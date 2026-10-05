@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use unicode_normalization::UnicodeNormalization;
 
+use super::asset_security_rules::matching_pattern_rules;
+
 const MAX_TEXT_ASSET_BYTES: usize = 512 * 1024;
 pub const MAX_ARCHIVE_ENTRIES: usize = 128;
 pub const MAX_ARCHIVE_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
@@ -460,6 +462,10 @@ fn scan_text_asset(kind: AssetKind, content: &str) -> AssetSecurityReport {
         }
     }
 
+    for rule in matching_pattern_rules(&normalized) {
+        report.warning(rule.code, rule.message);
+    }
+
     report
 }
 
@@ -551,6 +557,10 @@ fn contains_invisible_control_chars(content: &str) -> bool {
                 | '\u{202C}'
                 | '\u{202D}'
                 | '\u{202E}'
+                | '\u{2066}'
+                | '\u{2067}'
+                | '\u{2068}'
+                | '\u{2069}'
         )
     })
 }
@@ -684,6 +694,30 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn warns_for_bidi_isolate_characters() {
+        let report = scan_text_asset_report(AssetKind::Skill, "safe \u{2067}text\u{2069} here");
+
+        assert!(!report.blocked());
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "hidden-unicode"));
+    }
+
+    #[test]
+    fn pattern_rules_warn_without_blocking() {
+        let report = scan_text_asset_report(
+            AssetKind::CompanionFile,
+            "exec(base64.b64decode(payload))",
+        );
+
+        assert!(!report.blocked());
+        assert!(report.findings.iter().any(|finding| {
+            finding.code == "obfuscated-execution" && finding.severity == FindingSeverity::Warning
+        }));
     }
 
     #[test]
