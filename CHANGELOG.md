@@ -2,7 +2,23 @@
 
 All notable changes to Automatic are documented here.
 
-## [Unreleased]
+## [1.33.0] - 2026-10-06
+
+### Added
+
+- The MCP server editor checks servers that run through `docker run` or `podman run`. It reports a missing `-i` as an error, because the server exits as soon as it starts. It warns about a missing `--rm`, a `-t` flag, and variables passed with `-e` that are not set. One button adds `-i` and `--rm`. Save is blocked while there are errors unless you tick "Save anyway". Adding a server from Discover, a pasted config or a project recommendation asks you to confirm when the config has errors. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+- The MCP Servers list marks every stored server that has an error or a warning. Stored servers are not changed. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+- For the GitHub Docker image, the editor offers a switch to GitHub's official remote server, which needs no Docker. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+
+### Changed
+
+- A Docker MCP server with errors is no longer written to agent config files. The project's problems list names each server that was left out and says why. The `automatic_sync_project` tool reports the same. A server that Automatic imported from your own agent config file is still synced and shows a warning instead. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+- Discover adds a server's remote endpoint when it offers both a remote and a local option. This applies to GitHub, Supabase and Chrome Browser Automation. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+
+### Fixed
+
+- The GitHub server in Discover was stored as `docker run` with no `-i`, no `--rm` and no token. It never connected, and every launch by an agent left a stopped container behind. Discover now adds the remote GitHub server, and the local option has the correct flags and asks for a token. If you added the old version, your next sync removes it from your agent config files and lists it under the project's problems. Open it under MCP Servers and apply the fix or switch to Remote. Automatic does not delete the stopped containers. To remove them, run `docker rm $(docker ps -aq --filter status=exited --filter ancestor=ghcr.io/github/github-mcp-server:0.31.0)`. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
+- The MCP Toolbox for Databases entry in Discover no longer offers a one-click add. The server needs a tools file that you write yourself, so the entry now links to its documentation. ([90653dc](https://github.com/velvet-tiger/automatic/commit/90653dc))
 
 ## [1.32.0] - 2026-10-06
 
