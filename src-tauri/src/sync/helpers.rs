@@ -446,6 +446,12 @@ pub(crate) fn build_selected_servers(
             continue;
         }
         if let Some(server_config) = mcp_config.get(server_name) {
+            // A config that cannot work is left out of every agent file.
+            // Drift detection builds its expected map through this same
+            // function, so a skipped server never reads as drift.
+            if crate::core::mcp_sync_block_reason(server_config).is_some() {
+                continue;
+            }
             let cleaned = strip_internal_fields(server_config.clone());
 
             // Check if this is an HTTP server with a stored OAuth token. Only
@@ -506,6 +512,9 @@ pub(crate) fn build_global_selected_servers(
         let Some(server_config) = mcp_config.get(server_name) else {
             continue;
         };
+        if crate::core::mcp_sync_block_reason(server_config).is_some() {
+            continue;
+        }
         let cleaned = strip_internal_fields(server_config.clone());
 
         let is_http = cleaned
@@ -528,6 +537,65 @@ pub(crate) fn build_global_selected_servers(
     }
 
     selected_servers
+}
+
+/// Validation messages for one MCP server, as reported after a sync.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct McpServerNote {
+    pub server: String,
+    pub messages: Vec<String>,
+}
+
+/// What config validation decided for a set of servers: which ones the sync
+/// guard leaves out of agent files, and which ones sync with warnings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct McpConfigSyncNotes {
+    pub skipped: Vec<McpServerNote>,
+    pub warnings: Vec<McpServerNote>,
+}
+
+impl McpConfigSyncNotes {
+    pub fn is_empty(&self) -> bool {
+        self.skipped.is_empty() && self.warnings.is_empty()
+    }
+}
+
+/// Validate each named server and sort the results into skipped and warned.
+/// A discovered config is never skipped, so its errors are listed with the
+/// warnings.  Servers missing from the registry are ignored here; the sync
+/// already drops them.
+pub(crate) fn collect_mcp_config_notes(
+    server_names: &[String],
+    mcp_config: &Map<String, Value>,
+) -> McpConfigSyncNotes {
+    use crate::core::McpFindingSeverity;
+
+    let mut notes = McpConfigSyncNotes::default();
+    for server_name in server_names {
+        let Some(config) = mcp_config.get(server_name) else {
+            continue;
+        };
+        let validation = crate::core::validate_mcp_config(config);
+        let errors = validation.messages(McpFindingSeverity::Error);
+        let mut warnings = validation.messages(McpFindingSeverity::Warning);
+
+        if crate::core::mcp_sync_block_reason(config).is_some() {
+            notes.skipped.push(McpServerNote {
+                server: server_name.clone(),
+                messages: errors,
+            });
+            continue;
+        }
+        let mut messages = errors;
+        messages.append(&mut warnings);
+        if !messages.is_empty() {
+            notes.warnings.push(McpServerNote {
+                server: server_name.clone(),
+                messages,
+            });
+        }
+    }
+    notes
 }
 
 /// Remove fields whose names start with `_` from a JSON object.

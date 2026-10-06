@@ -111,11 +111,25 @@
       "package": "ghcr.io/github/github-mcp-server:0.31.0",
       "version": "",
       "transport": "stdio",
-      "command": "docker run ghcr.io/github/github-mcp-server:0.31.0"
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server:0.31.0"
+      ]
     },
     "auth": {
-      "method": "none",
-      "env_vars": []
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "description": "GitHub personal access token, used only when running the server locally with Docker",
+          "secret": true
+        }
+      ]
     }
   },
   {
@@ -294,14 +308,9 @@
     "icon": "google.com",
     "classification": "official",
     "repository_url": "https://github.com/googleapis/genai-toolbox",
+    "docs_url": "https://github.com/googleapis/genai-toolbox#readme",
     "remote": null,
-    "local": {
-      "registry": "oci",
-      "package": "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0",
-      "version": "",
-      "transport": "streamable-http",
-      "command": "docker run us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0"
-    },
+    "local": null,
     "auth": {
       "method": "none",
       "env_vars": []

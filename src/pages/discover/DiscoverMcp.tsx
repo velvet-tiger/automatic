@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { buildDiscoverMcpConfig, resolveLocalCommand } from "../../lib/discoverMcpConfig";
+import { confirmMcpConfigSave } from "../../lib/mcpConfigValidation";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
 import { smallInputClass } from "../../components/KvField";
@@ -236,16 +238,6 @@ function copyNameProblem(name: string, installed: Set<string>): string | null {
 
 type LocalConfig = NonNullable<McpServer["local"]>;
 
-/** Resolve a Discover `local` block into a runnable {command, args}.
- *  Prefers an explicit `args` array; falls back to splitting the command
- *  string on whitespace for legacy entries that embed args in `command`.
- *  Splitting a string is fragile (it breaks on arguments containing spaces),
- *  so `args` is the canonical source when an entry provides it. */
-function resolveLocalCommand(local: LocalConfig): { command: string; args: string[] } {
-  const parts = local.command.split(/\s+/).filter(Boolean);
-  return { command: parts[0] || "", args: local.args ?? parts.slice(1) };
-}
-
 /** Full command line for display/copy, reconstructed from command + resolved args. */
 function localCommandLine(local: LocalConfig): string {
   const { command, args } = resolveLocalCommand(local);
@@ -267,36 +259,6 @@ function exampleConfigJson(server: McpServer): string {
     null,
     2,
   );
-}
-
-/** Build a save-ready config JSON from Discover data. Prefers local, falls back to remote.
- *  Embeds `_author` metadata so Automatic can display the provider in the MCP Servers view.
- */
-function buildConfig(server: McpServer): Record<string, unknown> {
-  // Author metadata derived from Discover data
-  const _author: Record<string, string> = { name: server.provider };
-  if (server.repository_url) _author.repository_url = server.repository_url;
-
-  if (server.local) {
-    const { command, args } = resolveLocalCommand(server.local);
-    const env: Record<string, string> = {};
-    server.auth.env_vars.forEach((v) => {
-      env[v.name] = "";
-    });
-    const cfg: Record<string, unknown> = { type: "stdio", command, _author };
-    if (args.length > 0) cfg.args = args;
-    if (Object.keys(env).length > 0) cfg.env = env;
-    return cfg;
-  }
-  if (server.remote) {
-    const type = server.remote.transport === "sse" ? "sse" : "http";
-    const env: Record<string, string> = {};
-    server.auth.env_vars.forEach((v) => { env[v.name] = ""; });
-    const cfg: Record<string, unknown> = { type, url: server.remote.url, _author };
-    if (Object.keys(env).length > 0) cfg.env = env;
-    return cfg;
-  }
-  return { type: "stdio", command: "", _author };
 }
 
 export default function DiscoverMcp({
@@ -428,8 +390,13 @@ export default function DiscoverMcp({
     setInstallError(null);
     try {
       const name = configName(server);
-      const data = JSON.stringify(buildConfig(server));
-      await invoke("save_mcp_server_config", { name, data });
+      const config = buildDiscoverMcpConfig(server);
+      if (!config) {
+        setInstallError("This server needs manual setup. Follow its documentation.");
+        return;
+      }
+      if (!(await confirmMcpConfigSave(name, config))) return;
+      await invoke("save_mcp_server_config", { name, data: JSON.stringify(config) });
       setInstalledServers((prev) => new Set([...prev, name]));
     } catch (err: any) {
       setInstallError(`Failed to add server: ${err}`);
@@ -463,7 +430,17 @@ export default function DiscoverMcp({
     setCopying(true);
     setCopyError(null);
     try {
-      await invoke("save_mcp_server_config", { name, data: JSON.stringify(buildConfig(server)) });
+      const config = buildDiscoverMcpConfig(server);
+      if (!config) {
+        setCopying(false);
+        setCopyError("This server needs manual setup. Follow its documentation.");
+        return;
+      }
+      if (!(await confirmMcpConfigSave(name, config))) {
+        setCopying(false);
+        return;
+      }
+      await invoke("save_mcp_server_config", { name, data: JSON.stringify(config) });
     } catch (err: unknown) {
       setCopying(false);
       setCopyError(`Failed to add copy: ${err instanceof Error ? err.message : String(err)}`);
@@ -684,6 +661,11 @@ export default function DiscoverMcp({
                         </button>
                       )}
                     </>
+                  ) : !hasRemote(selected) && !hasLocal(selected) ? (
+                    <p className="text-[12px] text-text-muted leading-relaxed">
+                      This server needs manual setup, so Automatic cannot add it for you. Follow the
+                      documentation linked below, then create it under MCP Servers.
+                    </p>
                   ) : (
                     <button
                       onClick={() => handleInstall(selected)}

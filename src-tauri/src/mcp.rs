@@ -2716,6 +2716,16 @@ impl AutomaticMcpServer {
                             .to_string(),
                     );
                 }
+                match crate::sync::mcp_config_sync_notes(&project) {
+                    Ok(notes) if !notes.is_empty() => {
+                        response["mcp_servers_not_synced"] = serde_json::json!(notes.skipped);
+                        response["mcp_server_warnings"] = serde_json::json!(notes.warnings);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        response["mcp_validation_error"] = serde_json::Value::String(e);
+                    }
+                }
                 Ok(CallToolResult::success(vec![Content::text(
                     serde_json::to_string_pretty(&response)
                         .unwrap_or_else(|_| format!("Synced {} files", files.len())),

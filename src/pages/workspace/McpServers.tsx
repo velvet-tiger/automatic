@@ -13,6 +13,14 @@ import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { nextAvailableName } from "../../lib/uniqueName";
+import { McpConfigFindings } from "../../components/McpConfigFindings";
+import {
+  fixMcpDockerArgs,
+  hasMcpConfigErrors,
+  validateMcpConfig,
+  validateStoredMcpConfigs,
+  type McpConfigValidation,
+} from "../../lib/mcpConfigValidation";
 import {
   Plus,
   Copy,
@@ -540,6 +548,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   // Inline add state
   const [newArg, setNewArg] = useState("");
 
+  // Validation of the config being edited, and of every stored config (for
+  // the warning marker in the list).
+  const [validation, setValidation] = useState<McpConfigValidation | null>(null);
+  const [saveDespiteErrors, setSaveDespiteErrors] = useState(false);
+  const [storedFindings, setStoredFindings] = useState<Record<string, McpConfigValidation>>({});
+
 
   useEffect(() => {
     loadServers();
@@ -563,6 +577,59 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     } catch (err: any) {
       setError(`Failed to load servers: ${err}`);
     }
+    await loadStoredFindings();
+  };
+
+  const loadStoredFindings = async () => {
+    try {
+      setStoredFindings(await validateStoredMcpConfigs());
+    } catch (err: unknown) {
+      setError(`Failed to check stored server configs: ${err}`);
+    }
+  };
+
+  // Re-validate as the user edits. Debounced so typing an argument does not
+  // call the backend on every keystroke.
+  const configToValidate = config ? JSON.stringify(cleanConfig(config)) : null;
+  useEffect(() => {
+    if (!configToValidate) {
+      setValidation(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      validateMcpConfig(JSON.parse(configToValidate) as Record<string, unknown>)
+        .then((result) => {
+          if (cancelled) return;
+          setValidation(result);
+          if (!hasMcpConfigErrors(result)) setSaveDespiteErrors(false);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(`Failed to validate server config: ${err}`);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [configToValidate]);
+
+  const saveBlockedByErrors = hasMcpConfigErrors(validation) && !saveDespiteErrors;
+
+  const applyDockerFix = async () => {
+    if (!config) return;
+    try {
+      const fixed = await fixMcpDockerArgs(config.command || "", config.args || []);
+      updateConfig({ args: fixed });
+    } catch (err: unknown) {
+      setError(`Failed to fix arguments: ${err}`);
+    }
+  };
+
+  const switchToRemoteEquivalent = () => {
+    const remote = validation?.remote_equivalent;
+    if (!config || !remote) return;
+    updateConfig({ type: remote.transport, url: remote.url, headers: config.headers || {} });
   };
 
   const checkOpencodeProjects = async () => {
@@ -628,6 +695,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const trimmedEdit = editName.trim();
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
+    if (saveBlockedByErrors) return;
     try {
       // Rename first when the user changed the name of an existing server.
       // The backend rewrites project + template references and re-syncs, so
@@ -649,8 +717,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         trackMcpServerUpdated(name);
       }
       setDirty(false);
+      setSaveDespiteErrors(false);
       setSelectedName(name);
       setEditName(name);
+      void loadStoredFindings();
       if (isCreating) {
         setIsCreating(false);
         await loadServers();
@@ -829,6 +899,17 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         <td className="px-3 py-2 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[13px] font-medium text-text-base truncate">{name}</span>
+            {storedFindings[name] && storedFindings[name]!.findings.some((f) => f.severity !== "info") && (
+              <span
+                className={`shrink-0 ${hasMcpConfigErrors(storedFindings[name]!) ? "text-danger" : "text-warning"}`}
+                title={storedFindings[name]!.findings
+                  .filter((f) => f.severity !== "info")
+                  .map((f) => f.message.replace(/`/g, ""))
+                  .join("\n")}
+              >
+                <AlertTriangle size={13} />
+              </span>
+            )}
             {recentIds.has(name) && (
               <span className="shrink-0 px-1.5 py-0.5 rounded bg-brand/15 text-brand text-[9px] font-semibold uppercase tracking-wider">New</span>
             )}
@@ -1053,8 +1134,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     onClick={handleSave}
                     disabled={
                       (isCreating && !newName.trim()) ||
-                      (!isCreating && !editName.trim())
+                      (!isCreating && !editName.trim()) ||
+                      saveBlockedByErrors
                     }
+                    title={saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
@@ -1264,6 +1347,47 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           Add
                         </button>
                       </div>
+                      )}
+                      {validation && (
+                        <>
+                          <McpConfigFindings findings={validation.findings} />
+                          {validation.can_fix && (
+                            <button
+                              onClick={applyDockerFix}
+                              className="mt-2 text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors"
+                            >
+                              Add <code className="font-mono">-i</code> and <code className="font-mono">--rm</code>
+                            </button>
+                          )}
+                          {validation.remote_equivalent && (
+                            <div className="mt-3 px-3 py-2 rounded-md bg-bg-input border border-border-strong/40 text-[11px] text-text-muted leading-relaxed">
+                              <p>
+                                {validation.remote_equivalent.title} runs an official remote server at{" "}
+                                <code className="font-mono text-text-base">{validation.remote_equivalent.url}</code>.
+                                It needs no Docker. After switching, sign in under OAuth Authentication, or add an{" "}
+                                <code className="font-mono">{validation.remote_equivalent.auth_header}</code> header.
+                                Headers are written to agent config files as plain text.
+                              </p>
+                              <button
+                                onClick={switchToRemoteEquivalent}
+                                className="mt-2 text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors"
+                              >
+                                Switch to Remote
+                              </button>
+                            </div>
+                          )}
+                          {hasMcpConfigErrors(validation) && (
+                            <label className="mt-3 flex items-center gap-2 text-[11px] text-text-muted cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={saveDespiteErrors}
+                                onChange={(e) => setSaveDespiteErrors(e.target.checked)}
+                                className="cursor-pointer accent-brand"
+                              />
+                              Save anyway. Automatic will not sync this server to agents until the errors are fixed.
+                            </label>
+                          )}
+                        </>
                       )}
                     </section>
 

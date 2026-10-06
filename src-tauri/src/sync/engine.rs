@@ -95,6 +95,7 @@ fn autodetect_and_sync(project: &Project, adoption: AgentAdoption) -> Result<Vec
         if discovered_would_downgrade_remote(&name, &config_str) {
             continue;
         }
+        let config_str = crate::core::mark_discovered_if_blocked(&config_str);
         let _ = crate::core::save_mcp_server_config(&name, &config_str);
     }
 

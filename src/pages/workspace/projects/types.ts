@@ -234,7 +234,10 @@ export interface DriftReport {
   custom_conflicts?: CustomAssetConflict[];
 }
 
-export type ProjectProblemKind = "mcp_user_scope_conflict" | "silent_mode_stale_root_mcp";
+export type ProjectProblemKind =
+  | "mcp_user_scope_conflict"
+  | "silent_mode_stale_root_mcp"
+  | "mcp_server_config_invalid";
 
 export interface ProjectProblem {
   kind: ProjectProblemKind;

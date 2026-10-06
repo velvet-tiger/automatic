@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmMcpConfigSave } from "../lib/mcpConfigValidation";
 import { X, ClipboardPaste, Loader2, CheckCircle2, AlertTriangle, FileText, ChevronDown } from "lucide-react";
 import { trackMcpServerCreated } from "../lib/analytics";
 
@@ -345,6 +346,10 @@ export default function McpServerImportDialog({
       const entry = entries[i]!;
       const name = row.effectiveName;
       try {
+        if (!(await confirmMcpConfigSave(name, entry.config))) {
+          failed.push({ name, error: "Not imported. The config has errors." });
+          continue;
+        }
         await invoke("save_mcp_server_config", {
           name,
           data: JSON.stringify(entry.config),

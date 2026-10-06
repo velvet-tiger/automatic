@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import mcpServersData from "../../../../../src-tauri/assets/discover/featured-mcp-servers.json";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import type { ProjectRecommendation } from "../types";
+import { buildDiscoverMcpConfig } from "../../../../lib/discoverMcpConfig";
+import { confirmMcpConfigSave } from "../../../../lib/mcpConfigValidation";
 
 /**
  * Installs an AI-suggested MCP server config and adds it to the project.
@@ -50,27 +52,11 @@ export function McpAddButton({
       return;
     }
 
-    // Build the config — same logic as DiscoverMcp.buildConfig.
-    const _author: Record<string, string> = { name: server.provider };
-    if (server.repository_url) _author.repository_url = server.repository_url;
-
-    let config: Record<string, unknown>;
-    if (server.local) {
-      // Mirrors resolveLocalCommand in DiscoverMcp: prefer an explicit args
-      // vector, fall back to splitting the command string for legacy entries.
-      const parts = server.local.command.split(/\s+/).filter(Boolean);
-      const cmd = parts[0] ?? "";
-      const args = server.local.args ?? parts.slice(1);
-      const env: Record<string, string> = {};
-      server.auth.env_vars.forEach((v) => { env[v.name] = ""; });
-      config = { type: "stdio", command: cmd, _author };
-      if (args.length > 0) config.args = args;
-      if (Object.keys(env).length > 0) config.env = env;
-    } else if (server.remote) {
-      const type = server.remote.transport === "sse" ? "sse" : "http";
-      config = { type, url: server.remote.url, _author };
-    } else {
-      config = { type: "stdio", command: "", _author };
+    const config = buildDiscoverMcpConfig(server);
+    if (!config) {
+      setState("error");
+      setErrorMsg("This server needs manual setup. Open it in Discover MCP Servers for its documentation.");
+      return;
     }
 
     // Derive the config key — same as DiscoverMcp.configName.
@@ -84,6 +70,10 @@ export function McpAddButton({
       const installed: string[] = await invoke("list_mcp_server_configs");
       const alreadyOnDisk = installed.some((n) => n.toLowerCase() === configKey.toLowerCase());
       if (!alreadyOnDisk) {
+        if (!(await confirmMcpConfigSave(configKey, config))) {
+          setState("idle");
+          return;
+        }
         await invoke("save_mcp_server_config", { name: configKey, data: JSON.stringify(config) });
       }
     } catch (err: any) {

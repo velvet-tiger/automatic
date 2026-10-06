@@ -10,13 +10,14 @@ mod rebuild;
 pub use autodetect::autodetect_project_dependencies;
 pub use cleanup::{get_agent_cleanup_preview, remove_agent_from_project};
 pub use drift::{
-    check_project_drift, check_project_problems, collect_instruction_conflicts_pub, AgentDrift,
+    check_project_drift, check_project_problems, collect_instruction_conflicts_pub,
+    mcp_config_sync_notes, AgentDrift,
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };
 pub use helpers::{
     extract_agent_machine_name as extract_agent_machine_name_pub, CustomAssetConflict,
-    CustomAssetKind,
+    CustomAssetKind, McpConfigSyncNotes, McpServerNote,
 };
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.

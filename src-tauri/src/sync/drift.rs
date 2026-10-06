@@ -9,7 +9,8 @@ use crate::core::{Project, ProjectMode, ProjectSummary};
 
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
-    collect_custom_asset_conflicts, extract_agent_machine_name, load_mcp_server_configs,
+    collect_custom_asset_conflicts, collect_mcp_config_notes, extract_agent_machine_name,
+    load_mcp_server_configs, McpConfigSyncNotes, McpServerNote,
     CustomAssetConflict, CustomAssetKind,
 };
 
@@ -28,6 +29,9 @@ pub enum ProjectProblemKind {
     /// writes the root, so the agent keeps loading those servers until the
     /// user edits the file.
     SilentModeStaleRootMcp,
+    /// An MCP server's stored config fails validation.  Servers with errors
+    /// are left out of agent files; servers with warnings still sync.
+    McpServerConfigInvalid,
 }
 
 /// A single actionable problem in a project's configuration.
@@ -81,6 +85,7 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
             if project.mode == ProjectMode::Silent {
                 problems.extend(silent_stale_root_mcp_problem(project, &dir));
             }
+            problems.extend(mcp_config_problems(&mcp_config_sync_notes(project)?));
         }
     }
 
@@ -88,6 +93,60 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
         has_problems: !problems.is_empty(),
         problems,
     })
+}
+
+/// Validate the project's enabled MCP servers against the registry and report
+/// which ones a sync leaves out and which ones sync with warnings.
+pub fn mcp_config_sync_notes(project: &Project) -> Result<McpConfigSyncNotes, String> {
+    let mcp_config = load_mcp_server_configs()?;
+    Ok(collect_mcp_config_notes(
+        &project.enabled_mcp_servers(),
+        &mcp_config,
+    ))
+}
+
+/// One fix step per server: its name followed by what validation found.
+fn mcp_note_steps(notes: &[McpServerNote]) -> Vec<String> {
+    notes
+        .iter()
+        .map(|note| format!("`{}`: {}", note.server, note.messages.join(" ")))
+        .collect()
+}
+
+/// Turn validation notes into at most two problems: one for servers that are
+/// not synced, one for servers that sync with warnings.
+fn mcp_config_problems(notes: &McpConfigSyncNotes) -> Vec<ProjectProblem> {
+    let mut problems = Vec::new();
+    let names = |list: &[McpServerNote]| list.iter().map(|n| n.server.clone()).collect::<Vec<_>>();
+
+    if !notes.skipped.is_empty() {
+        let mut solution = mcp_note_steps(&notes.skipped);
+        solution.push(
+            "Open the server under Library > MCP Servers, apply the suggested fix and save."
+                .to_string(),
+        );
+        problems.push(ProjectProblem {
+            kind: ProjectProblemKind::McpServerConfigInvalid,
+            title: "MCP servers not synced".to_string(),
+            description: "These servers cannot start with their current settings, so Automatic leaves them out of every agent config file.".to_string(),
+            solution,
+            reference_url: None,
+            agents: Vec::new(),
+            resources: names(&notes.skipped),
+        });
+    }
+    if !notes.warnings.is_empty() {
+        problems.push(ProjectProblem {
+            kind: ProjectProblemKind::McpServerConfigInvalid,
+            title: "MCP server configuration warnings".to_string(),
+            description: "These servers are synced, but their settings are likely to cause trouble.".to_string(),
+            solution: mcp_note_steps(&notes.warnings),
+            reference_url: None,
+            agents: Vec::new(),
+            resources: names(&notes.warnings),
+        });
+    }
+    problems
 }
 
 /// One agent's user-scope conflicts: the servers involved and where the
@@ -2684,6 +2743,72 @@ mod tests {
         assert!(report.has_problems, "expected a user-scope conflict for github");
         assert_eq!(report.problems.len(), 1);
         assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
+    }
+
+    /// A registry config the sync guard blocks is left out of the agent file,
+    /// is not reported as drift (sync and drift build the same server map),
+    /// and shows up in the problems report with the reason.  A discovered
+    /// config with the same fault still syncs and is reported as a warning.
+    #[test]
+    fn blocked_mcp_server_is_skipped_without_drift_and_reported_as_a_problem() {
+        use crate::core::{save_mcp_server_config, with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config(
+                "broken",
+                r#"{"type":"stdio","command":"docker","args":["run","example/server:1.0"]}"#,
+            )
+            .expect("save broken");
+            save_mcp_server_config(
+                "handwritten",
+                r#"{"type":"stdio","command":"docker","args":["run","--rm","example/server:1.0"],"_discovered":true}"#,
+            )
+            .expect("save handwritten");
+
+            let mut project = Project {
+                name: "guarded".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec![
+                    "automatic".to_string(),
+                    "broken".to_string(),
+                    "handwritten".to_string(),
+                ],
+                ..Default::default()
+            };
+
+            crate::sync::sync_project_without_autodetect(&mut project).expect("sync");
+
+            let written: Value = serde_json::from_str(
+                &fs::read_to_string(project_dir.path().join(".mcp.json")).expect("read .mcp.json"),
+            )
+            .expect("parse .mcp.json");
+            let servers = written["mcpServers"].as_object().expect("mcpServers map");
+            assert!(!servers.contains_key("broken"), "blocked server must not be written");
+            assert!(servers.contains_key("handwritten"), "discovered server must still sync");
+            assert!(
+                servers["handwritten"].get("_discovered").is_none(),
+                "the marker is internal and must not reach agent files"
+            );
+
+            let drift = check_project_drift(&project).expect("drift check");
+            assert!(!drift.drifted, "a skipped server must not read as drift: {:?}", drift);
+
+            let report = check_project_problems(&project).expect("problems check");
+            let invalid: Vec<&ProjectProblem> = report
+                .problems
+                .iter()
+                .filter(|p| p.kind == ProjectProblemKind::McpServerConfigInvalid)
+                .collect();
+            assert_eq!(invalid.len(), 2, "one problem for skipped, one for warnings");
+            assert_eq!(invalid[0].resources, vec!["broken".to_string()]);
+            assert!(invalid[0].solution[0].contains("`-i` is missing"));
+            assert_eq!(invalid[1].resources, vec!["handwritten".to_string()]);
+            assert!(invalid[1].solution[0].contains("`-i` is missing"));
+        });
     }
 
     /// The same server at user scope for several agents is one problem, not

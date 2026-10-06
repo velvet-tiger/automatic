@@ -378,6 +378,13 @@ fn build_prepared_desired(
                     });
                     continue;
                 }
+                if let Some(reason) = crate::core::mcp_sync_block_reason(cfg) {
+                    rejected.push(RejectedServer {
+                        name: name.clone(),
+                        reason,
+                    });
+                    continue;
+                }
                 effective_names.push(name.clone());
             }
         }

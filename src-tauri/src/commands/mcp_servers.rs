@@ -97,6 +97,41 @@ pub fn check_mcp_command_available(command: String) -> core::McpServerAvailabili
     core::check_mcp_command_available(trimmed)
 }
 
+/// Validate an MCP server config before it is saved.  `data` is the config
+/// JSON as the editor would save it.  Returns the findings, whether the
+/// one-click Docker fix applies, and any official remote equivalent.
+#[tauri::command]
+pub fn validate_mcp_server_config(data: &str) -> Result<core::McpConfigValidation, String> {
+    let config: serde_json::Value =
+        serde_json::from_str(data).map_err(|e| format!("Invalid MCP server config JSON: {}", e))?;
+    Ok(core::validate_mcp_config(&config))
+}
+
+/// Validate every stored MCP server config.  Returns only the servers that
+/// have findings, keyed by server name.  Nothing is rewritten.
+#[tauri::command]
+pub fn validate_stored_mcp_server_configs(
+) -> Result<std::collections::BTreeMap<String, core::McpConfigValidation>, String> {
+    let mut results = std::collections::BTreeMap::new();
+    for name in core::list_mcp_server_configs()? {
+        let raw = core::read_mcp_server_config(&name)?;
+        let config: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("Invalid config for MCP server '{}': {}", name, e))?;
+        let validation = core::validate_mcp_config(&config);
+        if !validation.findings.is_empty() {
+            results.insert(name, validation);
+        }
+    }
+    Ok(results)
+}
+
+/// Return `args` with `-i` and `--rm` inserted after `run` when missing.
+/// The caller shows the result to the user; nothing is saved here.
+#[tauri::command]
+pub fn fix_mcp_docker_args(command: String, args: Vec<String>) -> Vec<String> {
+    core::apply_docker_stdio_fix(&command, &args)
+}
+
 // ── MCP Discover ─────────────────────────────────────────────────────────────
 
 /// Return all MCP server Discover catalogue entries matching `query` as a JSON array.

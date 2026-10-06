@@ -157,6 +157,7 @@ pub fn import_agent_global_configs(agent_ids: Vec<String>) -> Result<String, Str
         for (name, config) in servers {
             let config_str = serde_json::to_string_pretty(&config)
                 .map_err(|e| format!("Failed to serialise config for '{}': {}", name, e))?;
+            let config_str = core::mark_discovered_if_blocked(&config_str);
             core::save_mcp_server_config(&name, &config_str)?;
             imported.push(name);
         }
