@@ -4,6 +4,23 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-10-06
+
+### Added
+
+- Project groups can list profiles. Every project in the group receives them. A profile that comes from a group shows a "From group" badge in the project's Profiles panel, and you can only detach it at the group. The Library profile page shows which groups use it. The MCP profile attach and detach tools take an optional group. ([6b2d5b6](https://github.com/velvet-tiger/automatic/commit/6b2d5b6))
+- The asset security scanner has nine new warning rules: conversation exfiltration, behaviour manipulation, refusal suppression, prompt leakage, memory poisoning, credential harvesting, file enumeration, remote code fetch and obfuscated execution. The patterns are adapted from NVIDIA SkillSpector (Apache-2.0). These rules warn only and never block an asset. The hidden-character rule now also catches the bidi isolate characters U+2066 to U+2069. ([3767e24](https://github.com/velvet-tiger/automatic/commit/3767e24))
+
+### Changed
+
+- The drift window uses the same side-by-side diff as the conflict window. Before, it showed a unified diff with the colours inverted. Automatic is on the left and the file on disk is on the right. The drift window has a new "Overwrite with Automatic (re-sync)" button. ([6d4ab5b](https://github.com/velvet-tiger/automatic/commit/6d4ab5b))
+
+### Fixed
+
+- A user-level MCP conflict now shows as one problem across all agents, with a fix step for each agent that names its own config file. Agents with no project-level MCP config, such as Cline, are skipped. ([0439576](https://github.com/velvet-tiger/automatic/commit/0439576))
+- In Silent mode, Automatic now warns about servers left in root agent MCP files that the project no longer manages. It names each file and server to delete. ([0439576](https://github.com/velvet-tiger/automatic/commit/0439576))
+- On macOS 27 the window buttons sit on the centre line of the top bar again, and the sidebar toggle no longer crowds them. ([ddde5d2](https://github.com/velvet-tiger/automatic/commit/ddde5d2))
+
 ## [1.31.0] - 2026-09-29
 
 ### Added
