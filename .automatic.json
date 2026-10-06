@@ -1,0 +1,144 @@
+{
+  "agents": [
+    "claude",
+    "cursor",
+    "codex",
+    "opencode"
+  ],
+  "contexts": [
+    "automatic"
+  ],
+  "custom_agents": [],
+  "custom_commands": [],
+  "custom_skills": [
+    {
+      "content": "---\nname: Automatic App Release\ndescription: Describes how to create a new release for this application.\n—\n \n* Use standard semver without “v” e.g. 1.0.0\n* Update CHANGELOG.md\n* Run tests\n* Build the project\n* Ensure you’ve not missed the cargo.lock\n",
+      "name": "release-automatic"
+    },
+    {
+      "content": "---\nname: check-agents-for-updates\ndescription: Scan all available LLMs that this application supports and look for updates.\n---\n\nThis project supports a range of LLMs for coding, documented in src-tauri/src/agent.\n\nThese products routinely add new features and change existing behaviours.\n\nThis task is to walk through these agents one by one, check their current support for our features on their official documentation on the internet against our implemented versions, and flag any gaps or changes required.\n\nYou may add additional documentation into the docs folder to support this.",
+      "name": "check-agents-for-updates"
+    }
+  ],
+  "description": "",
+  "file_rules": {
+    "_project": [
+      "automatic-service",
+      "automatic-general",
+      "automatic-process",
+      "automatic-prose",
+      "thinking-effort",
+      "automatic-code",
+      "local-git-rules",
+      "local-general"
+    ]
+  },
+  "id": "4afb60f2-72af-4cac-9a12-20f001816a51",
+  "instruction_mode": "unified",
+  "instructions_index_mode": false,
+  "manage_gitignore": false,
+  "mcp_servers": [
+    "automatic",
+    "sentry",
+    "linear-vt"
+  ],
+  "name": "automatic-app",
+  "profile_contributions": {
+    "General": {
+      "agents": [
+        "claude",
+        "codex",
+        "cursor",
+        "opencode"
+      ],
+      "rules": [
+        "automatic-service",
+        "automatic-process",
+        "automatic-code",
+        "automatic-general",
+        "automatic-prose",
+        "local-git-rules",
+        "thinking-effort",
+        "local-general"
+      ]
+    }
+  },
+  "profiles": [
+    "General"
+  ],
+  "providers": [],
+  "skill_collections": {
+    "automatic": "automatic-skills",
+    "automatic-code-review": "automatic-skills",
+    "automatic-debugging": "automatic-skills",
+    "automatic-documentation": "automatic-skills",
+    "automatic-performance": "automatic-skills",
+    "automatic-refactoring": "automatic-skills",
+    "automatic-security-review": "automatic-skills",
+    "automatic-testing": "automatic-skills"
+  },
+  "skill_sources": {
+    "automatic": {
+      "id": "automatic/automatic-app/automatic",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-code-review": {
+      "id": "automatic/automatic-app/automatic-code-review",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-debugging": {
+      "id": "automatic/automatic-app/automatic-debugging",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-documentation": {
+      "id": "automatic/automatic-app/automatic-documentation",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-performance": {
+      "id": "automatic/automatic-app/automatic-performance",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-refactoring": {
+      "id": "automatic/automatic-app/automatic-refactoring",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-security-review": {
+      "id": "automatic/automatic-app/automatic-security-review",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "automatic-testing": {
+      "id": "automatic/automatic-app/automatic-testing",
+      "kind": "bundled",
+      "source": "automatic/automatic-app"
+    },
+    "git-commit": {
+      "id": "github/awesome-copilot/git-commit",
+      "kind": "github",
+      "source": "github/awesome-copilot"
+    }
+  },
+  "skills": [
+    "automatic",
+    "automatic-security-review",
+    "git-commit",
+    "release-prep",
+    "hooks-automation",
+    "skill-builder",
+    "automatic-refactoring",
+    "brandfetch",
+    "automatic-documentation",
+    "automatic-performance",
+    "automatic-debugging",
+    "dev-automatic-marketplace-authoring",
+    "automatic-code-review",
+    "automatic-testing"
+  ],
+  "tools": []
+}
