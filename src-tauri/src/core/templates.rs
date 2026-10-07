@@ -484,6 +484,12 @@ pub fn apply_templates_to_project(
         templates.push(tmpl);
     }
 
+    let library_rules: Vec<String> = super::rules::list_rules()?
+        .into_iter()
+        .map(|rule| rule.id)
+        .collect();
+    retain_library_rules(&mut templates, &library_rules);
+
     let result = merge_templates_into_project(&mut project, &templates)?;
 
     project.updated_at = chrono::Utc::now().to_rfc3339();
@@ -492,6 +498,18 @@ pub fn apply_templates_to_project(
     save_project(project_name, &pretty)?;
 
     Ok(result)
+}
+
+/// Drop rule names that are not in `library_rules` from each template.
+///
+/// A template can outlive a rule it lists. Merging such a name would attach a
+/// rule that does not exist: sync skips it, and the project shows a row the
+/// user cannot explain.
+fn retain_library_rules(templates: &mut [ProjectTemplate], library_rules: &[String]) {
+    for tmpl in templates {
+        tmpl.unified_rules
+            .retain(|rule| library_rules.contains(rule));
+    }
 }
 
 /// Pure merge logic: applies template assets to a project in place.

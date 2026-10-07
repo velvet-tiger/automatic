@@ -24,6 +24,7 @@ import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import type { ProjectSummary } from "./projects/types";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
+  AlertTriangle,
   Plus,
   X,
   Check,
@@ -1055,6 +1056,28 @@ export default function Templates({
                             </button>
                           );
                         })}
+                        {/* Rules the template lists but the library no longer holds.
+                            Without a chip they could never be unticked. */}
+                        {(template.unified_rules || [])
+                          .filter((ruleId) => !availableRules.some((rule) => rule.id === ruleId))
+                          .map((ruleId) => (
+                            <button
+                              key={ruleId}
+                              onClick={() =>
+                                updateField(
+                                  "unified_rules",
+                                  (template.unified_rules || []).filter((r) => r !== ruleId)
+                                )
+                              }
+                              title="This rule is no longer in the library. Click to remove it from the template."
+                              className="px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 bg-warning/10 border-warning/40 text-warning hover:bg-warning/20"
+                            >
+                              <AlertTriangle size={10} />
+                              {ruleId}
+                              <span className="text-[10px] uppercase tracking-wide">Missing</span>
+                              <X size={10} />
+                            </button>
+                          ))}
                       </div>
                     ) : (
                       <p className="text-[11px] text-text-muted italic">

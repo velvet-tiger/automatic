@@ -1,6 +1,6 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
-import { Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
 import { InheritedBadge } from "../../../../../components/ProtectionBadge";
@@ -45,6 +45,12 @@ export function RulesPanel({
   const MANDATORY_RULE = "automatic-service";
   const isRuleLocked = (ruleId: string) =>
     pluginLockedRules.includes(ruleId) || ruleId === MANDATORY_RULE || !!profileLocks.rules[ruleId];
+
+  // A rule the project lists but the library no longer holds, for example
+  // after the rule was deleted. The library always holds the mandatory rule,
+  // so an empty list means it has not loaded yet and nothing is flagged.
+  const isRuleMissing = (ruleId: string) =>
+    availableRules.length > 0 && !availableRules.some(r => r.id === ruleId);
 
   const configuredRules = (project.file_rules || {})["_project"] || [];
   const projectRules = configuredRules.includes(MANDATORY_RULE)
@@ -336,24 +342,41 @@ export function RulesPanel({
           <div className="space-y-2">
             {projectRules.map((ruleId) => {
               const meta = availableRules.find(r => r.id === ruleId);
+              const missing = isRuleMissing(ruleId);
               return (
                 <div
                   key={ruleId}
-                  className="bg-bg-input border border-border-strong/40 rounded-lg group flex items-center gap-3 px-3 py-2.5"
+                  className={`bg-bg-input border rounded-lg group flex items-center gap-3 px-3 py-2.5 ${
+                    missing ? "border-warning/40" : "border-border-strong/40"
+                  }`}
                 >
-                  <ScrollText size={14} className="flex-shrink-0 text-text-muted" />
+                  {missing ? (
+                    <AlertTriangle size={14} className="flex-shrink-0 text-warning" />
+                  ) : (
+                    <ScrollText size={14} className="flex-shrink-0 text-text-muted" />
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium text-text-base truncate">
                       {meta?.name ?? ruleId}
                     </div>
-                    <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
+                    <div className="text-[11px] text-text-muted truncate">
+                      {missing ? "This rule is no longer in the library." : ruleId}
+                    </div>
                   </div>
-                  <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
+                  {missing ? (
+                    <span className="text-[11px] text-warning bg-warning/10 border border-warning/20 rounded px-2 py-0.5 flex-shrink-0">
+                      Missing
+                    </span>
+                  ) : (
+                    <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
+                  )}
                   {profileLocks.rules[ruleId] && <InheritedBadge profile={profileLocks.rules[ruleId]!} />}
                   {!isRuleLocked(ruleId) && (
                   <button
                     onClick={() => handleToggleProjectRule(ruleId)}
-                    className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                    className={`p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 ${
+                      missing ? "" : "opacity-0 group-hover:opacity-100"
+                    }`}
                     title="Remove"
                   >
                     <X size={12} />

@@ -1551,17 +1551,15 @@ pub(crate) fn rename_mcp_server_in_projects(old_name: &str, new_name: &str) {
     });
 }
 
-/// Rewrite every template's `mcp_servers` entries from `old_name` to
-/// `new_name` and persist the ones that changed. Failures are logged and
-/// skipped, matching the pattern used by the other propagation helpers.
-pub(crate) fn rename_mcp_server_in_templates(old_name: &str, new_name: &str) {
-    if old_name == new_name {
-        return;
-    }
+/// Run `mutate` over every template in the library and persist the ones it
+/// reports as changed. Failures are logged and skipped, matching the pattern
+/// used by the other propagation helpers. `action` names the caller in those
+/// log lines.
+fn update_each_template(action: &str, mutate: impl Fn(&mut core::ProjectTemplate) -> bool) {
     let template_names = match core::list_templates() {
         Ok(names) => names,
         Err(e) => {
-            eprintln!("Failed to list templates for MCP-server rename: {}", e);
+            eprintln!("Failed to list templates for {}: {}", action, e);
             return;
         }
     };
@@ -1583,6 +1581,36 @@ pub(crate) fn rename_mcp_server_in_templates(old_name: &str, new_name: &str) {
             }
         };
 
+        if !mutate(&mut template) {
+            continue;
+        }
+
+        match serde_json::to_string_pretty(&template).map_err(|e| e.to_string()) {
+            Ok(data) => {
+                if let Err(e) = core::save_template(&template_name, &data) {
+                    eprintln!(
+                        "Failed to save template '{}' after {}: {}",
+                        template_name, action, e
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to serialise template '{}' after {}: {}",
+                    template_name, action, e
+                );
+            }
+        }
+    }
+}
+
+/// Rewrite every template's `mcp_servers` entries from `old_name` to
+/// `new_name` and persist the ones that changed.
+pub(crate) fn rename_mcp_server_in_templates(old_name: &str, new_name: &str) {
+    if old_name == new_name {
+        return;
+    }
+    update_each_template("MCP-server rename", |template| {
         let mut changed = false;
         for server in template.mcp_servers.iter_mut() {
             if server == old_name {
@@ -1590,26 +1618,19 @@ pub(crate) fn rename_mcp_server_in_templates(old_name: &str, new_name: &str) {
                 changed = true;
             }
         }
+        changed
+    });
+}
 
-        if changed {
-            match serde_json::to_string_pretty(&template).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_template(&template_name, &data) {
-                        eprintln!(
-                            "Failed to save template '{}' after MCP-server rename: {}",
-                            template_name, e
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Failed to serialise template '{}' after MCP-server rename: {}",
-                        template_name, e
-                    );
-                }
-            }
-        }
-    }
+/// Remove `rule_name` from every template's `unified_rules`. A template that
+/// keeps the name of a deleted rule puts it back into each project the
+/// template is applied to, where it shows as a rule that cannot be found.
+pub(crate) fn prune_rule_from_templates(rule_name: &str) {
+    update_each_template("rule delete", |template| {
+        let before = template.unified_rules.len();
+        template.unified_rules.retain(|r| r != rule_name);
+        template.unified_rules.len() != before
+    });
 }
 
 pub(crate) fn prune_rule_from_projects(rule_name: &str) {
@@ -1711,6 +1732,58 @@ mod propagation_tests {
             assert!(
                 !dir_b.join(".claude").exists(),
                 "non-referencing project should NOT have been synced"
+            );
+        });
+    }
+
+    fn save_template_with_rules(name: &str, rules: &[&str]) {
+        let data = serde_json::to_string(&core::ProjectTemplate {
+            name: name.to_string(),
+            unified_rules: rules.iter().map(|r| r.to_string()).collect(),
+            ..Default::default()
+        })
+        .expect("template json");
+        core::save_template(name, &data).expect("save template");
+    }
+
+    fn template_rules(name: &str) -> Vec<String> {
+        let raw = core::read_template(name).expect("read template");
+        let template: core::ProjectTemplate = serde_json::from_str(&raw).expect("parse template");
+        template.unified_rules
+    }
+
+    /// Deleting a rule must drop it from every template that lists it, and
+    /// leave the other rules and the other templates alone.
+    #[test]
+    fn prune_rule_from_templates_drops_only_the_named_rule() {
+        with_temp_home(|_| {
+            save_template_with_rules("with-rule", &["keep-rule", "gone-rule"]);
+            save_template_with_rules("without-rule", &["keep-rule"]);
+
+            prune_rule_from_templates("gone-rule");
+
+            assert_eq!(template_rules("with-rule"), vec!["keep-rule"]);
+            assert_eq!(template_rules("without-rule"), vec!["keep-rule"]);
+        });
+    }
+
+    /// A template that still lists a rule the library no longer holds must
+    /// not attach that rule to the project.
+    #[test]
+    fn apply_templates_skips_rules_missing_from_library() {
+        with_temp_home(|_| {
+            core::save_rule("keep-rule", "Keep Rule", "Rule body.\n").expect("save rule");
+            save_template_with_rules("stale", &["keep-rule", "gone-rule"]);
+            let (_keep, _dir) = make_project("project-a", |_| {});
+
+            let result = core::apply_templates_to_project("project-a", &["stale".to_string()])
+                .expect("apply templates");
+
+            assert_eq!(result.project.file_rules["_project"], vec!["keep-rule"]);
+            assert_eq!(result.pending_unified[0].rules, vec!["keep-rule"]);
+            assert_eq!(
+                read_back("project-a").file_rules["_project"],
+                vec!["keep-rule"]
             );
         });
     }

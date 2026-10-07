@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use crate::core;
 
 use super::projects::{
-    prune_rule_from_projects, sync_project_if_configured, sync_projects_referencing_rule,
-    with_each_project_mut,
+    prune_rule_from_projects, prune_rule_from_templates, sync_project_if_configured,
+    sync_projects_referencing_rule, with_each_project_mut,
 };
 
 // ── Rules ────────────────────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     core::delete_rule(machine_name)?;
     core::prune_asset_from_profiles(core::ProfileResourceKind::Rule, machine_name);
     prune_rule_from_projects(machine_name);
+    prune_rule_from_templates(machine_name);
     Ok(())
 }
 

@@ -2170,10 +2170,15 @@ export function ProjectEditor({
         // union is a no-op for them. `_project` is the key the Rules tab reads and
         // writes, so rules stored there survive later toggles from the Rules UI.
         if (mergedRules.length > 0) {
+          // A template can still list a rule that was deleted from the library.
+          // Attaching it would add a rule that sync skips and the user cannot open.
+          const libraryRules: { id: string }[] = await invoke("get_rules");
+          const libraryRuleIds = new Set(libraryRules.map((r) => r.id));
+          const attachableRules = mergedRules.filter((r) => libraryRuleIds.has(r));
           const latestRaw: string = await invoke("read_project", { name });
           const latestProj = JSON.parse(latestRaw);
           const existingProjectRules: string[] = (latestProj.file_rules || {})["_project"] || [];
-          const combinedRules = [...new Set([...existingProjectRules, ...mergedRules])];
+          const combinedRules = [...new Set([...existingProjectRules, ...attachableRules])];
           const withRules = {
             ...latestProj,
             file_rules: { ...(latestProj.file_rules || {}), _project: combinedRules },
