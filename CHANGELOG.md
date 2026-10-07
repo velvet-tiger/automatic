@@ -2,6 +2,20 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.34.0] - 2026-10-07
+
+### Added
+
+- Edits to a saved project now save on their own. This covers rules, commands, sub-agents, hooks, agents, agent options, contexts, project settings and the project folder. Skills and MCP servers already saved on change. An open inline editor holds the save until you finish with it. The create wizard still waits for you to finish it. Two things still wait for Save: the changes Automatic detects when you open a project, and a template's pending instruction content. ([b7f83f4](https://github.com/velvet-tiger/automatic/commit/b7f83f4))
+
+### Changed
+
+- The bundled library is now v0.2.0. It has a rewritten `automatic-security-review` skill, a new `automatic-qa-review` skill and a new `automatic-workflow` rule. The `automatic-general` rule now tells agents never to stop a running server without permission. ([3918529](https://github.com/velvet-tiger/automatic/commit/3918529))
+
+### Fixed
+
+- Deleting a rule now removes it from every template. Before, a template that still listed the rule put it back into each project it was applied to, where it showed as a row with no content. Applying a template skips rules the library no longer holds. The template editor marks such a rule as "Missing" and lets you remove it. The project Rules panel marks it too. ([3d231f7](https://github.com/velvet-tiger/automatic/commit/3d231f7))
+
 ## [1.33.0] - 2026-10-06
 
 ### Added
