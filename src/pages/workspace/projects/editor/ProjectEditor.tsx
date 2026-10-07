@@ -440,6 +440,34 @@ export function ProjectEditor({
   // re-evaluates recommendations after every change.
   const [projectVersion, setProjectVersion] = useState(0);
   const notifyProjectUpdated = () => setProjectVersion((v) => v + 1);
+
+  // ── Autosave ─────────────────────────────────────────────────────────────
+  // Edits to a saved project persist on their own; the Save button is only a
+  // fallback for a failed save and for changes Automatic made itself (the
+  // autodetect merge on open, a template's pending instruction content).
+  // `markDirty` is the edit entry point: it bumps `autosaveTick`, and the
+  // effect below saves the project as rendered after that edit.
+  const [autosaveTick, setAutosaveTick] = useState(0);
+  const autosaveInFlight = useRef(false);
+  const autosaveQueued = useRef(false);
+  // Counts edits, so a save that finishes after a newer edit does not replace
+  // that edit with what it read back from disk.
+  const editSeq = useRef(0);
+  // Orders every save_project call from this editor: the last one requested
+  // is the last one written.
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const selectedKeyRef = useRef(selectedKey);
+  selectedKeyRef.current = selectedKey;
+  const projectFileBusy = useRef(false);
+  projectFileBusy.current = projectFileDirty || projectFileEditing;
+
+  const markDirty = (v: boolean) => {
+    setDirty(v);
+    if (v) {
+      editSeq.current += 1;
+      setAutosaveTick((t) => t + 1);
+    }
+  };
   const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
@@ -902,6 +930,53 @@ export function ProjectEditor({
       });
   }, [project?.tools?.join(",")]);
 
+  // Autosave a saved project after each edit. The wizard saves on its own
+  // steps. An open inline editor (rule, sub-agent, command, skill) holds a
+  // draft entry that is not ready to be written to agent config files, so the
+  // save waits for that editor to commit.
+  useEffect(() => {
+    if (autosaveTick === 0 || !dirty || isCreating || !selectedKey || !project) return;
+    if (
+      customRuleEditingIdx !== null ||
+      customAgentEditingIdx !== null ||
+      customCommandEditingIdx !== null ||
+      customSkillEditingIdx !== null
+    ) {
+      return;
+    }
+    // One save at a time: edits made meanwhile are covered by a single
+    // follow-up save of the then-current project.
+    if (autosaveInFlight.current) {
+      autosaveQueued.current = true;
+      return;
+    }
+    autosaveInFlight.current = true;
+    const name = selectedKey;
+    const synced = Boolean(project.directory) && project.agents.length > 0;
+    setSyncStatus("syncing");
+    saveProjectSnapshot(project)
+      .then(async (ok) => {
+        if (!ok || selectedKeyRef.current !== name) return;
+        if (synced) {
+          setDriftReport({ drifted: false, agents: [] });
+          setDriftByProject((prev) => ({ ...prev, [name]: false }));
+          refreshProblemsReport(name);
+          // Rules and instruction settings change the generated files. Leave
+          // them alone while the user has an instruction file open for edit.
+          if (!projectFileBusy.current) await loadProjectFiles(name);
+        }
+        notifyProjectUpdated();
+        setTimeout(() => setSyncStatus((cur) => (cur === "syncing" ? cur : null)), 4000);
+      })
+      .finally(() => {
+        autosaveInFlight.current = false;
+        if (autosaveQueued.current) {
+          autosaveQueued.current = false;
+          setAutosaveTick((t) => t + 1);
+        }
+      });
+  }, [autosaveTick]);
+
   // Periodically check for configuration drift while a project tab is active.
   //
   // Note: this check runs even while `dirty` is true so that the per-project
@@ -1126,7 +1201,7 @@ export function ProjectEditor({
     } else if (customRuleEditingIdx !== null && customRuleEditingIdx > idx) {
       setCustomRuleEditingIdx(customRuleEditingIdx - 1);
     }
-    setDirty(true);
+    markDirty(true);
     await loadAvailableRules();
   };
 
@@ -1884,7 +1959,7 @@ export function ProjectEditor({
   ) => {
     if (!project) return;
     setProject({ ...project, [key]: value });
-    setDirty(true);
+    markDirty(true);
   };
 
   // Reload project state from disk and refresh all dependent UI.
@@ -2434,25 +2509,59 @@ export function ProjectEditor({
     const displayName = isCreating ? (newName.trim() || folderFallback) : snapshot.name;
     const name = isCreating ? displayName : selectedKey;
     if (!name || !displayName) return false;
+    const seq = editSeq.current;
+    const previous = saveChain.current;
+    let release: () => void = () => {};
+    saveChain.current = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
     try {
       const toSave = { ...snapshot, name: displayName, updated_at: new Date().toISOString() };
       await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
       // Re-read the project — the backend may have enriched it (e.g. plugin
       // skills/rules added when a plugin tool is toggled on).
       let saved = toSave;
+      let reread = false;
       try {
         const raw: string = await invoke("read_project", { name });
         saved = JSON.parse(raw);
-        setProject(saved);
+        reread = true;
       } catch { /* fall back to pre-save snapshot */ }
-      setSyncStatus(saved.directory && saved.agents.length > 0 ? "Saved & synced" : "Saved");
       setProjectDetailsMap((prev) => new Map(prev).set(name, saved));
-      setDirty(false);
+      // The user may have moved to another project, or edited this one again,
+      // while the save ran. Either way the editor state is newer than `saved`.
+      const stillOpen = isCreating || selectedKeyRef.current === name;
+      if (stillOpen) {
+        setSyncStatus(saved.directory && saved.agents.length > 0 ? "Saved & synced" : "Saved");
+        if (editSeq.current === seq) {
+          if (reread) setProject(saved);
+          // Template instruction content still waiting to be written keeps
+          // the Save button up: only a full save writes it.
+          const pending = pendingUnifiedInstruction.current;
+          if (!(pending && pending.projectKey === name && pending.entries.length > 0)) {
+            setDirty(false);
+          }
+        }
+      }
       return true;
     } catch (err: any) {
       console.error("Autosave failed:", err);
       setSyncStatus(`Save failed: ${err}`);
       return false;
+    } finally {
+      release();
+    }
+  };
+
+  // Skills and MCP servers are saved by addItem/removeItem themselves, which
+  // need the result. The other lists go through autosave.
+  const setListField = (key: ListField, list: string[]) => {
+    if (!project) return;
+    setProject({ ...project, [key]: list });
+    if (key === "skills" || key === "mcp_servers") {
+      editSeq.current += 1;
+      setDirty(true);
+    } else {
+      markDirty(true);
     }
   };
 
@@ -2460,7 +2569,7 @@ export function ProjectEditor({
     if (!project || !item.trim()) return false;
     if (project[key].includes(item.trim())) return true;
     const newList = [...project[key], item.trim()];
-    updateField(key, newList);
+    setListField(key, newList);
     const pName = isCreating ? newName.trim() : (selectedKey ?? "");
     const pLabel = isCreating ? newName.trim() : project.name;
     if (key === "agents") trackProjectAgentAdded(pLabel, item.trim());
@@ -2486,7 +2595,7 @@ export function ProjectEditor({
     if (!project) return;
     const removed = project[key][idx];
     const newList = project[key].filter((_, i) => i !== idx);
-    updateField(key, newList);
+    setListField(key, newList);
     const pName = isCreating ? newName.trim() : (selectedKey ?? "");
     const pLabel = isCreating ? newName.trim() : project.name;
     if (removed) {
@@ -2973,10 +3082,10 @@ export function ProjectEditor({
                 {dirty && (
                   <button
                     onClick={handleSave}
-                    disabled={isCreating && !newName.trim()}
+                    disabled={(isCreating && !newName.trim()) || syncStatus === "syncing"}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
-                    <Check size={12} /> Save
+                    <Check size={12} /> {syncStatus === "syncing" ? "Saving…" : "Save"}
                   </button>
                 )}
               </div>
@@ -3867,7 +3976,7 @@ export function ProjectEditor({
                   <RulesPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     dirty={dirty}
                     pluginLockedRules={pluginLockedRules}
                     profileLocks={profileLocks}
@@ -3894,7 +4003,7 @@ export function ProjectEditor({
                   <CommandsPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     dirty={dirty}
                     syncStatus={syncStatus}
                     handleSave={handleSave}
@@ -3927,7 +4036,7 @@ export function ProjectEditor({
                   <HooksPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     dirty={dirty}
                     syncStatus={syncStatus}
                     handleSave={handleSave}
@@ -3947,7 +4056,7 @@ export function ProjectEditor({
                   <CustomAgentsPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     dirty={dirty}
                     syncStatus={syncStatus}
                     handleSave={handleSave}
@@ -3991,7 +4100,7 @@ export function ProjectEditor({
                   <AgentsPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     availableAgents={availableAgents}
                     profileLocks={profileLocks}
                     addItem={addItem}
@@ -4006,7 +4115,7 @@ export function ProjectEditor({
                     setProject={setProject}
                     selectedKey={selectedKey}
                     setProjectDetailsMap={setProjectDetailsMap}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     setSyncStatus={setSyncStatus}
                     setError={setError}
                     setDriftReport={setDriftReport}
@@ -4118,7 +4227,7 @@ export function ProjectEditor({
                     project={project}
                     setProject={setProject}
                     dirty={dirty}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     isCreating={isCreating}
                     selectedKey={selectedKey}
                     reloadProject={reloadProject}
@@ -4192,7 +4301,7 @@ export function ProjectEditor({
                   <ProfilesPanel
                     project={project}
                     setProject={setProject}
-                    setDirty={setDirty}
+                    setDirty={markDirty}
                     isCreating={isCreating}
                     selectedKey={selectedKey}
                     availableProfiles={availableProfiles}
@@ -4203,7 +4312,7 @@ export function ProjectEditor({
 
                 {/* ── Settings tab ─────────────────────────────────────── */}
                 {projectTab === "settings" && (
-                  <SettingsPanel project={project} setProject={setProject} setDirty={setDirty} />
+                  <SettingsPanel project={project} setProject={setProject} setDirty={markDirty} />
                 )}
 
               </div>
