@@ -225,6 +225,10 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 // server's config, which the bare name list here does not carry.
 const isDeletable = (name: string) => name !== "automatic";
 
+// The OpenCode restart banner is standing advice, so one dismissal hides it
+// for good.
+const OPENCODE_WARNING_DISMISSED_KEY = "automatic.mcpServers.opencodeWarningDismissed";
+
 // ── Command dependency warning ──────────────────────────────────────────────
 
 interface McpServerAvailability {
@@ -557,7 +561,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   useEffect(() => {
     loadServers();
-    checkOpencodeProjects();
+    if (localStorage.getItem(OPENCODE_WARNING_DISMISSED_KEY) !== "true") {
+      checkOpencodeProjects();
+    }
   }, []);
 
   // When navigated here from another page (e.g. Projects), auto-select the
@@ -652,6 +658,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       // Silently fail - warning is non-critical
       console.error("Failed to check OpenCode projects:", err);
     }
+  };
+
+  const dismissOpencodeWarning = () => {
+    localStorage.setItem(OPENCODE_WARNING_DISMISSED_KEY, "true");
+    setOpencodeWarning([]);
   };
 
   const selectServer = async (name: string) => {
@@ -1029,7 +1040,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
               OpenCode requires a restart to pick up new MCP servers. After syncing, restart OpenCode for any newly added servers to become available.
             </div>
           </div>
-          <button onClick={() => setOpencodeWarning([])} className="text-amber-300 hover:text-amber-200">
+          <button onClick={dismissOpencodeWarning} className="text-amber-300 hover:text-amber-200">
             <X size={14} />
           </button>
         </div>
