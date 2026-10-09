@@ -304,11 +304,11 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
                     if !core::contains_ignore_ascii_case(&enriched.mcp_servers, &server_name) {
                         enriched.mcp_servers.push(server_name.clone());
                     }
-                    // Persist the config to the global registry so that
+                    // Add the config to the global registry so that
                     // sync_project_without_autodetect can include it when
-                    // building the mcpServers map written to disk.
-                    let config_str = core::mark_discovered_if_blocked(&config_str);
-                    let _ = core::save_mcp_server_config(&server_name, &config_str);
+                    // building the mcpServers map written to disk.  A name
+                    // the registry already holds keeps its saved config.
+                    let _ = core::add_discovered_mcp_server_config(&server_name, &config_str);
                 }
             }
 

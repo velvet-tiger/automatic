@@ -37,8 +37,7 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     }
 
     for (name, config_str) in discovered_servers {
-        let config_str = core::mark_discovered_if_blocked(&config_str);
-        let _ = core::save_mcp_server_config(&name, &config_str);
+        let _ = core::add_discovered_mcp_server_config(&name, &config_str);
     }
 
     rebuilt.disabled_mcp_servers = project

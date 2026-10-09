@@ -160,6 +160,7 @@ pub(super) fn autodetect_inner(
 
     // Configs are collected here and returned to the caller — we do not write
     // to the global MCP registry from this read-only function.
+    let registry_names = crate::core::list_mcp_server_configs().unwrap_or_default();
     for a in &selected_agents {
         let servers = a.discover_mcp_servers(&dir);
         for (name, config) in servers {
@@ -167,7 +168,14 @@ pub(super) fn autodetect_inner(
                 // Case-insensitive: the registry treats `Sentry`/`sentry` as one
                 // server, so a re-discovered variant must not become a duplicate.
                 if !crate::core::contains_ignore_ascii_case(&updated_project.mcp_servers, &name) {
-                    updated_project.mcp_servers.push(name.clone());
+                    // A discovered config never replaces a registry entry, so
+                    // the project must list the registry's own spelling.  The
+                    // file's spelling would name a server that does not exist.
+                    let selected = registry_names
+                        .iter()
+                        .find(|existing| existing.eq_ignore_ascii_case(&name))
+                        .unwrap_or(&name);
+                    updated_project.mcp_servers.push(selected.clone());
                 }
                 discovered_servers.push((name, config_str));
             }

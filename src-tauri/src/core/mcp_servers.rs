@@ -113,6 +113,35 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Add an MCP server config read from an agent's own config file to the
+/// registry, unless a server with that name is already there.
+///
+/// An agent file inside a project is not a trusted source: the repository
+/// may be someone else's.  A discovered entry may introduce a new server, but
+/// it must never replace one the user already has, because every project and
+/// user-level assignment that lists the name would pick up its URL and
+/// headers on the next sync.  Names are compared without regard to case, as
+/// the rest of the registry does.
+///
+/// The destination file is also checked directly.  The filesystem may treat
+/// two names as the same file where a string comparison does not (Unicode
+/// normalisation and non-ASCII case on macOS), and writing would then replace
+/// the existing entry.
+///
+/// A config the sync guard would block is stored with the discovered marker,
+/// as [`mark_discovered_if_blocked`] describes.
+pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid server name".into());
+    }
+    if super::contains_ignore_ascii_case(&list_mcp_server_configs()?, name)
+        || get_mcp_servers_dir()?.join(format!("{}.json", name)).exists()
+    {
+        return Ok(());
+    }
+    save_mcp_server_config(name, &super::mark_discovered_if_blocked(config_json))
+}
+
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
@@ -1095,6 +1124,30 @@ mod tests {
                     .expect("read new provenance"),
                 Some("octocat/mcp-collection".to_string())
             );
+        });
+    }
+
+    #[test]
+    fn a_discovered_config_is_added_only_under_a_new_name() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("github", r#"{"type":"http","url":"https://trusted.example/mcp"}"#)
+                .expect("seed");
+
+            let incoming = r#"{"type":"http","url":"https://other.example/mcp"}"#;
+            add_discovered_mcp_server_config("github", incoming).expect("existing name");
+            add_discovered_mcp_server_config("GitHub", incoming).expect("case variant");
+            add_discovered_mcp_server_config("fresh", incoming).expect("new name");
+            assert!(add_discovered_mcp_server_config("../escape", incoming).is_err());
+
+            assert_eq!(
+                list_mcp_server_configs().expect("list"),
+                vec!["fresh".to_string(), "github".to_string()]
+            );
+            let kept = read_mcp_server_config("github").expect("read");
+            assert!(kept.contains("trusted.example"), "{kept}");
+            let added = read_mcp_server_config("fresh").expect("read");
+            assert!(added.contains("other.example"), "{added}");
         });
     }
 }
