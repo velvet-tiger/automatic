@@ -270,6 +270,17 @@ pub trait Agent: Send + Sync {
         substitute_inherited_env(server, keys, |key| format!("${{{}}}", key));
     }
 
+    /// Rewrite `${NAME}` environment references inside one server entry's
+    /// `headers` into this agent's own spelling.
+    ///
+    /// Automatic stores a header such as `Authorization: Bearer ${TOKEN}` so
+    /// the secret stays in the user's environment and never lands in a project
+    /// file.  `${NAME}` is Claude Code's syntax, so the default leaves the
+    /// headers untouched.  Agents that spell the reference differently
+    /// override this; an agent that copied the literal through would send the
+    /// placeholder text to the server as the credential.
+    fn rewrite_header_env_references(&self, _server: &mut Map<String, Value>) {}
+
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
     ///
@@ -1507,6 +1518,142 @@ pub(crate) fn substitute_inherited_env(
     }
 }
 
+/// One piece of a header value: literal text, or the name of an environment
+/// variable referenced as `${NAME}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HeaderValuePart {
+    Literal(String),
+    EnvReference(String),
+}
+
+/// VS Code launch variables share the `${...}` shape but are substituted by
+/// [`expand_workspace_variables`], so they are never environment references.
+const LAUNCH_VARIABLES: &[&str] = &["workspaceFolder", "userHome"];
+
+fn is_env_variable_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !LAUNCH_VARIABLES.contains(&name)
+}
+
+/// Length of the environment variable name at the start of `text` when it is
+/// followed at once by `}`.  `None` when `text` does not open with `NAME}`.
+///
+/// Scans only the name itself, so a value made of many unterminated `${`
+/// costs one pass in [`parse_header_value`] and not one pass per `${`.
+fn env_reference_name_len(text: &str) -> Option<usize> {
+    let len = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(text.len());
+    let name = &text[..len];
+    (text[len..].starts_with('}') && is_env_variable_name(name)).then_some(len)
+}
+
+/// Split a header value into literal text and `${NAME}` environment
+/// references.
+///
+/// Only a bare variable name counts as a reference.  Anything else inside
+/// `${...}` — `${env:NAME}`, `${NAME:-default}`, a launch variable — stays
+/// literal, so a value written in another dialect passes through unchanged.
+pub(crate) fn parse_header_value(value: &str) -> Vec<HeaderValuePart> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut rest = value;
+
+    while let Some(start) = rest.find("${") {
+        let after_open = &rest[start + 2..];
+        match env_reference_name_len(after_open) {
+            Some(len) => {
+                literal.push_str(&rest[..start]);
+                if !literal.is_empty() {
+                    parts.push(HeaderValuePart::Literal(std::mem::take(&mut literal)));
+                }
+                parts.push(HeaderValuePart::EnvReference(after_open[..len].to_string()));
+                rest = &after_open[len + 1..];
+            }
+            None => {
+                literal.push_str(&rest[..start + 2]);
+                rest = after_open;
+            }
+        }
+    }
+
+    literal.push_str(rest);
+    if !literal.is_empty() {
+        parts.push(HeaderValuePart::Literal(literal));
+    }
+    parts
+}
+
+/// Undo [`substitute_header_env_references`] on a server entry read back from
+/// an agent's own config file: every `<open>NAME}` in `headers` becomes the
+/// canonical `${NAME}`.
+///
+/// The sync engine saves discovered entries over the registry.  Without this,
+/// the second sync would store one agent's spelling as the canonical value and
+/// every other agent would be handed a placeholder it cannot resolve.
+///
+/// `open` is the agent's opening token, `${env:` or `{env:`.  A match directly
+/// after `$` is skipped when `open` itself has no `$`, so OpenCode's `{env:`
+/// does not fire inside another dialect's `${env:NAME}`.
+pub(crate) fn restore_header_env_references(server: &mut Value, open: &str) {
+    let Some(Value::Object(headers)) = server.get_mut("headers") else {
+        return;
+    };
+    for value in headers.values_mut() {
+        let Some(text) = value.as_str() else {
+            continue;
+        };
+        let mut restored = String::new();
+        let mut rest = text;
+        while let Some(start) = rest.find(open) {
+            let after_open = &rest[start + open.len()..];
+            let inside_other_dialect = !open.starts_with('$') && rest[..start].ends_with('$');
+            match env_reference_name_len(after_open).filter(|_| !inside_other_dialect) {
+                Some(len) => {
+                    restored.push_str(&rest[..start]);
+                    restored.push_str(&format!("${{{}}}", &after_open[..len]));
+                    rest = &after_open[len + 1..];
+                }
+                None => {
+                    restored.push_str(&rest[..start + open.len()]);
+                    rest = after_open;
+                }
+            }
+        }
+        restored.push_str(rest);
+        *value = Value::String(restored);
+    }
+}
+
+/// Rewrite every `${NAME}` reference in a server entry's `headers` in place
+/// with `render(NAME)`.
+///
+/// Shared by the agents whose config format interpolates variables inside a
+/// header value; the only difference between them is the placeholder spelling.
+pub(crate) fn substitute_header_env_references(
+    server: &mut Map<String, Value>,
+    render: impl Fn(&str) -> String,
+) {
+    let Some(Value::Object(headers)) = server.get_mut("headers") else {
+        return;
+    };
+    for value in headers.values_mut() {
+        let Some(text) = value.as_str() else {
+            continue;
+        };
+        let rewritten: String = parse_header_value(text)
+            .into_iter()
+            .map(|part| match part {
+                HeaderValuePart::Literal(text) => text,
+                HeaderValuePart::EnvReference(name) => render(&name),
+            })
+            .collect();
+        *value = Value::String(rewritten);
+    }
+}
+
 /// Render the canonical MCP server map into the form an agent's writer expects:
 /// expand "inherit from the environment" markers into that agent's own
 /// placeholder syntax, substitute VS Code launch variables against the project
@@ -1570,6 +1717,7 @@ fn prepare_mcp_servers_impl(
             if !inherited.is_empty() {
                 agent.rewrite_inherited_env(obj, &inherited);
             }
+            agent.rewrite_header_env_references(obj);
         }
         expand_workspace_variables(&mut server, workspace_folder, home.as_deref());
         prepared.insert(name.clone(), server);

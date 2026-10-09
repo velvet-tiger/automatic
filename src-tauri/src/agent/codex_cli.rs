@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Agent, GlobalMcpTarget, GlobalMcpWriteReport};
+use super::{Agent, GlobalMcpTarget, GlobalMcpWriteReport, HeaderValuePart};
 
 /// Codex CLI agent — writes `.codex/config.toml` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -73,6 +73,63 @@ impl Agent for CodexCli {
         server.insert("env_vars".to_string(), Value::Array(forwarded));
     }
 
+    /// TOML has no interpolation, so a `${NAME}` inside `http_headers` would
+    /// be sent to the server as literal text.  Codex has two keys that read a
+    /// header from the environment instead: `bearer_token_env_var` for
+    /// `Authorization: Bearer ${NAME}`, and `env_http_headers` for a header
+    /// whose whole value is `${NAME}`.  A reference mixed with other text has
+    /// no Codex equivalent and stays in `http_headers` unchanged.
+    ///
+    /// Both keys are derived here and nowhere else.  A stored config that
+    /// already carries one is not trusted: the editor shows `headers` only, so
+    /// a passed-through key would send an environment variable the user never
+    /// saw.  They are dropped before the headers are read.
+    fn rewrite_header_env_references(&self, server: &mut Map<String, Value>) {
+        server.remove("bearer_token_env_var");
+        server.remove("env_http_headers");
+
+        let Some(Value::Object(headers)) = server.get_mut("headers") else {
+            return;
+        };
+
+        let mut bearer: Option<(String, String)> = None;
+        let mut env_http_headers = Map::new();
+        for (header, value) in headers.iter() {
+            let Some(text) = value.as_str() else {
+                continue;
+            };
+            match super::parse_header_value(text).as_slice() {
+                [HeaderValuePart::EnvReference(name)] => {
+                    env_http_headers.insert(header.clone(), Value::String(name.clone()));
+                }
+                [HeaderValuePart::Literal(scheme), HeaderValuePart::EnvReference(name)]
+                    if header.eq_ignore_ascii_case("authorization")
+                        && scheme == "Bearer "
+                        && bearer.is_none() =>
+                {
+                    bearer = Some((header.clone(), name.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        for header in env_http_headers.keys() {
+            headers.remove(header);
+        }
+        if let Some((header, _)) = &bearer {
+            headers.remove(header);
+        }
+        if headers.is_empty() {
+            server.remove("headers");
+        }
+        if let Some((_, name)) = bearer {
+            server.insert("bearer_token_env_var".to_string(), Value::String(name));
+        }
+        if !env_http_headers.is_empty() {
+            server.insert("env_http_headers".to_string(), Value::Object(env_http_headers));
+        }
+    }
+
     fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".codex").join("config.toml")]
     }
@@ -114,6 +171,7 @@ impl Agent for CodexCli {
                     if has_oauth_client(&config) {
                         toml_content.push_str("auth = \"oauth\"\n");
                     }
+                    toml_content.push_str(&render_codex_bearer_token_env_var(&config));
 
                     // Codex spells static headers `http_headers`; a plain
                     // `headers` table is an unknown key and is ignored.
@@ -132,6 +190,7 @@ impl Agent for CodexCli {
                             }
                         }
                     }
+                    toml_content.push_str(&render_codex_env_http_headers(name, &config));
                 }
                 _ => {
                     if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
@@ -456,6 +515,39 @@ fn discover_codex_global_config(path: &std::path::Path) -> Map<String, Value> {
 
 // ── TOML Helpers ────────────────────────────────────────────────────────────
 
+/// Render the `bearer_token_env_var` key set by
+/// [`Agent::rewrite_header_env_references`], or nothing when the server has
+/// none.  It is a bare key, so callers must emit it before any sub-table.
+fn render_codex_bearer_token_env_var(config: &Value) -> String {
+    match config.get("bearer_token_env_var").and_then(|v| v.as_str()) {
+        Some(name) => format!("bearer_token_env_var = \"{}\"\n", escape_toml_string(name)),
+        None => String::new(),
+    }
+}
+
+/// Render the `env_http_headers` sub-table set by
+/// [`Agent::rewrite_header_env_references`]: header name to the environment
+/// variable Codex reads its value from.  Empty when the server has none.
+fn render_codex_env_http_headers(name: &str, config: &Value) -> String {
+    let Some(headers) = config.get("env_http_headers").and_then(|v| v.as_object()) else {
+        return String::new();
+    };
+    if headers.is_empty() {
+        return String::new();
+    }
+    let mut section = format!("\n[mcp_servers.{}.env_http_headers]\n", name);
+    for (header, variable) in headers {
+        if let Some(variable) = variable.as_str() {
+            section.push_str(&format!(
+                "\"{}\" = \"{}\"\n",
+                escape_toml_string(header),
+                escape_toml_string(variable)
+            ));
+        }
+    }
+    section
+}
+
 /// `true` when the canonical server config carries a usable OAuth client id
 /// — the same gate Cursor's own `cursor_auth_block` uses before emitting its
 /// `auth` block, reused here since Codex's `auth = "oauth"` answers the same
@@ -504,6 +596,7 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
             if has_oauth_client(&config) {
                 toml_content.push_str("auth = \"oauth\"\n");
             }
+            toml_content.push_str(&render_codex_bearer_token_env_var(&config));
 
             if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                 if !headers.is_empty() {
@@ -520,6 +613,7 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
                     }
                 }
             }
+            toml_content.push_str(&render_codex_env_http_headers(name, &config));
         }
         _ => {
             if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
@@ -950,6 +1044,29 @@ mod tests {
         assert!(content.contains("url = \"https://api.example.com/mcp\""));
         assert!(content.contains("[mcp_servers.remote-api.http_headers]"));
         assert!(content.contains("Authorization"));
+    }
+
+    #[test]
+    fn global_section_reads_header_env_references_from_the_environment() {
+        let mut servers = Map::new();
+        servers.insert(
+            "github".to_string(),
+            json!({
+                "type": "http",
+                "url": "https://api.githubcopilot.com/mcp/",
+                "headers": {
+                    "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}",
+                    "X-Api-Key": "${EXAMPLE_API_KEY}",
+                },
+            }),
+        );
+        let prepared = crate::agent::prepare_global_mcp_servers(&CodexCli, &servers);
+        let section = render_codex_server_section("github", &prepared["github"]);
+
+        assert!(section.contains(r#"bearer_token_env_var = "GITHUB_PERSONAL_ACCESS_TOKEN""#));
+        assert!(section.contains("[mcp_servers.github.env_http_headers]"));
+        assert!(section.contains(r#""X-Api-Key" = "EXAMPLE_API_KEY""#));
+        assert!(!section.contains("${"), "{section}");
     }
 
     // ── Hooks ───────────────────────────────────────────────────────────────

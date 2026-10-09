@@ -84,6 +84,11 @@ impl Agent for OpenCode {
     /// user's own project config — `model`, `permission`, `instructions` and
     /// `agent` all live alongside `mcp` — so only `$schema` and `mcp` are ours
     /// to set.
+    /// OpenCode spells an environment reference `{env:NAME}`, with no `$`.
+    fn rewrite_header_env_references(&self, server: &mut Map<String, Value>) {
+        super::substitute_header_env_references(server, |name| format!("{{env:{}}}", name));
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         write_opencode_dialect_mcp_config(
             &dir.join("opencode.json"),
@@ -139,7 +144,7 @@ impl Agent for OpenCode {
             let path = dir.join(filename);
             if path.exists() {
                 let found =
-                    discover_mcp_servers_from_json(&path, "mcp", normalise_opencode_dialect_server);
+                    discover_mcp_servers_from_json(&path, "mcp", normalise_opencode_server);
                 result.extend(found);
             }
         }
@@ -167,7 +172,7 @@ impl Agent for OpenCode {
                 result.extend(discover_mcp_servers_from_json(
                     &path,
                     "mcp",
-                    normalise_opencode_dialect_server,
+                    normalise_opencode_server,
                 ));
             }
         }
@@ -178,7 +183,7 @@ impl Agent for OpenCode {
             result.extend(discover_mcp_servers_from_json(
                 &xdg_path,
                 "mcp",
-                normalise_opencode_dialect_server,
+                normalise_opencode_server,
             ));
         }
 
@@ -199,6 +204,14 @@ impl Agent for OpenCode {
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".opencode").join("agents"))
     }
+}
+
+/// The shared OpenCode-dialect normalisation, plus OpenCode's own `{env:NAME}`
+/// header references restored to the canonical `${NAME}`.
+fn normalise_opencode_server(config: Value) -> Value {
+    let mut server = normalise_opencode_dialect_server(config);
+    super::restore_header_env_references(&mut server, "{env:");
+    server
 }
 
 // ── Cache management ────────────────────────────────────────────────────────

@@ -504,6 +504,260 @@ fn codex_infers_transport_and_uses_http_headers() {
     );
 }
 
+// ── Environment references in headers ───────────────────────────────────────
+
+/// A remote server whose credential is read from the environment, in the
+/// shape the Discover catalogue saves for GitHub.
+fn env_header_servers() -> Map<String, Value> {
+    let mut servers = Map::new();
+    servers.insert(
+        "github".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": {
+                "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}",
+                "X-Api-Key": "${EXAMPLE_API_KEY}",
+                "X-Client": "automatic",
+            },
+        }),
+    );
+    servers
+}
+
+#[test]
+fn parse_header_value_splits_literals_and_env_references() {
+    use HeaderValuePart::{EnvReference, Literal};
+
+    assert_eq!(
+        parse_header_value("Bearer ${TOKEN}"),
+        vec![Literal("Bearer ".into()), EnvReference("TOKEN".into())]
+    );
+    assert_eq!(
+        parse_header_value("${A}:${_B2}!"),
+        vec![
+            EnvReference("A".into()),
+            Literal(":".into()),
+            EnvReference("_B2".into()),
+            Literal("!".into()),
+        ]
+    );
+    assert_eq!(parse_header_value(""), vec![]);
+
+    // Not bare variable names: another dialect, a default, a launch variable,
+    // an unterminated or empty reference.
+    for literal in [
+        "plain",
+        "${env:TOKEN}",
+        "${TOKEN:-fallback}",
+        "${workspaceFolder}",
+        "${userHome}",
+        "${TOKEN",
+        "${}",
+        "${1ABC}",
+    ] {
+        assert_eq!(
+            parse_header_value(literal),
+            vec![Literal(literal.into())],
+            "`{literal}` must stay literal"
+        );
+    }
+}
+
+#[test]
+fn claude_code_keeps_bare_header_env_references() {
+    let dir = tempdir().unwrap();
+    let content =
+        write_and_read(&ClaudeCode, dir.path(), &env_header_servers()).expect("writes .mcp.json");
+    let parsed: Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(
+        parsed["mcpServers"]["github"]["headers"]["Authorization"],
+        "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    );
+}
+
+#[test]
+fn cursor_rewrites_header_env_references_to_its_env_syntax() {
+    let dir = tempdir().unwrap();
+    let content = write_and_read(&Cursor, dir.path(), &env_header_servers())
+        .expect("writes .cursor/mcp.json");
+    let parsed: Value = serde_json::from_str(&content).unwrap();
+    let headers = &parsed["mcpServers"]["github"]["headers"];
+
+    assert_eq!(
+        headers["Authorization"],
+        "Bearer ${env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+    );
+    assert_eq!(headers["X-Api-Key"], "${env:EXAMPLE_API_KEY}");
+    assert_eq!(headers["X-Client"], "automatic");
+}
+
+#[test]
+fn opencode_rewrites_header_env_references_to_its_env_syntax() {
+    let dir = tempdir().unwrap();
+    let content = write_and_read(&OpenCode, dir.path(), &env_header_servers())
+        .expect("writes opencode.json");
+    let parsed: Value = serde_json::from_str(&content).unwrap();
+    let headers = &parsed["mcp"]["github"]["headers"];
+
+    assert_eq!(
+        headers["Authorization"],
+        "Bearer {env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+    );
+    assert_eq!(headers["X-Api-Key"], "{env:EXAMPLE_API_KEY}");
+    assert_eq!(headers["X-Client"], "automatic");
+}
+
+#[test]
+fn codex_reads_header_env_references_from_the_environment() {
+    let dir = tempdir().unwrap();
+    let content = write_and_read(&CodexCli, dir.path(), &env_header_servers())
+        .expect("writes .codex/config.toml");
+
+    assert!(
+        !content.contains("${"),
+        "TOML has no interpolation — a placeholder would be sent as the credential:\n{content}"
+    );
+
+    let parsed: toml::Value = toml::from_str(&content).expect("valid TOML");
+    let server = &parsed["mcp_servers"]["github"];
+    assert_eq!(
+        server["bearer_token_env_var"].as_str(),
+        Some("GITHUB_PERSONAL_ACCESS_TOKEN")
+    );
+    assert_eq!(
+        server["env_http_headers"]["X-Api-Key"].as_str(),
+        Some("EXAMPLE_API_KEY")
+    );
+    assert_eq!(server["http_headers"]["X-Client"].as_str(), Some("automatic"));
+    assert!(
+        server["http_headers"].get("Authorization").is_none(),
+        "the bearer header moved to bearer_token_env_var:\n{content}"
+    );
+}
+
+#[test]
+fn codex_drops_the_http_headers_table_when_every_header_is_an_env_reference() {
+    let mut servers = Map::new();
+    servers.insert(
+        "github".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": { "authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}" },
+        }),
+    );
+    let dir = tempdir().unwrap();
+    let content =
+        write_and_read(&CodexCli, dir.path(), &servers).expect("writes .codex/config.toml");
+
+    assert!(content.contains(r#"bearer_token_env_var = "GITHUB_PERSONAL_ACCESS_TOKEN""#));
+    assert!(
+        !content.contains("http_headers"),
+        "no static headers remain:\n{content}"
+    );
+}
+
+#[test]
+fn parse_header_value_handles_many_unterminated_openers() {
+    // One pass over the value, however many `${` never close.
+    let value = "${".repeat(200_000) + "}";
+    assert_eq!(
+        parse_header_value(&value),
+        vec![HeaderValuePart::Literal(value.clone())]
+    );
+}
+
+#[test]
+fn discovery_restores_the_canonical_header_env_reference() {
+    // The sync engine saves discovered entries over the registry, so an agent
+    // must read back what Automatic stored, not its own spelling.  Otherwise
+    // the second sync hands every other agent a placeholder it cannot resolve.
+    let servers = env_header_servers();
+    let agents: [&dyn Agent; 3] = [&ClaudeCode, &Cursor, &OpenCode];
+    for agent in agents {
+        let dir = tempdir().unwrap();
+        write_and_read(agent, dir.path(), &servers).expect("writes a config");
+
+        let discovered = agent.discover_mcp_servers(dir.path());
+        assert_eq!(
+            discovered["github"]["headers"],
+            servers["github"]["headers"],
+            "{}: discovery changed the stored headers",
+            agent.id()
+        );
+    }
+}
+
+#[test]
+fn restore_header_env_references_leaves_other_text_alone() {
+    let mut cursor = json!({ "headers": {
+        "A": "Bearer ${env:TOKEN}",
+        "B": "${env:}",
+        "C": "${env:TOKEN",
+        "D": "${TOKEN}",
+        "E": 7,
+    }});
+    restore_header_env_references(&mut cursor, "${env:");
+    assert_eq!(
+        cursor["headers"],
+        json!({ "A": "Bearer ${TOKEN}", "B": "${env:}", "C": "${env:TOKEN", "D": "${TOKEN}", "E": 7 })
+    );
+
+    // `{env:` also occurs inside Cursor's `${env:NAME}`; that is not OpenCode's.
+    let mut opencode = json!({ "headers": { "A": "Bearer {env:TOKEN}", "B": "${env:TOKEN}" } });
+    restore_header_env_references(&mut opencode, "{env:");
+    assert_eq!(
+        opencode["headers"],
+        json!({ "A": "Bearer ${TOKEN}", "B": "${env:TOKEN}" })
+    );
+}
+
+#[test]
+fn codex_removes_the_authorization_header_that_matched() {
+    let mut servers = Map::new();
+    servers.insert(
+        "srv".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.example.com/mcp",
+            "headers": { "Authorization": "Basic abc", "authorization": "Bearer ${TOKEN}" },
+        }),
+    );
+    let dir = tempdir().unwrap();
+    let content =
+        write_and_read(&CodexCli, dir.path(), &servers).expect("writes .codex/config.toml");
+    let parsed: toml::Value = toml::from_str(&content).expect("valid TOML");
+    let server = &parsed["mcp_servers"]["srv"];
+
+    assert_eq!(server["bearer_token_env_var"].as_str(), Some("TOKEN"));
+    assert_eq!(server["http_headers"]["Authorization"].as_str(), Some("Basic abc"));
+    assert!(server["http_headers"].get("authorization").is_none());
+}
+
+#[test]
+fn codex_ignores_env_header_keys_already_present_in_a_stored_config() {
+    // The editor shows `headers` only.  A key that arrived from a project
+    // file or a remote source would name a variable the user never saw.
+    let mut servers = Map::new();
+    servers.insert(
+        "srv".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.example.com/mcp",
+            "bearer_token_env_var": "AWS_SECRET_ACCESS_KEY",
+            "env_http_headers": { "X-Leak": "AWS_SESSION_TOKEN" },
+        }),
+    );
+    let dir = tempdir().unwrap();
+    let content =
+        write_and_read(&CodexCli, dir.path(), &servers).expect("writes .codex/config.toml");
+
+    assert!(!content.contains("AWS_SECRET_ACCESS_KEY"), "{content}");
+    assert!(!content.contains("AWS_SESSION_TOKEN"), "{content}");
+}
+
 #[test]
 fn codex_writes_auth_oauth_marker_for_oauth_servers() {
     let mut servers = Map::new();

@@ -2,7 +2,9 @@
 export interface DiscoverMcpSource {
   provider: string;
   repository_url: string | null;
-  remote: { transport: string; url: string } | null;
+  /** `headers` may reference an environment variable as `${NAME}`. Automatic
+   *  rewrites the reference into each agent's own syntax when it syncs. */
+  remote: { transport: string; url: string; headers?: Record<string, string> | null } | null;
   local: { command: string; args?: string[] | null } | null;
   auth: { env_vars: Array<{ name: string }> };
 }
@@ -29,6 +31,9 @@ export function resolveLocalCommand(
  *  to a remote config when the entry has no local block, which keeps existing
  *  remote-only entries unchanged.
  *
+ *  `remote.headers` are copied as they are. An entry uses them for a hosted
+ *  endpoint that authenticates with a token header and not with OAuth.
+ *
  *  Embeds `_author` metadata so Automatic can display the provider in the MCP
  *  Servers view.
  *
@@ -46,6 +51,8 @@ export function buildDiscoverMcpConfig(server: DiscoverMcpSource): Record<string
   if (server.remote) {
     const type = server.remote.transport === "sse" ? "sse" : "http";
     const cfg: Record<string, unknown> = { type, url: server.remote.url, _author };
+    const headers = server.remote.headers ?? {};
+    if (Object.keys(headers).length > 0) cfg.headers = { ...headers };
     if (!server.local && Object.keys(env).length > 0) cfg.env = env;
     return cfg;
   }

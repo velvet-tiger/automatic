@@ -36,6 +36,33 @@ describe("buildDiscoverMcpConfig", () => {
     expect(cfg).toEqual({ type: "http", url: "https://example.com/mcp", _author: { name: "Example" } });
   });
 
+  it("copies the remote headers, keeping the env reference unresolved", () => {
+    const cfg = buildDiscoverMcpConfig({
+      ...base,
+      remote: {
+        transport: "streamable-http",
+        url: "https://example.com/mcp",
+        headers: { Authorization: "Bearer ${TOKEN}" },
+      },
+      local: { command: "docker", args: ["run", "-i", "--rm", "-e", "TOKEN", "img:1"] },
+      auth: { env_vars: [{ name: "TOKEN" }] },
+    });
+    expect(cfg).toEqual({
+      type: "http",
+      url: "https://example.com/mcp",
+      headers: { Authorization: "Bearer ${TOKEN}" },
+      _author: { name: "Example" },
+    });
+  });
+
+  it("omits headers when the entry has none", () => {
+    const cfg = buildDiscoverMcpConfig({
+      ...base,
+      remote: { transport: "sse", url: "https://example.com/sse", headers: null },
+    });
+    expect(cfg).not.toHaveProperty("headers");
+  });
+
   it("keeps env vars on a remote-only entry", () => {
     const cfg = buildDiscoverMcpConfig({
       ...base,

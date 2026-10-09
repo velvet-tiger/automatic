@@ -135,6 +135,11 @@ impl Agent for Cursor {
         super::substitute_inherited_env(server, keys, |key| format!("${{env:{}}}", key));
     }
 
+    /// Cursor interpolates `${env:NAME}` inside `headers` too.
+    fn rewrite_header_env_references(&self, server: &mut Map<String, Value>) {
+        super::substitute_header_env_references(server, |name| format!("${{env:{}}}", name));
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // Cursor's `mcpServers` map looks like Claude Code's but diverges on
         // two points: OAuth client details live under `auth` in SCREAMING_CASE,
@@ -230,8 +235,7 @@ impl Agent for Cursor {
         if !path.exists() {
             return Map::new();
         }
-        // Cursor's format matches Claude's — no normalisation needed.
-        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+        discover_mcp_servers_from_json(&path, "mcpServers", normalise_cursor_server)
     }
 
     fn detect_global_install(&self) -> bool {
@@ -249,7 +253,7 @@ impl Agent for Cursor {
         };
         // ~/.cursor/mcp.json — user-level Cursor MCP config
         let path = home.join(".cursor").join("mcp.json");
-        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+        discover_mcp_servers_from_json(&path, "mcpServers", normalise_cursor_server)
     }
 
     fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
@@ -269,9 +273,11 @@ impl Agent for Cursor {
     }
 }
 
-/// Pass-through normaliser: Cursor's format is already canonical.
-fn identity(v: Value) -> Value {
-    v
+/// Cursor's format matches Claude's except for its `${env:NAME}` references,
+/// which are restored to the canonical `${NAME}`.
+fn normalise_cursor_server(mut server: Value) -> Value {
+    super::restore_header_env_references(&mut server, "${env:");
+    server
 }
 
 /// Translate Automatic's `oauth` block into Cursor's `auth` block.

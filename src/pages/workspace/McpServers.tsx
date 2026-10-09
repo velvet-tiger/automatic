@@ -87,6 +87,27 @@ function tokenLinksForServer(
   return out;
 }
 
+/** Environment variables a server's headers reference as `${NAME}`, in first-use
+ *  order. Mirrors `parse_header_value` in `src-tauri/src/agent/mod.rs`, which
+ *  rewrites the same references into each agent's own syntax at sync time. */
+function headerEnvReferences(headers: Record<string, string>): string[] {
+  const names = new Set<string>();
+  for (const value of Object.values(headers)) {
+    // A stored config is not validated on read, so a value may not be a string.
+    if (typeof value !== "string") continue;
+    for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+      const name = match[1];
+      if (name !== undefined && name !== "workspaceFolder" && name !== "userHome") names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/** A server that sends its own `Authorization` header does not use OAuth. */
+function hasAuthorizationHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
+}
+
 type TransportType = "stdio" | "http" | "sse";
 
 /** Metadata stored alongside config in Automatic's own JSON. Not written to agent files. */
@@ -285,7 +306,13 @@ function CommandDependencyWarning({ command }: { command: string }) {
 
 // ── OAuth Authentication Section ────────────────────────────────────────────
 
-function OAuthSection({ serverName, url }: { serverName: string; url: string }) {
+/**
+ * `offerSignIn` is false for a server that sends its own `Authorization`
+ * header: it does not use OAuth, so the sign-in prompt is left out. A token
+ * already stored for the name still shows, because sync keeps routing the
+ * server through the OAuth proxy until that token is revoked.
+ */
+function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; url: string; offerSignIn: boolean }) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
   const [action, setAction] = useState<"authorize" | "revoke" | null>(null);
@@ -380,6 +407,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
   // No URL and no stored token → nothing actionable. Wait for the user to
   // enter a URL before claiming auth is required.
   if (!hasToken && !url) return null;
+  if (!hasToken && !offerSignIn) return null;
 
   return (
     <section>
@@ -1504,12 +1532,30 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         valuePlaceholder="value"
                         colorKey
                       />
+                      {headerEnvReferences(config.headers || {}).length > 0 && (
+                        <p className="mt-2 text-[11px] text-text-muted leading-relaxed">
+                          Set{" "}
+                          {headerEnvReferences(config.headers || {}).map((name, i) => (
+                            <span key={name}>
+                              {i > 0 && ", "}
+                              <code className="font-mono">{name}</code>
+                            </span>
+                          ))}{" "}
+                          in your shell environment. Each agent reads it when it starts, so the
+                          value is never written to your project.
+                        </p>
+                      )}
                     </section>
                     )}
 
                     {/* OAuth Authentication — only for servers with no env-var-based auth */}
                     {Object.keys(config.env || {}).length === 0 && (
-                      <OAuthSection key={selectedName || ""} serverName={selectedName || ""} url={config.url || ""} />
+                      <OAuthSection
+                        key={selectedName || ""}
+                        serverName={selectedName || ""}
+                        url={config.url || ""}
+                        offerSignIn={!hasAuthorizationHeader(config.headers || {})}
+                      />
                     )}
                   </>
                 )}

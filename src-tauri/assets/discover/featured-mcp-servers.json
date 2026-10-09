@@ -104,7 +104,10 @@
     "repository_url": "https://github.com/github/github-mcp-server",
     "remote": {
       "transport": "streamable-http",
-      "url": "https://api.githubcopilot.com/mcp/"
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
     },
     "local": {
       "registry": "oci",
@@ -126,7 +129,7 @@
       "env_vars": [
         {
           "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
-          "description": "GitHub personal access token, used only when running the server locally with Docker",
+          "description": "GitHub personal access token. The hosted server reads it from your environment as a bearer token, and the local Docker server reads it directly.",
           "secret": true
         }
       ]

@@ -71,7 +71,7 @@ interface McpServer {
   repository_url: string | null;
   /** Optional link to the provider's documentation or setup guide for this server */
   docs_url?: string | null;
-  remote: { transport: string; url: string } | null;
+  remote: { transport: string; url: string; headers?: Record<string, string> | null } | null;
   local: {
     registry: string;
     package: string;
@@ -242,6 +242,15 @@ type LocalConfig = NonNullable<McpServer["local"]>;
 function localCommandLine(local: LocalConfig): string {
   const { command, args } = resolveLocalCommand(local);
   return [command, ...args].join(" ");
+}
+
+/** The remote setup tab's example config: exactly what "Add" saves, minus
+ *  Automatic's own `_author` metadata. Built from the installer so the two
+ *  cannot disagree. Only called for an entry that has a remote block. */
+function remoteExampleConfigJson(server: McpServer): string {
+  const saved = buildDiscoverMcpConfig(server) ?? {};
+  const shown = Object.fromEntries(Object.entries(saved).filter(([key]) => !key.startsWith("_")));
+  return JSON.stringify({ [configName(server)]: shown }, null, 2);
 }
 
 /** Build the human-facing example stdio config JSON shown in the local setup tab. */
@@ -912,32 +921,10 @@ export default function DiscoverMcp({
                     </label>
                     <div className="relative">
                       <pre className="bg-bg-base border border-border-strong/40 rounded-md px-4 py-3 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre">
-{`{
-  "${selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}": {
-    "type": "${selected.remote.transport === "sse" ? "sse" : "http"}",
-    "url": "${selected.remote.url}"${hasAuth(selected) ? `,
-    "headers": {
-      "Authorization": "Bearer <YOUR_TOKEN>"
-    }` : ""}
-  }
-}`}
+{remoteExampleConfigJson(selected)}
                       </pre>
                       <div className="absolute top-2 right-2">
-                        <CopyButton
-                          text={JSON.stringify(
-                            {
-                              [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: {
-                                type: selected.remote.transport === "sse" ? "sse" : "http",
-                                url: selected.remote.url,
-                                ...(hasAuth(selected)
-                                  ? { headers: { Authorization: "Bearer <YOUR_TOKEN>" } }
-                                  : {}),
-                              },
-                            },
-                            null,
-                            2
-                          )}
-                        />
+                        <CopyButton text={remoteExampleConfigJson(selected)} />
                       </div>
                     </div>
                   </div>
