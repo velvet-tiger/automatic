@@ -68,14 +68,27 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
 
 #[cfg(not(test))]
 fn read_or_create_keychain_key() -> Result<[u8; 32], String> {
-    if let Some(key) = stored_key(secret_store::load_secret_if_present(KEYCHAIN_USER))? {
+    existing_or_new_key(secret_store::load_secret_if_present(KEYCHAIN_USER), |hex| {
+        secret_store::store_secret(KEYCHAIN_USER, hex)
+    })
+}
+
+/// Return the stored key. When `loaded` shows that nothing is stored, create
+/// a key and pass it to `store` as hex. `store` is called in no other case.
+///
+/// The read result and the write are parameters so that the rule "a failed
+/// read never creates a key" can be tested without a keychain.
+fn existing_or_new_key(
+    loaded: Result<Option<String>, String>,
+    store: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<[u8; 32], String> {
+    if let Some(key) = stored_key(loaded)? {
         return Ok(key);
     }
 
     // No key yet — generate one and persist it.
     let key_bytes: [u8; 32] = Aes256Gcm::generate_key(OsRng).into();
-    let hex = hex::encode(key_bytes);
-    secret_store::store_secret(KEYCHAIN_USER, &hex)
+    store(&hex::encode(key_bytes))
         .map_err(|e| format!("Failed to store encryption key in keychain: {}", e))?;
     Ok(key_bytes)
 }
@@ -242,6 +255,55 @@ mod tests {
         assert!(stored_key(Ok(Some("not hex".to_string()))).is_err());
         assert!(stored_key(Ok(Some(String::new()))).is_err());
         assert!(stored_key(Ok(Some(hex::encode([7u8; 16])))).is_err());
+    }
+
+    // ── existing_or_new_key ──────────────────────────────────────────────────
+
+    /// Run `existing_or_new_key` and return every value it passed to `store`.
+    fn key_and_stored_values(
+        loaded: Result<Option<String>, String>,
+    ) -> (Result<[u8; 32], String>, Vec<String>) {
+        let mut stored = Vec::new();
+        let key = existing_or_new_key(loaded, |hex| {
+            stored.push(hex.to_string());
+            Ok(())
+        });
+        (key, stored)
+    }
+
+    #[test]
+    fn a_failed_read_never_stores_a_new_key() {
+        let (key, stored) = key_and_stored_values(Err("keychain is locked".to_string()));
+        assert!(key.is_err());
+        assert!(stored.is_empty(), "a failed read must not replace the key");
+    }
+
+    #[test]
+    fn an_undecodable_key_is_never_replaced() {
+        let (key, stored) = key_and_stored_values(Ok(Some("not hex".to_string())));
+        assert!(key.is_err());
+        assert!(stored.is_empty());
+    }
+
+    #[test]
+    fn an_existing_key_is_returned_without_a_write() {
+        let existing = [9u8; 32];
+        let (key, stored) = key_and_stored_values(Ok(Some(hex::encode(existing))));
+        assert_eq!(key, Ok(existing));
+        assert!(stored.is_empty());
+    }
+
+    #[test]
+    fn a_new_key_is_stored_once_when_nothing_is_stored() {
+        let (key, stored) = key_and_stored_values(Ok(None));
+        let key = key.expect("a new key");
+        assert_eq!(stored, vec![hex::encode(key)]);
+    }
+
+    #[test]
+    fn a_new_key_that_cannot_be_stored_is_an_error() {
+        let key = existing_or_new_key(Ok(None), |_| Err("disk full".to_string()));
+        assert!(key.unwrap_err().contains("disk full"));
     }
 
     // ── encrypt_value / decrypt_value roundtrip ───────────────────────────────
