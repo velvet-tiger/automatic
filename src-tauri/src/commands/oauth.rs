@@ -149,9 +149,16 @@ pub async fn get_mcp_oauth_token_status(
     })
 }
 
-/// Remove the stored OAuth token for a given MCP server.
+/// Remove the stored OAuth token and refresh credentials for a given MCP
+/// server.
+///
+/// The credentials go first. The UI offers Revoke only while a token is
+/// stored, so a failure must leave the token in place for a retry to be
+/// possible. Returns an error when no token is stored, after removing any
+/// credentials that were left behind.
 #[tauri::command]
 pub fn revoke_mcp_oauth_token(server_name: String) -> Result<(), String> {
+    crate::proxy::delete_oauth_credentials(&server_name)?;
     crate::proxy::delete_oauth_token(&server_name)
 }
 
@@ -159,4 +166,47 @@ pub fn revoke_mcp_oauth_token(server_name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn refresh_mcp_oauth_token(server_name: String) -> Result<String, String> {
     crate::oauth::refresh_token(&server_name).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Each test uses its own server name. The test secret store and the
+    // token presence cache are shared by the whole test process.
+
+    #[test]
+    fn revoke_removes_token_and_refresh_credentials() {
+        let server = "revoke-test-token-and-creds-fixture";
+        crate::proxy::store_oauth_token(server, "access-token").unwrap();
+        crate::proxy::store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#).unwrap();
+        assert!(crate::proxy::has_oauth_token(server));
+
+        revoke_mcp_oauth_token(server.to_string()).unwrap();
+
+        assert!(crate::proxy::load_oauth_token(server).is_err());
+        assert!(crate::proxy::load_oauth_credentials(server).is_err());
+        assert!(!crate::proxy::has_oauth_token(server));
+    }
+
+    #[test]
+    fn revoke_succeeds_without_refresh_credentials() {
+        let server = "revoke-test-token-only-fixture";
+        crate::proxy::store_oauth_token(server, "access-token").unwrap();
+
+        revoke_mcp_oauth_token(server.to_string()).unwrap();
+
+        assert!(crate::proxy::load_oauth_token(server).is_err());
+        assert!(!crate::proxy::has_oauth_token(server));
+    }
+
+    #[test]
+    fn revoke_without_token_still_removes_refresh_credentials() {
+        let server = "revoke-test-creds-only-fixture";
+        crate::proxy::store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#).unwrap();
+
+        assert!(revoke_mcp_oauth_token(server.to_string()).is_err());
+
+        assert!(crate::proxy::load_oauth_credentials(server).is_err());
+    }
 }

@@ -102,6 +102,28 @@ pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
     secret_store::load_secret(&oauth_creds_user(server_name))
 }
 
+/// Delete the stored OAuth credentials, which hold the refresh token.
+///
+/// A missing entry is success. Authorising stores the credentials after the
+/// token and carries on when that store fails, so a server can have a token
+/// and no credentials. Revoking it must still work.
+///
+/// `delete_secret` reports a missing entry and a failed delete the same way,
+/// so a failed delete is checked by reading the entry back. The call fails
+/// only when the credentials can still be read.
+pub fn delete_oauth_credentials(server_name: &str) -> Result<(), String> {
+    let Err(delete_err) = secret_store::delete_secret(&oauth_creds_user(server_name)) else {
+        return Ok(());
+    };
+    if load_oauth_credentials(server_name).is_ok() {
+        return Err(format!(
+            "failed to delete OAuth credentials for '{}': {}",
+            server_name, delete_err
+        ));
+    }
+    Ok(())
+}
+
 // ── Server config helpers ────────────────────────────────────────────────────
 
 /// Read the URL for a named MCP server from the Automatic registry.
