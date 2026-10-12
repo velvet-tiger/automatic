@@ -34,6 +34,14 @@
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
+
+    // A mistyped AUTOMATIC_KEYCHAIN would otherwise read as "no secrets
+    // stored" for the whole run.
+    if let Err(e) = automatic_lib::core::check_secret_store_config() {
+        eprintln!("error: {}", e);
+        std::process::exit(2);
+    }
+
     let code = automatic_lib::cli::run(argv);
     std::process::exit(code);
 }

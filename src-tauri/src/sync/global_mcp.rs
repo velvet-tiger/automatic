@@ -570,16 +570,20 @@ mod tests {
                 "url": "https://mcp.example.com/mcp",
             }))
             .unwrap();
-            crate::core::save_mcp_server_config("linear", &raw).unwrap();
+            crate::core::save_mcp_server_config("oauth-remote-fixture", &raw).unwrap();
+            // A stored OAuth token is what turns a remote server into a
+            // proxy stub. The secret store is shared by the whole test
+            // process, so the server name is one no other test uses.
+            crate::proxy::store_oauth_token("oauth-remote-fixture", "test-token").unwrap();
 
-            apply_global_mcp("cursor", vec!["linear".to_string()])
+            apply_global_mcp("cursor", vec!["oauth-remote-fixture".to_string()])
                 .expect("apply managed remote");
 
-            // The file now contains an mcp-proxy stub for `linear`.
+            // The file now contains an mcp-proxy stub for the server.
             let target = tmp.path().join(".cursor").join("mcp.json");
             let contents = std::fs::read_to_string(&target).expect("cursor mcp.json exists");
             assert!(
-                contents.contains("mcp-proxy") && contents.contains("linear"),
+                contents.contains("mcp-proxy") && contents.contains("oauth-remote-fixture"),
                 "expected an mcp-proxy stub, got:\n{contents}"
             );
 

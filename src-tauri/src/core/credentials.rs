@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use keyring::Entry;
-
 use super::agents::known_agents;
+use super::secret_store;
 use super::settings::{read_settings, write_settings};
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
@@ -45,8 +44,7 @@ fn set_agent_features_enabled(value: bool) {
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
     let had_keys_before = any_known_api_key_stored();
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, provider).map_err(|e| e.to_string())?;
-    entry.set_password(key).map_err(|e| e.to_string())?;
+    secret_store::store_secret(provider, key)?;
     set_cached_presence(provider, true);
 
     // Auto-enable agent features the first time a key is added.
@@ -57,8 +55,7 @@ pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
 }
 
 pub fn get_api_key(provider: &str) -> Result<String, String> {
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, provider).map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    secret_store::load_secret(provider)
 }
 
 /// Check whether an API key exists in the keyring for this provider without
@@ -74,18 +71,14 @@ pub fn has_api_key(provider: &str) -> bool {
         }
     }
 
-    let Ok(entry) = Entry::new(crate::core::KEYCHAIN_SERVICE, provider) else {
-        return false;
-    };
-    let present = entry.get_password().is_ok();
+    let present = secret_store::load_secret(provider).is_ok();
     set_cached_presence(provider, present);
     present
 }
 
 /// Remove a stored API key from the keyring.
 pub fn delete_api_key(provider: &str) -> Result<(), String> {
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, provider).map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())?;
+    secret_store::delete_secret(provider)?;
     set_cached_presence(provider, false);
 
     // Auto-disable agent features once no recognised keys remain.
@@ -93,4 +86,26 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
         set_agent_features_enabled(false);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Not one of `known_agents()`, so saving it never changes the
+    // agent-features setting.
+    const PROVIDER: &str = "credentials-test-provider";
+
+    #[test]
+    fn api_key_presence_follows_save_and_delete() {
+        assert!(!has_api_key(PROVIDER));
+
+        save_api_key(PROVIDER, "key").unwrap();
+        assert!(has_api_key(PROVIDER));
+        assert_eq!(get_api_key(PROVIDER).unwrap(), "key");
+
+        delete_api_key(PROVIDER).unwrap();
+        assert!(!has_api_key(PROVIDER));
+        assert!(get_api_key(PROVIDER).is_err());
+    }
 }

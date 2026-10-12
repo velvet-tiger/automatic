@@ -35,7 +35,7 @@ use crate::core::cloud_sync_reconcile::{
     apply_server_response, FileOp, FileOpsPlan, ServerSyncResponse,
 };
 use crate::core::cloud_sync_state::{self, PendingTombstone};
-use crate::core::KEYCHAIN_SERVICE;
+use crate::core::secret_store;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1030,13 +1030,11 @@ fn http_client() -> Result<reqwest::Client, String> {
 }
 
 fn keychain_store(user: &str, value: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())?;
-    entry.set_password(value).map_err(|e| e.to_string())
+    secret_store::store_secret(user, value)
 }
 
 fn keychain_load(user: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    secret_store::load_secret(user)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -8,7 +8,31 @@ Two separate things get signed, for different reasons.
 
 **Dev builds** are signed with a local self-signed certificate named `automatic-dev`, applied by `.cargo/sign-dev-binary.sh`. This exists only to stop macOS asking for your keychain password after every build. It has nothing to do with distribution.
 
-Run this once per machine:
+Dev signing only matters when a debug build uses the keychain. By default it does not.
+
+---
+
+## Dev builds keep secrets in a file
+
+A debug build stores its secrets in `~/.automatic-dev/dev-secrets.json`, readable only by your user. It never opens the macOS keychain, so it never raises a keychain dialog. That holds for `make dev`, the CLI, and agents that build in a worktree. Tests keep secrets in memory. Release builds use the keychain and are not affected. The code is in `src-tauri/src/core/secret_store.rs`.
+
+The file holds everything a debug build stores: provider API keys, MCP OAuth tokens and refresh credentials, cloud account tokens, and the env-encryption key. None of it is encrypted. Any process that runs as your user can read it, coding agents included. Use dev-only keys in a debug build.
+
+Writers take a lock on `dev-secrets.json.lock` next to it, so the app, `mcp-serve` and the proxies can write at the same time.
+
+A debug `automatic-cli` build with `AUTOMATIC_HOME` set keeps the file at `$AUTOMATIC_HOME/dev-secrets.json` instead.
+
+If you have secrets from before this change, copy them across once, before you next run a debug build:
+
+```bash
+make dev-secrets-import
+```
+
+macOS asks for permission once per item. Without the import, a debug build starts with no secrets and creates a new env-encryption key. Environment values that were encrypted with the old key can then no longer be read.
+
+The import leaves an account alone when the file already has it. If a debug build ran first and created its own env-encryption key, run `./.cargo/import-dev-secrets.py --overwrite` to put the keychain values back. The keychain items stay in place either way.
+
+To make a debug build use the keychain, for example to test keychain behaviour, set `AUTOMATIC_KEYCHAIN=system`. Any other value except `file` stops the program at startup. The rest of this document applies to that mode. Run this once per machine first:
 
 ```bash
 make dev-signing-setup
@@ -16,9 +40,9 @@ make dev-signing-setup
 
 ---
 
-## Why dev builds need signing at all
+## Why keychain access from a dev build needs signing
 
-The app stores API keys, OAuth tokens, and the environment-variable encryption key in the macOS keychain, under the service name `automatic_desktop_dev` in debug builds (see `src-tauri/src/core/mod.rs`).
+With `AUTOMATIC_KEYCHAIN=system`, a debug build stores API keys, OAuth tokens, and the environment-variable encryption key in the macOS keychain, under the service name `automatic_desktop_dev` (see `src-tauri/src/core/secret_store.rs`).
 
 Each keychain item records which program is allowed to read it. For signed code, macOS records the *designated requirement*, which is derived from the code signing identifier and the certificate. For unsigned code it records a hash of the binary instead.
 
@@ -56,7 +80,7 @@ runner = ".cargo/sign-dev-binary.sh"
 
 Cargo resolves that path against the config file, not the working directory, so it works even though cargo runs from `src-tauri/`.
 
-The runner signs the binary and then execs it. If the certificate is not installed it prints a warning and runs unsigned, so a machine without the setup still builds. Test and benchmark binaries under `target/*/deps/` are skipped; they use an in-memory key rather than the keychain.
+The runner signs the binary and then execs it. If the certificate is not installed it prints a warning and runs unsigned, so a machine without the setup still builds. Test and benchmark binaries under `target/*/deps/` are skipped; they keep secrets in memory and never open the keychain.
 
 Release builds go through `cargo build`, which does not use `runner`, so none of this affects them.
 

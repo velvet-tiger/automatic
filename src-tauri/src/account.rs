@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use url::Url;
 
-use crate::core::KEYCHAIN_SERVICE;
+use crate::core::secret_store;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -94,18 +94,15 @@ fn generate_code_challenge(verifier: &str) -> String {
 // ── Keychain helpers ─────────────────────────────────────────────────────────
 
 fn keychain_store(user: &str, value: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())?;
-    entry.set_password(value).map_err(|e| e.to_string())
+    secret_store::store_secret(user, value)
 }
 
 fn keychain_load(user: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    secret_store::load_secret(user)
 }
 
 fn keychain_delete(user: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, user).map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())
+    secret_store::delete_secret(user)
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
+
+use crate::core::secret_store;
 
 // ── Gateway config ────────────────────────────────────────────────────────────
 
@@ -91,8 +92,7 @@ pub fn load_credential(agent_id: &str) -> Option<AgentCredential> {
 
 /// Store a `SingleToken` credential for `agent_id` in the OS keychain.
 pub fn store_token(agent_id: &str, token: &str) -> Result<(), String> {
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
-    entry.set_password(token).map_err(|e| e.to_string())
+    secret_store::store_secret(agent_id, token)
 }
 
 /// Return `true` if a non-empty credential is stored for `agent_id`.
@@ -102,15 +102,13 @@ pub fn has_credential(agent_id: &str) -> bool {
 
 /// Remove the stored credential for `agent_id` from the OS keychain.
 pub fn delete_credential(agent_id: &str) -> Result<(), String> {
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())
+    secret_store::delete_secret(agent_id)
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 fn read_keychain_token(key: &str) -> Option<String> {
-    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, key).ok()?;
-    let pw = entry.get_password().ok()?;
+    let pw = secret_store::load_secret(key).ok()?;
     if pw.is_empty() {
         None
     } else {

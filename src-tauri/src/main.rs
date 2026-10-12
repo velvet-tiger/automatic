@@ -4,6 +4,13 @@
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // A mistyped AUTOMATIC_KEYCHAIN would otherwise read as "no secrets
+    // stored" for the whole run.
+    if let Err(e) = automatic_lib::core::check_secret_store_config() {
+        eprintln!("error: {}", e);
+        std::process::exit(2);
+    }
+
     // Stdio-only subcommands never need the login-shell PATH probe: the
     // proxy relays JSON-RPC over reqwest and spawns nothing; `mcp-serve`
     // spawns its own children lazily and can invoke the probe on demand if

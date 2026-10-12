@@ -134,7 +134,8 @@ if codesign --force --sign "$IDENTITY" --identifier com.velvet.automatic.dev "$P
     echo "Done. Signing works. Designated requirement:"
     codesign -d -r- "$PROBE/probe" 2>&1 | grep "designated"
     echo
-    echo "Next: run 'make dev'. macOS asks once per stored secret, because each"
+    echo "This identity only matters with AUTOMATIC_KEYCHAIN=system. In that"
+    echo "mode macOS asks once per stored secret on the next run, because each"
     echo "item still lists the previous unsigned build. Choose 'Always Allow'"
     echo "for each. Later builds reuse this identity and will not ask again."
 else

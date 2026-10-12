@@ -1,4 +1,4 @@
-.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli dev-signing-setup
+.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli dev-signing-setup dev-secrets-import
 
 # Default target
 .DEFAULT_GOAL := help
@@ -16,8 +16,11 @@ install: ## Install dependencies (npm + cargo)
 dev: ## Run Tauri app in development mode with hot reload
 	npm run tauri dev
 
-dev-signing-setup: ## macOS: install the dev signing cert that stops repeat keychain prompts
+dev-signing-setup: ## macOS: install the dev signing cert (only needed with AUTOMATIC_KEYCHAIN=system)
 	./.cargo/setup-dev-signing.sh
+
+dev-secrets-import: ## macOS: copy dev keychain secrets into ~/.automatic-dev/dev-secrets.json (run once)
+	./.cargo/import-dev-secrets.py
 
 frontend-dev: ## Run frontend only in development mode
 	npm run dev

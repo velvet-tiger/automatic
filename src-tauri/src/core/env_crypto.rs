@@ -2,10 +2,11 @@
 //!
 //! # Design
 //!
-//! A single AES-256-GCM key is generated on first use and stored in the OS
-//! keychain (macOS Keychain, Linux SecretService, Windows Credential Manager)
-//! under `automatic_desktop` / `env_encryption_key`.  It is never written to
-//! disk in any other form.
+//! A single AES-256-GCM key is generated on first use and kept in the secret
+//! store (`core::secret_store`) under `env_encryption_key`. In a release build
+//! that is the OS keychain (macOS Keychain, Linux SecretService, Windows
+//! Credential Manager), and the key is never written to disk in any other
+//! form. A debug build keeps the key in the dev secrets file instead.
 //!
 //! Encrypted values are stored as self-describing sentinel strings:
 //!
@@ -26,12 +27,10 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-#[cfg(not(test))]
-use keyring::Entry;
 use serde_json::Value;
 
 #[cfg(not(test))]
-use crate::core::KEYCHAIN_SERVICE;
+use crate::core::secret_store;
 #[cfg(not(test))]
 const KEYCHAIN_USER: &str = "env_encryption_key";
 const SENTINEL: &str = "enc:v1:";
@@ -69,9 +68,7 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
 
 #[cfg(not(test))]
 fn read_or_create_keychain_key() -> Result<[u8; 32], String> {
-    let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
-
-    match entry.get_password() {
+    match secret_store::load_secret(KEYCHAIN_USER) {
         Ok(hex) => {
             // Key already exists — decode it.
             let bytes = hex::decode(&hex)
@@ -84,8 +81,7 @@ fn read_or_create_keychain_key() -> Result<[u8; 32], String> {
             // No key yet — generate one and persist it.
             let key_bytes: [u8; 32] = Aes256Gcm::generate_key(OsRng).into();
             let hex = hex::encode(key_bytes);
-            entry
-                .set_password(&hex)
+            secret_store::store_secret(KEYCHAIN_USER, &hex)
                 .map_err(|e| format!("Failed to store encryption key in keychain: {}", e))?;
             Ok(key_bytes)
         }

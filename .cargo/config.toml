@@ -15,6 +15,9 @@
 # `cargo run`, which is what `tauri dev` uses. Release builds go through
 # `cargo build` and are signed by Tauri, so they are unaffected.
 #
+# This only matters with AUTOMATIC_KEYCHAIN=system. By default a debug build
+# keeps its secrets in a file and never opens the keychain.
+#
 # Without the certificate installed this prints a warning and runs the binary
 # unsigned. Run `make dev-signing-setup` once to install it.
 [target.aarch64-apple-darwin]

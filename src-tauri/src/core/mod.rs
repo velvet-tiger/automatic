@@ -1,11 +1,3 @@
-// Keychain service name — debug builds use a separate entry so "Always Allow"
-// only needs to be clicked once per build type, and dev/release entries never
-// collide.
-#[cfg(debug_assertions)]
-pub const KEYCHAIN_SERVICE: &str = "automatic_desktop_dev";
-#[cfg(not(debug_assertions))]
-pub const KEYCHAIN_SERVICE: &str = "automatic_desktop";
-
 pub mod agents;
 pub mod ai;
 pub mod ai_generate;
@@ -56,6 +48,7 @@ mod recently_added;
 pub mod remote_sources;
 mod rules;
 mod rules_injection;
+pub(crate) mod secret_store;
 mod settings;
 mod skill_store;
 mod skills;
@@ -101,6 +94,7 @@ pub use projects::*;
 pub use recently_added::*;
 pub use rules::*;
 pub use rules_injection::*;
+pub use secret_store::check_secret_store_config;
 pub use settings::*;
 pub use skill_store::*;
 pub use skills::*;

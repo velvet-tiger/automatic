@@ -20,13 +20,14 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 // ── Keychain helpers ─────────────────────────────────────────────────────────
 //
-// All entries use the same service name as the existing API-key storage in
-// core::credentials (debug: "automatic_desktop_dev", release: "automatic_desktop").
-// This avoids a macOS keyring issue where dynamic service names pass
+// All entries go through `core::secret_store`, which keeps them under one
+// keychain service name (debug: "automatic_desktop_dev", release:
+// "automatic_desktop"). This avoids a macOS keyring issue where dynamic
+// service names pass
 // `set_password` but fail `get_password`. Entries are differentiated by the
 // *user* field instead.
 
-use crate::core::KEYCHAIN_SERVICE;
+use crate::core::secret_store;
 
 /// User field for an OAuth bearer token entry.
 fn oauth_token_user(server_name: &str) -> String {
@@ -58,25 +59,19 @@ fn set_cached_token_presence(server_name: &str, present: bool) {
 
 /// Store an OAuth bearer token in the system keychain.
 pub fn store_oauth_token(server_name: &str, token: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_token_user(server_name))
-        .map_err(|e| e.to_string())?;
-    entry.set_password(token).map_err(|e| e.to_string())?;
+    secret_store::store_secret(&oauth_token_user(server_name), token)?;
     set_cached_token_presence(server_name, true);
     Ok(())
 }
 
 /// Load an OAuth bearer token from the system keychain.
 pub fn load_oauth_token(server_name: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_token_user(server_name))
-        .map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    secret_store::load_secret(&oauth_token_user(server_name))
 }
 
 /// Delete an OAuth bearer token from the system keychain.
 pub fn delete_oauth_token(server_name: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_token_user(server_name))
-        .map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())?;
+    secret_store::delete_secret(&oauth_token_user(server_name))?;
     set_cached_token_presence(server_name, false);
     Ok(())
 }
@@ -99,18 +94,12 @@ pub fn has_oauth_token(server_name: &str) -> bool {
 
 /// Store OAuth credentials (client_id + token JSON) for refresh support.
 pub fn store_oauth_credentials(server_name: &str, credentials_json: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_creds_user(server_name))
-        .map_err(|e| e.to_string())?;
-    entry
-        .set_password(credentials_json)
-        .map_err(|e| e.to_string())
+    secret_store::store_secret(&oauth_creds_user(server_name), credentials_json)
 }
 
 /// Load stored OAuth credentials JSON.
 pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_creds_user(server_name))
-        .map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    secret_store::load_secret(&oauth_creds_user(server_name))
 }
 
 // ── Server config helpers ────────────────────────────────────────────────────
@@ -326,6 +315,19 @@ fn parse_sse_events(body: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oauth_token_presence_follows_store_and_delete() {
+        let server = "proxy-test-presence-fixture";
+        assert!(!has_oauth_token(server));
+
+        store_oauth_token(server, "token").unwrap();
+        assert!(has_oauth_token(server));
+        assert_eq!(load_oauth_token(server).unwrap(), "token");
+
+        delete_oauth_token(server).unwrap();
+        assert!(!has_oauth_token(server));
+    }
 
     #[test]
     fn test_parse_sse_events_basic() {
