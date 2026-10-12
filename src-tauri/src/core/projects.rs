@@ -378,6 +378,105 @@ pub(crate) fn contains_ignore_ascii_case(items: &[String], value: &str) -> bool 
     items.iter().any(|item| item.eq_ignore_ascii_case(value))
 }
 
+/// The server Automatic injects into every project. `enabled_mcp_servers`
+/// leaves it out because the sync adds it itself, so it cannot be disabled.
+const AUTOMATIC_MCP_SERVER: &str = "automatic";
+
+/// Enable or disable one MCP server attached to `project`, in memory.
+///
+/// Returns `true` when the project changed and `false` when the server was
+/// already in the requested state. The caller saves the project and runs the
+/// sync. The sync is what removes a disabled server from the agent config
+/// files or writes it back.
+///
+/// Refuses, with nothing changed:
+/// - disabling `automatic`, which every project needs;
+/// - a server that is not attached to the project;
+/// - changing a server an attached profile provides. The project editor
+///   locks the same toggle, because a profile owns every entry it lists.
+pub fn set_mcp_server_enabled(
+    project: &mut Project,
+    server: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    let server = server.trim();
+    if server.is_empty() {
+        return Err("The MCP server name is empty.".to_string());
+    }
+    if server.eq_ignore_ascii_case(AUTOMATIC_MCP_SERVER) {
+        if enabled {
+            return Ok(false);
+        }
+        return Err(format!(
+            "The '{}' MCP server cannot be disabled. Every project needs it.",
+            AUTOMATIC_MCP_SERVER
+        ));
+    }
+
+    // The disabled list must hold the attached spelling: `enabled_mcp_servers`
+    // compares the two lists exactly.
+    let attached = project
+        .mcp_servers
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(server))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "MCP server '{}' is not attached to project '{}'. Attached servers: {}.",
+                server,
+                project.name,
+                attached_mcp_server_list(project)
+            )
+        })?;
+
+    let currently_enabled = !project.disabled_mcp_servers.contains(&attached);
+    if currently_enabled == enabled {
+        return Ok(false);
+    }
+
+    if let Some(profile) = profile_providing_mcp_server(project, &attached) {
+        return Err(format!(
+            "MCP server '{}' is provided by profile '{}', so it cannot be {} on project '{}'. \
+             Edit or detach the profile instead.",
+            attached,
+            profile,
+            if enabled { "enabled" } else { "disabled" },
+            project.name
+        ));
+    }
+
+    if enabled {
+        project.disabled_mcp_servers.retain(|name| name != &attached);
+    } else {
+        project.disabled_mcp_servers.push(attached);
+    }
+    Ok(true)
+}
+
+/// The attached servers a caller may toggle, for an error message.
+fn attached_mcp_server_list(project: &Project) -> String {
+    let names: Vec<&str> = project
+        .mcp_servers
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !name.eq_ignore_ascii_case(AUTOMATIC_MCP_SERVER))
+        .collect();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// The attached profile that provides `server` to this project, if any.
+fn profile_providing_mcp_server<'a>(project: &'a Project, server: &str) -> Option<&'a str> {
+    project
+        .profile_contributions
+        .iter()
+        .find(|(_, contribution)| contains_ignore_ascii_case(&contribution.mcp_servers, server))
+        .map(|(profile, _)| profile.as_str())
+}
+
 fn enrich_skill_sources(project: &mut Project) {
     let Ok(all_sources) = read_skill_sources() else {
         return;
@@ -1465,6 +1564,129 @@ mod tests {
                 "disabled list is de-duplicated the same way"
             );
         });
+    }
+
+    // ── set_mcp_server_enabled ───────────────────────────────────────────
+
+    fn project_with_servers(servers: &[&str]) -> Project {
+        Project {
+            name: "demo".to_string(),
+            mcp_servers: servers.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_disables_then_enables_a_server() {
+        let mut project = project_with_servers(&["automatic", "github", "sentry"]);
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(true));
+        assert_eq!(project.disabled_mcp_servers, vec!["github".to_string()]);
+        assert_eq!(project.enabled_mcp_servers(), vec!["sentry".to_string()]);
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), Ok(true));
+        assert!(project.disabled_mcp_servers.is_empty());
+        assert_eq!(
+            project.enabled_mcp_servers(),
+            vec!["github".to_string(), "sentry".to_string()]
+        );
+        assert_eq!(
+            project.mcp_servers,
+            vec!["automatic".to_string(), "github".to_string(), "sentry".to_string()],
+            "toggling never detaches a server"
+        );
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_is_idempotent() {
+        let mut project = project_with_servers(&["github"]);
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), Ok(false));
+        assert!(project.disabled_mcp_servers.is_empty());
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(true));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(false));
+        assert_eq!(
+            project.disabled_mcp_servers,
+            vec!["github".to_string()],
+            "a repeated disable must not add a second entry"
+        );
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_stores_the_attached_spelling() {
+        // `enabled_mcp_servers` compares exactly, so a differently cased
+        // request must still take the server out of the enabled list.
+        let mut project = project_with_servers(&["Sentry"]);
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "sentry", false), Ok(true));
+        assert_eq!(project.disabled_mcp_servers, vec!["Sentry".to_string()]);
+        assert!(project.enabled_mcp_servers().is_empty());
+
+        assert_eq!(set_mcp_server_enabled(&mut project, "SENTRY", true), Ok(true));
+        assert!(project.disabled_mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_refuses_an_unattached_server() {
+        let mut project = project_with_servers(&["automatic", "github"]);
+
+        for enabled in [true, false] {
+            let err = set_mcp_server_enabled(&mut project, "linear", enabled)
+                .expect_err("an unattached server must be refused");
+            assert!(err.contains("'linear' is not attached to project 'demo'"), "{err}");
+            assert!(err.contains("Attached servers: github."), "{err}");
+        }
+        assert!(project.disabled_mcp_servers.is_empty());
+
+        let err = set_mcp_server_enabled(&mut project, "  ", false).expect_err("empty name");
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_refuses_to_disable_automatic() {
+        // Refused whether or not the project lists it: the sync injects it.
+        for servers in [&["automatic", "github"][..], &["github"][..]] {
+            let mut project = project_with_servers(servers);
+            let err = set_mcp_server_enabled(&mut project, "automatic", false)
+                .expect_err("automatic must never be disabled");
+            assert!(err.contains("'automatic' MCP server cannot be disabled"), "{err}");
+            assert!(project.disabled_mcp_servers.is_empty());
+
+            assert_eq!(
+                set_mcp_server_enabled(&mut project, "automatic", true),
+                Ok(false),
+                "it is always enabled, so enabling it changes nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_refuses_a_profile_owned_server() {
+        let mut project = project_with_servers(&["github", "sentry"]);
+        project.profile_contributions.insert(
+            "backend".to_string(),
+            ProfileContribution {
+                mcp_servers: vec!["github".to_string()],
+                ..Default::default()
+            },
+        );
+
+        let err = set_mcp_server_enabled(&mut project, "github", false)
+            .expect_err("a profile-owned server must be refused");
+        assert!(err.contains("provided by profile 'backend'"), "{err}");
+        assert!(project.disabled_mcp_servers.is_empty());
+
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "github", true),
+            Ok(false),
+            "asking for the state it is already in is not a change"
+        );
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "sentry", false),
+            Ok(true),
+            "the project's own servers stay switchable"
+        );
     }
 
     // ── create guards (Add Project must not overwrite) ───────────────────

@@ -67,6 +67,18 @@ pub struct SyncProjectParams {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetMcpServerEnabledParams {
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
+    /// The MCP server's name, as listed under `mcp_servers` by
+    /// `automatic_read_project`. It must already be attached to the project.
+    pub server: String,
+    /// `true` to enable the server, `false` to disable it.
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct StoreMemoryParams {
     /// The project to act on. Omit it to use the current project, the one
     /// this agent is working in. Accepts a local_key, an id or a name.
@@ -1202,6 +1214,9 @@ impl AutomaticMcpServer {
         name = "automatic_read_project",
         description = "Read the full configuration for a project (skills, MCP servers, agents, \
                        directory, description). Omit `name` to read the current project. \
+                       `disabled_mcp_servers` lists the attached MCP servers that are \
+                       switched off and left out of the agent config files; the field is \
+                       absent when none are. \
                        `profiles` lists the attached profiles and \
                        `profile_contributions` records which entries each profile provides, \
                        including entries the project had before the profile was attached; \
@@ -2684,6 +2699,59 @@ impl AutomaticMcpServer {
         }
     }
 
+    // ── Project MCP server toggle ────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_set_mcp_server_enabled",
+        description = "Enable or disable one MCP server attached to a project. A \
+                       disabled server stays attached, listed under \
+                       `disabled_mcp_servers` by automatic_read_project, and is \
+                       left out of the agent config files. Idempotent: asking \
+                       for the state the server is already in reports success. \
+                       Fails when the server is not attached to the project, \
+                       when asked to disable `automatic`, and when an attached \
+                       profile provides the server. Does not trigger a sync. \
+                       Call automatic_sync_project afterwards to remove the \
+                       server from the agent config files, or to write it back."
+    )]
+    async fn set_mcp_server_enabled(
+        &self,
+        params: Parameters<SetMcpServerEnabledParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = &params.0.server;
+        let enabled = params.0.enabled;
+        let state = if enabled { "enabled" } else { "disabled" };
+
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let mut project = match load_project(&checkout) {
+            Ok(project) => project,
+            Err(e) => return Ok(tool_error(e)),
+        };
+
+        match crate::core::set_mcp_server_enabled(&mut project, server, enabled) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(CallToolResult::success(vec![Content::text(format!(
+                    "MCP server '{}' is already {} on project '{}'.",
+                    server, state, checkout.name
+                ))]));
+            }
+            Err(e) => return Ok(tool_error(e)),
+        }
+
+        match persist_project(&checkout, &project) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "MCP server '{}' is now {} on project '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                server, state, checkout.name
+            ))])),
+            Err(e) => Ok(tool_error(e)),
+        }
+    }
+
     // ── Config sync tool ─────────────────────────────────────────────────
 
     #[tool(
@@ -3988,6 +4056,164 @@ mod tests {
                 "agent missing from saved project: {:?}",
                 project.agents
             );
+        });
+    }
+
+    /// The server names in a project's root `.mcp.json`, sorted.
+    fn root_mcp_server_names(dir: &std::path::Path) -> Vec<String> {
+        let raw = std::fs::read_to_string(dir.join(".mcp.json")).expect("read .mcp.json");
+        let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse .mcp.json");
+        let mut names: Vec<String> = parsed["mcpServers"]
+            .as_object()
+            .expect("mcpServers object")
+            .keys()
+            .cloned()
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn toggle(server: &AutomaticMcpServer, name: &str, enabled: bool) -> CallToolResult {
+        tauri::async_runtime::block_on(server.set_mcp_server_enabled(Parameters(
+            SetMcpServerEnabledParams {
+                project: Some("toggle".into()),
+                server: name.into(),
+                enabled,
+            },
+        )))
+        .expect("tool call")
+    }
+
+    fn sync_toggle_project(server: &AutomaticMcpServer) {
+        let synced = tauri::async_runtime::block_on(server.sync_project(Parameters(
+            SyncProjectParams {
+                name: Some("toggle".into()),
+            },
+        )))
+        .expect("tool call");
+        assert_ne!(synced.is_error, Some(true), "{:?}", synced.content);
+    }
+
+    fn toggle_project_drifted() -> bool {
+        let raw = crate::core::read_project("toggle").expect("read");
+        let project: crate::core::Project = serde_json::from_str(&raw).expect("parse");
+        crate::sync::check_project_drift(&project)
+            .expect("drift check")
+            .drifted
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_tool_drops_and_restores_the_server_on_sync() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config(
+                "github",
+                r#"{"command":"npx","args":["-y","server-github"]}"#,
+            )
+            .expect("save server");
+            register_project_impl(&params("toggle", ws.to_str().unwrap(), Some(vec!["claude"])))
+                .expect("register");
+            let mut project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("toggle").expect("read"))
+                    .expect("parse");
+            project.mcp_servers.push("github".to_string());
+            crate::core::save_project("toggle", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+
+            let server = AutomaticMcpServer::new();
+            sync_toggle_project(&server);
+            assert_eq!(root_mcp_server_names(&ws), vec!["automatic", "github"]);
+
+            // Disabling saves the project and leaves the files alone.
+            let disabled = toggle(&server, "github", false);
+            assert_ne!(disabled.is_error, Some(true), "{:?}", disabled.content);
+            assert!(
+                format!("{:?}", disabled.content).contains("automatic_sync_project"),
+                "the reply must tell the caller to sync: {:?}",
+                disabled.content
+            );
+            assert_eq!(
+                root_mcp_server_names(&ws),
+                vec!["automatic", "github"],
+                "the tool must not sync on its own"
+            );
+            let read = crate::core::read_project("toggle").expect("read");
+            let saved: crate::core::Project = serde_json::from_str(&read).expect("parse");
+            assert_eq!(saved.disabled_mcp_servers, vec!["github".to_string()]);
+            assert!(
+                read.contains("disabled_mcp_servers"),
+                "automatic_read_project must report the disabled server: {read}"
+            );
+            assert!(saved.mcp_servers.iter().any(|s| s == "github"), "still attached");
+
+            sync_toggle_project(&server);
+            assert_eq!(
+                root_mcp_server_names(&ws),
+                vec!["automatic"],
+                "the sync must remove the disabled server"
+            );
+            assert!(!toggle_project_drifted(), "a disabled server is not drift");
+            let after_sync: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("toggle").expect("read"))
+                    .expect("parse");
+            assert_eq!(
+                after_sync.disabled_mcp_servers,
+                vec!["github".to_string()],
+                "the sync must not switch it back on"
+            );
+
+            let again = toggle(&server, "github", false);
+            assert_ne!(again.is_error, Some(true), "{:?}", again.content);
+            assert!(format!("{:?}", again.content).contains("already disabled"));
+
+            let enabled = toggle(&server, "github", true);
+            assert_ne!(enabled.is_error, Some(true), "{:?}", enabled.content);
+            sync_toggle_project(&server);
+            assert_eq!(
+                root_mcp_server_names(&ws),
+                vec!["automatic", "github"],
+                "enabling and syncing must write the server back"
+            );
+            assert!(!toggle_project_drifted());
+        });
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_tool_refuses_unattached_and_automatic() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project = crate::core::Project {
+                name: "toggle".into(),
+                mcp_servers: vec!["automatic".into(), "github".into()],
+                ..Default::default()
+            };
+            crate::core::save_project("toggle", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            let server = AutomaticMcpServer::new();
+
+            let unattached = toggle(&server, "linear", false);
+            assert_eq!(unattached.is_error, Some(true));
+            assert!(
+                format!("{:?}", unattached.content).contains("not attached"),
+                "{:?}",
+                unattached.content
+            );
+
+            let automatic = toggle(&server, "automatic", false);
+            assert_eq!(automatic.is_error, Some(true));
+            assert!(
+                format!("{:?}", automatic.content).contains("cannot be disabled"),
+                "{:?}",
+                automatic.content
+            );
+
+            let saved: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("toggle").expect("read"))
+                    .expect("parse");
+            assert!(saved.disabled_mcp_servers.is_empty(), "a refusal saves nothing");
         });
     }
 }

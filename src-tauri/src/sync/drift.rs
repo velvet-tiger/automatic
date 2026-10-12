@@ -163,9 +163,12 @@ struct UserScopeConflict {
 /// Only names in `project.mcp_servers` count.  Reading `.mcp.json` from disk
 /// would surface legacy or user-authored entries the project no longer
 /// references, and in Silent mode Automatic never touches the root file, so
-/// such a warning could never be cleared through the UI.
+/// such a warning could never be cleared through the UI.  A disabled server
+/// is not written to the project config, so it has no project version for
+/// the user-level copy to override.
 fn user_scope_conflict_problem(project: &Project) -> Option<ProjectProblem> {
-    let managed: HashSet<&str> = project.mcp_servers.iter().map(String::as_str).collect();
+    let enabled = project.enabled_mcp_servers();
+    let managed: HashSet<&str> = enabled.iter().map(String::as_str).collect();
     if managed.is_empty() {
         return None;
     }
@@ -283,10 +286,11 @@ fn user_scope_fix_step(conflict: &UserScopeConflict) -> String {
 ///
 /// Silent mode writes every file under `.automatic/silent/` and never touches
 /// the project root.  Agents still read the root, so a server left in a root
-/// MCP config keeps loading even after it is removed from the project.  The
-/// user has to delete it by hand.
+/// MCP config keeps loading even after it is removed from the project or
+/// disabled on it.  The user has to delete it by hand.
 fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Option<ProjectProblem> {
-    let managed: HashSet<&str> = project.mcp_servers.iter().map(String::as_str).collect();
+    let enabled = project.enabled_mcp_servers();
+    let managed: HashSet<&str> = enabled.iter().map(String::as_str).collect();
 
     let mut steps: Vec<String> = Vec::new();
     let mut agent_labels: Vec<String> = Vec::new();
@@ -331,8 +335,9 @@ fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Op
     let plural = all_servers.len() != 1;
 
     steps.push(format!(
-        "Or add {} to this project's MCP list if you want to keep {}.",
+        "Or add {} to this project's MCP list, or enable {} there, if you want to keep {}.",
         code_list(&all_servers),
+        if plural { "them" } else { "it" },
         if plural { "them" } else { "it" },
     ));
 
@@ -343,7 +348,7 @@ fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Op
             if plural { "servers" } else { "server" }
         ),
         description: format!(
-            "{} {} not in this project's MCP list, but {} still load{} {} from the project folder. \
+            "{} {} not enabled in this project's MCP list, but {} still load{} {} from the project folder. \
              Silent mode never edits files there, so Automatic cannot remove {}.",
             code_list(&all_servers),
             if plural { "are" } else { "is" },
@@ -2915,6 +2920,94 @@ mod tests {
             check_project_problems(&project).expect("problems check should succeed")
         });
         assert!(!report.has_problems);
+    }
+
+    /// Silent mode cannot remove a disabled server from the root file, so the
+    /// agent keeps loading it.  The check must say so until it is enabled.
+    #[test]
+    fn check_project_problems_flags_a_disabled_server_left_in_the_silent_root() {
+        use crate::core::{with_test_home, Project, ProjectMode};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let root_mcp = serde_json::json!({
+            "mcpServers": { "github": { "command": "docker", "args": ["run", "x"] } }
+        });
+        fs::write(
+            project_dir.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&root_mcp).unwrap(),
+        )
+        .unwrap();
+
+        let mut project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string(), "github".to_string()],
+            disabled_mcp_servers: vec!["github".to_string()],
+            mode: ProjectMode::Silent,
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+        assert_eq!(report.problems.len(), 1);
+        assert_eq!(report.problems[0].kind, ProjectProblemKind::SilentModeStaleRootMcp);
+        assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
+
+        project.disabled_mcp_servers.clear();
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+        assert!(
+            report
+                .problems
+                .iter()
+                .all(|p| p.kind != ProjectProblemKind::SilentModeStaleRootMcp),
+            "an enabled server in the root file is not stale: {:?}",
+            report.problems
+        );
+    }
+
+    /// A disabled server is not written to the project config, so a
+    /// user-level copy overrides nothing.
+    #[test]
+    fn check_project_problems_ignores_user_scope_copies_of_disabled_servers() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let github = serde_json::json!({
+            "mcpServers": { "github": { "command": "docker", "args": ["run", "x"] } }
+        });
+        fs::write(
+            home.path().join(".claude.json"),
+            serde_json::to_string_pretty(&github).unwrap(),
+        )
+        .unwrap();
+
+        let mut project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string(), "github".to_string()],
+            ..Default::default()
+        };
+        let conflict_kinds = |project: &Project| -> Vec<ProjectProblemKind> {
+            with_test_home(home.path().to_path_buf(), || {
+                check_project_problems(project).expect("problems check should succeed")
+            })
+            .problems
+            .into_iter()
+            .map(|p| p.kind)
+            .filter(|kind| *kind == ProjectProblemKind::McpUserScopeConflict)
+            .collect()
+        };
+
+        assert_eq!(conflict_kinds(&project).len(), 1, "enabled: the conflict is real");
+        project.disabled_mcp_servers = vec!["github".to_string()];
+        assert!(conflict_kinds(&project).is_empty(), "disabled: nothing to override");
     }
 
     fn identity_project() -> Project {

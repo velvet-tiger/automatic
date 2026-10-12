@@ -70,6 +70,22 @@ Return all MCP server configurations stored in the Automatic registry (`~/.autom
 
 ---
 
+### `automatic_set_mcp_server_enabled`
+
+Enable or disable one MCP server attached to a project. A disabled server stays attached and is left out of the agent config files. `automatic_read_project` lists it under `disabled_mcp_servers`.
+
+```
+project?: string  — defaults to the current project
+server: string    — the server name, as listed under `mcp_servers`
+enabled: boolean  — true to enable, false to disable
+```
+
+The call is refused for a server that is not attached to the project, for the `automatic` server, and for a server an attached profile provides. Asking for the state a server is already in succeeds.
+
+**When to use:** When the user wants a server switched off for a project without detaching it, or switched back on. The call does not sync to disk — call `automatic_sync_project` afterwards.
+
+---
+
 ### `automatic_list_projects`
 
 List every project registered in Automatic. Each entry has `name`, `local_key` (one folder on this machine), `id` (the project, shared by every folder of it, such as git worktrees), `directory`, and `current`. `current` marks the project you are working in.
@@ -80,7 +96,7 @@ List every project registered in Automatic. Each entry has `name`, `local_key` (
 
 ### `automatic_read_project`
 
-Read the full configuration for a project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), `group_context_contributions` (which of those contexts each project group provides), and `group_profile_contributions` (which of the attached profiles each project group provides).
+Read the full configuration for a project: description, directory path, assigned skills, MCP servers, `disabled_mcp_servers` (attached servers that are switched off; absent when none are), providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), `group_context_contributions` (which of those contexts each project group provides), and `group_profile_contributions` (which of the attached profiles each project group provides).
 
 ```
 name?: string  — defaults to the current project
