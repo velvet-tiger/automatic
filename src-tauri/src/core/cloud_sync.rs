@@ -13,7 +13,8 @@
 //! 5. POST to `/api/library/sync`, refresh token once on 401.
 //! 6. Apply the `ServerSyncResponse` via `cloud_sync_reconcile` — state
 //!    mutations happen in-memory, disk ops return as a `FileOpsPlan`.
-//! 7. Execute the plan against disk (per-kind writers).
+//! 7. Execute the plan against disk (per-kind writers). A remote upsert
+//!    whose write fails gets its previous `seen` entry back.
 //! 8. Atomically save the mutated `CloudSyncState`.
 //!
 //! Secret scrubbing (MCP `env` values) happens inside the per-kind reader
@@ -27,6 +28,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 use crate::account;
@@ -34,7 +36,7 @@ use crate::core::cloud_sync_diff::{diff, DiskAsset, UpsertRecord};
 use crate::core::cloud_sync_reconcile::{
     apply_server_response, FileOp, FileOpsPlan, ServerSyncResponse,
 };
-use crate::core::cloud_sync_state::{self, PendingTombstone};
+use crate::core::cloud_sync_state::{self, CloudSyncState, PendingTombstone, SeenEntry};
 use crate::core::secret_store;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -193,10 +195,7 @@ pub async fn run_sync() -> Result<SyncSummary, String> {
 
     let response = upload_bundle(&bundle).await?;
 
-    let plan = apply_server_response(&mut state, &sent_upserts, &response);
-
-    // Apply disk ops. Currently a stub — see module-level TODO.
-    apply_file_ops_plan(&plan)?;
+    apply_sync_response(&mut state, &sent_upserts, &response);
 
     cloud_sync_state::save(&state)?;
 
@@ -461,16 +460,90 @@ fn read_project_templates() -> Result<Vec<DiskAsset>, String> {
 
 // ── File ops plan execution ───────────────────────────────────────────────────
 
-/// Execute the disk writes and deletes returned by `apply_server_response`.
+/// An asset's identity in the sync state: `(kind, machine_name)`.
+type AssetKey = (String, String);
+
+/// Apply a server response to `state` and to disk.
 ///
-/// Errors from individual kinds are logged and swallowed: one broken asset
-/// should not abort an otherwise successful sync. Anything that fails to
-/// write simply stays out-of-date locally and will be re-emitted on the next
-/// sync round when the hash mismatch is detected again. The `seen` state has
-/// already been updated in the reconcile pass, so a failed write here will
-/// surface as a local-disk-missing-but-server-has-it discrepancy on the next
-/// diff — the correct fallback.
-fn apply_file_ops_plan(plan: &FileOpsPlan) -> Result<(), String> {
+/// The reconcile pass records every remote upsert in `seen` before its file
+/// is written. A write can fail, and the sync carries on when one does. The
+/// `seen` entry of each failed write is then put back to what it was before
+/// this response. Left as it is, the entry would say this device holds the
+/// server's version. The next diff would then send a tombstone for an asset
+/// that was never written here, or upload the older local copy over the
+/// newer one in the cloud.
+///
+/// Makes no network call and does not save `state`. The caller saves it.
+fn apply_sync_response(
+    state: &mut CloudSyncState,
+    sent_upserts: &[UpsertRecord],
+    response: &ServerSyncResponse,
+) {
+    let prior_seen = prior_seen_of_remote_upserts(state, response);
+    let plan = apply_server_response(state, sent_upserts, response);
+    let failed_writes = apply_file_ops_plan(&plan);
+    restore_seen_of_failed_writes(state, &prior_seen, &failed_writes);
+}
+
+/// The `seen` entry each remote upsert in `response` has before the reconcile
+/// pass replaces it. `None` means the asset has no entry yet.
+///
+/// An asset the same response also tombstones is left out. The reconcile
+/// pass ends with that asset forgotten, and a failed write must not bring
+/// its entry back.
+fn prior_seen_of_remote_upserts(
+    state: &CloudSyncState,
+    response: &ServerSyncResponse,
+) -> HashMap<AssetKey, Option<SeenEntry>> {
+    let tombstoned: HashSet<(&str, &str)> = response
+        .remote_tombstones
+        .iter()
+        .map(|t| (t.kind.as_str(), t.machine_name.as_str()))
+        .collect();
+
+    response
+        .remote_upserts
+        .iter()
+        .filter(|remote| {
+            !tombstoned.contains(&(remote.kind.as_str(), remote.machine_name.as_str()))
+        })
+        .map(|remote| {
+            let prior = state.seen_for(&remote.kind, &remote.machine_name).cloned();
+            ((remote.kind.clone(), remote.machine_name.clone()), prior)
+        })
+        .collect()
+}
+
+/// Put back the `seen` entry of each asset whose write failed: the entry it
+/// had before the response, or no entry when it had none.
+fn restore_seen_of_failed_writes(
+    state: &mut CloudSyncState,
+    prior_seen: &HashMap<AssetKey, Option<SeenEntry>>,
+    failed_writes: &[AssetKey],
+) {
+    for key in failed_writes {
+        let (kind, machine_name) = key;
+        match prior_seen.get(key) {
+            Some(Some(entry)) => {
+                state.mark_seen(kind, machine_name, &entry.content_hash, &entry.updated_at)
+            }
+            Some(None) => state.forget_seen(kind, machine_name),
+            // The same response tombstones this asset, so it stays forgotten.
+            None => {}
+        }
+    }
+}
+
+/// Execute the disk writes and deletes returned by `apply_server_response`,
+/// and return the assets whose write failed.
+///
+/// A failed write or delete is logged and the remaining operations still
+/// run. One broken asset must not stop the rest of the sync. The caller
+/// uses the returned list to undo the `seen` update of each failed write, so
+/// the asset is not treated as stored on this device. A failed delete is
+/// logged only.
+fn apply_file_ops_plan(plan: &FileOpsPlan) -> Vec<AssetKey> {
+    let mut failed_writes = Vec::new();
     for op in &plan.ops {
         match op {
             FileOp::WriteAsset {
@@ -484,6 +557,7 @@ fn apply_file_ops_plan(plan: &FileOpsPlan) -> Result<(), String> {
                         "cloud_sync: failed to write {}:{} — {}",
                         kind, machine_name, e
                     );
+                    failed_writes.push((kind.clone(), machine_name.clone()));
                 }
             }
             FileOp::DeleteAsset { kind, machine_name } => {
@@ -496,7 +570,7 @@ fn apply_file_ops_plan(plan: &FileOpsPlan) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    failed_writes
 }
 
 /// Dispatch a write to the right per-kind writer. The `payload` shape matches
@@ -1503,6 +1577,228 @@ mod tests {
                 "a server that is gone from disk is a real removal"
             );
             assert_eq!(preview.total_tombstones, 1);
+        });
+    }
+
+    // ── Pull: a failed write is not recorded as seen ──────────────────────────
+
+    use crate::core::cloud_sync_reconcile::{RemoteAssetRecord, RemoteTombstoneRecord};
+
+    const REMOTE_HASH: &str = "sha256:remote-version";
+    const REMOTE_TIME: &str = "2026-02-02T00:00:00Z";
+
+    fn remote_upsert(kind: &str, machine_name: &str, payload: Value) -> RemoteAssetRecord {
+        RemoteAssetRecord {
+            kind: kind.to_string(),
+            machine_name: machine_name.to_string(),
+            content_hash: REMOTE_HASH.to_string(),
+            updated_at: REMOTE_TIME.to_string(),
+            payload,
+        }
+    }
+
+    fn response_with(remote_upserts: Vec<RemoteAssetRecord>) -> ServerSyncResponse {
+        ServerSyncResponse {
+            remote_upserts,
+            server_time: "2026-02-02T00:00:01Z".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The entry `seen` holds for an asset whose remote upsert was written.
+    fn remote_seen_entry() -> SeenEntry {
+        SeenEntry {
+            content_hash: REMOTE_HASH.to_string(),
+            updated_at: REMOTE_TIME.to_string(),
+        }
+    }
+
+    /// What the next sync would send for one asset: `(upserts, tombstones)`.
+    fn next_delta_counts(state: &CloudSyncState, kind: &str, machine_name: &str) -> (usize, usize) {
+        let disk = read_all_disk_assets().expect("read disk");
+        let delta = diff(&disk, state, "2026-03-03T00:00:00Z");
+        let upserts = delta
+            .upserts
+            .iter()
+            .filter(|u| u.kind == kind && u.machine_name == machine_name)
+            .count();
+        let tombstones = delta
+            .new_tombstones
+            .iter()
+            .filter(|t| t.kind == kind && t.machine_name == machine_name)
+            .count();
+        (upserts, tombstones)
+    }
+
+    fn mcp_server_file(name: &str) -> std::path::PathBuf {
+        super::super::mcp_servers::get_mcp_servers_dir()
+            .expect("dir")
+            .join(format!("{}.json", name))
+    }
+
+    #[test]
+    fn a_new_asset_whose_write_fails_is_not_seen_and_not_tombstoned() {
+        with_temp_home(|_| {
+            let mut state = CloudSyncState::new_for_this_install();
+            // The writer rejects an `mcp_server` payload with no `config`.
+            let response =
+                response_with(vec![remote_upsert("mcp_server", "pull-new-bad", json!({}))]);
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert!(!mcp_server_file("pull-new-bad").exists());
+            assert_eq!(state.seen_for("mcp_server", "pull-new-bad"), None);
+            assert_eq!(
+                next_delta_counts(&state, "mcp_server", "pull-new-bad"),
+                (0, 0),
+                "an asset that was never written must not be sent as a delete"
+            );
+            assert_eq!(
+                state.last_sync_at.as_deref(),
+                Some("2026-02-02T00:00:01Z"),
+                "the sync cursor still advances"
+            );
+        });
+    }
+
+    #[test]
+    fn a_new_asset_whose_write_succeeds_is_on_disk_and_seen() {
+        with_temp_home(|_| {
+            let mut state = CloudSyncState::new_for_this_install();
+            let response = response_with(vec![remote_upsert(
+                "mcp_server",
+                "pull-new-good",
+                json!({ "config": { "command": "npx" } }),
+            )]);
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert!(mcp_server_file("pull-new-good").is_file());
+            assert_eq!(
+                state.seen_for("mcp_server", "pull-new-good"),
+                Some(&remote_seen_entry())
+            );
+        });
+    }
+
+    #[test]
+    fn an_existing_asset_whose_write_fails_keeps_its_prior_seen_entry() {
+        with_temp_home(|_| {
+            let path =
+                super::super::mcp_servers::write_undecryptable_mcp_server_config("pull-old-locked");
+            let before = fs::read(&path).expect("read before");
+            let mut state = CloudSyncState::new_for_this_install();
+            state.mark_seen(
+                "mcp_server",
+                "pull-old-locked",
+                "sha256:prior-version",
+                "2026-01-01T00:00:00Z",
+            );
+            let prior = state
+                .seen_for("mcp_server", "pull-old-locked")
+                .cloned()
+                .expect("prior entry");
+            // The writer cannot read the env it must keep, so it refuses.
+            let response = response_with(vec![remote_upsert(
+                "mcp_server",
+                "pull-old-locked",
+                json!({ "config": { "command": "npx", "env_keys": ["API_KEY"] } }),
+            )]);
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert_eq!(
+                state.seen_for("mcp_server", "pull-old-locked"),
+                Some(&prior)
+            );
+            assert_eq!(fs::read(&path).expect("read after"), before);
+        });
+    }
+
+    #[test]
+    fn an_unchanged_asset_whose_write_fails_is_not_uploaded_over_the_cloud_copy() {
+        with_temp_home(|_| {
+            super::super::rules::save_rule("pull-rule", "Pull Rule", "local body")
+                .expect("seed rule");
+            let disk_hash = read_all_disk_assets()
+                .expect("read disk")
+                .into_iter()
+                .find(|asset| asset.kind == "rule" && asset.machine_name == "pull-rule")
+                .expect("rule on disk")
+                .content_hash;
+            let mut state = CloudSyncState::new_for_this_install();
+            state.mark_seen("rule", "pull-rule", &disk_hash, "2026-01-01T00:00:00Z");
+            let prior = state
+                .seen_for("rule", "pull-rule")
+                .cloned()
+                .expect("prior entry");
+            assert_eq!(next_delta_counts(&state, "rule", "pull-rule"), (0, 0));
+            // The writer rejects a `rule` payload with no `content`.
+            let response = response_with(vec![remote_upsert("rule", "pull-rule", json!({}))]);
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert_eq!(state.seen_for("rule", "pull-rule"), Some(&prior));
+            assert_eq!(
+                next_delta_counts(&state, "rule", "pull-rule"),
+                (0, 0),
+                "the local copy must not be sent as a newer version or as a delete"
+            );
+        });
+    }
+
+    #[test]
+    fn one_failed_write_does_not_stop_the_other_writes() {
+        with_temp_home(|_| {
+            let mut state = CloudSyncState::new_for_this_install();
+            let response = response_with(vec![
+                remote_upsert("mcp_server", "pull-mixed-bad", json!({})),
+                remote_upsert(
+                    "rule",
+                    "pull-mixed-good",
+                    json!({ "content": "remote body" }),
+                ),
+            ]);
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert_eq!(state.seen_for("mcp_server", "pull-mixed-bad"), None);
+            assert!(!mcp_server_file("pull-mixed-bad").exists());
+
+            assert_eq!(
+                state.seen_for("rule", "pull-mixed-good"),
+                Some(&remote_seen_entry())
+            );
+            let raw = super::super::rules::read_rule("pull-mixed-good").expect("rule written");
+            let rule: Value = serde_json::from_str(&raw).expect("parse rule");
+            assert_eq!(rule["content"], "remote body");
+        });
+    }
+
+    #[test]
+    fn a_failed_write_does_not_bring_back_an_asset_the_response_also_deletes() {
+        with_temp_home(|_| {
+            let mut state = CloudSyncState::new_for_this_install();
+            state.mark_seen(
+                "mcp_server",
+                "pull-redeleted",
+                "sha256:prior-version",
+                "2026-01-01T00:00:00Z",
+            );
+            let mut response = response_with(vec![remote_upsert(
+                "mcp_server",
+                "pull-redeleted",
+                json!({}),
+            )]);
+            response.remote_tombstones = vec![RemoteTombstoneRecord {
+                kind: "mcp_server".to_string(),
+                machine_name: "pull-redeleted".to_string(),
+                deleted_at: "2026-02-02T00:00:00Z".to_string(),
+            }];
+
+            apply_sync_response(&mut state, &[], &response);
+
+            assert_eq!(state.seen_for("mcp_server", "pull-redeleted"), None);
         });
     }
 
