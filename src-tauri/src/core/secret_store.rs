@@ -3,7 +3,9 @@
 //!
 //! The backend depends on the build:
 //!
-//! - **Release builds** use the OS keychain.
+//! - **Release builds** use the OS keychain: the macOS Keychain, the Windows
+//!   Credential Manager, and on Linux the Secret Service over D-Bus (GNOME
+//!   Keyring, KWallet, KeePassXC).
 //! - **Debug builds** use a JSON file in the dev data directory. macOS ties a
 //!   keychain item's "Always Allow" to the binary that asked for it. A dev
 //!   binary changes on every rebuild, so each stored secret raised a password
@@ -14,6 +16,16 @@
 //!
 //! The file backend is compiled out of release builds. No environment variable
 //! can make a release build write a secret to disk.
+//!
+//! # Linux
+//!
+//! The Secret Service needs a D-Bus session bus and a provider with a default
+//! keyring. Without them every call here returns an error. There is no
+//! fallback store.
+//!
+//! Older builds kept secrets in the kernel keyring, which the kernel empties
+//! on reboot. A read that finds nothing in the Secret Service looks there, and
+//! copies what it finds to the Secret Service. A delete removes both copies.
 
 /// Store `secret` under `account`, replacing any value already there.
 pub fn store_secret(account: &str, secret: &str) -> Result<(), String> {
@@ -68,13 +80,83 @@ fn missing_secret(account: &str) -> String {
 ///
 /// Only `NoEntry` means nothing is stored. A denied prompt, a locked keychain
 /// or an unreachable backend leaves the stored value in place, so those stay
-/// errors. On Linux the `keyring` crate itself reports a denied, revoked or
-/// expired key as `NoEntry`, so those cases cannot be told apart here.
+/// errors.
 fn absent_entry_as_none(read: Result<String, keyring::Error>) -> Result<Option<String>, String> {
     match read {
         Ok(secret) => Ok(Some(secret)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(keychain_error(e)),
+    }
+}
+
+/// The message a caller sees for a keychain failure.
+///
+/// On Linux a failure to reach or open the store names the Secret Service.
+/// The D-Bus text alone ("Unable to autolaunch a dbus-daemon") does not tell
+/// a user what is missing.
+fn keychain_error(error: keyring::Error) -> String {
+    #[cfg(target_os = "linux")]
+    if matches!(
+        error,
+        keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_)
+    ) {
+        return secret_service_unavailable(&error.to_string());
+    }
+    error.to_string()
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn secret_service_unavailable(detail: &str) -> String {
+    format!(
+        "Automatic keeps secrets in the Secret Service on Linux, and could not use it: {}. \
+         It needs a D-Bus session bus and a Secret Service provider (GNOME Keyring, KWallet \
+         or KeePassXC) with an unlocked default keyring.",
+        detail
+    )
+}
+
+/// Return the stored secret. When nothing is stored, return the copy an older
+/// build left in the kernel keyring, after passing it to `adopt`.
+///
+/// `adopt` copies the secret to the Secret Service. If the copy fails this is
+/// an error: a secret handed out from the kernel keyring alone would be gone
+/// after the next reboot, with nothing to tell the user why.
+///
+/// `legacy` is only called when nothing is stored, and `adopt` only when
+/// `legacy` found a secret.
+#[cfg(any(test, target_os = "linux"))]
+fn stored_or_legacy(
+    stored: Result<Option<String>, String>,
+    legacy: impl FnOnce() -> Result<Option<String>, String>,
+    adopt: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    if let Some(secret) = stored? {
+        return Ok(Some(secret));
+    }
+    let Some(secret) = legacy()? else {
+        return Ok(None);
+    };
+    adopt(&secret).map_err(|e| {
+        format!(
+            "found this secret in the kernel keyring but could not copy it to the Secret Service: {}",
+            e
+        )
+    })?;
+    Ok(Some(secret))
+}
+
+/// The result of a delete that covers both Linux stores.
+///
+/// Deleting only the kernel keyring copy is a successful delete: the secret
+/// was stored and is now gone.
+#[cfg(any(test, target_os = "linux"))]
+fn deleted_from_either(
+    legacy_removed: bool,
+    stored: Result<(), keyring::Error>,
+) -> Result<(), String> {
+    match stored {
+        Err(keyring::Error::NoEntry) if legacy_removed => Ok(()),
+        other => other.map_err(keychain_error),
     }
 }
 
@@ -166,6 +248,8 @@ fn dev_secrets_path() -> Result<std::path::PathBuf, String> {
 mod system {
     use keyring::Entry;
 
+    use super::keychain_error;
+
     // Debug builds use a separate service, so dev and release entries never
     // collide.
     #[cfg(debug_assertions)]
@@ -174,27 +258,93 @@ mod system {
     const KEYCHAIN_SERVICE: &str = "automatic_desktop";
 
     fn entry(account: &str) -> Result<Entry, String> {
-        Entry::new(KEYCHAIN_SERVICE, account).map_err(|e| e.to_string())
+        Entry::new(KEYCHAIN_SERVICE, account).map_err(keychain_error)
     }
 
     pub(super) fn store(account: &str, secret: &str) -> Result<(), String> {
-        entry(account)?
-            .set_password(secret)
-            .map_err(|e| e.to_string())
+        entry(account)?.set_password(secret).map_err(keychain_error)
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(super) fn load(account: &str) -> Result<String, String> {
-        entry(account)?.get_password().map_err(|e| e.to_string())
+        entry(account)?.get_password().map_err(keychain_error)
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
         super::absent_entry_as_none(entry(account)?.get_password())
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(super) fn delete(account: &str) -> Result<(), String> {
-        entry(account)?
-            .delete_credential()
-            .map_err(|e| e.to_string())
+        entry(account)?.delete_credential().map_err(keychain_error)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn load(account: &str) -> Result<String, String> {
+        load_if_present(account)?.ok_or_else(|| keyring::Error::NoEntry.to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
+        let stored = super::absent_entry_as_none(entry(account)?.get_password());
+        super::stored_or_legacy(
+            stored,
+            || kernel_keyring::load(account),
+            |secret| store(account, secret),
+        )
+    }
+
+    /// The kernel keyring copy goes first. If it were left behind after the
+    /// Secret Service delete, the next read would copy the deleted secret
+    /// back.
+    #[cfg(target_os = "linux")]
+    pub(super) fn delete(account: &str) -> Result<(), String> {
+        let legacy_removed = kernel_keyring::delete(account)?;
+        super::deleted_from_either(legacy_removed, entry(account)?.delete_credential())
+    }
+
+    /// The store builds used before the Secret Service. Nothing is written
+    /// here any more. It is read so that a user who updates keeps the secrets
+    /// stored since their last reboot.
+    #[cfg(target_os = "linux")]
+    mod kernel_keyring {
+        use keyring::keyutils::KeyutilsCredential;
+        use keyring::{Entry, Error};
+
+        /// `None` when the kernel keyring cannot be opened at all, as in a
+        /// container whose seccomp profile blocks `keyctl`. No build could
+        /// have stored a secret there, so there is nothing to carry over.
+        fn entry(account: &str) -> Option<Entry> {
+            KeyutilsCredential::new_with_target(None, super::KEYCHAIN_SERVICE, account)
+                .ok()
+                .map(|credential| Entry::new_with_credential(Box::new(credential)))
+        }
+
+        /// The `keyring` crate reports a denied, revoked or expired key as
+        /// `NoEntry`. Such a key cannot be read, so it counts as absent.
+        pub(super) fn load(account: &str) -> Result<Option<String>, String> {
+            let Some(entry) = entry(account) else {
+                return Ok(None);
+            };
+            match entry.get_password() {
+                Ok(secret) => Ok(Some(secret)),
+                Err(Error::NoEntry) => Ok(None),
+                Err(e) => Err(format!("failed to read the kernel keyring: {}", e)),
+            }
+        }
+
+        /// Returns whether a key was removed.
+        pub(super) fn delete(account: &str) -> Result<bool, String> {
+            let Some(entry) = entry(account) else {
+                return Ok(false);
+            };
+            match entry.delete_credential() {
+                Ok(()) => Ok(true),
+                Err(Error::NoEntry) => Ok(false),
+                Err(e) => Err(format!("failed to delete the kernel keyring copy: {}", e)),
+            }
+        }
     }
 }
 
@@ -433,6 +583,130 @@ mod tests {
 
         let not_text = keyring::Error::BadEncoding(vec![0xff]);
         assert!(absent_entry_as_none(Err(not_text)).is_err());
+    }
+
+    #[test]
+    fn a_secret_service_failure_names_what_is_missing() {
+        let message = secret_service_unavailable("DBus error: no session bus");
+        assert!(message.contains("DBus error: no session bus"));
+        assert!(message.contains("Secret Service"));
+        assert!(message.contains("D-Bus session bus"));
+    }
+
+    // ── stored_or_legacy ─────────────────────────────────────────────────────
+
+    /// Run `stored_or_legacy` and return what it passed to `adopt`, and
+    /// whether it called `legacy`.
+    fn read_with_legacy(
+        stored: Result<Option<String>, String>,
+        legacy: Result<Option<String>, String>,
+        adopt_result: Result<(), String>,
+    ) -> (Result<Option<String>, String>, bool, Vec<String>) {
+        let mut legacy_was_read = false;
+        let mut adopted = Vec::new();
+        let read = stored_or_legacy(
+            stored,
+            || {
+                legacy_was_read = true;
+                legacy
+            },
+            |secret| {
+                adopted.push(secret.to_string());
+                adopt_result
+            },
+        );
+        (read, legacy_was_read, adopted)
+    }
+
+    #[test]
+    fn a_stored_secret_is_returned_without_reading_the_legacy_store() {
+        let (read, legacy_was_read, adopted) = read_with_legacy(
+            Ok(Some("current".to_string())),
+            Ok(Some("old".to_string())),
+            Ok(()),
+        );
+        assert_eq!(read, Ok(Some("current".to_string())));
+        assert!(!legacy_was_read);
+        assert!(adopted.is_empty());
+    }
+
+    #[test]
+    fn a_legacy_secret_is_adopted_and_returned() {
+        let (read, _, adopted) = read_with_legacy(Ok(None), Ok(Some("old".to_string())), Ok(()));
+        assert_eq!(read, Ok(Some("old".to_string())));
+        assert_eq!(adopted, vec!["old"]);
+    }
+
+    #[test]
+    fn nothing_in_either_store_is_absent() {
+        let (read, legacy_was_read, adopted) = read_with_legacy(Ok(None), Ok(None), Ok(()));
+        assert_eq!(read, Ok(None));
+        assert!(legacy_was_read);
+        assert!(adopted.is_empty());
+    }
+
+    #[test]
+    fn a_failed_read_never_falls_back_to_the_legacy_store() {
+        // A locked keyring may hold a newer value than the kernel keyring.
+        let (read, legacy_was_read, adopted) = read_with_legacy(
+            Err("keyring is locked".to_string()),
+            Ok(Some("old".to_string())),
+            Ok(()),
+        );
+        assert_eq!(read, Err("keyring is locked".to_string()));
+        assert!(!legacy_was_read);
+        assert!(adopted.is_empty());
+    }
+
+    #[test]
+    fn a_failed_legacy_read_is_an_error() {
+        let (read, _, adopted) =
+            read_with_legacy(Ok(None), Err("kernel keyring failed".to_string()), Ok(()));
+        assert_eq!(read, Err("kernel keyring failed".to_string()));
+        assert!(adopted.is_empty());
+    }
+
+    #[test]
+    fn a_legacy_secret_that_cannot_be_adopted_is_an_error() {
+        let (read, _, adopted) = read_with_legacy(
+            Ok(None),
+            Ok(Some("old".to_string())),
+            Err("keyring is locked".to_string()),
+        );
+        let error = read.unwrap_err();
+        assert!(error.contains("keyring is locked"), "error was: {error}");
+        assert!(
+            !error.contains("old"),
+            "the error must not quote the secret"
+        );
+        assert_eq!(adopted, vec!["old"]);
+    }
+
+    // ── deleted_from_either ──────────────────────────────────────────────────
+
+    #[test]
+    fn deleting_only_the_legacy_copy_is_a_successful_delete() {
+        assert_eq!(
+            deleted_from_either(true, Err(keyring::Error::NoEntry)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn deleting_nothing_is_an_error() {
+        assert!(deleted_from_either(false, Err(keyring::Error::NoEntry)).is_err());
+    }
+
+    #[test]
+    fn a_stored_secret_that_was_deleted_is_a_successful_delete() {
+        assert_eq!(deleted_from_either(false, Ok(())), Ok(()));
+        assert_eq!(deleted_from_either(true, Ok(())), Ok(()));
+    }
+
+    #[test]
+    fn a_failed_delete_stays_an_error_after_the_legacy_copy_is_gone() {
+        let locked = keyring::Error::NoStorageAccess("keyring is locked".into());
+        assert!(deleted_from_either(true, Err(locked)).is_err());
     }
 }
 

@@ -109,19 +109,25 @@ pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
 /// and no credentials. Revoking it must still work.
 ///
 /// `delete_secret` reports a missing entry and a failed delete the same way,
-/// so a failed delete is checked by reading the entry back. The call fails
-/// only when the credentials can still be read.
+/// so a failed delete is checked by reading the entry back. The call succeeds
+/// only when the store confirms that nothing is left. A read that fails is an
+/// error, because the credentials may still be there.
 pub fn delete_oauth_credentials(server_name: &str) -> Result<(), String> {
-    let Err(delete_err) = secret_store::delete_secret(&oauth_creds_user(server_name)) else {
+    let account = oauth_creds_user(server_name);
+    let Err(delete_err) = secret_store::delete_secret(&account) else {
         return Ok(());
     };
-    if load_oauth_credentials(server_name).is_ok() {
-        return Err(format!(
+    match secret_store::load_secret_if_present(&account) {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => Err(format!(
             "failed to delete OAuth credentials for '{}': {}",
             server_name, delete_err
-        ));
+        )),
+        Err(read_err) => Err(format!(
+            "could not confirm that OAuth credentials for '{}' were deleted: {} (delete failed with: {})",
+            server_name, read_err, delete_err
+        )),
     }
-    Ok(())
 }
 
 // ── Server config helpers ────────────────────────────────────────────────────
