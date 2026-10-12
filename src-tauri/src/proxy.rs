@@ -113,21 +113,118 @@ pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
 /// only when the store confirms that nothing is left. A read that fails is an
 /// error, because the credentials may still be there.
 pub fn delete_oauth_credentials(server_name: &str) -> Result<(), String> {
-    let account = oauth_creds_user(server_name);
-    let Err(delete_err) = secret_store::delete_secret(&account) else {
+    delete_secret_if_present(&oauth_creds_user(server_name), "OAuth credentials", server_name)
+}
+
+/// Delete the secret under `account`, treating a missing entry as success.
+///
+/// The delete is tried first, so a secret that exists is removed without
+/// being read. `what` names the secret in an error message.
+fn delete_secret_if_present(account: &str, what: &str, server_name: &str) -> Result<(), String> {
+    let Err(delete_err) = secret_store::delete_secret(account) else {
         return Ok(());
     };
-    match secret_store::load_secret_if_present(&account) {
+    match secret_store::load_secret_if_present(account) {
         Ok(None) => Ok(()),
         Ok(Some(_)) => Err(format!(
-            "failed to delete OAuth credentials for '{}': {}",
-            server_name, delete_err
+            "failed to delete {} for '{}': {}",
+            what, server_name, delete_err
         )),
         Err(read_err) => Err(format!(
-            "could not confirm that OAuth credentials for '{}' were deleted: {} (delete failed with: {})",
-            server_name, read_err, delete_err
+            "could not confirm the deletion of {} for '{}': {} (delete failed with: {})",
+            what, server_name, read_err, delete_err
         )),
     }
+}
+
+/// Delete both OAuth secrets stored for a server: the refresh credentials and
+/// the bearer token.
+///
+/// Call this whenever a server name stops referring to the server the secrets
+/// were issued for. Both are keyed by name alone, so a server later created
+/// under the same name would otherwise send the old token to its own URL.
+///
+/// A missing secret is success. The credentials go first, as in a revoke: a
+/// failure then leaves the token in place, and the server still shows as
+/// signed in so the user can try again. Unlike [`delete_oauth_token`], this
+/// does not fail when no token is stored.
+pub fn forget_oauth_secrets(server_name: &str) -> Result<(), String> {
+    delete_oauth_credentials(server_name)?;
+    delete_secret_if_present(&oauth_token_user(server_name), "the OAuth token", server_name)?;
+    set_cached_token_presence(server_name, false);
+    Ok(())
+}
+
+/// Store the given OAuth secrets under `server_name`, and delete whichever of
+/// the two is `None`.
+///
+/// Deleting the absent half matters. A leftover under this name would pair one
+/// account's token with another account's refresh token.
+fn replace_oauth_secrets(
+    server_name: &str,
+    token: Option<&str>,
+    credentials: Option<&str>,
+) -> Result<(), String> {
+    match credentials {
+        Some(credentials) => store_oauth_credentials(server_name, credentials)?,
+        None => delete_oauth_credentials(server_name)?,
+    }
+    match token {
+        Some(token) => store_oauth_token(server_name, token),
+        None => {
+            delete_secret_if_present(
+                &oauth_token_user(server_name),
+                "the OAuth token",
+                server_name,
+            )?;
+            set_cached_token_presence(server_name, false);
+            Ok(())
+        }
+    }
+}
+
+/// Move both OAuth secrets from `old_name` to `new_name`, for a server that is
+/// being renamed.
+///
+/// Anything already stored under `new_name` is replaced or deleted, because
+/// the caller has checked that no server has that name. A server with no
+/// secrets is success, and leaves none under either name.
+///
+/// On an error the secrets are still under `old_name`. A read that fails is
+/// an error before anything is written: the secret may exist, and renaming
+/// without it would leave it behind under the old name.
+pub fn move_oauth_secrets(old_name: &str, new_name: &str) -> Result<(), String> {
+    let token = secret_store::load_secret_if_present(&oauth_token_user(old_name))
+        .map_err(|e| format!("could not read the OAuth token for '{}': {}", old_name, e))?;
+    let credentials = secret_store::load_secret_if_present(&oauth_creds_user(old_name))
+        .map_err(|e| format!("could not read the OAuth credentials for '{}': {}", old_name, e))?;
+
+    replace_oauth_secrets(new_name, token.as_deref(), credentials.as_deref()).map_err(|e| {
+        format!(
+            "could not store the OAuth secrets of '{}' under '{}': {}",
+            old_name, new_name, e
+        )
+    })?;
+
+    if token.is_none() && credentials.is_none() {
+        set_cached_token_presence(old_name, false);
+        return Ok(());
+    }
+
+    let Err(forget_err) = forget_oauth_secrets(old_name) else {
+        return Ok(());
+    };
+    // The old name still holds a secret, so the rename must not go ahead.
+    // Put back whatever was deleted and remove the copies.
+    let restored = replace_oauth_secrets(old_name, token.as_deref(), credentials.as_deref())
+        .and_then(|()| forget_oauth_secrets(new_name));
+    Err(match restored {
+        Ok(()) => forget_err,
+        Err(restore_err) => format!(
+            "{} (the OAuth secrets could not be put back as they were: {})",
+            forget_err, restore_err
+        ),
+    })
 }
 
 // ── Server config helpers ────────────────────────────────────────────────────
@@ -355,6 +452,90 @@ mod tests {
 
         delete_oauth_token(server).unwrap();
         assert!(!has_oauth_token(server));
+    }
+
+    // Each test below uses server names no other test uses. The test secret
+    // store and the token presence cache are shared by the whole test process.
+
+    #[test]
+    fn forget_removes_the_token_and_the_credentials() {
+        let server = "forget-test-both-fixture";
+        store_oauth_token(server, "token").unwrap();
+        store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#).unwrap();
+        assert!(has_oauth_token(server));
+
+        forget_oauth_secrets(server).unwrap();
+
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(server)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(server)), Ok(None));
+        assert!(!has_oauth_token(server));
+    }
+
+    #[test]
+    fn forget_succeeds_when_nothing_is_stored() {
+        let server = "forget-test-empty-fixture";
+
+        forget_oauth_secrets(server).unwrap();
+
+        assert!(!has_oauth_token(server));
+    }
+
+    #[test]
+    fn forget_removes_credentials_left_without_a_token() {
+        let server = "forget-test-creds-only-fixture";
+        store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#).unwrap();
+
+        forget_oauth_secrets(server).unwrap();
+
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(server)), Ok(None));
+    }
+
+    #[test]
+    fn move_carries_both_secrets_to_the_new_name() {
+        let (old, new) = ("move-test-both-old-fixture", "move-test-both-new-fixture");
+        store_oauth_token(old, "token").unwrap();
+        store_oauth_credentials(old, r#"{"refresh_token":"refresh"}"#).unwrap();
+        // Prime the cache with the answers a sync would have recorded.
+        assert!(has_oauth_token(old));
+        assert!(!has_oauth_token(new));
+
+        move_oauth_secrets(old, new).unwrap();
+
+        assert_eq!(load_oauth_token(new).unwrap(), "token");
+        assert_eq!(load_oauth_credentials(new).unwrap(), r#"{"refresh_token":"refresh"}"#);
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(old)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(old)), Ok(None));
+        assert!(has_oauth_token(new));
+        assert!(!has_oauth_token(old));
+    }
+
+    #[test]
+    fn move_with_no_secrets_leaves_none_under_either_name() {
+        let (old, new) = ("move-test-empty-old-fixture", "move-test-empty-new-fixture");
+        // Secrets left under the new name by a server that no longer exists.
+        store_oauth_token(new, "stale-token").unwrap();
+        store_oauth_credentials(new, r#"{"refresh_token":"stale"}"#).unwrap();
+        assert!(has_oauth_token(new));
+
+        move_oauth_secrets(old, new).unwrap();
+
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(new)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+        assert!(!has_oauth_token(new));
+        assert!(!has_oauth_token(old));
+    }
+
+    #[test]
+    fn move_of_a_token_alone_deletes_credentials_left_under_the_new_name() {
+        let (old, new) = ("move-test-token-old-fixture", "move-test-token-new-fixture");
+        store_oauth_token(old, "token").unwrap();
+        store_oauth_credentials(new, r#"{"refresh_token":"stale"}"#).unwrap();
+
+        move_oauth_secrets(old, new).unwrap();
+
+        assert_eq!(load_oauth_token(new).unwrap(), "token");
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(old)), Ok(None));
     }
 
     #[test]

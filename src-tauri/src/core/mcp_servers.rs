@@ -265,10 +265,22 @@ fn blank_ciphertext_like_env_values(config_json: &str) -> String {
     config.to_string()
 }
 
+/// Delete a single MCP server config, and the OAuth secrets stored for it.
+///
+/// The secrets go first. They are keyed by server name, so a server later
+/// created under this name would send the old token to its own URL. If the
+/// secret store cannot confirm they are gone, the config is left in place and
+/// the call fails, so the user can try again. A server with no secrets is
+/// deleted as before.
+///
+/// Callers are responsible for removing the name from projects, profiles and
+/// global selections.
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
+    crate::proxy::forget_oauth_secrets(name)?;
+
     let dir = get_mcp_servers_dir()?;
     let path = dir.join(format!("{}.json", name));
 
@@ -289,6 +301,11 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
 ///
 /// Any provenance entry recorded against `old_name` is moved to `new_name` so
 /// the GitHub author badge continues to show.
+///
+/// The server's OAuth secrets are keyed by name, so they move to `new_name`
+/// before the file does. Left behind, the renamed server would look signed
+/// out, and a server later created as `old_name` would send the old token to
+/// its own URL. A failed move fails the rename with nothing changed.
 pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
     if !is_valid_name(old_name) || !is_valid_name(new_name) {
         return Err("Invalid server name".into());
@@ -311,7 +328,18 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
         return Err(format!("MCP server '{}' already exists", new_name));
     }
 
-    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+    crate::proxy::move_oauth_secrets(old_name, new_name)?;
+
+    if let Err(rename_err) = fs::rename(&old_path, &new_path) {
+        // The config is still under the old name, so its secrets go back.
+        return Err(match crate::proxy::move_oauth_secrets(new_name, old_name) {
+            Ok(()) => rename_err.to_string(),
+            Err(restore_err) => format!(
+                "{} (the OAuth secrets could not be moved back to '{}': {})",
+                rename_err, old_name, restore_err
+            ),
+        });
+    }
 
     remove_recently_added("mcp_servers", old_name);
 
@@ -1508,6 +1536,122 @@ mod tests {
                     .expect("read new provenance"),
                 Some("octocat/mcp-collection".to_string())
             );
+        });
+    }
+
+    // ── OAuth secrets follow the server ──────────────────────────────────────
+    //
+    // The test secret store and the token presence cache are shared by the
+    // whole test process, so each test uses server names no other test uses.
+
+    const OAUTH_SERVER: &str = r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#;
+
+    fn store_oauth_secrets(server: &str) {
+        crate::proxy::store_oauth_token(server, "access-token").expect("store token");
+        crate::proxy::store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#)
+            .expect("store credentials");
+    }
+
+    fn has_no_oauth_secrets(server: &str) -> bool {
+        crate::proxy::load_oauth_token(server).is_err()
+            && crate::proxy::load_oauth_credentials(server).is_err()
+            && !crate::proxy::has_oauth_token(server)
+    }
+
+    #[test]
+    fn delete_removes_the_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-delete-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+            assert!(crate::proxy::has_oauth_token(server));
+
+            delete_mcp_server_config(server).expect("delete");
+
+            assert!(read_mcp_server_config(server).is_err());
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn delete_succeeds_for_a_server_with_no_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-delete-none-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+
+            delete_mcp_server_config(server).expect("delete");
+
+            assert!(read_mcp_server_config(server).is_err());
+        });
+    }
+
+    #[test]
+    fn delete_removes_oauth_secrets_left_without_a_config() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-delete-orphan-fixture";
+            store_oauth_secrets(server);
+
+            delete_mcp_server_config(server).expect("delete");
+
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn rename_moves_the_oauth_secrets_to_the_new_name() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (old, new) = ("secrets-rename-old-fixture", "secrets-rename-new-fixture");
+            save_mcp_server_config(old, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(old);
+            assert!(crate::proxy::has_oauth_token(old));
+            assert!(!crate::proxy::has_oauth_token(new));
+
+            rename_mcp_server_config(old, new).expect("rename");
+
+            assert_eq!(crate::proxy::load_oauth_token(new).expect("token"), "access-token");
+            assert_eq!(
+                crate::proxy::load_oauth_credentials(new).expect("credentials"),
+                r#"{"refresh_token":"refresh"}"#
+            );
+            assert!(crate::proxy::has_oauth_token(new));
+            assert!(has_no_oauth_secrets(old));
+        });
+    }
+
+    #[test]
+    fn rename_succeeds_for_a_server_with_no_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (old, new) = ("secrets-rename-none-old-fixture", "secrets-rename-none-new-fixture");
+            save_mcp_server_config(old, OAUTH_SERVER).expect("save");
+
+            rename_mcp_server_config(old, new).expect("rename");
+
+            assert!(read_mcp_server_config(new).is_ok());
+            assert!(has_no_oauth_secrets(old));
+            assert!(has_no_oauth_secrets(new));
+        });
+    }
+
+    #[test]
+    fn a_refused_rename_leaves_the_oauth_secrets_where_they_were() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (old, taken) = ("secrets-rename-kept-fixture", "secrets-rename-taken-fixture");
+            save_mcp_server_config(old, OAUTH_SERVER).expect("save old");
+            save_mcp_server_config(taken, OAUTH_SERVER).expect("save taken");
+            store_oauth_secrets(old);
+            crate::proxy::store_oauth_token(taken, "other-token").expect("store other token");
+
+            rename_mcp_server_config(old, taken).expect_err("should refuse");
+
+            assert_eq!(crate::proxy::load_oauth_token(old).expect("token"), "access-token");
+            assert!(crate::proxy::load_oauth_credentials(old).is_ok());
+            assert_eq!(crate::proxy::load_oauth_token(taken).expect("other token"), "other-token");
         });
     }
 
