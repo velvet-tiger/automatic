@@ -2820,6 +2820,66 @@ mod tests {
         });
     }
 
+    /// An enabled server that exists but cannot be read stops every check
+    /// that builds the expected server map.  Leaving the server out would
+    /// report the project's agent files as drifted, or report no problems.
+    #[test]
+    fn checks_fail_when_an_enabled_mcp_server_cannot_be_read() {
+        use crate::core::{
+            save_mcp_server_config, with_test_home, write_undecryptable_mcp_server_config, Project,
+        };
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("drift-good", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save drift-good");
+            let mut project = Project {
+                name: "drift-unreadable".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec!["drift-good".to_string(), "drift-locked".to_string()],
+                ..Default::default()
+            };
+            // `drift-locked` has no registry entry yet, so this sync works and
+            // leaves agent files on disk for the drift check to compare.
+            crate::sync::sync_project_without_autodetect(&mut project).expect("sync");
+            write_undecryptable_mcp_server_config("drift-locked");
+
+            let drift = check_project_drift(&project)
+                .expect_err("drift check must stop on a server it cannot read");
+            assert!(
+                drift.contains("drift-locked"),
+                "error names the server: {}",
+                drift
+            );
+
+            let notes = mcp_config_sync_notes(&project)
+                .expect_err("sync notes must stop on a server they cannot read");
+            assert!(
+                notes.contains("drift-locked"),
+                "error names the server: {}",
+                notes
+            );
+
+            let problems = check_project_problems(&project)
+                .expect_err("problems check must stop on a server it cannot read");
+            assert!(
+                problems.contains("drift-locked"),
+                "error names the server: {}",
+                problems
+            );
+
+            // A disabled server is not read, so the checks work again.
+            project.disabled_mcp_servers = vec!["drift-locked".to_string()];
+            let drift = check_project_drift(&project).expect("drift check");
+            assert!(!drift.drifted, "nothing changed on disk: {:?}", drift);
+            mcp_config_sync_notes(&project).expect("sync notes");
+            check_project_problems(&project).expect("problems check");
+        });
+    }
+
     /// The same server at user scope for several agents is one problem, not
     /// one per agent, and the fix steps name each agent's own file.  Agents
     /// with no project-local MCP config (Cline) cannot conflict and are

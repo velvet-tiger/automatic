@@ -540,6 +540,86 @@ mod tests {
         });
     }
 
+    /// The whole saved state document, for before-and-after comparison.
+    fn saved_state() -> serde_json::Value {
+        serde_json::to_value(load_global_mcp_state().expect("load state")).expect("state as JSON")
+    }
+
+    #[test]
+    fn preview_fails_when_a_selected_server_cannot_be_read() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("preview-good");
+            crate::core::write_undecryptable_mcp_server_config("preview-locked");
+
+            let selection = vec!["preview-good".to_string(), "preview-locked".to_string()];
+            let err = preview_global_mcp("cursor", &selection)
+                .expect_err("a selected server that cannot be read must stop the preview");
+            assert!(
+                err.contains("preview-locked"),
+                "error names the server: {}",
+                err
+            );
+
+            // An unreadable server outside the selection does not block it.
+            let preview =
+                preview_global_mcp("cursor", &["preview-good".to_string()]).expect("preview");
+            assert_eq!(preview.would_write, vec!["preview-good".to_string()]);
+        });
+    }
+
+    /// Without the error, the apply would treat the unreadable server as
+    /// gone from the registry and leave it out of the agent's file.
+    #[test]
+    fn apply_fails_and_changes_nothing_when_a_selected_server_cannot_be_read() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("apply-good");
+            seed_registry("apply-later-locked");
+            let selection = vec!["apply-good".to_string(), "apply-later-locked".to_string()];
+            apply_global_mcp("cursor", selection.clone()).expect("first apply");
+
+            let agent_file = agent::from_id("cursor")
+                .and_then(|cursor| cursor.global_mcp_target())
+                .expect("cursor global target")
+                .path;
+            assert!(
+                agent_file.starts_with(tmp.path()),
+                "the agent file must sit under the test home: {}",
+                agent_file.display()
+            );
+            let file_before = std::fs::read(&agent_file).expect("agent file after first apply");
+            let state_before = saved_state();
+
+            crate::core::write_undecryptable_mcp_server_config("apply-later-locked");
+
+            // Deselecting `apply-good` would remove it from the agent file
+            // and from the saved state if the apply went ahead.
+            let err = apply_global_mcp("cursor", vec!["apply-later-locked".to_string()])
+                .expect_err("a selected server that cannot be read must stop the apply");
+            assert!(
+                err.contains("apply-later-locked"),
+                "error names the server: {}",
+                err
+            );
+
+            assert_eq!(
+                std::fs::read(&agent_file).expect("agent file after failed apply"),
+                file_before,
+                "the agent file must be left untouched"
+            );
+            assert_eq!(
+                saved_state(),
+                state_before,
+                "the saved state must be left untouched"
+            );
+            let state = load_global_mcp_state().unwrap();
+            let cursor = state.agents.get("cursor").expect("state entry");
+            assert_eq!(cursor.selected, selection);
+            assert_eq!(cursor.managed, selection);
+        });
+    }
+
     #[test]
     fn status_reflects_in_sync_after_apply() {
         let tmp = TempDir::new().unwrap();

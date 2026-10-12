@@ -530,6 +530,13 @@ fn enrich_skill_collections(project: &mut Project) {
 fn enrich_mcp_server_specs(project: &mut Project) {
     let mut specs = BTreeMap::new();
     for name in &project.mcp_servers {
+        // The registry can never hold a config under an invalid name, so
+        // there is nothing to snapshot.  The reader reports such a name as an
+        // error, and the branch below would keep whatever spec the project
+        // file carries for it.
+        if !is_valid_name(name) {
+            continue;
+        }
         match read_mcp_server_spec(name) {
             Ok(Some(spec)) => {
                 specs.insert(name.clone(), spec);
@@ -542,7 +549,11 @@ fn enrich_mcp_server_specs(project: &mut Project) {
             // read and save, and one unreadable server must not block them.
             // The snapshot the project already carries is kept, so a failed
             // read does not erase it from the saved project.
-            Err(_) => {
+            Err(e) => {
+                eprintln!(
+                    "enrich_project: could not read MCP server '{}' for project '{}': {}",
+                    name, project.name, e
+                );
                 if let Some(prior) = project.mcp_server_specs.get(name) {
                     specs.insert(name.clone(), prior.clone());
                 }
@@ -1675,6 +1686,26 @@ mod tests {
             enrich_project(&mut project);
 
             assert!(project.mcp_server_specs.is_empty());
+        });
+    }
+
+    #[test]
+    fn enrich_drops_the_spec_of_a_server_with_an_invalid_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            for invalid in ["a/b", "a\\b", ".."] {
+                let mut project = project_with_prior_spec(invalid);
+
+                enrich_project(&mut project);
+
+                assert!(
+                    project.mcp_server_specs.is_empty(),
+                    "a spec under the invalid name {:?} must not be kept",
+                    invalid
+                );
+            }
         });
     }
 

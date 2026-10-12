@@ -149,6 +149,13 @@ fn sync_to_directory_inner(
         return Err(format!("Directory '{}' does not exist", project.directory));
     }
 
+    // Read the enabled MCP server configs from the Automatic registry before
+    // anything is written.  This read fails when an enabled server exists but
+    // cannot be read, and the legacy migrations below delete and move files.
+    // A sync that is going to stop here must stop before they run.
+    let enabled_mcp_servers = project.enabled_mcp_servers();
+    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+
     // In Silent mode all synced files are written under .automatic/silent/
     // instead of the project root, leaving the project tree untouched.
     let effective_dir = match project.mode {
@@ -178,12 +185,9 @@ fn sync_to_directory_inner(
     // already selected for this project, before the MCP write below.
     migrate_legacy_kilocode(&effective_dir, project);
 
-    // Read MCP server configs from the Automatic registry and build the
-    // selected server map (includes stripping internal fields and OAuth proxy
-    // substitution).  Uses the shared helper so drift detection produces
-    // identical output.
-    let enabled_mcp_servers = project.enabled_mcp_servers();
-    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    // Build the selected server map from the registry configs read above
+    // (includes stripping internal fields and OAuth proxy substitution).
+    // Uses the shared helper so drift detection produces identical output.
     let selected_servers = build_selected_servers(
         automatic_project_env_value(project),
         &enabled_mcp_servers,
@@ -1969,6 +1973,37 @@ mod tests {
             assert!(
                 !dir.path().join(".mcp.json").exists(),
                 "no MCP config is written without the server"
+            );
+        });
+    }
+
+    /// The legacy `.kilocode/mcp.json` is deleted once every server it names
+    /// is selected. A sync that stops on an unreadable server must stop
+    /// before that, or the file is gone and nothing replaced it.
+    #[test]
+    fn a_sync_that_fails_on_an_unreadable_server_keeps_the_legacy_kilocode_file() {
+        let home = tmp();
+        let dir = tmp();
+        let legacy = r#"{"mcpServers":{"sync-kilo-locked":{"command":"npx"}}}"#;
+        fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
+        fs::write(dir.path().join(".kilocode/mcp.json"), legacy).expect("write legacy file");
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::write_undecryptable_mcp_server_config("sync-kilo-locked");
+            let mut project = make_kilo_project(dir.path().to_str().unwrap());
+            project.mcp_servers = vec!["sync-kilo-locked".to_string()];
+
+            let err = sync_project_without_autodetect(&mut project)
+                .expect_err("a selected server that cannot be read must stop the sync");
+            assert!(
+                err.contains("sync-kilo-locked"),
+                "error names the server: {}",
+                err
+            );
+            assert_eq!(
+                fs::read_to_string(dir.path().join(".kilocode/mcp.json")).expect("legacy file"),
+                legacy,
+                "a failed sync must not delete the legacy file"
             );
         });
     }
