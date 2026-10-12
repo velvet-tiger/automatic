@@ -108,33 +108,67 @@ pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
 /// token and carries on when that store fails, so a server can have a token
 /// and no credentials. Revoking it must still work.
 ///
-/// `delete_secret` reports a missing entry and a failed delete the same way,
-/// so a failed delete is checked by reading the entry back. The call succeeds
-/// only when the store confirms that nothing is left. A read that fails is an
-/// error, because the credentials may still be there.
+/// The call succeeds only when the store confirms that nothing is left. A
+/// read that fails is an error, because the credentials may still be there.
+/// A revoke is the user asking for the secrets to be gone, so it must not
+/// report success on a guess.
 pub fn delete_oauth_credentials(server_name: &str) -> Result<(), String> {
-    delete_secret_if_present(&oauth_creds_user(server_name), "OAuth credentials", server_name)
+    match remove_secret(&oauth_creds_user(server_name), "OAuth credentials", server_name)? {
+        Removal::Gone => Ok(()),
+        Removal::Unconfirmed { delete_err, read_err } => Err(format!(
+            "could not confirm the deletion of OAuth credentials for '{}': {} (delete failed with: {})",
+            server_name, read_err, delete_err
+        )),
+    }
 }
 
-/// Delete the secret under `account`, treating a missing entry as success.
+/// What became of a secret that was to be deleted.
+enum Removal {
+    /// Nothing is stored under the account now.
+    Gone,
+    /// The delete failed, and the store could not be read to see whether the
+    /// secret is there.
+    Unconfirmed { delete_err: String, read_err: String },
+}
+
+/// Delete the secret under `account`. `what` names it in an error message.
 ///
-/// The delete is tried first, so a secret that exists is removed without
-/// being read. `what` names the secret in an error message.
-fn delete_secret_if_present(account: &str, what: &str, server_name: &str) -> Result<(), String> {
+/// `delete_secret` reports a missing entry and a failed delete the same way,
+/// so a failed delete is checked by reading the entry back. The delete is
+/// tried first, so a secret that exists is removed without being read.
+///
+/// The only error is a store that answers and still holds the secret.
+fn remove_secret(account: &str, what: &str, server_name: &str) -> Result<Removal, String> {
     let Err(delete_err) = secret_store::delete_secret(account) else {
-        return Ok(());
+        return Ok(Removal::Gone);
     };
     match secret_store::load_secret_if_present(account) {
-        Ok(None) => Ok(()),
+        Ok(None) => Ok(Removal::Gone),
         Ok(Some(_)) => Err(format!(
             "failed to delete {} for '{}': {}",
             what, server_name, delete_err
         )),
-        Err(read_err) => Err(format!(
-            "could not confirm the deletion of {} for '{}': {} (delete failed with: {})",
-            what, server_name, read_err, delete_err
-        )),
+        Err(read_err) => Ok(Removal::Unconfirmed { delete_err, read_err }),
     }
+}
+
+/// Delete the secret under `account` for a server whose name is changing
+/// hands, and carry on when the store cannot be read.
+///
+/// A store that cannot be read cannot hand a token to the proxy either. On
+/// Linux with no Secret Service every call fails, always. Treating that as an
+/// error would stop every delete and rename of a remote server there. The
+/// cost is a secret that outlives its server if the store is unreadable now
+/// and readable later. A warning is logged, and creating a server with a URL
+/// under the name makes the same attempt again.
+fn forget_secret(account: &str, what: &str, server_name: &str) -> Result<(), String> {
+    if let Removal::Unconfirmed { delete_err, read_err } = remove_secret(account, what, server_name)? {
+        eprintln!(
+            "warning: could not check whether {} for MCP server '{}' is still stored: {} (delete failed with: {})",
+            what, server_name, read_err, delete_err
+        );
+    }
+    Ok(())
 }
 
 /// Delete both OAuth secrets stored for a server: the refresh credentials and
@@ -144,13 +178,15 @@ fn delete_secret_if_present(account: &str, what: &str, server_name: &str) -> Res
 /// were issued for. Both are keyed by name alone, so a server later created
 /// under the same name would otherwise send the old token to its own URL.
 ///
-/// A missing secret is success. The credentials go first, as in a revoke: a
-/// failure then leaves the token in place, and the server still shows as
-/// signed in so the user can try again. Unlike [`delete_oauth_token`], this
-/// does not fail when no token is stored.
+/// A missing secret is success. So is a store that cannot be read, as
+/// [`forget_secret`] explains. The error is a store that answers and still
+/// holds a secret. The credentials go first, as in a revoke: a failure then
+/// leaves the token in place, and the server still shows as signed in so the
+/// user can try again. Unlike [`delete_oauth_token`], this does not fail when
+/// no token is stored.
 pub fn forget_oauth_secrets(server_name: &str) -> Result<(), String> {
-    delete_oauth_credentials(server_name)?;
-    delete_secret_if_present(&oauth_token_user(server_name), "the OAuth token", server_name)?;
+    forget_secret(&oauth_creds_user(server_name), "the OAuth credentials", server_name)?;
+    forget_secret(&oauth_token_user(server_name), "the OAuth token", server_name)?;
     set_cached_token_presence(server_name, false);
     Ok(())
 }
@@ -167,18 +203,29 @@ fn replace_oauth_secrets(
 ) -> Result<(), String> {
     match credentials {
         Some(credentials) => store_oauth_credentials(server_name, credentials)?,
-        None => delete_oauth_credentials(server_name)?,
+        None => forget_secret(&oauth_creds_user(server_name), "the OAuth credentials", server_name)?,
     }
     match token {
         Some(token) => store_oauth_token(server_name, token),
         None => {
-            delete_secret_if_present(
-                &oauth_token_user(server_name),
-                "the OAuth token",
-                server_name,
-            )?;
+            forget_secret(&oauth_token_user(server_name), "the OAuth token", server_name)?;
             set_cached_token_presence(server_name, false);
             Ok(())
+        }
+    }
+}
+
+/// Read one of the secrets a rename has to move. `None` means the store could
+/// not be read, and a warning has been logged.
+fn read_secret_to_move(account: &str, old_name: &str, new_name: &str) -> Option<Option<String>> {
+    match secret_store::load_secret_if_present(account) {
+        Ok(secret) => Some(secret),
+        Err(e) => {
+            eprintln!(
+                "warning: could not read the OAuth secrets of MCP server '{}', so none were moved to '{}': {}",
+                old_name, new_name, e
+            );
+            None
         }
     }
 }
@@ -190,15 +237,20 @@ fn replace_oauth_secrets(
 /// the caller has checked that no server has that name. A server with no
 /// secrets is success, and leaves none under either name.
 ///
+/// A store that cannot be read is success too, and nothing is moved. The
+/// reasons are the ones [`forget_secret`] gives. The renamed server is then
+/// signed out.
+///
 /// On an error the secrets are still under `old_name`, and none are left
-/// under `new_name`. A read that fails is an error before anything is
-/// written: the secret may exist, and renaming without it would leave it
-/// behind under the old name.
+/// under `new_name`.
 pub fn move_oauth_secrets(old_name: &str, new_name: &str) -> Result<(), String> {
-    let token = secret_store::load_secret_if_present(&oauth_token_user(old_name))
-        .map_err(|e| format!("could not read the OAuth token for '{}': {}", old_name, e))?;
-    let credentials = secret_store::load_secret_if_present(&oauth_creds_user(old_name))
-        .map_err(|e| format!("could not read the OAuth credentials for '{}': {}", old_name, e))?;
+    let Some(token) = read_secret_to_move(&oauth_token_user(old_name), old_name, new_name) else {
+        return Ok(());
+    };
+    let Some(credentials) = read_secret_to_move(&oauth_creds_user(old_name), old_name, new_name)
+    else {
+        return Ok(());
+    };
 
     if let Err(store_err) =
         replace_oauth_secrets(new_name, token.as_deref(), credentials.as_deref())
@@ -545,6 +597,72 @@ mod tests {
         assert_eq!(load_oauth_token(new).unwrap(), "token");
         assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
         assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(old)), Ok(None));
+    }
+
+    // ── A secret store that fails ────────────────────────────────────────────
+
+    use crate::core::secret_store::{set_test_fault, TestFault};
+
+    #[test]
+    fn a_revoke_does_not_report_success_when_the_store_cannot_be_read() {
+        let server = "fault-test-revoke-fixture";
+        set_test_fault(&oauth_creds_user(server), Some(TestFault::Unreadable));
+
+        let err = delete_oauth_credentials(server).expect_err("must not guess");
+
+        assert!(err.contains("could not confirm"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn forget_succeeds_when_the_store_cannot_be_read() {
+        let server = "fault-test-forget-unreadable-fixture";
+        set_test_fault(&oauth_creds_user(server), Some(TestFault::Unreadable));
+        set_test_fault(&oauth_token_user(server), Some(TestFault::Unreadable));
+
+        forget_oauth_secrets(server).unwrap();
+
+        assert!(!has_oauth_token(server));
+    }
+
+    #[test]
+    fn forget_fails_when_the_store_still_holds_the_token() {
+        let server = "fault-test-forget-refused-fixture";
+        store_oauth_token(server, "token").unwrap();
+        set_test_fault(&oauth_token_user(server), Some(TestFault::DeleteRefused));
+
+        let err = forget_oauth_secrets(server).expect_err("the token is still stored");
+
+        assert!(err.contains("failed to delete the OAuth token"), "unexpected error: {err}");
+        assert_eq!(load_oauth_token(server).unwrap(), "token");
+        assert!(has_oauth_token(server));
+    }
+
+    #[test]
+    fn move_succeeds_and_moves_nothing_when_the_store_cannot_be_read() {
+        let (old, new) = ("fault-test-move-unreadable-old-fixture", "fault-test-move-unreadable-new-fixture");
+        set_test_fault(&oauth_token_user(old), Some(TestFault::Unreadable));
+
+        move_oauth_secrets(old, new).unwrap();
+
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(new)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+    }
+
+    #[test]
+    fn a_move_that_cannot_clear_the_old_name_puts_the_secrets_back() {
+        let (old, new) = ("fault-test-move-refused-old-fixture", "fault-test-move-refused-new-fixture");
+        store_oauth_token(old, "token").unwrap();
+        store_oauth_credentials(old, r#"{"refresh_token":"refresh"}"#).unwrap();
+        set_test_fault(&oauth_token_user(old), Some(TestFault::DeleteRefused));
+
+        move_oauth_secrets(old, new).expect_err("the old name still holds the token");
+
+        assert_eq!(load_oauth_token(old).unwrap(), "token");
+        assert_eq!(load_oauth_credentials(old).unwrap(), r#"{"refresh_token":"refresh"}"#);
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(new)), Ok(None));
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+        assert!(has_oauth_token(old));
+        assert!(!has_oauth_token(new));
     }
 
     #[test]

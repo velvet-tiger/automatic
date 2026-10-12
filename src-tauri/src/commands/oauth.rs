@@ -65,6 +65,20 @@ pub async fn get_mcp_oauth_token_status(
         });
     }
 
+    // The check sends the token to `mcp_url`, which the caller supplies. The
+    // token is only ever used with the saved URL, so no other URL gets it.
+    if !crate::core::mcp_server_url_is(&server_name, &mcp_url)? {
+        return Ok(McpOAuthTokenStatus {
+            has_token: true,
+            valid: false,
+            revoked: false,
+            message: Some(
+                "Cannot verify token because this is not the URL saved for the MCP server. Save the server first."
+                    .to_string(),
+            ),
+        });
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -174,6 +188,38 @@ mod tests {
 
     // Each test uses its own server name. The test secret store and the
     // token presence cache are shared by the whole test process.
+
+    #[test]
+    fn the_token_check_does_not_send_the_token_to_a_url_that_is_not_saved() {
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let server = "status-saved-url-fixture";
+            crate::core::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("save");
+            crate::proxy::store_oauth_token(server, "access-token").unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            // Nothing listens on this port. A request to it would come back
+            // as an error, not as a status.
+            let status = runtime
+                .block_on(get_mcp_oauth_token_status(
+                    server.to_string(),
+                    "http://127.0.0.1:9/mcp".to_string(),
+                ))
+                .expect("status");
+
+            assert!(status.has_token);
+            assert!(!status.valid);
+            assert!(!status.revoked);
+            assert!(status.message.expect("message").contains("not the URL saved"));
+        });
+    }
 
     #[test]
     fn revoke_removes_token_and_refresh_credentials() {

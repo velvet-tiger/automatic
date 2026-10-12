@@ -240,6 +240,8 @@ pub async fn register_client(
 ///
 /// Returns the access token on success.
 pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String, String> {
+    ensure_saved_url(server_name, mcp_url)?;
+
     // 1. Discover OAuth metadata.
     let metadata = discover_auth_server(mcp_url).await?;
 
@@ -309,7 +311,9 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     )
     .await?;
 
-    // 8. Store in keychain.
+    // 8. Store in keychain. The browser step can take minutes, and the
+    // server's URL may have been saved as something else since it began.
+    ensure_saved_url(server_name, mcp_url)?;
     crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
 
     // Best-effort: store full credentials for future refresh.
@@ -333,6 +337,22 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     }
 
     Ok(token_response.access_token)
+}
+
+/// Refuse to sign in at a URL that is not the one saved for the server.
+///
+/// The token is stored under the server's name, and the proxy sends it to
+/// the saved URL. A token issued for any other URL would go to the wrong
+/// place. The caller's URL comes from an editor or an RPC client, so it is
+/// checked here and not trusted.
+fn ensure_saved_url(server_name: &str, mcp_url: &str) -> Result<(), String> {
+    if crate::core::mcp_server_url_is(server_name, mcp_url)? {
+        return Ok(());
+    }
+    Err(format!(
+        "'{}' is not the URL saved for MCP server '{}'. Save the server, then sign in again.",
+        mcp_url, server_name
+    ))
 }
 
 // ── Callback HTML pages ───────────────────────────────────────────────────────
@@ -724,4 +744,63 @@ pub async fn refresh_token(server_name: &str) -> Result<String, String> {
     crate::proxy::store_oauth_credentials(server_name, &updated_json)?;
 
     Ok(token_response.access_token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::with_test_home;
+
+    #[test]
+    fn sign_in_is_refused_at_a_url_that_is_not_the_saved_one() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "sign-in-saved-url-fixture";
+            crate::core::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("save");
+
+            ensure_saved_url(server, "https://mcp.example.com/mcp").expect("the saved url");
+            let err = ensure_saved_url(server, "https://other.example/mcp")
+                .expect_err("another url");
+            assert!(err.contains("not the URL saved"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn sign_in_is_refused_for_a_server_that_is_not_saved() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            ensure_saved_url("sign-in-unsaved-fixture", "https://mcp.example.com/mcp")
+                .expect_err("no saved server");
+        });
+    }
+
+    #[test]
+    fn authorising_at_another_url_fails_before_any_request() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "sign-in-authorise-fixture";
+            crate::core::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("save");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            // Nothing listens on this port. Reaching it would give a
+            // different error.
+            let err = runtime
+                .block_on(authorize_server(server, "http://127.0.0.1:9/mcp"))
+                .expect_err("another url");
+
+            assert!(err.contains("not the URL saved"), "unexpected error: {err}");
+            assert!(!crate::proxy::has_oauth_token(server));
+        });
+    }
 }
