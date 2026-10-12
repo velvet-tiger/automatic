@@ -350,7 +350,7 @@ fn ensure_saved_url(server_name: &str, mcp_url: &str) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "'{}' is not the URL saved for MCP server '{}'. Save the server, then sign in again.",
+        "'{}' is not the URL saved for MCP server '{}'. Save your changes, or reopen the server if it was changed elsewhere, then sign in again.",
         mcp_url, server_name
     ))
 }

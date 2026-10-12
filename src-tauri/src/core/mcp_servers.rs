@@ -325,11 +325,19 @@ fn may_have_oauth_secrets(path: &Path) -> Result<bool, String> {
 /// A server's OAuth token is used with its saved URL, so sign-in and the
 /// token check ask this before they use a URL a caller gave them. False when
 /// the server is not stored or has no URL.
+///
+/// False too when the registry file is stored under another form of `name`,
+/// such as another case. The token is kept under the name the caller gave,
+/// and the cleanup of a server's secrets would not find it there.
 pub fn mcp_server_url_is(name: &str, url: &str) -> Result<bool, String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
-    let path = get_mcp_servers_dir()?.join(format!("{}.json", name));
+    let dir = get_mcp_servers_dir()?;
+    if stored_server_name(&dir, name)?.is_some_and(|stored| stored != name) {
+        return Ok(false);
+    }
+    let path = dir.join(format!("{}.json", name));
     let StoredUrl::Known(Some(saved_url)) = stored_server_url(&path)? else {
         return Ok(false);
     };
@@ -2088,6 +2096,20 @@ mod tests {
             assert!(!mcp_server_url_is(server, "https://other.example/mcp").expect("other host"));
             assert!(!mcp_server_url_is(server, "https://mcp.example.com/sse").expect("other path"));
             assert!(!mcp_server_url_is(server, "").expect("empty"));
+        });
+    }
+
+    #[test]
+    fn the_saved_url_is_not_matched_under_another_case_of_the_name() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "saved-url-case-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+
+            // Another server where case matters, and the same file under a
+            // name the token must not be stored as where it does not.
+            assert!(!mcp_server_url_is(&server.to_uppercase(), "https://mcp.example.com/mcp")
+                .expect("other case"));
         });
     }
 

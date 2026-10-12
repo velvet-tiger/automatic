@@ -73,7 +73,7 @@ pub async fn get_mcp_oauth_token_status(
             valid: false,
             revoked: false,
             message: Some(
-                "Cannot verify token because this is not the URL saved for the MCP server. Save the server first."
+                "Cannot verify token because this is not the URL saved for the MCP server. Save your changes, or reopen the server if it was changed elsewhere."
                     .to_string(),
             ),
         });

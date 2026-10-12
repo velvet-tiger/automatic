@@ -157,10 +157,14 @@ fn remove_secret(account: &str, what: &str, server_name: &str) -> Result<Removal
 ///
 /// A store that cannot be read cannot hand a token to the proxy either. On
 /// Linux with no Secret Service every call fails, always. Treating that as an
-/// error would stop every delete and rename of a remote server there. The
-/// cost is a secret that outlives its server if the store is unreadable now
-/// and readable later. A warning is logged, and creating a server with a URL
-/// under the name makes the same attempt again.
+/// error would stop every delete and rename of a remote server there.
+///
+/// The cost is a secret that stays if the store is unreadable now and
+/// readable later, as with a locked keychain. A warning is logged. After a
+/// delete or rename, creating a server with a URL under the name makes the
+/// same attempt again. After a save that changes a server's URL nothing
+/// does, because the name stays in use: the old token is then sent to the
+/// new URL once the store can be read.
 fn forget_secret(account: &str, what: &str, server_name: &str) -> Result<(), String> {
     if let Removal::Unconfirmed { delete_err, read_err } = remove_secret(account, what, server_name)? {
         eprintln!(
@@ -646,6 +650,34 @@ mod tests {
 
         assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(new)), Ok(None));
         assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+    }
+
+    #[test]
+    fn move_moves_nothing_when_only_the_credentials_cannot_be_read() {
+        let (old, new) = ("fault-test-move-creds-old-fixture", "fault-test-move-creds-new-fixture");
+        store_oauth_token(old, "token").unwrap();
+        set_test_fault(&oauth_creds_user(old), Some(TestFault::Unreadable));
+
+        move_oauth_secrets(old, new).unwrap();
+
+        assert_eq!(load_oauth_token(old).unwrap(), "token");
+        assert_eq!(secret_store::load_secret_if_present(&oauth_token_user(new)), Ok(None));
+    }
+
+    #[test]
+    fn a_move_that_cannot_store_both_secrets_leaves_none_under_the_new_name() {
+        let (old, new) = ("fault-test-move-store-old-fixture", "fault-test-move-store-new-fixture");
+        store_oauth_token(old, "token").unwrap();
+        store_oauth_credentials(old, r#"{"refresh_token":"refresh"}"#).unwrap();
+        // The credentials are stored first, then the token store fails.
+        set_test_fault(&oauth_token_user(new), Some(TestFault::Unreadable));
+
+        let err = move_oauth_secrets(old, new).expect_err("the token could not be stored");
+
+        assert!(err.contains("could not store the OAuth secrets"), "unexpected error: {err}");
+        assert_eq!(secret_store::load_secret_if_present(&oauth_creds_user(new)), Ok(None));
+        assert_eq!(load_oauth_token(old).unwrap(), "token");
+        assert_eq!(load_oauth_credentials(old).unwrap(), r#"{"refresh_token":"refresh"}"#);
     }
 
     #[test]
