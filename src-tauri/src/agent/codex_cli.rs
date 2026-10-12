@@ -936,6 +936,9 @@ const CODEX_SUPPORTED_EVENTS: &[&str] = &[
     "SubagentStart",
     "SubagentStop",
     "Stop",
+    // Codex ignores any `matcher` on this event and limits its timeout to
+    // one through three seconds (https://learn.chatgpt.com/docs/hooks).
+    "Interrupt",
 ];
 
 fn sync_codex_hooks(
@@ -962,20 +965,27 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn hook_events_declares_eleven_events() {
+    fn hook_events_declares_twelve_events() {
         let events = CodexCli.hook_events();
         assert_eq!(
             events.len(),
-            11,
-            "expected 11 documented Codex CLI hook events, found {}",
+            12,
+            "expected 12 documented Codex CLI hook events, found {}",
             events.len()
         );
         for event in [
+            "SessionStart",
             "SessionEnd",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
             "PreCompact",
             "PostCompact",
+            "UserPromptSubmit",
             "SubagentStart",
             "SubagentStop",
+            "Stop",
+            "Interrupt",
         ] {
             assert!(
                 events.contains(&event),
@@ -1139,6 +1149,23 @@ mod tests {
                 "expected '{event}' to be written to hooks.json"
             );
         }
+    }
+
+    #[test]
+    fn codex_hook_sync_writes_the_interrupt_event() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![codex_cmd_hook("audit", "Interrupt", "echo interrupted")];
+        let written = CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(!written.is_empty());
+
+        let raw = fs::read_to_string(dir.path().join(".codex/hooks.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let group = &v["hooks"]["Interrupt"][0];
+        assert!(
+            group.get("matcher").is_none(),
+            "a hook without a matcher must not gain one"
+        );
+        assert_eq!(group["hooks"][0]["command"], "echo interrupted");
     }
 
     #[test]

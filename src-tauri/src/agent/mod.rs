@@ -2910,8 +2910,9 @@ mod tests {
         let events = value["hook_events"]
             .as_array()
             .expect("hook_events must serialise as a JSON array");
-        assert_eq!(events.len(), 11);
+        assert_eq!(events.len(), 12);
         assert!(events.iter().any(|v| v == "SubagentStop"));
+        assert!(events.iter().any(|v| v == "Interrupt"));
 
         let claude = AgentInfo::from_agent(from_id("claude").unwrap());
         let value = serde_json::to_value(&claude).unwrap();
