@@ -167,8 +167,14 @@ struct UserScopeConflict {
 /// is not written to the project config, so it has no project version for
 /// the user-level copy to override.
 fn user_scope_conflict_problem(project: &Project) -> Option<ProjectProblem> {
-    let enabled = project.enabled_mcp_servers();
-    let managed: HashSet<&str> = enabled.iter().map(String::as_str).collect();
+    // Not `enabled_mcp_servers()`: that also drops `automatic`, which this
+    // check has always kept in the managed set.
+    let managed: HashSet<&str> = project
+        .mcp_servers
+        .iter()
+        .filter(|name| !project.disabled_mcp_servers.contains(*name))
+        .map(String::as_str)
+        .collect();
     if managed.is_empty() {
         return None;
     }
@@ -3008,6 +3014,49 @@ mod tests {
         assert_eq!(conflict_kinds(&project).len(), 1, "enabled: the conflict is real");
         project.disabled_mcp_servers = vec!["github".to_string()];
         assert!(conflict_kinds(&project).is_empty(), "disabled: nothing to override");
+    }
+
+    /// Pins the behaviour for `automatic` itself.  It stays in the managed
+    /// set, but global discovery leaves `automatic` entries out, so a
+    /// user-level `automatic` has never been reported as a conflict.
+    #[test]
+    fn check_project_problems_does_not_report_a_user_scope_automatic_entry() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let user_scope = serde_json::json!({
+            "mcpServers": {
+                "automatic": { "command": "/tmp/automatic", "args": ["mcp-serve"] }
+            }
+        });
+        fs::write(
+            home.path().join(".claude.json"),
+            serde_json::to_string_pretty(&user_scope).unwrap(),
+        )
+        .unwrap();
+
+        // Only `automatic` is listed: the managed set must not be empty, or
+        // the check would return before it looked at the user-level file.
+        let project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string()],
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+        assert!(
+            report
+                .problems
+                .iter()
+                .all(|p| p.kind != ProjectProblemKind::McpUserScopeConflict),
+            "unexpected conflict: {:?}",
+            report.problems
+        );
     }
 
     fn identity_project() -> Project {

@@ -382,12 +382,21 @@ pub(crate) fn contains_ignore_ascii_case(items: &[String], value: &str) -> bool 
 /// leaves it out because the sync adds it itself, so it cannot be disabled.
 const AUTOMATIC_MCP_SERVER: &str = "automatic";
 
+/// What [`set_mcp_server_enabled`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerToggle {
+    /// The server's name as the project spells it, which may differ in case
+    /// from the name the caller gave.
+    pub server: String,
+    /// `false` when the server was already in the requested state.
+    pub changed: bool,
+}
+
 /// Enable or disable one MCP server attached to `project`, in memory.
 ///
-/// Returns `true` when the project changed and `false` when the server was
-/// already in the requested state. The caller saves the project and runs the
-/// sync. The sync is what removes a disabled server from the agent config
-/// files or writes it back.
+/// Reports the attached spelling of the server and whether the project
+/// changed. The caller saves the project and runs the sync. The sync is what
+/// removes a disabled server from the agent config files or writes it back.
 ///
 /// Refuses, with nothing changed:
 /// - disabling `automatic`, which every project needs;
@@ -398,14 +407,17 @@ pub fn set_mcp_server_enabled(
     project: &mut Project,
     server: &str,
     enabled: bool,
-) -> Result<bool, String> {
+) -> Result<McpServerToggle, String> {
     let server = server.trim();
     if server.is_empty() {
         return Err("The MCP server name is empty.".to_string());
     }
     if server.eq_ignore_ascii_case(AUTOMATIC_MCP_SERVER) {
         if enabled {
-            return Ok(false);
+            return Ok(McpServerToggle {
+                server: AUTOMATIC_MCP_SERVER.to_string(),
+                changed: false,
+            });
         }
         return Err(format!(
             "The '{}' MCP server cannot be disabled. Every project needs it.",
@@ -429,9 +441,14 @@ pub fn set_mcp_server_enabled(
             )
         })?;
 
+    // Exact, as the sync reads it: a case-variant entry in the disabled list
+    // does not switch the server off.
     let currently_enabled = !project.disabled_mcp_servers.contains(&attached);
     if currently_enabled == enabled {
-        return Ok(false);
+        return Ok(McpServerToggle {
+            server: attached,
+            changed: false,
+        });
     }
 
     if let Some(profile) = profile_providing_mcp_server(project, &attached) {
@@ -445,12 +462,19 @@ pub fn set_mcp_server_enabled(
         ));
     }
 
-    if enabled {
-        project.disabled_mcp_servers.retain(|name| name != &attached);
-    } else {
-        project.disabled_mcp_servers.push(attached);
+    // Case variants go too. The save-time dedupe keeps the first of a
+    // case-variant pair, so a stale variant left ahead of the attached
+    // spelling would win and the server would stay enabled.
+    project
+        .disabled_mcp_servers
+        .retain(|name| !name.eq_ignore_ascii_case(&attached));
+    if !enabled {
+        project.disabled_mcp_servers.push(attached.clone());
     }
-    Ok(true)
+    Ok(McpServerToggle {
+        server: attached,
+        changed: true,
+    })
 }
 
 /// The attached servers a caller may toggle, for an error message.
@@ -1576,15 +1600,23 @@ mod tests {
         }
     }
 
+    /// The expected result of a call that was not refused.
+    fn toggled(server: &str, changed: bool) -> Result<McpServerToggle, String> {
+        Ok(McpServerToggle {
+            server: server.to_string(),
+            changed,
+        })
+    }
+
     #[test]
     fn set_mcp_server_enabled_disables_then_enables_a_server() {
         let mut project = project_with_servers(&["automatic", "github", "sentry"]);
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(true));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), toggled("github", true));
         assert_eq!(project.disabled_mcp_servers, vec!["github".to_string()]);
         assert_eq!(project.enabled_mcp_servers(), vec!["sentry".to_string()]);
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), Ok(true));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), toggled("github", true));
         assert!(project.disabled_mcp_servers.is_empty());
         assert_eq!(
             project.enabled_mcp_servers(),
@@ -1601,11 +1633,11 @@ mod tests {
     fn set_mcp_server_enabled_is_idempotent() {
         let mut project = project_with_servers(&["github"]);
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), Ok(false));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", true), toggled("github", false));
         assert!(project.disabled_mcp_servers.is_empty());
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(true));
-        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), Ok(false));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), toggled("github", true));
+        assert_eq!(set_mcp_server_enabled(&mut project, "github", false), toggled("github", false));
         assert_eq!(
             project.disabled_mcp_servers,
             vec!["github".to_string()],
@@ -1619,11 +1651,50 @@ mod tests {
         // request must still take the server out of the enabled list.
         let mut project = project_with_servers(&["Sentry"]);
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "sentry", false), Ok(true));
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "sentry", false),
+            toggled("Sentry", true),
+            "the result names the server as the project spells it"
+        );
         assert_eq!(project.disabled_mcp_servers, vec!["Sentry".to_string()]);
         assert!(project.enabled_mcp_servers().is_empty());
 
-        assert_eq!(set_mcp_server_enabled(&mut project, "SENTRY", true), Ok(true));
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "SENTRY", true),
+            toggled("Sentry", true)
+        );
+        assert!(project.disabled_mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn set_mcp_server_enabled_replaces_case_variants_in_the_disabled_list() {
+        // A stale `sentry` does not disable `Sentry`. Left in place it would
+        // survive the save-time dedupe ahead of the attached spelling, and
+        // the server would stay enabled after a reported disable.
+        let mut project = project_with_servers(&["Sentry", "github"]);
+        project.disabled_mcp_servers = vec!["sentry".to_string(), "github".to_string()];
+        assert_eq!(project.enabled_mcp_servers(), vec!["Sentry".to_string()]);
+
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "Sentry", false),
+            toggled("Sentry", true)
+        );
+        assert_eq!(
+            project.disabled_mcp_servers,
+            vec!["github".to_string(), "Sentry".to_string()]
+        );
+        dedupe_ignore_ascii_case(&mut project.disabled_mcp_servers);
+        assert!(
+            project.enabled_mcp_servers().is_empty(),
+            "the server must still be disabled after the save-time dedupe"
+        );
+
+        // Enabling clears every spelling, not only the attached one.
+        project.disabled_mcp_servers = vec!["SENTRY".to_string(), "Sentry".to_string()];
+        assert_eq!(
+            set_mcp_server_enabled(&mut project, "sentry", true),
+            toggled("Sentry", true)
+        );
         assert!(project.disabled_mcp_servers.is_empty());
     }
 
@@ -1655,7 +1726,7 @@ mod tests {
 
             assert_eq!(
                 set_mcp_server_enabled(&mut project, "automatic", true),
-                Ok(false),
+                toggled("automatic", false),
                 "it is always enabled, so enabling it changes nothing"
             );
         }
@@ -1679,12 +1750,12 @@ mod tests {
 
         assert_eq!(
             set_mcp_server_enabled(&mut project, "github", true),
-            Ok(false),
+            toggled("github", false),
             "asking for the state it is already in is not a change"
         );
         assert_eq!(
             set_mcp_server_enabled(&mut project, "sentry", false),
-            Ok(true),
+            toggled("sentry", true),
             "the project's own servers stay switchable"
         );
     }

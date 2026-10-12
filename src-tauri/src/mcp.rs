@@ -2718,7 +2718,6 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SetMcpServerEnabledParams>,
     ) -> Result<CallToolResult, McpError> {
-        let server = &params.0.server;
         let enabled = params.0.enabled;
         let state = if enabled { "enabled" } else { "disabled" };
 
@@ -2731,16 +2730,19 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
 
-        match crate::core::set_mcp_server_enabled(&mut project, server, enabled) {
-            Ok(true) => {}
-            Ok(false) => {
-                return Ok(CallToolResult::success(vec![Content::text(format!(
-                    "MCP server '{}' is already {} on project '{}'.",
-                    server, state, checkout.name
-                ))]));
-            }
-            Err(e) => return Ok(tool_error(e)),
-        }
+        // The replies name the server as the project spells it, not as the
+        // caller typed it.
+        let server =
+            match crate::core::set_mcp_server_enabled(&mut project, &params.0.server, enabled) {
+                Ok(toggle) if toggle.changed => toggle.server,
+                Ok(toggle) => {
+                    return Ok(CallToolResult::success(vec![Content::text(format!(
+                        "MCP server '{}' is already {} on project '{}'.",
+                        toggle.server, state, checkout.name
+                    ))]));
+                }
+                Err(e) => return Ok(tool_error(e)),
+            };
 
         match persist_project(&checkout, &project) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
@@ -4165,12 +4167,22 @@ mod tests {
                 "the sync must not switch it back on"
             );
 
-            let again = toggle(&server, "github", false);
+            // Replies name the server as the project spells it.
+            let again = toggle(&server, "GITHUB", false);
             assert_ne!(again.is_error, Some(true), "{:?}", again.content);
-            assert!(format!("{:?}", again.content).contains("already disabled"));
+            assert!(
+                format!("{:?}", again.content).contains("'github' is already disabled"),
+                "{:?}",
+                again.content
+            );
 
-            let enabled = toggle(&server, "github", true);
+            let enabled = toggle(&server, "GitHub", true);
             assert_ne!(enabled.is_error, Some(true), "{:?}", enabled.content);
+            assert!(
+                format!("{:?}", enabled.content).contains("'github' is now enabled"),
+                "{:?}",
+                enabled.content
+            );
             sync_toggle_project(&server);
             assert_eq!(
                 root_mcp_server_names(&ws),
