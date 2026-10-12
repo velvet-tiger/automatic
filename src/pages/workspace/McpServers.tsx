@@ -313,10 +313,11 @@ function CommandDependencyWarning({ command }: { command: string }) {
  * server through the OAuth proxy until that token is revoked.
  *
  * `url` is the value in the editor, which may not be saved yet. A token is
- * issued for one URL and the proxy sends it to the saved one, so while
- * `dirty` is true this section neither signs in nor sends the stored token
- * anywhere. `savedRevision` changes after each save. Saving a new URL deletes
- * the stored token, so the section asks again whether one is stored.
+ * issued for one URL and the proxy sends it to the saved one. So this section
+ * does not sign in while `dirty` is true, and it only ever sends the stored
+ * token to the URL as last saved. `savedRevision` changes after each save.
+ * Saving a new URL deletes the stored token, so the section asks again
+ * whether one is stored.
  */
 function OAuthSection({
   serverName,
@@ -352,26 +353,38 @@ function OAuthSection({
       .finally(() => setChecking(false));
   }, [serverName]);
 
+  // The mount effect above has already asked for the revision this section
+  // started with.
+  const checkedRevision = useRef(savedRevision);
   useEffect(() => {
-    if (!serverName || savedRevision === 0) return;
+    if (!serverName || savedRevision === checkedRevision.current) return;
+    checkedRevision.current = savedRevision;
     invoke<boolean>("has_mcp_oauth_token", { serverName })
       .then(setHasToken)
       .catch(() => setHasToken(false));
   }, [savedRevision]);
 
+  // The URL as last saved. `url` follows the editor, so it is copied only
+  // while the editor has no unsaved changes. The section can mount while the
+  // editor is dirty, and then no saved URL is known until the next save.
+  const [savedUrl, setSavedUrl] = useState(dirty ? "" : url);
   useEffect(() => {
-    if (!serverName || !url || !hasToken) {
+    if (!dirty) setSavedUrl(url);
+  }, [dirty, url]);
+
+  // The check sends the stored token to the URL, so it uses the saved one.
+  // Typing in the URL field does not run it, and neither does a save that
+  // leaves the URL as it was.
+  useEffect(() => {
+    if (!serverName || !savedUrl || !hasToken) {
       setCheckingStatus(false);
       setTokenStatus(null);
       return;
     }
-    // The check sends the stored token to `url`. Wait until that is the
-    // saved URL, and keep showing the last result until then.
-    if (dirty) return;
 
     let active = true;
     setCheckingStatus(true);
-    invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: url })
+    invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: savedUrl })
       .then((status) => {
         if (!active) return;
         // The token can be deleted between the presence check and this one.
@@ -397,7 +410,7 @@ function OAuthSection({
     return () => {
       active = false;
     };
-  }, [serverName, url, hasToken, dirty]);
+  }, [serverName, savedUrl, hasToken]);
 
   const handleAuthorize = async () => {
     if (!serverName || !url || dirty) return;
