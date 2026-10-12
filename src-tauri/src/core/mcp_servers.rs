@@ -161,10 +161,9 @@ pub(crate) fn write_undecryptable_mcp_server_config(name: &str) -> PathBuf {
 /// The `data` parameter is the raw JSON string from the frontend (env values
 /// are plaintext at this point — the frontend never sees the encrypted form).
 ///
-/// A save that changes the server's `url` deletes the OAuth secrets stored
-/// under `name` before it writes, as [`changes_server_url`] describes. If the
-/// secret store cannot confirm they are gone, nothing is written and the
-/// call fails.
+/// A save that changes the server's `url` deletes its OAuth secrets before it
+/// writes, as [`forget_oauth_secrets_on_url_change`] describes. If the secret
+/// store cannot confirm they are gone, nothing is written and the call fails.
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
@@ -185,9 +184,7 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
 
     let path = dir.join(format!("{}.json", name));
     let is_new = !path.exists();
-    if changes_server_url(&path, &config)? {
-        crate::proxy::forget_oauth_secrets(name)?;
-    }
+    forget_oauth_secrets_on_url_change(name, &config)?;
     let serialized = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&path, serialized).map_err(|e| e.to_string())?;
 
@@ -198,20 +195,81 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether saving `config` at `path` gives the server a different `url` from
-/// the one stored there.
+/// Delete the OAuth secrets of the server `name` when writing `config` as its
+/// registry file gives it a different `url`. Call this before the write.
 ///
 /// The server's OAuth token was issued for the stored URL, and the proxy
-/// sends it to whatever URL the config holds. Every writer comes through
-/// [`save_mcp_server_config`]: the editor, a cloud sync pull, a plugin update
-/// and an import from an agent file. Any of them can point the name at
-/// another URL, so the secrets must not outlive the change.
+/// sends it to whatever URL the config holds. Anything that writes a registry
+/// file can point the name at another URL, so the secrets must not outlive
+/// the change. [`save_mcp_server_config`] calls this, which covers the
+/// editor, a cloud sync pull, a plugin update and an import from an agent
+/// file. A remote source install writes the file itself and calls this
+/// directly.
+///
+/// A write that keeps the URL makes no call to the secret store. An error
+/// means the secrets may still be stored, and the caller must not write.
+pub(crate) fn forget_oauth_secrets_on_url_change(
+    name: &str,
+    config: &serde_json::Value,
+) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid server name".into());
+    }
+    let dir = get_mcp_servers_dir()?;
+    let path = dir.join(format!("{}.json", name));
+    if !changes_server_url(&path, config)? {
+        return Ok(());
+    }
+    for secret_name in oauth_secret_names(&dir, name)? {
+        crate::proxy::forget_oauth_secrets(&secret_name)?;
+    }
+    Ok(())
+}
+
+/// The server names whose OAuth secrets belong to the registry file of
+/// `name`: `name` itself, and the name the file is stored under when the
+/// filesystem keeps it under another one.
+///
+/// Secrets are keyed by the exact name, but the filesystem decides which file
+/// a name refers to. On a filesystem that ignores case, `Linear` refers to
+/// `linear.json`, and that server's secrets are stored as `linear`. The
+/// listing, sync and the proxy all use the stored name.
+fn oauth_secret_names(dir: &Path, name: &str) -> Result<Vec<String>, String> {
+    let mut names = vec![name.to_string()];
+    if let Some(stored) = stored_server_name(dir, name)? {
+        if stored != name {
+            names.push(stored);
+        }
+    }
+    Ok(names)
+}
+
+/// The name the registry file of `name` is stored under, or `None` when no
+/// such file exists.
+///
+/// A file reached through a link to somewhere outside the registry has no
+/// stored name here. The name of the link's target says nothing about which
+/// server's secrets it holds.
+fn stored_server_name(dir: &Path, name: &str) -> Result<Option<String>, String> {
+    let stored = match fs::canonicalize(dir.join(format!("{}.json", name))) {
+        Ok(stored) => stored,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let registry = fs::canonicalize(dir).map_err(|e| e.to_string())?;
+    if stored.parent() != Some(registry.as_path()) {
+        return Ok(None);
+    }
+    Ok(mcp_server_name_from_path(&stored).map(str::to_string))
+}
+
+/// Whether saving `config` at `path` gives the server a different `url` from
+/// the one stored there.
 ///
 /// A config that is not stored yet counts as having no URL. Creating a server
 /// with a URL therefore also clears secrets left under its name by an earlier
 /// server. A stored config that is not valid JSON has no known URL, and
-/// counts as a change. A save that keeps the URL returns `false`, and the
-/// caller then makes no call to the secret store.
+/// counts as a change.
 fn changes_server_url(path: &Path, config: &serde_json::Value) -> Result<bool, String> {
     let stored = match fs::read_to_string(path) {
         Ok(stored) => stored,
@@ -332,10 +390,11 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
-    crate::proxy::forget_oauth_secrets(name)?;
-
     let dir = get_mcp_servers_dir()?;
     let path = dir.join(format!("{}.json", name));
+    for secret_name in oauth_secret_names(&dir, name)? {
+        crate::proxy::forget_oauth_secrets(&secret_name)?;
+    }
 
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -358,7 +417,8 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
 /// The server's OAuth secrets are keyed by name, so they move to `new_name`
 /// before the file does. Left behind, the renamed server would look signed
 /// out, and a server later created as `old_name` would send the old token to
-/// its own URL. A failed move fails the rename with nothing changed.
+/// its own URL. A failed move fails the rename, and the config and its
+/// secrets stay under the old name.
 pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
     if !is_valid_name(old_name) || !is_valid_name(new_name) {
         return Err("Invalid server name".into());
@@ -381,15 +441,18 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
         return Err(format!("MCP server '{}' already exists", new_name));
     }
 
-    crate::proxy::move_oauth_secrets(old_name, new_name)?;
+    // The secrets are under the name the file is stored as, which the
+    // filesystem may keep in another case than `old_name`.
+    let secrets_name = stored_server_name(&dir, old_name)?.unwrap_or_else(|| old_name.to_string());
+    crate::proxy::move_oauth_secrets(&secrets_name, new_name)?;
 
     if let Err(rename_err) = fs::rename(&old_path, &new_path) {
         // The config is still under the old name, so its secrets go back.
-        return Err(match crate::proxy::move_oauth_secrets(new_name, old_name) {
+        return Err(match crate::proxy::move_oauth_secrets(new_name, &secrets_name) {
             Ok(()) => rename_err.to_string(),
             Err(restore_err) => format!(
                 "{} (the OAuth secrets could not be moved back to '{}': {})",
-                rename_err, old_name, restore_err
+                rename_err, secrets_name, restore_err
             ),
         });
     }
@@ -1787,6 +1850,110 @@ mod tests {
             save_mcp_server_config(server, OAUTH_SERVER).expect("save again");
 
             assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    /// Whether the registry stores `name` and its upper-case form as one
+    /// file. True on the default macOS and Windows filesystems.
+    fn registry_ignores_case(name: &str) -> bool {
+        get_mcp_servers_dir()
+            .expect("dir")
+            .join(format!("{}.json", name.to_uppercase()))
+            .exists()
+    }
+
+    #[test]
+    fn a_save_under_another_case_of_the_name_removes_the_stored_servers_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-case-save-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+            if !registry_ignores_case(server) {
+                // The two names are two servers here, so there is nothing to test.
+                return;
+            }
+
+            save_mcp_server_config(
+                &server.to_uppercase(),
+                r#"{"type":"http","url":"https://other.example/mcp"}"#,
+            )
+            .expect("save under the other case");
+
+            assert_eq!(list_mcp_server_configs().expect("list"), vec![server.to_string()]);
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn a_delete_under_another_case_of_the_name_removes_the_stored_servers_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-case-delete-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+            if !registry_ignores_case(server) {
+                return;
+            }
+
+            delete_mcp_server_config(&server.to_uppercase()).expect("delete");
+
+            assert!(read_mcp_server_config(server).is_err());
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn a_rename_from_another_case_of_the_name_moves_the_stored_servers_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (old, new) = ("secrets-case-rename-old-fixture", "secrets-case-rename-new-fixture");
+            save_mcp_server_config(old, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(old);
+            if !registry_ignores_case(old) {
+                return;
+            }
+
+            rename_mcp_server_config(&old.to_uppercase(), new).expect("rename");
+
+            assert_eq!(crate::proxy::load_oauth_token(new).expect("token"), "access-token");
+            assert!(crate::proxy::load_oauth_credentials(new).is_ok());
+            assert!(has_no_oauth_secrets(old));
+        });
+    }
+
+    #[test]
+    fn the_stored_name_of_a_server_is_the_name_of_its_registry_file() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("stored-name-fixture", OAUTH_SERVER).expect("save");
+            let dir = get_mcp_servers_dir().expect("dir");
+
+            assert_eq!(
+                stored_server_name(&dir, "stored-name-fixture").expect("stored"),
+                Some("stored-name-fixture".to_string())
+            );
+            assert_eq!(stored_server_name(&dir, "stored-name-missing").expect("missing"), None);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_registry_file_linked_from_outside_the_registry_has_no_stored_name() {
+        let home = tmp();
+        let outside = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = get_mcp_servers_dir().expect("dir");
+            fs::create_dir_all(&dir).expect("create registry");
+            let target = outside.path().join("stored-name-target.json");
+            fs::write(&target, OAUTH_SERVER).expect("write target");
+            std::os::unix::fs::symlink(&target, dir.join("stored-name-link.json")).expect("link");
+
+            assert_eq!(stored_server_name(&dir, "stored-name-link").expect("stored"), None);
+            assert_eq!(
+                oauth_secret_names(&dir, "stored-name-link").expect("names"),
+                vec!["stored-name-link".to_string()]
+            );
         });
     }
 

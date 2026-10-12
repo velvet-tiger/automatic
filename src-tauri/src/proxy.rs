@@ -190,21 +190,30 @@ fn replace_oauth_secrets(
 /// the caller has checked that no server has that name. A server with no
 /// secrets is success, and leaves none under either name.
 ///
-/// On an error the secrets are still under `old_name`. A read that fails is
-/// an error before anything is written: the secret may exist, and renaming
-/// without it would leave it behind under the old name.
+/// On an error the secrets are still under `old_name`, and none are left
+/// under `new_name`. A read that fails is an error before anything is
+/// written: the secret may exist, and renaming without it would leave it
+/// behind under the old name.
 pub fn move_oauth_secrets(old_name: &str, new_name: &str) -> Result<(), String> {
     let token = secret_store::load_secret_if_present(&oauth_token_user(old_name))
         .map_err(|e| format!("could not read the OAuth token for '{}': {}", old_name, e))?;
     let credentials = secret_store::load_secret_if_present(&oauth_creds_user(old_name))
         .map_err(|e| format!("could not read the OAuth credentials for '{}': {}", old_name, e))?;
 
-    replace_oauth_secrets(new_name, token.as_deref(), credentials.as_deref()).map_err(|e| {
-        format!(
-            "could not store the OAuth secrets of '{}' under '{}': {}",
-            old_name, new_name, e
-        )
-    })?;
+    if let Err(store_err) =
+        replace_oauth_secrets(new_name, token.as_deref(), credentials.as_deref())
+    {
+        // One of the two may have been stored. No server has the new name,
+        // so nothing under it is worth keeping.
+        let cleanup = match forget_oauth_secrets(new_name) {
+            Ok(()) => String::new(),
+            Err(e) => format!(" (a copy may be left under '{}': {})", new_name, e),
+        };
+        return Err(format!(
+            "could not store the OAuth secrets of '{}' under '{}': {}{}",
+            old_name, new_name, store_err, cleanup
+        ));
+    }
 
     if token.is_none() && credentials.is_none() {
         set_cached_token_presence(old_name, false);
