@@ -1054,6 +1054,40 @@ mod tests {
         });
     }
 
+    /// `Path::exists` reports false for a directory under a parent that
+    /// cannot be searched, so a listing that asks `exists` first returns an
+    /// empty list here.
+    #[cfg(unix)]
+    #[test]
+    fn a_registry_under_an_unsearchable_parent_is_an_error_not_an_empty_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("list-unreachable", r#"{"command":"npx"}"#).expect("save");
+            let dir = registry_dir();
+            let parent = dir.parent().expect("registry parent").to_path_buf();
+            let _restore = RestorePermissions {
+                path: parent.clone(),
+                permissions: fs::metadata(&parent).expect("metadata").permissions(),
+            };
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).expect("chmod");
+
+            // Root reaches a directory whatever its parent's mode, so the
+            // failure cannot be produced and there is nothing to assert.
+            if fs::read_dir(&dir).is_ok() {
+                return;
+            }
+
+            let err = list_mcp_server_configs().expect_err("the listing must fail");
+            assert!(
+                err.contains(&dir.display().to_string()),
+                "error names the registry path: {}",
+                err
+            );
+        });
+    }
+
     // ── read: missing versus unreadable ──────────────────────────────────────
 
     #[test]

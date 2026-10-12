@@ -550,8 +550,10 @@ fn enrich_mcp_server_specs(project: &mut Project) {
             // The snapshot the project already carries is kept, so a failed
             // read does not erase it from the saved project.
             Err(e) => {
+                // Both names can come from a project file in a repository
+                // the user did not write, so they are printed escaped.
                 eprintln!(
-                    "enrich_project: could not read MCP server '{}' for project '{}': {}",
+                    "enrich_project: could not read MCP server {:?} for project {:?}: {}",
                     name, project.name, e
                 );
                 if let Some(prior) = project.mcp_server_specs.get(name) {
