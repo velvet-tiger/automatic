@@ -68,24 +68,42 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
 
 #[cfg(not(test))]
 fn read_or_create_keychain_key() -> Result<[u8; 32], String> {
-    match secret_store::load_secret(KEYCHAIN_USER) {
-        Ok(hex) => {
-            // Key already exists — decode it.
-            let bytes = hex::decode(&hex)
-                .map_err(|e| format!("Failed to decode encryption key from keychain: {}", e))?;
-            bytes
-                .try_into()
-                .map_err(|_| "Encryption key in keychain has wrong length".into())
-        }
-        Err(_) => {
-            // No key yet — generate one and persist it.
-            let key_bytes: [u8; 32] = Aes256Gcm::generate_key(OsRng).into();
-            let hex = hex::encode(key_bytes);
-            secret_store::store_secret(KEYCHAIN_USER, &hex)
-                .map_err(|e| format!("Failed to store encryption key in keychain: {}", e))?;
-            Ok(key_bytes)
-        }
+    if let Some(key) = stored_key(secret_store::load_secret_if_present(KEYCHAIN_USER))? {
+        return Ok(key);
     }
+
+    // No key yet — generate one and persist it.
+    let key_bytes: [u8; 32] = Aes256Gcm::generate_key(OsRng).into();
+    let hex = hex::encode(key_bytes);
+    secret_store::store_secret(KEYCHAIN_USER, &hex)
+        .map_err(|e| format!("Failed to store encryption key in keychain: {}", e))?;
+    Ok(key_bytes)
+}
+
+/// Decode the result of reading the stored key. `Ok(None)` means no key has
+/// been created yet, and is the only result that may lead to a new key.
+///
+/// A failed read is an error, never "no key". The key may still be in the
+/// store, and replacing it would leave every value encrypted with it
+/// unreadable. A stored key that cannot be decoded is an error for the same
+/// reason.
+fn stored_key(loaded: Result<Option<String>, String>) -> Result<Option<[u8; 32]>, String> {
+    let stored = loaded.map_err(|e| {
+        format!(
+            "Failed to read encryption key from keychain (no new key was created): {}",
+            e
+        )
+    })?;
+    let Some(hex) = stored else {
+        return Ok(None);
+    };
+
+    let bytes = hex::decode(&hex)
+        .map_err(|e| format!("Failed to decode encryption key from keychain: {}", e))?;
+    let key = bytes
+        .try_into()
+        .map_err(|_| "Encryption key in keychain has wrong length".to_string())?;
+    Ok(Some(key))
 }
 
 // ── Encrypt / Decrypt primitives ──────────────────────────────────────────────
@@ -194,6 +212,36 @@ mod tests {
         assert!(!is_encrypted("my-api-key"));
         assert!(!is_encrypted(""));
         assert!(!is_encrypted("enc:v2:something")); // wrong version
+    }
+
+    // ── stored_key ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn stored_key_decodes_an_existing_key() {
+        let key = [7u8; 32];
+        let loaded = Ok(Some(hex::encode(key)));
+        assert_eq!(stored_key(loaded), Ok(Some(key)));
+    }
+
+    #[test]
+    fn stored_key_reports_no_key_only_when_nothing_is_stored() {
+        assert_eq!(stored_key(Ok(None)), Ok(None));
+    }
+
+    #[test]
+    fn stored_key_keeps_a_failed_read_as_an_error() {
+        // A denied or locked keychain must never look like "no key yet":
+        // that would replace the real key and orphan every encrypted value.
+        let error = stored_key(Err("User interaction is not allowed".to_string())).unwrap_err();
+        assert!(error.contains("User interaction is not allowed"));
+        assert!(error.contains("no new key was created"));
+    }
+
+    #[test]
+    fn stored_key_rejects_a_key_it_cannot_decode() {
+        assert!(stored_key(Ok(Some("not hex".to_string()))).is_err());
+        assert!(stored_key(Ok(Some(String::new()))).is_err());
+        assert!(stored_key(Ok(Some(hex::encode([7u8; 16])))).is_err());
     }
 
     // ── encrypt_value / decrypt_value roundtrip ───────────────────────────────

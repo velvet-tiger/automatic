@@ -23,9 +23,19 @@ pub fn store_secret(account: &str, secret: &str) -> Result<(), String> {
 /// Load the secret stored under `account`.
 ///
 /// Returns an error when nothing is stored, as well as when the backend
-/// fails. Callers that only need presence use `.is_ok()`.
+/// fails. Callers that only need presence use `.is_ok()`. Callers that must
+/// tell the two apart use [`load_secret_if_present`].
 pub fn load_secret(account: &str) -> Result<String, String> {
     backend::load(account)
+}
+
+/// Load the secret stored under `account`, or `None` when nothing is stored.
+///
+/// A failed read is an error here, never `None`. Use this before creating a
+/// secret that must not replace an existing one: a backend that could not be
+/// read may still hold the value.
+pub fn load_secret_if_present(account: &str) -> Result<Option<String>, String> {
+    backend::load_if_present(account)
 }
 
 /// Delete the secret stored under `account`.
@@ -54,6 +64,20 @@ fn missing_secret(account: &str) -> String {
     format!("no secret is stored for '{}'", account)
 }
 
+/// Split a keychain read into "nothing stored" and "the read failed".
+///
+/// Only `NoEntry` means nothing is stored. A denied prompt, a locked keychain
+/// or an unreachable backend leaves the stored value in place, so those stay
+/// errors. On Linux the `keyring` crate itself reports a denied, revoked or
+/// expired key as `NoEntry`, so those cases cannot be told apart here.
+fn absent_entry_as_none(read: Result<String, keyring::Error>) -> Result<Option<String>, String> {
+    match read {
+        Ok(secret) => Ok(Some(secret)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ── Backend selection ────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -77,6 +101,13 @@ mod backend {
         match dev_backend()? {
             DevBackend::File => file::load(&dev_secrets_path()?, account),
             DevBackend::System => system::load(account),
+        }
+    }
+
+    pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
+        match dev_backend()? {
+            DevBackend::File => file::load_if_present(&dev_secrets_path()?, account),
+            DevBackend::System => system::load_if_present(account),
         }
     }
 
@@ -156,6 +187,10 @@ mod system {
         entry(account)?.get_password().map_err(|e| e.to_string())
     }
 
+    pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
+        super::absent_entry_as_none(entry(account)?.get_password())
+    }
+
     pub(super) fn delete(account: &str) -> Result<(), String> {
         entry(account)?
             .delete_credential()
@@ -189,6 +224,12 @@ mod file {
         read_secrets(path)?
             .remove(account)
             .ok_or_else(|| missing_secret(account))
+    }
+
+    /// `None` when the account, or the whole file, does not exist. A file
+    /// that cannot be read or parsed is an error.
+    pub(super) fn load_if_present(path: &Path, account: &str) -> Result<Option<String>, String> {
+        Ok(read_secrets(path)?.remove(account))
     }
 
     pub(super) fn delete(path: &Path, account: &str) -> Result<(), String> {
@@ -324,6 +365,11 @@ mod memory {
             .ok_or_else(|| missing_secret(account))
     }
 
+    pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
+        let secrets = secrets().lock().map_err(|e| e.to_string())?;
+        Ok(secrets.get(account).cloned())
+    }
+
     pub(super) fn delete(account: &str) -> Result<(), String> {
         let mut secrets = secrets().lock().map_err(|e| e.to_string())?;
         secrets
@@ -351,6 +397,42 @@ mod tests {
         delete_secret(account).unwrap();
         assert!(load_secret(account).is_err());
         assert!(delete_secret(account).is_err());
+    }
+
+    #[test]
+    fn a_missing_secret_loads_as_none() {
+        let account = "secret-store-test/load-if-present";
+        assert_eq!(load_secret_if_present(account), Ok(None));
+
+        store_secret(account, "value").unwrap();
+        assert_eq!(
+            load_secret_if_present(account),
+            Ok(Some("value".to_string()))
+        );
+
+        delete_secret(account).unwrap();
+        assert_eq!(load_secret_if_present(account), Ok(None));
+    }
+
+    #[test]
+    fn only_a_missing_keychain_entry_counts_as_absent() {
+        assert_eq!(
+            absent_entry_as_none(Ok("value".to_string())),
+            Ok(Some("value".to_string()))
+        );
+        assert_eq!(absent_entry_as_none(Err(keyring::Error::NoEntry)), Ok(None));
+    }
+
+    #[test]
+    fn a_failed_keychain_read_is_an_error() {
+        let denied = keyring::Error::PlatformFailure("user denied access".into());
+        assert!(absent_entry_as_none(Err(denied)).is_err());
+
+        let locked = keyring::Error::NoStorageAccess("keychain is locked".into());
+        assert!(absent_entry_as_none(Err(locked)).is_err());
+
+        let not_text = keyring::Error::BadEncoding(vec![0xff]);
+        assert!(absent_entry_as_none(Err(not_text)).is_err());
     }
 }
 
@@ -384,6 +466,25 @@ mod file_tests {
         assert!(file::load(&path, "absent").is_err());
         assert!(file::delete(&path, "absent").is_err());
         assert!(!path.exists(), "a failed delete must not create the file");
+    }
+
+    #[test]
+    fn file_backend_tells_a_missing_account_from_an_unreadable_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("dev-secrets.json");
+
+        assert_eq!(file::load_if_present(&path, "anthropic"), Ok(None));
+        assert!(!path.exists(), "a read must not create the file");
+
+        file::store(&path, "anthropic", "key-a").unwrap();
+        assert_eq!(file::load_if_present(&path, "openai"), Ok(None));
+        assert_eq!(
+            file::load_if_present(&path, "anthropic"),
+            Ok(Some("key-a".to_string()))
+        );
+
+        std::fs::write(&path, "not json").unwrap();
+        assert!(file::load_if_present(&path, "anthropic").is_err());
     }
 
     #[test]
