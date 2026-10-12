@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::env_crypto;
 use super::paths::{get_library_dir, is_valid_name};
@@ -11,31 +11,69 @@ pub fn get_mcp_servers_dir() -> Result<PathBuf, String> {
     Ok(get_library_dir()?.join("mcp_servers"))
 }
 
+/// Names of every server stored in the registry, sorted.
+///
+/// A registry directory that does not exist yet lists as empty. Every other
+/// failure is an error, never a shorter list. Cloud sync deletes a server
+/// from the cloud library when it is missing from this list, and project
+/// sync drops it from agent config files.
 pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {
     let dir = get_mcp_servers_dir()?;
 
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
+    // Absence is decided by the read itself. `Path::exists` also reports
+    // false when the directory is there but cannot be reached.
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(format!(
+                "Failed to read the MCP server registry '{}': {}",
+                dir.display(),
+                e
+            ))
+        }
+    };
 
     let mut servers = Vec::new();
-    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
-
     for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if is_valid_name(stem) {
-                        servers.push(stem.to_string());
-                    }
-                }
-            }
+        let entry = entry.map_err(|e| {
+            format!(
+                "Failed to read an entry of the MCP server registry '{}': {}",
+                dir.display(),
+                e
+            )
+        })?;
+        let path = entry.path();
+        // Only an entry named like a server config is inspected, so an
+        // unrelated file cannot fail the listing.
+        let Some(name) = mcp_server_name_from_path(&path) else {
+            continue;
+        };
+        // `fs::metadata` follows symlinks, as `Path::is_file` does.
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => servers.push(name.to_string()),
+            // Not a regular file, for example a directory named `x.json`.
+            Ok(_) => {}
+            // A dangling symlink, or a file deleted during the listing. The
+            // reader reports the same entry as not stored.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Failed to inspect MCP server '{}': {}", name, e)),
         }
     }
 
     servers.sort();
     Ok(servers)
+}
+
+/// The server name a registry path stores a config for, or `None` when the
+/// path is not named like a server config (`<valid name>.json`).
+fn mcp_server_name_from_path(path: &Path) -> Option<&str> {
+    if !path.extension().is_some_and(|ext| ext == "json") {
+        return None;
+    }
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| is_valid_name(stem))
 }
 
 /// Read a single MCP server config from disk and return it as a JSON string
@@ -813,6 +851,161 @@ mod tests {
         let tmp = tmp();
         let dir = tmp.path().join("mcp_servers");
         delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    // ── list: empty versus unreadable ────────────────────────────────────────
+
+    /// The registry directory under the current test home, created.
+    fn registry_dir() -> PathBuf {
+        let dir = get_mcp_servers_dir().expect("dir");
+        fs::create_dir_all(&dir).expect("create registry dir");
+        dir
+    }
+
+    #[test]
+    fn a_registry_that_does_not_exist_yet_lists_as_empty() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            assert!(!get_mcp_servers_dir().expect("dir").exists());
+            assert_eq!(list_mcp_server_configs(), Ok(Vec::new()));
+        });
+    }
+
+    #[test]
+    fn the_listing_is_sorted_and_holds_only_server_configs() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let config = r#"{"command":"npx"}"#;
+            save_mcp_server_config("list-zeta", config).expect("save");
+            save_mcp_server_config("list-alpha", config).expect("save");
+            let dir = registry_dir();
+            fs::write(dir.join("notes.txt"), "not a server").expect("write");
+            fs::write(dir.join("no-extension"), "{}").expect("write");
+            // The stem `.` is not a valid server name.
+            fs::write(dir.join("..json"), "{}").expect("write");
+
+            assert_eq!(
+                list_mcp_server_configs(),
+                Ok(vec!["list-alpha".to_string(), "list-zeta".to_string()])
+            );
+        });
+    }
+
+    #[test]
+    fn a_registry_path_that_is_not_a_directory_is_an_error() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = get_mcp_servers_dir().expect("dir");
+            fs::create_dir_all(dir.parent().expect("parent")).expect("create parent");
+            fs::write(&dir, "a file where the registry directory belongs").expect("write");
+
+            let err = list_mcp_server_configs().expect_err("the listing must fail");
+            assert!(
+                err.contains(&dir.display().to_string()),
+                "error names the registry path: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn a_directory_named_like_a_server_is_not_listed() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("list-real", r#"{"command":"npx"}"#).expect("save");
+            fs::create_dir_all(registry_dir().join("list-folder.json")).expect("mkdir");
+
+            assert_eq!(list_mcp_server_configs(), Ok(vec!["list-real".to_string()]));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_not_listed_and_a_live_one_is() {
+        let home = tmp();
+        let outside = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = registry_dir();
+            let target = outside.path().join("target.json");
+            fs::write(&target, r#"{"command":"npx"}"#).expect("write target");
+            std::os::unix::fs::symlink(&target, dir.join("list-linked.json")).expect("symlink");
+            std::os::unix::fs::symlink(
+                outside.path().join("never-created.json"),
+                dir.join("list-dangling.json"),
+            )
+            .expect("dangling symlink");
+
+            assert_eq!(
+                list_mcp_server_configs(),
+                Ok(vec!["list-linked".to_string()])
+            );
+            // The reader agrees with the listing about the dangling entry.
+            assert_eq!(read_mcp_server_config_if_present("list-dangling"), Ok(None));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_server_entry_that_cannot_be_inspected_is_an_error() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = registry_dir();
+            // A symlink to itself: the entry exists but following it fails.
+            let looped = dir.join("list-looped.json");
+            std::os::unix::fs::symlink(&looped, &looped).expect("symlink loop");
+
+            let err = list_mcp_server_configs().expect_err("the listing must fail");
+            assert!(
+                err.contains("list-looped"),
+                "error names the server: {}",
+                err
+            );
+        });
+    }
+
+    /// Puts a directory's permissions back when dropped, so the temp dir can
+    /// be removed even when an assertion fails first.
+    #[cfg(unix)]
+    struct RestorePermissions {
+        path: PathBuf,
+        permissions: fs::Permissions,
+    }
+
+    #[cfg(unix)]
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.path, self.permissions.clone());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_registry_that_cannot_be_read_is_an_error_not_an_empty_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("list-hidden", r#"{"command":"npx"}"#).expect("save");
+            let dir = registry_dir();
+            let _restore = RestorePermissions {
+                path: dir.clone(),
+                permissions: fs::metadata(&dir).expect("metadata").permissions(),
+            };
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).expect("chmod");
+
+            // Root reads a directory whatever its mode, so the failure cannot
+            // be produced and there is nothing to assert.
+            if fs::read_dir(&dir).is_ok() {
+                return;
+            }
+
+            let err = list_mcp_server_configs().expect_err("the listing must fail");
+            assert!(
+                err.contains(&dir.display().to_string()),
+                "error names the registry path: {}",
+                err
+            );
+        });
     }
 
     // ── read: missing versus unreadable ──────────────────────────────────────
