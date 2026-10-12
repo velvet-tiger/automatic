@@ -41,18 +41,36 @@ pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {
 /// Read a single MCP server config from disk and return it as a JSON string
 /// with env values **decrypted** (plaintext) so the frontend and sync engine
 /// see regular strings.
+///
+/// Returns an error when no config is stored under `name`, as well as when
+/// the read fails. Callers that must tell the two apart use
+/// [`read_mcp_server_config_if_present`].
 pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
+    read_mcp_server_config_if_present(name)?
+        .ok_or_else(|| format!("MCP server '{}' not found", name))
+}
+
+/// Read a single MCP server config, or `None` when no config is stored under
+/// `name`. The JSON string is the one [`read_mcp_server_config`] returns.
+///
+/// A failed read is an error here, never `None`. Decrypting env values needs
+/// the env-encryption key, so a locked keychain or a denied keychain prompt
+/// fails the read of a server that still exists. Use this wherever a missing
+/// server leads to a removal or an overwrite.
+pub fn read_mcp_server_config_if_present(name: &str) -> Result<Option<String>, String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
     let dir = get_mcp_servers_dir()?;
     let path = dir.join(format!("{}.json", name));
 
-    if !path.exists() {
-        return Err(format!("MCP server '{}' not found", name));
-    }
-
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    // Absence is decided by the read itself. `Path::exists` also reports
+    // false when the file is there but cannot be reached.
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
     let mut config: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid JSON in config: {}", e))?;
 
@@ -75,7 +93,28 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
         }
     }
 
-    serde_json::to_string(&config).map_err(|e| e.to_string())
+    serde_json::to_string(&config)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// Write a registry file for `name` whose env value carries the encryption
+/// prefix but is not valid ciphertext, and return its path.
+///
+/// Tests use a fixed in-memory env-encryption key, so they cannot make the
+/// key itself unavailable. Reading this file fails in `decrypt_env_values`,
+/// which is where a read fails when the key cannot be loaded.
+#[cfg(test)]
+pub(crate) fn write_undecryptable_mcp_server_config(name: &str) -> PathBuf {
+    let dir = get_mcp_servers_dir().expect("mcp servers dir");
+    fs::create_dir_all(&dir).expect("create mcp servers dir");
+    let path = dir.join(format!("{}.json", name));
+    fs::write(
+        &path,
+        r#"{"command":"npx","env":{"API_KEY":"enc:v1:not-a-real-ciphertext"}}"#,
+    )
+    .expect("write undecryptable config");
+    path
 }
 
 /// Persist a single MCP server config.  Env values are **encrypted** before
@@ -774,6 +813,78 @@ mod tests {
         let tmp = tmp();
         let dir = tmp.path().join("mcp_servers");
         delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    // ── read: missing versus unreadable ──────────────────────────────────────
+
+    #[test]
+    fn a_missing_server_reads_as_none() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            assert_eq!(read_mcp_server_config_if_present("reader-absent"), Ok(None));
+            assert_eq!(
+                read_mcp_server_config("reader-absent"),
+                Err("MCP server 'reader-absent' not found".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn a_stored_server_reads_with_its_env_decrypted() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let config = r#"{"command":"npx","env":{"API_KEY":"plain-secret"}}"#;
+            save_mcp_server_config("reader-stored", config).expect("save");
+
+            let raw = read_mcp_server_config_if_present("reader-stored")
+                .expect("read")
+                .expect("server is stored");
+            let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(parsed["env"]["API_KEY"], "plain-secret");
+            assert_eq!(read_mcp_server_config("reader-stored"), Ok(raw));
+        });
+    }
+
+    #[test]
+    fn a_server_that_cannot_be_decrypted_is_an_error_not_a_missing_server() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            write_undecryptable_mcp_server_config("reader-locked");
+
+            let typed = read_mcp_server_config_if_present("reader-locked");
+            assert!(typed.is_err(), "got {:?}", typed);
+
+            let plain = read_mcp_server_config("reader-locked").expect_err("read must fail");
+            assert!(
+                !plain.contains("not found"),
+                "a failed read must not look like a missing server: {}",
+                plain
+            );
+        });
+    }
+
+    #[test]
+    fn a_server_holding_invalid_json_is_an_error_not_a_missing_server() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = get_mcp_servers_dir().expect("dir");
+            fs::create_dir_all(&dir).expect("create dir");
+            fs::write(dir.join("reader-corrupt.json"), "{ not json").expect("write");
+
+            let typed = read_mcp_server_config_if_present("reader-corrupt");
+            assert!(typed.is_err(), "got {:?}", typed);
+        });
+    }
+
+    #[test]
+    fn an_invalid_name_is_an_error_not_a_missing_server() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            assert_eq!(
+                read_mcp_server_config_if_present("../escape"),
+                Err("Invalid server name".to_string())
+            );
+        });
     }
 
     /// Two invocation aliases of the same file (e.g. the CLI symlink vs the

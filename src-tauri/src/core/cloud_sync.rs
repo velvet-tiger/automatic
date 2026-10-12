@@ -389,18 +389,26 @@ fn read_commands() -> Result<Vec<DiskAsset>, String> {
     Ok(out)
 }
 
+/// Read every MCP server in the registry for the upload diff.
+///
+/// The diff sends a tombstone for each previously synced server missing from
+/// this list, and a tombstone deletes that server from the cloud library. A
+/// server whose config cannot be read still exists, so the sync stops here
+/// instead of leaving it out. The same holds when the registry cannot be
+/// listed, which would otherwise tombstone every server.
 fn read_mcp_servers() -> Result<Vec<DiskAsset>, String> {
-    let names = super::mcp_servers::list_mcp_server_configs().unwrap_or_default();
+    let names = super::mcp_servers::list_mcp_server_configs()
+        .map_err(|e| format!("failed to list MCP servers: {}", e))?;
     let mut out = Vec::with_capacity(names.len());
     for name in names {
-        let raw = match super::mcp_servers::read_mcp_server_config(&name) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let raw = match super::mcp_servers::read_mcp_server_config_if_present(&name) {
+            Ok(Some(raw)) => raw,
+            // Deleted between the listing and the read: a real removal.
+            Ok(None) => continue,
+            Err(e) => return Err(format!("MCP server '{}' could not be read: {}", name, e)),
         };
-        let parsed: Value = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+        let parsed: Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("MCP server '{}' holds invalid JSON: {}", name, e))?;
         let config = scrub_mcp_config(&parsed);
         let payload = json!({ "config": config });
         out.push(DiskAsset {
@@ -653,11 +661,7 @@ fn write_mcp_server_asset(machine_name: &str, payload: &Value) -> Result<(), Str
 
     // Merge with any existing local env so we never clobber secrets the user
     // has set on this device.
-    let existing_env: Map<String, Value> = super::mcp_servers::read_mcp_server_config(machine_name)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .and_then(|v| v.get("env").and_then(|e| e.as_object()).cloned())
-        .unwrap_or_default();
+    let existing_env = existing_mcp_server_env(machine_name)?;
 
     if !env_keys.is_empty() || !existing_env.is_empty() {
         let mut merged = Map::new();
@@ -674,6 +678,31 @@ fn write_mcp_server_asset(machine_name: &str, payload: &Value) -> Result<(), Str
     let data = serde_json::to_string(&config)
         .map_err(|e| format!("failed to serialise mcp_server config: {}", e))?;
     super::mcp_servers::save_mcp_server_config(machine_name, &data)
+}
+
+/// The decrypted `env` of the server stored under `machine_name`.
+///
+/// Empty only when the server is not stored yet, or is stored without an
+/// `env` object. A failed read is an error: the caller writes an empty string
+/// for every key missing from this map, which would replace a stored secret
+/// that could not be decrypted this time.
+fn existing_mcp_server_env(machine_name: &str) -> Result<Map<String, Value>, String> {
+    let raw = super::mcp_servers::read_mcp_server_config_if_present(machine_name).map_err(|e| {
+        format!(
+            "MCP server '{}' could not be read, so its env values cannot be kept: {}",
+            machine_name, e
+        )
+    })?;
+    let Some(raw) = raw else {
+        return Ok(Map::new());
+    };
+    let existing: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("MCP server '{}' holds invalid JSON: {}", machine_name, e))?;
+    Ok(existing
+        .get("env")
+        .and_then(|env| env.as_object())
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// Reconcile a skill collection: the payload has `skills: [string]` — the
@@ -1387,6 +1416,93 @@ mod tests {
             let raw = super::super::mcp_servers::read_mcp_server_config("new-server").unwrap();
             let v: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(v["env"]["TOKEN"].as_str().unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn write_mcp_server_asset_refuses_to_blank_env_it_could_not_read() {
+        // The existing config is stored but its env cannot be decrypted, as
+        // when the env-encryption key is unavailable. Writing the pulled
+        // config would save an empty string over the stored secret.
+        with_temp_home(|_| {
+            let path =
+                super::super::mcp_servers::write_undecryptable_mcp_server_config("pull-locked");
+            let before = fs::read(&path).expect("read before");
+
+            let payload = json!({
+                "config": {
+                    "command": "npx",
+                    "args": ["--new-flag"],
+                    "env_keys": ["API_KEY"]
+                }
+            });
+            let err = write_mcp_server_asset("pull-locked", &payload)
+                .expect_err("an unreadable existing config must stop the write");
+            assert!(
+                err.contains("pull-locked"),
+                "error names the server: {}",
+                err
+            );
+
+            let after = fs::read(&path).expect("read after");
+            assert_eq!(before, after, "the stored config must be left untouched");
+            assert!(String::from_utf8(after)
+                .expect("utf8")
+                .contains("enc:v1:not-a-real-ciphertext"));
+        });
+    }
+
+    // ── Disk reader: a failed read is not a deletion ──────────────────────────
+
+    /// Record `name` as an MCP server the cloud library already holds.
+    fn mark_mcp_server_seen(name: &str) {
+        let mut state = cloud_sync_state::load_or_init().expect("load state");
+        state.mark_seen(
+            "mcp_server",
+            &name_to_machine(name),
+            "sha256:previously-synced",
+            "2026-01-01T00:00:00Z",
+        );
+        cloud_sync_state::save(&state).expect("save state");
+    }
+
+    #[test]
+    fn preview_sync_stops_when_a_synced_mcp_server_cannot_be_read() {
+        with_temp_home(|_| {
+            mark_mcp_server_seen("preview-locked");
+            super::super::mcp_servers::write_undecryptable_mcp_server_config("preview-locked");
+
+            let err = preview_sync()
+                .expect_err("an unreadable server must stop the sync, not be tombstoned");
+            assert!(
+                err.contains("preview-locked"),
+                "error names the server: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn preview_sync_tombstones_a_synced_mcp_server_that_was_deleted() {
+        with_temp_home(|_| {
+            mark_mcp_server_seen("preview-deleted");
+            super::super::mcp_servers::save_mcp_server_config(
+                "preview-deleted",
+                r#"{"command":"npx"}"#,
+            )
+            .expect("seed server");
+            let path = super::super::mcp_servers::get_mcp_servers_dir()
+                .expect("dir")
+                .join("preview-deleted.json");
+            fs::remove_file(&path).expect("delete the config");
+
+            let preview = preview_sync().expect("preview");
+            assert_eq!(
+                preview.tombstone_count_by_kind.get("mcp_server"),
+                Some(&1),
+                "a server that is gone from disk is a real removal"
+            );
+            assert_eq!(preview.total_tombstones, 1);
         });
     }
 

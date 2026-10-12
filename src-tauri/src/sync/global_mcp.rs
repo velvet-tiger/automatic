@@ -143,7 +143,7 @@ pub fn preview_global_mcp(
         .cloned()
         .collect();
 
-    let mcp_config = load_mcp_server_configs()?;
+    let mcp_config = load_mcp_server_configs(selection)?;
     let (desired_map, rejected) = build_prepared_desired(agent, selection, &mcp_config);
 
     let previously_managed_set: std::collections::HashSet<&String> =
@@ -332,7 +332,7 @@ fn run_apply(
         .global_mcp_target()
         .ok_or_else(|| format!("{} does not support global MCP writes", agent.label()))?;
 
-    let mcp_config = load_mcp_server_configs()?;
+    let mcp_config = load_mcp_server_configs(selection)?;
     let (desired, rejected) = build_prepared_desired(agent, selection, &mcp_config);
 
     let write = agent.write_global_mcp_config(&desired, previously_managed)?;

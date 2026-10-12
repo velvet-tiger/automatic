@@ -98,11 +98,9 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
 /// Validate the project's enabled MCP servers against the registry and report
 /// which ones a sync leaves out and which ones sync with warnings.
 pub fn mcp_config_sync_notes(project: &Project) -> Result<McpConfigSyncNotes, String> {
-    let mcp_config = load_mcp_server_configs()?;
-    Ok(collect_mcp_config_notes(
-        &project.enabled_mcp_servers(),
-        &mcp_config,
-    ))
+    let enabled_mcp_servers = project.enabled_mcp_servers();
+    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    Ok(collect_mcp_config_notes(&enabled_mcp_servers, &mcp_config))
 }
 
 /// One fix step per server: its name followed by what validation found.
@@ -498,8 +496,8 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
 
     // Build the MCP server map using the same logic as the sync engine
     // (strips internal `_` fields, substitutes OAuth proxy configs).
-    let mcp_config = load_mcp_server_configs()?;
     let enabled_mcp_servers = project.enabled_mcp_servers();
+    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
     let selected_servers = build_selected_servers(
         automatic_project_env_value(project),
         &enabled_mcp_servers,

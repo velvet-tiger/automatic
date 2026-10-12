@@ -6,20 +6,36 @@ use std::path::PathBuf;
 
 use crate::core::Project;
 
-/// Load MCP server configs from the Automatic registry (~/.automatic/mcp_servers/).
-pub(crate) fn load_mcp_server_configs() -> Result<Map<String, Value>, String> {
-    let names = crate::core::list_mcp_server_configs()?;
+/// Load the configs of the named MCP servers from the Automatic registry.
+///
+/// Pass the names the caller goes on to look up in the returned map. Only
+/// those servers are read, so a server that cannot be read blocks the
+/// projects and agents that use it and no others. A name is matched against
+/// the registry listing exactly, and a name with no registry entry is left
+/// out of the map.
+///
+/// A selected server that exists but cannot be read is an error. Leaving it
+/// out would make the caller treat it as deleted and drop it from agent
+/// config files.
+pub(crate) fn load_mcp_server_configs(
+    server_names: &[String],
+) -> Result<Map<String, Value>, String> {
+    let wanted: HashSet<&str> = server_names.iter().map(String::as_str).collect();
     let mut servers = Map::new();
 
-    for name in names {
-        match crate::core::read_mcp_server_config(&name) {
-            Ok(raw) => {
-                if let Ok(config) = serde_json::from_str::<Value>(&raw) {
-                    servers.insert(name, config);
-                }
-            }
-            Err(_) => continue,
+    for name in crate::core::list_mcp_server_configs()? {
+        if !wanted.contains(name.as_str()) {
+            continue;
         }
+        let raw = crate::core::read_mcp_server_config_if_present(&name)
+            .map_err(|e| format!("MCP server '{}' could not be read: {}", name, e))?;
+        // Deleted between the listing and the read.
+        let Some(raw) = raw else {
+            continue;
+        };
+        let config = serde_json::from_str::<Value>(&raw)
+            .map_err(|e| format!("MCP server '{}' holds invalid JSON: {}", name, e))?;
+        servers.insert(name, config);
     }
 
     Ok(servers)
@@ -931,5 +947,67 @@ mod tests {
 
         project.id.clear();
         assert_eq!(automatic_project_env_value(&project), "site");
+    }
+
+    // ── load_mcp_server_configs ──────────────────────────────────────────────
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn load_mcp_server_configs_fails_for_a_selected_server_it_cannot_read() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config("loader-good", r#"{"command":"npx"}"#)
+                .expect("seed");
+            crate::core::write_undecryptable_mcp_server_config("loader-locked");
+
+            let err = load_mcp_server_configs(&names(&["loader-good", "loader-locked"]))
+                .expect_err("a selected server that cannot be read must stop the load");
+            assert!(
+                err.contains("loader-locked"),
+                "error names the server: {}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn load_mcp_server_configs_ignores_an_unreadable_server_that_is_not_selected() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config("loader-used", r#"{"command":"npx"}"#)
+                .expect("seed");
+            crate::core::write_undecryptable_mcp_server_config("loader-unused-locked");
+
+            let loaded = load_mcp_server_configs(&names(&["loader-used"])).expect("load");
+            assert_eq!(loaded.keys().collect::<Vec<_>>(), vec!["loader-used"]);
+            assert_eq!(loaded["loader-used"]["command"], "npx");
+        });
+    }
+
+    #[test]
+    fn load_mcp_server_configs_skips_a_selected_name_with_no_registry_entry() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config("loader-present", r#"{"command":"npx"}"#)
+                .expect("seed");
+
+            let loaded = load_mcp_server_configs(&names(&["loader-present", "loader-absent"]))
+                .expect("load");
+            assert_eq!(loaded.keys().collect::<Vec<_>>(), vec!["loader-present"]);
+        });
+    }
+
+    #[test]
+    fn load_mcp_server_configs_reads_nothing_for_an_empty_selection() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::write_undecryptable_mcp_server_config("loader-idle-locked");
+
+            let loaded = load_mcp_server_configs(&[]).expect("load");
+            assert!(loaded.is_empty());
+        });
     }
 }

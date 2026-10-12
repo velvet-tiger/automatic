@@ -182,8 +182,8 @@ fn sync_to_directory_inner(
     // selected server map (includes stripping internal fields and OAuth proxy
     // substitution).  Uses the shared helper so drift detection produces
     // identical output.
-    let mcp_config = load_mcp_server_configs()?;
     let enabled_mcp_servers = project.enabled_mcp_servers();
+    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
     let selected_servers = build_selected_servers(
         automatic_project_env_value(project),
         &enabled_mcp_servers,
@@ -1937,6 +1937,72 @@ mod tests {
                 "sync writes the registry's config back, under the registry's spelling"
             );
             assert!(written["mcpServers"].get("GitHub").is_none());
+        });
+    }
+
+    fn claude_project_with_servers(dir: &std::path::Path, name: &str, servers: &[&str]) -> Project {
+        Project {
+            name: name.into(),
+            directory: dir.display().to_string(),
+            agents: vec!["claude".into()],
+            mcp_servers: servers.iter().map(|server| server.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sync_fails_when_a_selected_server_cannot_be_read() {
+        let home = tmp();
+        let dir = tmp();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::write_undecryptable_mcp_server_config("sync-locked");
+            let project = claude_project_with_servers(dir.path(), "locked", &["sync-locked"]);
+
+            let err = sync_project(&project)
+                .expect_err("a selected server that cannot be read must stop the sync");
+            assert!(
+                err.contains("sync-locked"),
+                "error names the server: {}",
+                err
+            );
+            assert!(
+                !dir.path().join(".mcp.json").exists(),
+                "no MCP config is written without the server"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_ignores_an_unreadable_server_the_project_does_not_enable() {
+        let home = tmp();
+        let dir = tmp();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config(
+                "sync-used",
+                r#"{"type":"http","url":"https://used.example/mcp"}"#,
+            )
+            .expect("seed");
+            crate::core::write_undecryptable_mcp_server_config("sync-unused-locked");
+            crate::core::write_undecryptable_mcp_server_config("sync-disabled-locked");
+            let mut project = claude_project_with_servers(
+                dir.path(),
+                "unaffected",
+                &["sync-used", "sync-disabled-locked"],
+            );
+            project.disabled_mcp_servers = vec!["sync-disabled-locked".into()];
+
+            sync_project(&project).expect("sync");
+
+            let written = fs::read_to_string(dir.path().join(".mcp.json")).expect("read");
+            let written: serde_json::Value = serde_json::from_str(&written).expect("parse");
+            assert_eq!(
+                written["mcpServers"]["sync-used"]["url"],
+                "https://used.example/mcp"
+            );
+            assert!(written["mcpServers"].get("sync-unused-locked").is_none());
+            assert!(written["mcpServers"].get("sync-disabled-locked").is_none());
         });
     }
 }

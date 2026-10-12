@@ -530,48 +530,74 @@ fn enrich_skill_collections(project: &mut Project) {
 fn enrich_mcp_server_specs(project: &mut Project) {
     let mut specs = BTreeMap::new();
     for name in &project.mcp_servers {
-        let Ok(raw) = read_mcp_server_config(name) else {
-            continue;
-        };
-        let Ok(config) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            continue;
-        };
-        let server_type = config
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let command = config
-            .get("command")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let args = config
-            .get("args")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let env_keys = config
-            .get("env")
-            .and_then(|v| v.as_object())
-            .map(|obj| obj.keys().cloned().collect())
-            .unwrap_or_default();
-        let url = config.get("url").and_then(|v| v.as_str()).map(String::from);
-
-        specs.insert(
-            name.clone(),
-            McpServerSpec {
-                server_type,
-                command,
-                args,
-                env_keys,
-                url,
-            },
-        );
+        match read_mcp_server_spec(name) {
+            Ok(Some(spec)) => {
+                specs.insert(name.clone(), spec);
+            }
+            // The server is gone from the registry, so its snapshot goes too.
+            Ok(None) => {}
+            // The server may still exist: decrypting its env needs the
+            // env-encryption key, and a locked keychain fails the read. The
+            // error is not returned because enrichment runs on every project
+            // read and save, and one unreadable server must not block them.
+            // The snapshot the project already carries is kept, so a failed
+            // read does not erase it from the saved project.
+            Err(_) => {
+                if let Some(prior) = project.mcp_server_specs.get(name) {
+                    specs.insert(name.clone(), prior.clone());
+                }
+            }
+        }
     }
     project.mcp_server_specs = specs;
+}
+
+/// Read the registry config stored under `name` and reduce it to a spec.
+/// `Ok(None)` means no config is stored. `Err` means one is stored but could
+/// not be read.
+fn read_mcp_server_spec(name: &str) -> Result<Option<McpServerSpec>, String> {
+    let Some(raw) = read_mcp_server_config_if_present(name)? else {
+        return Ok(None);
+    };
+    let config = serde_json::from_str::<serde_json::Value>(&raw)
+        .map_err(|e| format!("MCP server '{}' holds invalid JSON: {}", name, e))?;
+    Ok(Some(mcp_server_spec_from_config(&config)))
+}
+
+/// The parts of a server config a project snapshot records. Env values are
+/// left out and only their key names are kept.
+fn mcp_server_spec_from_config(config: &serde_json::Value) -> McpServerSpec {
+    let server_type = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let command = config
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let args = config
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let env_keys = config
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+    let url = config.get("url").and_then(|v| v.as_str()).map(String::from);
+
+    McpServerSpec {
+        server_type,
+        command,
+        args,
+        env_keys,
+        url,
+    }
 }
 
 fn enrich_resolved_rules(project: &mut Project) {
@@ -1587,6 +1613,109 @@ mod tests {
                 vec!["Foo".to_string()],
                 "disabled list is de-duplicated the same way"
             );
+        });
+    }
+
+    // ── enrich_mcp_server_specs ──────────────────────────────────────────
+
+    /// A project that selects `server` and already carries a snapshot of it.
+    fn project_with_prior_spec(server: &str) -> Project {
+        let mut project = Project {
+            name: "demo".to_string(),
+            mcp_servers: vec![server.to_string()],
+            ..Default::default()
+        };
+        project.mcp_server_specs.insert(
+            server.to_string(),
+            McpServerSpec {
+                server_type: Some("stdio".to_string()),
+                command: Some("docker".to_string()),
+                args: vec!["run".to_string()],
+                env_keys: vec!["API_KEY".to_string()],
+                url: None,
+            },
+        );
+        project
+    }
+
+    #[test]
+    fn enrich_keeps_the_prior_spec_of_a_server_that_cannot_be_read() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            write_undecryptable_mcp_server_config("enrich-locked");
+            let mut project = project_with_prior_spec("enrich-locked");
+
+            enrich_project(&mut project);
+
+            let spec = project
+                .mcp_server_specs
+                .get("enrich-locked")
+                .expect("a failed read must not erase the snapshot");
+            assert_eq!(spec.command.as_deref(), Some("docker"));
+            assert_eq!(spec.args, vec!["run"]);
+            assert_eq!(spec.env_keys, vec!["API_KEY"]);
+        });
+    }
+
+    #[test]
+    fn enrich_adds_no_spec_for_an_unreadable_server_without_a_prior_one() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            write_undecryptable_mcp_server_config("enrich-locked-new");
+            let mut project = Project {
+                name: "demo".to_string(),
+                mcp_servers: vec!["enrich-locked-new".to_string()],
+                ..Default::default()
+            };
+
+            enrich_project(&mut project);
+
+            assert!(project.mcp_server_specs.is_empty());
+        });
+    }
+
+    #[test]
+    fn enrich_drops_the_spec_of_a_server_that_is_gone() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = project_with_prior_spec("enrich-gone");
+
+            enrich_project(&mut project);
+
+            assert!(
+                !project.mcp_server_specs.contains_key("enrich-gone"),
+                "a server with no registry entry has no snapshot"
+            );
+        });
+    }
+
+    #[test]
+    fn enrich_replaces_the_prior_spec_of_a_server_that_reads() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config(
+                "enrich-readable",
+                r#"{"command":"npx","env":{"TOKEN":"value"}}"#,
+            )
+            .expect("seed");
+            let mut project = project_with_prior_spec("enrich-readable");
+
+            enrich_project(&mut project);
+
+            let spec = project
+                .mcp_server_specs
+                .get("enrich-readable")
+                .expect("spec");
+            assert_eq!(spec.command.as_deref(), Some("npx"));
+            assert_eq!(spec.env_keys, vec!["TOKEN"]);
         });
     }
 
