@@ -43,7 +43,11 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["n
 tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "windows-native"] }
+# On Linux, `linux-native` alone is the kernel keyring, which is emptied on
+# reboot. `sync-secret-service` makes the Secret Service the default store, and
+# `crypto-rust` encrypts secrets on the D-Bus session. `linux-native` stays so
+# that secrets an older build left in the kernel keyring can still be read.
+keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "sync-secret-service", "crypto-rust", "windows-native"] }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
 rmcp = { version = "1.6", features = [

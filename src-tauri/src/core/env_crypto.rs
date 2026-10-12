@@ -2,11 +2,15 @@
 //!
 //! # Design
 //!
-//! A single AES-256-GCM key is generated on first use and kept in the secret
-//! store (`core::secret_store`) under `env_encryption_key`. In a release build
-//! that is the OS keychain (macOS Keychain, Linux SecretService, Windows
-//! Credential Manager), and the key is never written to disk in any other
-//! form. A debug build keeps the key in the dev secrets file instead.
+//! A single AES-256-GCM key is generated the first time a value is encrypted
+//! and kept in the secret store (`core::secret_store`) under
+//! `env_encryption_key`. In a release build that is the OS keychain (macOS
+//! Keychain, Windows Credential Manager, Linux Secret Service over D-Bus), and
+//! the key is never written to disk in any other form. A debug build keeps the
+//! key in the dev secrets file instead.
+//!
+//! Decrypting never creates a key. A new key cannot read a value that an
+//! earlier key encrypted, so a missing key is reported as an error.
 //!
 //! Encrypted values are stored as self-describing sentinel strings:
 //!
@@ -50,6 +54,13 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
     Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()))
 }
 
+/// Retrieve the encryption key for a decrypt. Tests share one key, so a value
+/// a test encrypted can be decrypted again.
+#[cfg(test)]
+fn existing_key() -> Result<[u8; 32], String> {
+    get_or_create_key()
+}
+
 /// Retrieve the encryption key from the keychain, creating and storing a new
 /// random key if one does not yet exist.
 ///
@@ -63,6 +74,20 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
         return Ok(*key);
     }
     let key = read_or_create_keychain_key()?;
+    Ok(*CACHED_KEY.get_or_init(|| key))
+}
+
+/// Retrieve the encryption key from the keychain for a decrypt. Never creates
+/// a key.
+///
+/// A missing key is not cached. Another process may create the key later, and
+/// the next call must find it.
+#[cfg(not(test))]
+fn existing_key() -> Result<[u8; 32], String> {
+    if let Some(key) = CACHED_KEY.get() {
+        return Ok(*key);
+    }
+    let key = key_for_decrypt(secret_store::load_secret_if_present(KEYCHAIN_USER))?;
     Ok(*CACHED_KEY.get_or_init(|| key))
 }
 
@@ -91,6 +116,19 @@ fn existing_or_new_key(
     store(&hex::encode(key_bytes))
         .map_err(|e| format!("Failed to store encryption key in keychain: {}", e))?;
     Ok(key_bytes)
+}
+
+/// Return the stored key for a decrypt. No stored key is an error here.
+///
+/// The value being decrypted was encrypted with a key that is no longer in
+/// the store. Before this rule, the first read after the key was lost created
+/// a new key, and the old values then failed with a bare "Decryption failed".
+fn key_for_decrypt(loaded: Result<Option<String>, String>) -> Result<[u8; 32], String> {
+    stored_key(loaded)?.ok_or_else(|| {
+        "The encryption key for this value is no longer in the keychain, so the value cannot \
+         be decrypted (no new key was created). Enter the value again to store it with a new key."
+            .to_string()
+    })
 }
 
 /// Decode the result of reading the stored key. `Ok(None)` means no key has
@@ -139,7 +177,7 @@ pub fn encrypt_value(plaintext: &str) -> Result<String, String> {
 }
 
 /// Decrypt an `enc:v1:<base64url>` sentinel string.  Returns `Err` if the
-/// sentinel prefix is missing or decryption fails.
+/// sentinel prefix is missing, no key is stored, or decryption fails.
 pub fn decrypt_value(ciphertext_str: &str) -> Result<String, String> {
     let encoded = ciphertext_str
         .strip_prefix(SENTINEL)
@@ -156,7 +194,7 @@ pub fn decrypt_value(ciphertext_str: &str) -> Result<String, String> {
     let (nonce_bytes, ciphertext) = payload.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let key_bytes = get_or_create_key()?;
+    let key_bytes = existing_key()?;
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
 
@@ -255,6 +293,31 @@ mod tests {
         assert!(stored_key(Ok(Some("not hex".to_string()))).is_err());
         assert!(stored_key(Ok(Some(String::new()))).is_err());
         assert!(stored_key(Ok(Some(hex::encode([7u8; 16])))).is_err());
+    }
+
+    // ── key_for_decrypt ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_decrypt_uses_the_stored_key() {
+        let key = [5u8; 32];
+        assert_eq!(key_for_decrypt(Ok(Some(hex::encode(key)))), Ok(key));
+    }
+
+    #[test]
+    fn a_decrypt_with_no_stored_key_is_an_error() {
+        // A new key could not read the value, and would hide that the old
+        // key was lost.
+        let error = key_for_decrypt(Ok(None)).unwrap_err();
+        assert!(
+            error.contains("no new key was created"),
+            "error was: {error}"
+        );
+    }
+
+    #[test]
+    fn a_decrypt_keeps_a_failed_read_as_an_error() {
+        let error = key_for_decrypt(Err("keychain is locked".to_string())).unwrap_err();
+        assert!(error.contains("keychain is locked"), "error was: {error}");
     }
 
     // ── existing_or_new_key ──────────────────────────────────────────────────
