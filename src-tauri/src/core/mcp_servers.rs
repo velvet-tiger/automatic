@@ -160,6 +160,11 @@ pub(crate) fn write_undecryptable_mcp_server_config(name: &str) -> PathBuf {
 ///
 /// The `data` parameter is the raw JSON string from the frontend (env values
 /// are plaintext at this point — the frontend never sees the encrypted form).
+///
+/// A save that changes the server's `url` deletes the OAuth secrets stored
+/// under `name` before it writes, as [`changes_server_url`] describes. If the
+/// secret store cannot confirm they are gone, nothing is written and the
+/// call fails.
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
@@ -180,6 +185,9 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
 
     let path = dir.join(format!("{}.json", name));
     let is_new = !path.exists();
+    if changes_server_url(&path, &config)? {
+        crate::proxy::forget_oauth_secrets(name)?;
+    }
     let serialized = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     fs::write(&path, serialized).map_err(|e| e.to_string())?;
 
@@ -188,6 +196,51 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Whether saving `config` at `path` gives the server a different `url` from
+/// the one stored there.
+///
+/// The server's OAuth token was issued for the stored URL, and the proxy
+/// sends it to whatever URL the config holds. Every writer comes through
+/// [`save_mcp_server_config`]: the editor, a cloud sync pull, a plugin update
+/// and an import from an agent file. Any of them can point the name at
+/// another URL, so the secrets must not outlive the change.
+///
+/// A config that is not stored yet counts as having no URL. Creating a server
+/// with a URL therefore also clears secrets left under its name by an earlier
+/// server. A stored config that is not valid JSON has no known URL, and
+/// counts as a change. A save that keeps the URL returns `false`, and the
+/// caller then makes no call to the secret store.
+fn changes_server_url(path: &Path, config: &serde_json::Value) -> Result<bool, String> {
+    let stored = match fs::read_to_string(path) {
+        Ok(stored) => stored,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(comparable_server_url(config).is_some());
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    let Ok(stored) = serde_json::from_str::<serde_json::Value>(&stored) else {
+        return Ok(true);
+    };
+    Ok(comparable_server_url(&stored) != comparable_server_url(config))
+}
+
+/// The `url` of a server config in the form two URLs are compared in, or
+/// `None` when the config has none.
+///
+/// Parsing puts the scheme and host in lower case, drops a default port and
+/// gives an empty path a `/`, so tidying a URL does not sign the user out. A
+/// value that does not parse as a URL is compared as written.
+fn comparable_server_url(config: &serde_json::Value) -> Option<String> {
+    let url = config.get("url")?.as_str()?.trim();
+    if url.is_empty() {
+        return None;
+    }
+    Some(match url::Url::parse(url) {
+        Ok(parsed) => parsed.to_string(),
+        Err(_) => url.to_string(),
+    })
 }
 
 /// Add an MCP server config read from an agent's own config file to the
@@ -1652,6 +1705,88 @@ mod tests {
             assert_eq!(crate::proxy::load_oauth_token(old).expect("token"), "access-token");
             assert!(crate::proxy::load_oauth_credentials(old).is_ok());
             assert_eq!(crate::proxy::load_oauth_token(taken).expect("other token"), "other-token");
+        });
+    }
+
+    #[test]
+    fn a_save_that_changes_the_url_removes_the_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-url-changed-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+            assert!(crate::proxy::has_oauth_token(server));
+
+            save_mcp_server_config(server, r#"{"type":"http","url":"https://other.example/mcp"}"#)
+                .expect("save new url");
+
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn a_save_that_keeps_the_url_keeps_the_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-url-kept-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+
+            // The same URL written another way, and another field changed.
+            save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":" HTTPS://MCP.Example.com:443/mcp ","headers":{"X-Team":"a"}}"#,
+            )
+            .expect("save again");
+
+            assert_eq!(crate::proxy::load_oauth_token(server).expect("token"), "access-token");
+            assert!(crate::proxy::load_oauth_credentials(server).is_ok());
+            assert!(crate::proxy::has_oauth_token(server));
+        });
+    }
+
+    #[test]
+    fn a_save_that_drops_the_url_removes_the_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-url-dropped-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+
+            save_mcp_server_config(server, r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save as stdio");
+
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn a_new_server_with_a_url_does_not_inherit_oauth_secrets_left_under_its_name() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-url-inherit-fixture";
+            store_oauth_secrets(server);
+            assert!(crate::proxy::has_oauth_token(server));
+
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+
+            assert!(has_no_oauth_secrets(server));
+        });
+    }
+
+    #[test]
+    fn a_save_over_a_config_that_does_not_parse_removes_the_oauth_secrets() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "secrets-url-unparsed-fixture";
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            store_oauth_secrets(server);
+            let path = get_mcp_servers_dir().expect("dir").join(format!("{}.json", server));
+            fs::write(&path, "not json").expect("corrupt the config");
+
+            save_mcp_server_config(server, OAUTH_SERVER).expect("save again");
+
+            assert!(has_no_oauth_secrets(server));
         });
     }
 
