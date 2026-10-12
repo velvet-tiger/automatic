@@ -203,8 +203,8 @@ pub fn move_oauth_secrets(old_name: &str, new_name: &str) -> Result<(), String> 
     if let Err(store_err) =
         replace_oauth_secrets(new_name, token.as_deref(), credentials.as_deref())
     {
-        // One of the two may have been stored. No server has the new name,
-        // so nothing under it is worth keeping.
+        // One of the two may have been stored. Half a pair is not worth
+        // keeping: it could sit next to the other half of another account.
         let cleanup = match forget_oauth_secrets(new_name) {
             Ok(()) => String::new(),
             Err(e) => format!(" (a copy may be left under '{}': {})", new_name, e),

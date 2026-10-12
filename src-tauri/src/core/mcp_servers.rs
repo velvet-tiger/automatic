@@ -1854,7 +1854,9 @@ mod tests {
     }
 
     /// Whether the registry stores `name` and its upper-case form as one
-    /// file. True on the default macOS and Windows filesystems.
+    /// file. True on the default macOS and Windows filesystems. Where it is
+    /// false the two names are two servers, and the tests below check that
+    /// acting on one leaves the other's secrets alone.
     fn registry_ignores_case(name: &str) -> bool {
         get_mcp_servers_dir()
             .expect("dir")
@@ -1869,10 +1871,7 @@ mod tests {
             let server = "secrets-case-save-fixture";
             save_mcp_server_config(server, OAUTH_SERVER).expect("save");
             store_oauth_secrets(server);
-            if !registry_ignores_case(server) {
-                // The two names are two servers here, so there is nothing to test.
-                return;
-            }
+            let one_file = registry_ignores_case(server);
 
             save_mcp_server_config(
                 &server.to_uppercase(),
@@ -1880,6 +1879,10 @@ mod tests {
             )
             .expect("save under the other case");
 
+            if !one_file {
+                assert!(crate::proxy::has_oauth_token(server));
+                return;
+            }
             assert_eq!(list_mcp_server_configs().expect("list"), vec![server.to_string()]);
             assert!(has_no_oauth_secrets(server));
         });
@@ -1892,12 +1895,15 @@ mod tests {
             let server = "secrets-case-delete-fixture";
             save_mcp_server_config(server, OAUTH_SERVER).expect("save");
             store_oauth_secrets(server);
-            if !registry_ignores_case(server) {
-                return;
-            }
+            let one_file = registry_ignores_case(server);
 
             delete_mcp_server_config(&server.to_uppercase()).expect("delete");
 
+            if !one_file {
+                assert!(read_mcp_server_config(server).is_ok());
+                assert!(crate::proxy::has_oauth_token(server));
+                return;
+            }
             assert!(read_mcp_server_config(server).is_err());
             assert!(has_no_oauth_secrets(server));
         });
@@ -1911,6 +1917,9 @@ mod tests {
             save_mcp_server_config(old, OAUTH_SERVER).expect("save");
             store_oauth_secrets(old);
             if !registry_ignores_case(old) {
+                rename_mcp_server_config(&old.to_uppercase(), new)
+                    .expect_err("no server has the upper-case name");
+                assert!(crate::proxy::has_oauth_token(old));
                 return;
             }
 
