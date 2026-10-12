@@ -46,15 +46,15 @@ impl Agent for Pi {
     /// server stays blocked until the user approves it inside Pi.
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "In a trusted project, Pi asks you to approve each project MCP server before its \
-             first connection. Headless runs skip unapproved project servers unless \
-             projectServers is set to \"allow\" in your user-level \
-             ~/.pi/agent/mcp-adapter.json. Reading .pi/mcp.json needs pi-mcp-adapter 5.0.0 \
-             or later and Pi 0.99 or later.",
+            "With pi-mcp-adapter, Pi asks you to approve each project MCP server in a trusted \
+             project before it first connects, and again when its definition changes. \
+             Headless runs skip unapproved servers unless settings.projectServers is \
+             \"allow\" in ~/.pi/agent/mcp-adapter.json. Automatic does not write Pi's \
+             user-level MCP config.",
         )
     }
 
-    // ── Detection───────────────────────────────────────────────────────
+    // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_global_install(&self) -> bool {
         super::cli_available("pi")
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn test_mcp_note_names_the_headless_setting() {
         let note = Pi.mcp_note().expect("Pi should carry an MCP note");
-        assert!(note.contains("projectServers"));
+        assert!(note.contains("settings.projectServers"));
         assert!(note.contains("~/.pi/agent/mcp-adapter.json"));
     }
 
