@@ -311,8 +311,26 @@ function CommandDependencyWarning({ command }: { command: string }) {
  * header: it does not use OAuth, so the sign-in prompt is left out. A token
  * already stored for the name still shows, because sync keeps routing the
  * server through the OAuth proxy until that token is revoked.
+ *
+ * `url` is the value in the editor, which may not be saved yet. A token is
+ * issued for one URL and the proxy sends it to the saved one, so while
+ * `dirty` is true this section neither signs in nor sends the stored token
+ * anywhere. `savedRevision` changes after each save. Saving a new URL deletes
+ * the stored token, so the section asks again whether one is stored.
  */
-function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; url: string; offerSignIn: boolean }) {
+function OAuthSection({
+  serverName,
+  url,
+  offerSignIn,
+  dirty,
+  savedRevision,
+}: {
+  serverName: string;
+  url: string;
+  offerSignIn: boolean;
+  dirty: boolean;
+  savedRevision: number;
+}) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
   const [action, setAction] = useState<"authorize" | "revoke" | null>(null);
@@ -335,17 +353,32 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
   }, [serverName]);
 
   useEffect(() => {
+    if (!serverName || savedRevision === 0) return;
+    invoke<boolean>("has_mcp_oauth_token", { serverName })
+      .then(setHasToken)
+      .catch(() => setHasToken(false));
+  }, [savedRevision]);
+
+  useEffect(() => {
     if (!serverName || !url || !hasToken) {
       setCheckingStatus(false);
       setTokenStatus(null);
       return;
     }
+    // The check sends the stored token to `url`. Wait until that is the
+    // saved URL, and keep showing the last result until then.
+    if (dirty) return;
 
     let active = true;
     setCheckingStatus(true);
     invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: url })
       .then((status) => {
         if (!active) return;
+        // The token can be deleted between the presence check and this one.
+        if (!status.has_token) {
+          setHasToken(false);
+          return;
+        }
         setTokenStatus(status);
       })
       .catch((statusError) => {
@@ -364,10 +397,10 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
     return () => {
       active = false;
     };
-  }, [serverName, url, hasToken]);
+  }, [serverName, url, hasToken, dirty]);
 
   const handleAuthorize = async () => {
-    if (!serverName || !url) return;
+    if (!serverName || !url || dirty) return;
     cancelledRef.current = false;
     setAction("authorize");
     setError(null);
@@ -462,7 +495,7 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
                       {tokenInvalid && (
                         <button
                           onClick={handleAuthorize}
-                          disabled={!url || loading}
+                          disabled={!url || loading || dirty}
                           className="px-3 py-1.5 text-[11px] font-medium bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                           Re-authenticate
@@ -479,6 +512,10 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
                   )}
                 </div>
               </div>
+
+              {dirty && tokenInvalid && (
+                <p className="text-[11px] text-text-muted">Save your changes before you sign in again.</p>
+              )}
 
               {checkingStatus && (
                 <div className="flex items-center gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3 text-[11px] text-text-muted">
@@ -522,13 +559,17 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
             ) : (
               <button
                 onClick={handleAuthorize}
-                disabled={!url}
+                disabled={!url || dirty}
                 className="px-4 py-1.5 text-[12px] font-medium bg-brand hover:bg-brand-hover text-white rounded shadow-sm transition-colors disabled:opacity-50 whitespace-nowrap"
               >
                 Authenticate
               </button>
             )}
           </div>
+
+          {dirty && !loading && (
+            <p className="text-[11px] text-text-muted">Save your changes before you sign in.</p>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
@@ -565,6 +606,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [config, setConfig] = useState<McpServerConfig | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Counts successful saves, so the OAuth section can re-check the stored token.
+  const [savedRevision, setSavedRevision] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
   // Editable name for existing (non-creating) servers. When it differs from
@@ -756,6 +799,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         trackMcpServerUpdated(name);
       }
       setDirty(false);
+      setSavedRevision(prev => prev + 1);
       setSaveDespiteErrors(false);
       setSelectedName(name);
       setEditName(name);
@@ -1555,6 +1599,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         serverName={selectedName || ""}
                         url={config.url || ""}
                         offerSignIn={!hasAuthorizationHeader(config.headers || {})}
+                        dirty={dirty}
+                        savedRevision={savedRevision}
                       />
                     )}
                   </>
