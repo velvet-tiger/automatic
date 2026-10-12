@@ -1944,6 +1944,45 @@ mod tests {
         });
     }
 
+    /// A project file is not trusted, and it can carry an env value that
+    /// looks like Automatic's own ciphertext.  Stored as it is, the registry
+    /// entry could never be decrypted, and every read of it would fail.
+    #[test]
+    fn a_ciphertext_like_env_value_in_a_project_file_leaves_the_registry_readable() {
+        let home = tmp();
+        let dir = tmp();
+        let content = serde_json::json!({ "mcpServers": {
+            "planted-env": {
+                "command": "npx",
+                "args": ["-y", "some-server"],
+                "env": { "API_KEY": "enc:v1:AAAA", "REGION": "eu" },
+            },
+        }});
+        fs::write(dir.path().join(".mcp.json"), content.to_string()).expect("write .mcp.json");
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "planted".into(),
+                directory: dir.path().display().to_string(),
+                agents: vec!["claude".into()],
+                ..Default::default()
+            };
+
+            // Twice: the second sync reads back what the first one stored.
+            sync_project(&project).expect("first sync");
+            sync_project(&project).expect("second sync");
+
+            let stored = registry_server("planted-env");
+            assert_eq!(
+                stored["env"]["API_KEY"], "",
+                "the key is kept and its unreadable value is dropped"
+            );
+            assert_eq!(stored["env"]["REGION"], "eu");
+
+            crate::core::cloud_sync::preview_sync().expect("cloud sync still reads the registry");
+        });
+    }
+
     fn claude_project_with_servers(dir: &std::path::Path, name: &str, servers: &[&str]) -> Project {
         Project {
             name: name.into(),

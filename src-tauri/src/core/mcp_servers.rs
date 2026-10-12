@@ -207,6 +207,9 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
 ///
 /// A config the sync guard would block is stored with the discovered marker,
 /// as [`mark_discovered_if_blocked`] describes.
+///
+/// An env value that looks like Automatic's own ciphertext is stored empty,
+/// as [`blank_ciphertext_like_env_values`] describes.
 pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
@@ -216,7 +219,50 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
     {
         return Ok(());
     }
-    save_mcp_server_config(name, &super::mark_discovered_if_blocked(config_json))
+    // Blanked first, so the config that is validated is the one stored.
+    // Validation reads env key names only, and blanking keeps every key.
+    let config_json = blank_ciphertext_like_env_values(config_json);
+    save_mcp_server_config(name, &super::mark_discovered_if_blocked(&config_json))
+}
+
+/// Replace every `env` value in a discovered config that carries the
+/// encryption prefix with an empty string.  The key is kept.
+///
+/// Saving a config leaves a prefixed value as it is, because it is taken for
+/// a value that is already encrypted.  A prefixed value from an agent file is
+/// not ciphertext this install can read: sync writes decrypted values to
+/// agent files, so they never hold Automatic's ciphertext.  Stored as it is,
+/// the registry entry could never be decrypted, and cloud sync and the
+/// project's own sync would stop on it until the user deleted the server.
+///
+/// An empty value means "inherit from the environment".  The value is not
+/// encrypted as plain text instead.  It would then read back as a plain
+/// string with the prefix, and the next save would store it unencrypted and
+/// make the entry unreadable again.
+///
+/// Returns the input unchanged when it is not JSON, has no `env` object, or
+/// has no prefixed value, leaving the save path to report any error.
+fn blank_ciphertext_like_env_values(config_json: &str) -> String {
+    let Ok(mut config) = serde_json::from_str::<serde_json::Value>(config_json) else {
+        return config_json.to_string();
+    };
+    let Some(env) = config.get_mut("env").and_then(|env| env.as_object_mut()) else {
+        return config_json.to_string();
+    };
+
+    let mut blanked = false;
+    for value in env.values_mut() {
+        if let serde_json::Value::String(text) = value {
+            if env_crypto::is_encrypted(text) {
+                text.clear();
+                blanked = true;
+            }
+        }
+    }
+    if !blanked {
+        return config_json.to_string();
+    }
+    config.to_string()
 }
 
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
@@ -1452,6 +1498,62 @@ mod tests {
             assert!(kept.contains("trusted.example"), "{kept}");
             let added = read_mcp_server_config("fresh").expect("read");
             assert!(added.contains("other.example"), "{added}");
+        });
+    }
+
+    // ── discovered configs: ciphertext-like env values ───────────────────────
+
+    #[test]
+    fn blanking_empties_only_prefixed_env_strings_and_keeps_their_keys() {
+        let incoming = serde_json::json!({
+            "command": "npx",
+            "args": ["enc:v1:not-an-env-value"],
+            "env": {
+                "PLANTED": "enc:v1:AAAA",
+                "PLAIN": "value",
+                "EMPTY": "",
+                "MENTIONS_PREFIX": "see enc:v1: later",
+                "NUMBER": 7,
+                "NESTED": { "INNER": "enc:v1:AAAA" },
+            },
+            "headers": { "Authorization": "enc:v1:AAAA" },
+        });
+
+        let blanked: serde_json::Value =
+            serde_json::from_str(&blank_ciphertext_like_env_values(&incoming.to_string()))
+                .expect("parse");
+
+        let mut expected = incoming.clone();
+        expected["env"]["PLANTED"] = serde_json::json!("");
+        assert_eq!(blanked, expected);
+    }
+
+    #[test]
+    fn blanking_returns_other_input_unchanged() {
+        for input in [
+            "{ not json",
+            r#"["enc:v1:AAAA"]"#,
+            r#"{"command":"npx"}"#,
+            r#"{"command":"npx","env":"enc:v1:AAAA"}"#,
+            r#"{ "command": "npx",   "env": { "PLAIN": "value" } }"#,
+        ] {
+            assert_eq!(blank_ciphertext_like_env_values(input), input);
+        }
+    }
+
+    #[test]
+    fn a_discovered_config_with_a_ciphertext_like_env_value_is_stored_readable() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let incoming = r#"{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}"#;
+            add_discovered_mcp_server_config("discovered-planted", incoming).expect("add");
+
+            let raw = read_mcp_server_config("discovered-planted")
+                .expect("the stored entry must be readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["env"]["API_KEY"], "");
+            assert_eq!(stored["env"]["REGION"], "eu");
+            assert_eq!(stored["command"], "npx");
         });
     }
 }
