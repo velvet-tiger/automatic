@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -204,8 +205,8 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
 /// - the secrets for the old URL, which nothing will ask for again;
 /// - any secrets already filed for the new URL, so a server does not start
 ///   out signed in as an earlier server of the same name and URL;
-/// - secrets an older version stored under the name alone, so they are not
-///   adopted for the new URL.
+/// - secrets an older version stored under the name alone, which were issued
+///   for a URL the server no longer has.
 ///
 /// A write that keeps the URL makes no call to the secret store. A failure in
 /// the store is logged and never returned. The error here is a registry file
@@ -221,6 +222,7 @@ pub(crate) fn tidy_oauth_secrets_on_url_change(
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
+    record_legacy_oauth_urls()?;
     let path = get_mcp_servers_dir()?.join(format!("{}.json", name));
     let new_url = comparable_server_url(config);
     let old_url = match stored_server_url(&path)? {
@@ -291,6 +293,83 @@ pub fn mcp_server_url_is(name: &str, url: &str) -> Result<bool, String> {
         return Ok(false);
     };
     Ok(comparable_mcp_url(url) == Some(saved_url))
+}
+
+// ── The URLs that secrets from older versions were issued for ───────────────
+//
+// Older versions filed a server's OAuth secrets under its name alone, so
+// nothing in the secret store says which URL they were issued for. The best
+// evidence is the URL the server had before this version changed anything.
+// It is written to a file once, the first time it is needed, and never
+// changed. An old secret is then only ever used for the URL recorded for its
+// server. A server created later, or one whose URL has changed since, does
+// not get it, whether or not the old secret could be deleted.
+
+/// The file that records the URL each server had when this version first ran.
+fn legacy_oauth_urls_path() -> Result<PathBuf, String> {
+    Ok(super::paths::get_automatic_dir()?.join("mcp_oauth_legacy_urls.json"))
+}
+
+/// Record the URL of every stored server, unless that has been done already.
+///
+/// Everything that changes a registry file calls this first, so the record
+/// always describes the registry as an older version left it. The first
+/// writer wins. A second process that gets here at the same time has read
+/// the same registry.
+pub(crate) fn record_legacy_oauth_urls() -> Result<(), String> {
+    let path = legacy_oauth_urls_path()?;
+    if path.exists() {
+        return Ok(());
+    }
+    let record = serde_json::to_string_pretty(&registry_urls()?).map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    // Written under another name and then linked into place, so no reader
+    // sees half a file and an existing record is never replaced.
+    let draft = path.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&draft, record).map_err(|e| e.to_string())?;
+    let linked = fs::hard_link(&draft, &path);
+    let _ = fs::remove_file(&draft);
+    match linked {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Failed to write {}: {}", path.display(), e)),
+    }
+}
+
+/// The comparable URL of every stored server that has one, by server name.
+fn registry_urls() -> Result<BTreeMap<String, String>, String> {
+    let entries = match fs::read_dir(get_mcp_servers_dir()?) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut urls = BTreeMap::new();
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        let Some(name) = mcp_server_name_from_path(&path) else {
+            continue;
+        };
+        if let StoredUrl::Known(Some(url)) = stored_server_url(&path)? {
+            urls.insert(name.to_string(), url);
+        }
+    }
+    Ok(urls)
+}
+
+/// Whether `url` is the URL the server `name` had when this version first
+/// ran, which is the URL its secrets from an older version were issued for.
+///
+/// False for a server that did not exist then or had no URL. A record that
+/// cannot be read is an error, and the old secrets then go unused.
+pub fn legacy_oauth_url_is(name: &str, url: &str) -> Result<bool, String> {
+    record_legacy_oauth_urls()?;
+    let path = legacy_oauth_urls_path()?;
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let urls: BTreeMap<String, String> = serde_json::from_str(&raw)
+        .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))?;
+    Ok(urls.get(name).is_some_and(|recorded| Some(recorded) == comparable_mcp_url(url).as_ref()))
 }
 
 /// The `url` of a server config in comparable form, or `None` when the config
@@ -407,6 +486,7 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
+    record_legacy_oauth_urls()?;
     let dir = get_mcp_servers_dir()?;
     let path = dir.join(format!("{}.json", name));
     match stored_server_url(&path)? {
@@ -437,8 +517,8 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
 /// the GitHub author badge continues to show.
 ///
 /// The server's OAuth secrets are filed under its name and URL, so they move
-/// to `new_name` with the file. Left behind, the renamed server would look
-/// signed out. A failed move is logged and does not fail the rename, as
+/// to `new_name` once the file has. Left behind, the renamed server would
+/// look signed out. A failed move is logged and does not fail the rename, as
 /// [`crate::proxy::move_oauth_secrets`] explains. A server with no URL is
 /// renamed without a call to the store.
 pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
@@ -463,20 +543,13 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
         return Err(format!("MCP server '{}' already exists", new_name));
     }
 
-    let url = match stored_server_url(&old_path)? {
-        StoredUrl::Known(url) => url,
-        StoredUrl::NotStored | StoredUrl::Unknown => None,
-    };
-    if let Some(url) = &url {
-        crate::proxy::move_oauth_secrets(old_name, new_name, url);
-    }
+    record_legacy_oauth_urls()?;
+    let url = stored_server_url(&old_path)?;
 
-    if let Err(rename_err) = fs::rename(&old_path, &new_path) {
-        // The config is still under the old name, so its secrets go back.
-        if let Some(url) = &url {
-            crate::proxy::move_oauth_secrets(new_name, old_name, url);
-        }
-        return Err(rename_err.to_string());
+    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    if let StoredUrl::Known(Some(url)) = url {
+        crate::proxy::move_oauth_secrets(old_name, new_name, &url);
     }
 
     remove_recently_added("mcp_servers", old_name);
@@ -1707,6 +1780,63 @@ mod tests {
         format!("mcp_oauth_token_{}", server)
     }
 
+    /// Leave a server in the registry as an older version would have. The
+    /// file is written directly. A save through this version would first
+    /// record that the server did not exist before.
+    fn leave_server_from_an_older_version(server: &str, config: &str) {
+        let dir = get_mcp_servers_dir().expect("dir");
+        fs::create_dir_all(&dir).expect("create the registry");
+        fs::write(dir.join(format!("{}.json", server)), config).expect("write");
+    }
+
+    #[test]
+    fn the_url_record_describes_the_registry_before_this_version_changed_it() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (server, later) = ("url-record-fixture", "url-record-later-fixture");
+            leave_server_from_an_older_version(server, OAUTH_SERVER);
+
+            save_mcp_server_config(server, OTHER_URL_SERVER).expect("change the url");
+            save_mcp_server_config(later, OAUTH_SERVER).expect("create another");
+
+            assert!(legacy_oauth_url_is(server, URL).expect("recorded url"));
+            assert!(legacy_oauth_url_is(server, " HTTPS://MCP.Example.com:443/mcp ").expect("tidied"));
+            assert!(!legacy_oauth_url_is(server, OTHER_URL).expect("new url"));
+            assert!(!legacy_oauth_url_is(later, URL).expect("created later"));
+        });
+    }
+
+    #[test]
+    fn the_url_record_is_written_before_a_delete_or_a_rename() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let (deleted, renamed) = ("url-record-deleted-fixture", "url-record-renamed-fixture");
+            leave_server_from_an_older_version(deleted, OAUTH_SERVER);
+            leave_server_from_an_older_version(renamed, OAUTH_SERVER);
+
+            delete_mcp_server_config(deleted).expect("delete");
+            rename_mcp_server_config(renamed, "url-record-renamed-to-fixture").expect("rename");
+
+            assert!(legacy_oauth_url_is(deleted, URL).expect("deleted"));
+            assert!(legacy_oauth_url_is(renamed, URL).expect("renamed"));
+            assert!(!legacy_oauth_url_is("url-record-renamed-to-fixture", URL).expect("new name"));
+        });
+    }
+
+    #[test]
+    fn a_url_record_that_does_not_parse_is_an_error() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let path = legacy_oauth_urls_path().expect("path");
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(&path, "not json").expect("write");
+
+            legacy_oauth_url_is("url-record-corrupt-fixture", URL).expect_err("not valid JSON");
+            // A save still works. The record exists, so it is left alone.
+            save_mcp_server_config("url-record-corrupt-fixture", OAUTH_SERVER).expect("save");
+        });
+    }
+
     #[test]
     fn a_token_does_not_follow_a_server_to_a_new_url() {
         let home = tmp();
@@ -1826,7 +1956,7 @@ mod tests {
         let home = tmp();
         with_test_home(home.path().to_path_buf(), || {
             let server = "secrets-url-legacy-fixture";
-            save_mcp_server_config(server, OAUTH_SERVER).expect("save");
+            leave_server_from_an_older_version(server, OAUTH_SERVER);
             secret_store::store_secret(&legacy_token_entry(server), "older-token").expect("seed");
 
             save_mcp_server_config(server, OTHER_URL_SERVER).expect("save new url");
@@ -1974,7 +2104,7 @@ mod tests {
         let home = tmp();
         with_test_home(home.path().to_path_buf(), || {
             let (old, new) = ("secrets-rename-legacy-old-fixture", "secrets-rename-legacy-new-fixture");
-            save_mcp_server_config(old, OAUTH_SERVER).expect("save");
+            leave_server_from_an_older_version(old, OAUTH_SERVER);
             secret_store::store_secret(&legacy_token_entry(old), "older-token").expect("seed");
 
             rename_mcp_server_config(old, new).expect("rename");

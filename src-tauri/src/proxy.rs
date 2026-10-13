@@ -129,7 +129,8 @@ pub fn load_oauth_token(server_name: &str, url: &str) -> Result<String, String> 
 /// The token in `entries`, or the one an older version stored for the server.
 ///
 /// `url` is the URL `entries` are for. The older token is only looked for
-/// when that is the server's saved URL, as [`adopt_legacy_secrets`] explains.
+/// when that is the URL it was issued for, as [`adopt_legacy_secrets`]
+/// explains.
 fn find_oauth_token(
     server_name: &str,
     url: &str,
@@ -138,7 +139,7 @@ fn find_oauth_token(
     if let Some(token) = secret_store::load_secret_if_present(&entries.token)? {
         return Ok(Some(token));
     }
-    if !crate::core::mcp_server_url_is(server_name, url)? {
+    if !crate::core::legacy_oauth_url_is(server_name, url)? {
         return Ok(None);
     }
     adopt_legacy_secrets(server_name, entries)
@@ -147,14 +148,14 @@ fn find_oauth_token(
 /// Move the secrets an older version stored under the server's name alone to
 /// `entries`, and return the token. `None` when there is no such token.
 ///
-/// The old entries do not say which URL they were issued for. This trusts
-/// that it is the server's saved URL, which is true for a server whose URL
-/// has not changed since it signed in. The caller has checked that `entries`
-/// are for the saved URL, so a URL an RPC client makes up adopts nothing. To
-/// keep the trust to one use, the old token is deleted before the new entry
-/// is written, and it is not adopted unless the store confirms the delete. A
-/// token that cannot be deleted would otherwise be adopted again for
-/// whatever URL the server has next.
+/// The old entries do not say which URL they were issued for. The caller has
+/// checked that `entries` are for the URL the server had when this version
+/// first ran, which [`crate::core::legacy_oauth_url_is`] records. A server
+/// whose URL has changed since, or that was created since, adopts nothing.
+///
+/// The old token is deleted before the new entry is written, and it is not
+/// adopted unless the store confirms the delete. A revoked token would
+/// otherwise come back from an old entry that could not be deleted.
 ///
 /// The old credentials move with the token and are never adopted alone.
 /// Without that, credentials left behind could later refresh into a token
@@ -322,8 +323,8 @@ fn discard_secret(entry: &str, what: &str, server_name: &str) {
 /// [`discard_secret`] explains.
 ///
 /// Call this when a server is deleted or stops using `url`. The old entries
-/// go too because [`find_oauth_token`] would otherwise adopt them for the
-/// server's next URL.
+/// go too. They were issued for a URL the server no longer has, so nothing
+/// will use them.
 pub fn forget_oauth_secrets(server_name: &str, url: &str) {
     if let Ok(entries) = oauth_entries(server_name, url) {
         discard_secret(&entries.credentials, "the OAuth credentials", server_name);
@@ -343,9 +344,6 @@ pub fn forget_legacy_oauth_secrets(server_name: &str) {
 
 /// Move the OAuth secrets a server holds for `url` from `old_name` to
 /// `new_name`, for a server that is being renamed.
-///
-/// Call it while the registry file is still under `old_name`. Secrets an
-/// older version stored for `old_name` are found only while that is so.
 ///
 /// Anything already stored for `new_name` at that URL is replaced or deleted,
 /// so the renamed server never pairs its token with credentials left by
@@ -639,6 +637,21 @@ mod tests {
         });
     }
 
+    /// Leave an HTTP server at `url` in a home of its own as an older version
+    /// would have, then run `test`. The file is written directly. A save
+    /// through this version would first record that the server did not
+    /// exist before.
+    fn with_server_from_an_older_version(server: &str, url: &str, test: impl FnOnce()) {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = crate::core::get_mcp_servers_dir().expect("dir");
+            std::fs::create_dir_all(&dir).expect("create the registry");
+            let config = serde_json::json!({ "type": "http", "url": url }).to_string();
+            std::fs::write(dir.join(format!("{}.json", server)), config).expect("write");
+            test();
+        });
+    }
+
     #[test]
     fn oauth_token_presence_follows_store_and_delete() {
         let server = "proxy-test-presence-fixture";
@@ -879,20 +892,23 @@ mod tests {
     }
 
     // ── Secrets an older version stored under the name alone ─────────────────
-    //
-    // These ask with `load_oauth_token`. Saving the server caches "no token"
-    // for its URL, and `has_oauth_token` would answer from that cache.
+
+    fn seed_legacy_secrets(server: &str) -> OAuthEntries {
+        let legacy = legacy_oauth_entries(server);
+        secret_store::store_secret(&legacy.token, "old-token").unwrap();
+        secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+        legacy
+    }
 
     #[test]
-    fn an_older_token_is_adopted_for_the_saved_url() {
+    fn an_older_token_is_adopted_for_the_url_the_server_had() {
         let server = "legacy-test-adopt-fixture";
-        with_saved_server(server, URL, || {
-            let legacy = legacy_oauth_entries(server);
-            secret_store::store_secret(&legacy.token, "old-token").unwrap();
-            secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+
+            assert!(has_oauth_token(server, URL));
 
             assert_eq!(load_oauth_token(server, URL).unwrap(), "old-token");
-
             assert_eq!(stored(&entries(server, URL).token), Some("old-token".to_string()));
             assert_eq!(load_oauth_credentials(server, URL).unwrap(), CREDENTIALS);
             assert_eq!(stored(&legacy.token), None);
@@ -901,12 +917,12 @@ mod tests {
     }
 
     #[test]
-    fn an_older_token_is_not_adopted_for_a_url_that_is_not_the_saved_one() {
+    fn an_older_token_is_not_adopted_for_another_url() {
         let server = "legacy-test-other-url-fixture";
-        with_saved_server(server, URL, || {
-            let legacy = legacy_oauth_entries(server);
-            secret_store::store_secret(&legacy.token, "old-token").unwrap();
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
 
+            assert!(!has_oauth_token(server, OTHER_URL));
             assert!(load_oauth_token(server, OTHER_URL).is_err());
 
             assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
@@ -915,12 +931,58 @@ mod tests {
     }
 
     #[test]
-    fn an_older_token_is_not_adopted_for_a_server_that_is_not_saved() {
+    fn an_older_token_does_not_follow_its_server_to_a_new_url() {
+        let server = "legacy-test-url-change-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            // The save cannot delete the old token, so it is still there.
+            set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
+
+            let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
+            save_mcp_server_config(server, &config).expect("save the new url");
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+            assert!(load_oauth_token(server, OTHER_URL).is_err());
+            assert_eq!(stored(&entries(server, OTHER_URL).token), None);
+        });
+    }
+
+    #[test]
+    fn an_older_token_does_not_follow_a_save_under_another_case_of_the_name() {
+        let server = "legacy-test-case-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            // Where the filesystem ignores case, this writes the server's own
+            // file, and tidies under a name its old token is not filed as.
+            let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
+            save_mcp_server_config(&server.to_uppercase(), &config).expect("save");
+
+            assert!(load_oauth_token(server, OTHER_URL).is_err());
+            assert!(load_oauth_token(&server.to_uppercase(), OTHER_URL).is_err());
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn a_server_created_by_this_version_does_not_adopt_an_older_token() {
+        let server = "legacy-test-new-server-fixture";
+        with_saved_server(server, URL, || {
+            // Left under the name by a server deleted long ago.
+            let legacy = legacy_oauth_entries(server);
+            secret_store::store_secret(&legacy.token, "old-token").unwrap();
+
+            assert!(load_oauth_token(server, URL).is_err());
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn an_older_token_is_not_adopted_for_a_server_that_is_not_stored() {
         let server = "legacy-test-unsaved-fixture";
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            let legacy = legacy_oauth_entries(server);
-            secret_store::store_secret(&legacy.token, "old-token").unwrap();
+            let legacy = seed_legacy_secrets(server);
 
             assert!(load_oauth_token(server, URL).is_err());
 
@@ -931,11 +993,11 @@ mod tests {
     #[test]
     fn an_older_token_that_cannot_be_deleted_is_not_adopted() {
         let server = "legacy-test-refused-fixture";
-        with_saved_server(server, URL, || {
-            let legacy = legacy_oauth_entries(server);
-            secret_store::store_secret(&legacy.token, "old-token").unwrap();
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
             set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
 
+            assert!(!has_oauth_token(server, URL));
             assert!(load_oauth_token(server, URL).is_err());
 
             assert_eq!(stored(&entries(server, URL).token), None);
@@ -945,11 +1007,11 @@ mod tests {
     #[test]
     fn older_credentials_are_not_adopted_without_a_token() {
         let server = "legacy-test-creds-only-fixture";
-        with_saved_server(server, URL, || {
+        with_server_from_an_older_version(server, URL, || {
             let legacy = legacy_oauth_entries(server);
             secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
 
-            assert!(load_oauth_token(server, URL).is_err());
+            assert!(!has_oauth_token(server, URL));
             assert!(load_oauth_credentials(server, URL).is_err());
             assert_eq!(stored(&entries(server, URL).credentials), None);
         });
@@ -958,10 +1020,8 @@ mod tests {
     #[test]
     fn a_rename_carries_an_older_token_to_the_new_name() {
         let (old, new) = ("legacy-test-move-old-fixture", "legacy-test-move-new-fixture");
-        with_saved_server(old, URL, || {
-            let legacy = legacy_oauth_entries(old);
-            secret_store::store_secret(&legacy.token, "old-token").unwrap();
-            secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+        with_server_from_an_older_version(old, URL, || {
+            let legacy = seed_legacy_secrets(old);
 
             move_oauth_secrets(old, new, URL);
 
