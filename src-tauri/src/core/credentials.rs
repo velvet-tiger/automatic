@@ -25,9 +25,24 @@ fn set_cached_presence(provider: &str, present: bool) {
     }
 }
 
-/// Returns `true` if at least one known provider has a key in the keychain.
-fn any_known_api_key_stored() -> bool {
-    known_agents().iter().any(|id| has_api_key(id.as_str()))
+/// Whether at least one known provider has a key in the keychain.
+///
+/// A key that is found answers the question whatever the other reads did.
+/// When none is found and a read failed, the answer is not known, and that
+/// read's error is returned.
+pub(super) fn any_known_api_key_stored() -> Result<bool, String> {
+    let mut failed_read = None;
+    for id in known_agents() {
+        match has_api_key(id.as_str()) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(e) => failed_read = Some(e),
+        }
+    }
+    match failed_read {
+        Some(e) => Err(e),
+        None => Ok(false),
+    }
 }
 
 /// Best-effort write of `agent_features_enabled`. Errors reading or writing
@@ -47,8 +62,10 @@ pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
     secret_store::store_secret(provider, key)?;
     set_cached_presence(provider, true);
 
-    // Auto-enable agent features the first time a key is added.
-    if !had_keys_before && known_agents().iter().any(|id| id.as_str() == provider) {
+    // Auto-enable agent features the first time a key is added. When the
+    // store could not say whether a key was there before, the setting is the
+    // user's own choice as far as anyone knows, so it is left alone.
+    if had_keys_before == Ok(false) && known_agents().iter().any(|id| id.as_str() == provider) {
         set_agent_features_enabled(true);
     }
     Ok(())
@@ -58,22 +75,35 @@ pub fn get_api_key(provider: &str) -> Result<String, String> {
     secret_store::load_secret(provider)
 }
 
+/// The API key stored for this provider, or `None` when none is stored.
+///
+/// A store that cannot be read is an error, never `None`.
+pub fn get_api_key_if_present(provider: &str) -> Result<Option<String>, String> {
+    secret_store::load_secret_if_present(provider)
+}
+
 /// Check whether an API key exists in the keyring for this provider without
 /// revealing the value.
 ///
 /// The result is cached for the life of the process. A key added or removed by
 /// another process is therefore not observed until restart, which is the same
 /// staleness the settings snapshot already carries.
-pub fn has_api_key(provider: &str) -> bool {
+///
+/// A store that cannot be read is an error. It is not cached, so the next
+/// call reads the store again. A locked keychain would otherwise make every
+/// stored key look absent until the process restarts.
+pub fn has_api_key(provider: &str) -> Result<bool, String> {
     if let Ok(cache) = presence_cache().lock() {
         if let Some(present) = cache.get(provider) {
-            return *present;
+            return Ok(*present);
         }
     }
 
-    let present = secret_store::load_secret(provider).is_ok();
+    let present = secret_store::load_secret_if_present(provider)
+        .map_err(|e| format!("could not check for an API key for '{}': {}", provider, e))?
+        .is_some();
     set_cached_presence(provider, present);
-    present
+    Ok(present)
 }
 
 /// Remove a stored API key from the keyring.
@@ -81,8 +111,11 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     secret_store::delete_secret(provider)?;
     set_cached_presence(provider, false);
 
-    // Auto-disable agent features once no recognised keys remain.
-    if known_agents().iter().any(|id| id.as_str() == provider) && !any_known_api_key_stored() {
+    // Auto-disable agent features once no recognised keys remain. A store
+    // that cannot be read may still hold a key, so the setting then stays.
+    if known_agents().iter().any(|id| id.as_str() == provider)
+        && any_known_api_key_stored() == Ok(false)
+    {
         set_agent_features_enabled(false);
     }
     Ok(())
@@ -91,6 +124,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::secret_store::{set_test_fault, TestFault};
 
     // Not one of `known_agents()`, so saving it never changes the
     // agent-features setting.
@@ -98,14 +132,48 @@ mod tests {
 
     #[test]
     fn api_key_presence_follows_save_and_delete() {
-        assert!(!has_api_key(PROVIDER));
+        assert_eq!(has_api_key(PROVIDER), Ok(false));
 
         save_api_key(PROVIDER, "key").unwrap();
-        assert!(has_api_key(PROVIDER));
+        assert_eq!(has_api_key(PROVIDER), Ok(true));
         assert_eq!(get_api_key(PROVIDER).unwrap(), "key");
+        assert_eq!(get_api_key_if_present(PROVIDER), Ok(Some("key".to_string())));
 
         delete_api_key(PROVIDER).unwrap();
-        assert!(!has_api_key(PROVIDER));
+        assert_eq!(has_api_key(PROVIDER), Ok(false));
         assert!(get_api_key(PROVIDER).is_err());
+        assert_eq!(get_api_key_if_present(PROVIDER), Ok(None));
+    }
+
+    // The store and the presence cache are shared by the whole test process,
+    // so each test below uses a provider name no other test uses.
+
+    #[test]
+    fn a_store_that_cannot_be_read_is_an_error_and_is_not_remembered() {
+        let provider = "credentials-test-unreadable-provider";
+        secret_store::store_secret(provider, "key").expect("store key");
+
+        set_test_fault(provider, Some(TestFault::Unreadable));
+        let err = has_api_key(provider).expect_err("the store cannot be read");
+        assert!(err.contains(provider), "unexpected error: {err}");
+        assert!(get_api_key_if_present(provider).is_err());
+
+        // The failed read left nothing in the cache: the key is found as
+        // soon as the store can be read.
+        set_test_fault(provider, None);
+        assert_eq!(has_api_key(provider), Ok(true));
+    }
+
+    #[test]
+    fn a_missing_key_is_remembered_as_absent() {
+        let provider = "credentials-test-absent-provider";
+        assert_eq!(has_api_key(provider), Ok(false));
+
+        // A fault now makes no difference: the answer comes from the cache.
+        set_test_fault(provider, Some(TestFault::Unreadable));
+        let cached = has_api_key(provider);
+        set_test_fault(provider, None);
+
+        assert_eq!(cached, Ok(false));
     }
 }

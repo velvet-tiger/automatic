@@ -144,7 +144,7 @@ pub fn preview_global_mcp(
         .collect();
 
     let mcp_config = load_mcp_server_configs(selection)?;
-    let (desired_map, rejected) = build_prepared_desired(agent, selection, &mcp_config);
+    let (desired_map, rejected) = build_prepared_desired(agent, selection, &mcp_config)?;
 
     let previously_managed_set: std::collections::HashSet<&String> =
         previously_managed.iter().collect();
@@ -333,7 +333,7 @@ fn run_apply(
         .ok_or_else(|| format!("{} does not support global MCP writes", agent.label()))?;
 
     let mcp_config = load_mcp_server_configs(selection)?;
-    let (desired, rejected) = build_prepared_desired(agent, selection, &mcp_config);
+    let (desired, rejected) = build_prepared_desired(agent, selection, &mcp_config)?;
 
     let write = agent.write_global_mcp_config(&desired, previously_managed)?;
     Ok(GlobalMcpApplyReport {
@@ -345,11 +345,14 @@ fn run_apply(
 
 /// Build the prepared desired map plus the list of servers dropped along the
 /// way (missing from the registry, or referencing `${workspaceFolder}`).
+///
+/// An error means the secret store could not say whether a server has an
+/// OAuth token, as [`build_global_selected_servers`] explains.
 fn build_prepared_desired(
     agent: &dyn agent::Agent,
     selection: &[String],
     mcp_config: &Map<String, Value>,
-) -> (Map<String, Value>, Vec<RejectedServer>) {
+) -> Result<(Map<String, Value>, Vec<RejectedServer>), String> {
     let mut rejected: Vec<RejectedServer> = Vec::new();
     let mut effective_names: Vec<String> = Vec::with_capacity(selection.len());
     let mut seen = std::collections::HashSet::new();
@@ -390,9 +393,9 @@ fn build_prepared_desired(
         }
     }
 
-    let raw = build_global_selected_servers(&effective_names, mcp_config);
+    let raw = build_global_selected_servers(&effective_names, mcp_config)?;
     let prepared = agent::prepare_global_mcp_servers(agent, &raw);
-    (prepared, rejected)
+    Ok((prepared, rejected))
 }
 
 /// Update the state entry with the result of one apply.
@@ -617,6 +620,50 @@ mod tests {
             let cursor = state.agents.get("cursor").expect("state entry");
             assert_eq!(cursor.selected, selection);
             assert_eq!(cursor.managed, selection);
+        });
+    }
+
+    /// Without the error, the apply would count the token as missing and
+    /// write the server's own URL where its proxy stub belongs.
+    #[test]
+    fn apply_fails_and_changes_nothing_when_a_token_cannot_be_read() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let server = "apply-token-locked";
+            let url = "https://mcp.example.com/mcp";
+            seed_registry("apply-token-good");
+            apply_global_mcp("cursor", vec!["apply-token-good".to_string()]).expect("first apply");
+            let agent_file = agent::from_id("cursor")
+                .and_then(|cursor| cursor.global_mcp_target())
+                .expect("cursor global target")
+                .path;
+            let file_before = std::fs::read(&agent_file).expect("agent file after first apply");
+            let state_before = saved_state();
+            let entry = crate::proxy::leave_signed_in_server(server, url);
+            let selection = vec!["apply-token-good".to_string(), server.to_string()];
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let preview = preview_global_mcp("cursor", &selection);
+            let applied = apply_global_mcp("cursor", selection.clone());
+            set_test_fault(&entry, None);
+
+            assert!(preview.is_err(), "a token that cannot be read must stop the preview");
+            let err = applied.expect_err("a token that cannot be read must stop the apply");
+            assert!(err.contains(server), "error names the server: {}", err);
+            assert_eq!(
+                std::fs::read(&agent_file).expect("agent file after failed apply"),
+                file_before,
+                "the agent file must be left untouched"
+            );
+            assert_eq!(saved_state(), state_before, "the saved state must be left untouched");
+
+            // The failed read was not remembered as "no token".
+            apply_global_mcp("cursor", selection).expect("apply once the store can be read");
+            let written = std::fs::read_to_string(&agent_file).expect("agent file");
+            assert!(written.contains("mcp-proxy"), "the stub is written: {}", written);
+            assert!(!written.contains(url), "the server's URL is not: {}", written);
         });
     }
 

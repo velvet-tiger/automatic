@@ -824,8 +824,8 @@ mod tests {
                 .expect_err("another url");
 
             assert!(err.contains("not the URL saved"), "unexpected error: {err}");
-            assert!(!crate::proxy::has_oauth_token(server, "https://mcp.example.com/mcp"));
-            assert!(!crate::proxy::has_oauth_token(server, "http://127.0.0.1:9/mcp"));
+            assert_eq!(crate::proxy::has_oauth_token(server, "https://mcp.example.com/mcp"), Ok(false));
+            assert_eq!(crate::proxy::has_oauth_token(server, "http://127.0.0.1:9/mcp"), Ok(false));
         });
     }
 }

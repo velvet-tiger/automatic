@@ -156,6 +156,17 @@ fn sync_to_directory_inner(
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
 
+    // Build the selected server map from the registry configs read above
+    // (includes stripping internal fields and OAuth proxy substitution).
+    // Uses the shared helper so drift detection produces identical output.
+    // This fails when the secret store cannot say whether a server has an
+    // OAuth token, so it also runs before anything is written.
+    let selected_servers = build_selected_servers(
+        automatic_project_env_value(project),
+        &enabled_mcp_servers,
+        &mcp_config,
+    )?;
+
     // In Silent mode all synced files are written under .automatic/silent/
     // instead of the project root, leaving the project tree untouched.
     let effective_dir = match project.mode {
@@ -184,15 +195,6 @@ fn sync_to_directory_inner(
     // `.kilocode/mcp.json`.  Clear the legacy file once its servers are
     // already selected for this project, before the MCP write below.
     migrate_legacy_kilocode(&effective_dir, project);
-
-    // Build the selected server map from the registry configs read above
-    // (includes stripping internal fields and OAuth proxy substitution).
-    // Uses the shared helper so drift detection produces identical output.
-    let selected_servers = build_selected_servers(
-        automatic_project_env_value(project),
-        &enabled_mcp_servers,
-        &mcp_config,
-    );
 
     // Read all skill contents from the global skill registry, then append
     // project-scoped custom skills — deduplicating any custom_skill whose
@@ -2012,6 +2014,78 @@ mod tests {
             assert!(
                 !dir.path().join(".mcp.json").exists(),
                 "no MCP config is written without the server"
+            );
+        });
+    }
+
+    /// A signed-in server is written as a proxy stub. A store that cannot
+    /// be read used to count as "no token", and the sync then wrote the
+    /// server's own URL over the stub.
+    #[test]
+    fn sync_fails_and_keeps_the_proxy_stub_when_the_token_cannot_be_read() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let home = tmp();
+        let dir = tmp();
+        let server = "sync-token-locked";
+        let url = "https://mcp.example.com/mcp";
+        let stub = format!(
+            r#"{{"mcpServers":{{"{server}":{{"command":"automatic","args":["mcp-proxy","{server}"]}}}}}}"#
+        );
+        fs::write(dir.path().join(".mcp.json"), &stub).expect("write the agent file");
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let entry = crate::proxy::leave_signed_in_server(server, url);
+            let project = claude_project_with_servers(dir.path(), "token-locked", &[server]);
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let failed = sync_project(&project);
+            set_test_fault(&entry, None);
+
+            let err = failed.expect_err("a token that cannot be read must stop the sync");
+            assert!(err.contains(server), "error names the server: {}", err);
+            assert_eq!(
+                fs::read_to_string(dir.path().join(".mcp.json")).expect("agent file"),
+                stub,
+                "the agent file must be left untouched"
+            );
+
+            // The failed read was not remembered as "no token".
+            sync_project(&project).expect("sync once the store can be read");
+            let written = fs::read_to_string(dir.path().join(".mcp.json")).expect("agent file");
+            assert!(written.contains("mcp-proxy"), "the stub is written: {}", written);
+            assert!(!written.contains(url), "the server's URL is not: {}", written);
+        });
+    }
+
+    /// The legacy `.kilocode/mcp.json` must also survive a sync that stops
+    /// because a token cannot be read.
+    #[test]
+    fn a_sync_that_fails_on_an_unreadable_token_keeps_the_legacy_kilocode_file() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let home = tmp();
+        let dir = tmp();
+        let server = "sync-kilo-token-locked";
+        let legacy = format!(r#"{{"mcpServers":{{"{server}":{{"command":"npx"}}}}}}"#);
+        fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
+        fs::write(dir.path().join(".kilocode/mcp.json"), &legacy).expect("write legacy file");
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let entry = crate::proxy::leave_signed_in_server(server, "https://mcp.example.com/mcp");
+            let mut project = make_kilo_project(dir.path().to_str().unwrap());
+            project.mcp_servers = vec![server.to_string()];
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let failed = sync_project_without_autodetect(&mut project);
+            set_test_fault(&entry, None);
+
+            let err = failed.expect_err("a token that cannot be read must stop the sync");
+            assert!(err.contains(server), "error names the server: {}", err);
+            assert_eq!(
+                fs::read_to_string(dir.path().join(".kilocode/mcp.json")).expect("legacy file"),
+                legacy,
+                "a failed sync must not delete the legacy file"
             );
         });
     }

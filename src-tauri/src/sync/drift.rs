@@ -502,12 +502,12 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         automatic_project_env_value(project),
         &enabled_mcp_servers,
         &mcp_config,
-    );
+    )?;
     let summaries = crate::core::get_project_summaries()?;
     let alternate_servers: Vec<Map<String, Value>> = equivalent_project_idents(project, &summaries)
         .iter()
         .map(|ident| build_selected_servers(ident, &enabled_mcp_servers, &mcp_config))
-        .collect();
+        .collect::<Result<_, _>>()?;
 
     // Build skill contents with dedup: library-backed skills win over stale
     // custom_skills snapshots.
@@ -2820,6 +2820,38 @@ mod tests {
         });
     }
 
+    /// A token that cannot be read stops the drift check. Counting it as "no
+    /// token" would expect the server's own URL and report a correct proxy
+    /// stub as drift.
+    #[test]
+    fn the_drift_check_fails_when_a_token_cannot_be_read() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let server = "drift-token-locked";
+
+        with_test_home(home.path().to_path_buf(), || {
+            let entry = crate::proxy::leave_signed_in_server(server, "https://mcp.example.com/mcp");
+            let project = Project {
+                name: "drift-token-unreadable".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec![server.to_string()],
+                ..Default::default()
+            };
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let drift = check_project_drift(&project);
+            set_test_fault(&entry, None);
+
+            let err = drift.expect_err("drift check must stop on a token it cannot read");
+            assert!(err.contains(server), "error names the server: {}", err);
+            check_project_drift(&project).expect("drift check once the store can be read");
+        });
+    }
+
     /// An enabled server that exists but cannot be read stops every check
     /// that builds the expected server map.  Leaving the server out would
     /// report the project's agent files as drifted, or report no problems.
@@ -3145,7 +3177,8 @@ mod tests {
         let project = identity_project();
         let no_servers = Map::new();
         let expected =
-            build_selected_servers(automatic_project_env_value(&project), &[], &no_servers);
+            build_selected_servers(automatic_project_env_value(&project), &[], &no_servers)
+                .expect("no servers to check");
         assert_eq!(
             expected["automatic"]["env"]["AUTOMATIC_PROJECT"],
             project.id.as_str(),
@@ -3154,7 +3187,7 @@ mod tests {
         let own = summary_of(&project, &project.name, &project.id, &project.local_key);
         let alternates: Vec<Map<String, Value>> = equivalent_project_idents(&project, &[own])
             .iter()
-            .map(|ident| build_selected_servers(ident, &[], &no_servers))
+            .map(|ident| build_selected_servers(ident, &[], &no_servers).expect("no servers to check"))
             .collect();
         assert_eq!(alternates.len(), 2, "the local key and the name");
 
@@ -3163,7 +3196,8 @@ mod tests {
         for (agent_instance, file) in agents {
             for legacy_value in [project.name.as_str(), project.local_key.as_str()] {
                 let dir = tempdir().unwrap();
-                let legacy = build_selected_servers(legacy_value, &[], &no_servers);
+                let legacy = build_selected_servers(legacy_value, &[], &no_servers)
+                    .expect("no servers to check");
                 agent_instance.write_mcp_config(dir.path(), &legacy).unwrap();
                 let mut files: Vec<DriftedFile> = Vec::new();
                 collect_mcp_drift_accepting(
@@ -3177,7 +3211,8 @@ mod tests {
             }
 
             let dir = tempdir().unwrap();
-            let stranger = build_selected_servers("someone-else", &[], &no_servers);
+            let stranger = build_selected_servers("someone-else", &[], &no_servers)
+                .expect("no servers to check");
             agent_instance.write_mcp_config(dir.path(), &stranger).unwrap();
             let mut files: Vec<DriftedFile> = Vec::new();
             collect_mcp_drift_accepting(

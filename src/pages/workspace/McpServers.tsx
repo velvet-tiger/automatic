@@ -336,11 +336,23 @@ function OAuthSection({
   const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
   const [action, setAction] = useState<"authorize" | "revoke" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set when the keychain could not say whether a token is stored. That is
+  // neither "signed in" nor "signed out", so neither action is offered.
+  const [presenceError, setPresenceError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const loading = action !== null;
   // Track whether the user cancelled so we can ignore the late-arriving invoke result.
   const cancelledRef = useRef(false);
+
+  const showPresence = (present: boolean) => {
+    setHasToken(present);
+    setPresenceError(null);
+  };
+  const showPresenceError = (e: unknown) => {
+    setHasToken(false);
+    setPresenceError(String(e));
+  };
 
   // Check for existing token on mount and when serverName changes.
   useEffect(() => {
@@ -348,8 +360,8 @@ function OAuthSection({
     setChecking(true);
     setTokenStatus(null);
     invoke<boolean>("has_mcp_oauth_token", { serverName })
-      .then(setHasToken)
-      .catch(() => setHasToken(false))
+      .then(showPresence)
+      .catch(showPresenceError)
       .finally(() => setChecking(false));
   }, [serverName]);
 
@@ -360,8 +372,8 @@ function OAuthSection({
     if (!serverName || savedRevision === checkedRevision.current) return;
     checkedRevision.current = savedRevision;
     invoke<boolean>("has_mcp_oauth_token", { serverName })
-      .then(setHasToken)
-      .catch(() => setHasToken(false));
+      .then(showPresence)
+      .catch(showPresenceError);
   }, [savedRevision]);
 
   // The URL as last saved. `url` follows the editor, so it is copied only
@@ -450,6 +462,21 @@ function OAuthSection({
   };
 
   if (checking) return null;
+  if (presenceError) {
+    return (
+      <section>
+        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
+          OAuth Authentication
+        </label>
+        <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
+          <AlertTriangle size={12} className="text-danger mt-0.5 shrink-0" />
+          <p className="text-[11px] text-danger">
+            Could not check whether this server is signed in. {presenceError}
+          </p>
+        </div>
+      </section>
+    );
+  }
   // No URL and no stored token → nothing actionable. Wait for the user to
   // enter a URL before claiming auth is required.
   if (!hasToken && !url) return null;

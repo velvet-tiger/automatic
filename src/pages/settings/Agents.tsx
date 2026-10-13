@@ -103,10 +103,12 @@ interface KeyState {
   editing: boolean;
   revealed: boolean;
   saveStatus: SaveStatus;
+  /** Why the keychain could not say whether a key is stored, when it could not. */
+  readError: string | null;
 }
 
 function defaultKeyState(): KeyState {
-  return { stored: false, inputValue: "", inputValue2: "", editing: false, revealed: false, saveStatus: "idle" };
+  return { stored: false, inputValue: "", inputValue2: "", editing: false, revealed: false, saveStatus: "idle", readError: null };
 }
 
 export default function SettingsAgents() {
@@ -141,15 +143,16 @@ export default function SettingsAgents() {
       AGENTS.map(async (agent) => {
         try {
           const stored = await invoke<boolean>("has_api_key", { provider: agent.provider });
-          return { provider: agent.provider, stored };
-        } catch {
-          return { provider: agent.provider, stored: false };
+          return { provider: agent.provider, stored, readError: null };
+        } catch (e) {
+          // A failed read is not "no key". The key may be stored.
+          return { provider: agent.provider, stored: false, readError: String(e) };
         }
       })
     );
     const states: Record<string, KeyState> = {};
-    for (const { provider, stored } of results) {
-      states[provider] = { ...defaultKeyState(), stored };
+    for (const { provider, stored, readError } of results) {
+      states[provider] = { ...defaultKeyState(), stored, readError };
     }
     setKeyStates(states);
     // Pre-load model lists for all configured providers.
@@ -326,6 +329,7 @@ export default function SettingsAgents() {
         editing: false,
         revealed: false,
         saveStatus: "saved",
+        readError: null,
       });
       // The backend auto-enables features the first time a key is added.
       await loadSettings();
@@ -582,6 +586,13 @@ export default function SettingsAgents() {
                   );
                 })()}
 
+                {state.readError && !state.editing && (
+                  <div className="px-3 pb-3">
+                    <span className="text-[11px] text-danger">
+                      Could not check the keychain for a stored key. {state.readError}
+                    </span>
+                  </div>
+                )}
                 {state.saveStatus === "saved" && !state.editing && (
                   <div className="px-3 pb-3">
                     <span className="text-[11px] text-success">Key saved to keychain</span>

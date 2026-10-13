@@ -102,7 +102,8 @@ export default function CloudSync() {
       const status = await invoke<AccountStatus>("account_status");
       setAccountStatus(status);
     } catch (e) {
-      console.error("account_status failed", e);
+      // A failed read is not "signed out", so say what went wrong.
+      setSignInError(String(e));
     }
   }
 

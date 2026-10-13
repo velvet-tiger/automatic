@@ -436,11 +436,16 @@ fn server_url(config: &Value) -> &str {
 /// `automatic_project` is the value of the `automatic` entry's
 /// `AUTOMATIC_PROJECT` env var. Callers pass
 /// [`automatic_project_env_value`].
+///
+/// An error means the secret store could not say whether an HTTP server has
+/// an OAuth token. That decides between the proxy stub and the server's own
+/// URL, so there is no map to return: writing the URL over a stub would cut
+/// a signed-in server off from its token. The error names the server.
 pub(crate) fn build_selected_servers(
     automatic_project: &str,
     server_names: &[String],
     mcp_config: &Map<String, Value>,
-) -> Map<String, Value> {
+) -> Result<Map<String, Value>, String> {
     let mut selected_servers = Map::new();
     let automatic_binary = find_automatic_binary();
 
@@ -486,7 +491,7 @@ pub(crate) fn build_selected_servers(
                 .map(|t| t == "http" || t == "sse")
                 .unwrap_or(false);
 
-            if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned)) {
+            if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned))? {
                 // Emit a local proxy config instead of the remote URL.
                 selected_servers.insert(
                     server_name.clone(),
@@ -505,7 +510,7 @@ pub(crate) fn build_selected_servers(
         }
     }
 
-    selected_servers
+    Ok(selected_servers)
 }
 
 /// Build the selected MCP server map for a *global* (user-level) write,
@@ -520,10 +525,12 @@ pub(crate) fn build_selected_servers(
 ///
 /// OAuth'd HTTP servers still become `mcp-proxy` stubs — the proxy loads the
 /// token from the keychain and does not depend on any project context.
+///
+/// An error means the same as it does for [`build_selected_servers`].
 pub(crate) fn build_global_selected_servers(
     server_names: &[String],
     mcp_config: &Map<String, Value>,
-) -> Map<String, Value> {
+) -> Result<Map<String, Value>, String> {
     let mut selected_servers = Map::new();
     let automatic_binary = find_automatic_binary();
 
@@ -545,7 +552,7 @@ pub(crate) fn build_global_selected_servers(
             .map(|t| t == "http" || t == "sse")
             .unwrap_or(false);
 
-        if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned)) {
+        if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned))? {
             selected_servers.insert(
                 server_name.clone(),
                 json!({
@@ -558,7 +565,7 @@ pub(crate) fn build_global_selected_servers(
         }
     }
 
-    selected_servers
+    Ok(selected_servers)
 }
 
 /// Validation messages for one MCP server, as reported after a sync.
@@ -944,7 +951,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(automatic_project_env_value(&project), project.id);
-        let servers = build_selected_servers(automatic_project_env_value(&project), &[], &Map::new());
+        let servers = build_selected_servers(automatic_project_env_value(&project), &[], &Map::new())
+            .expect("no servers to check");
         assert_eq!(
             servers["automatic"]["env"]["AUTOMATIC_PROJECT"],
             project.id.as_str(),
@@ -1035,15 +1043,55 @@ mod tests {
             "sync-stub-project",
             &names,
             &registry("https://mcp.example.com/mcp"),
-        );
+        )
+        .expect("build");
         assert_eq!(signed_in[server]["args"], json!(["mcp-proxy", server]));
 
         let other_url = build_selected_servers(
             "sync-stub-project",
             &names,
             &registry("https://other.example/mcp"),
-        );
+        )
+        .expect("build");
         assert_eq!(other_url[server]["url"], "https://other.example/mcp");
         assert!(other_url[server].get("command").is_none());
+    }
+
+    /// One HTTP server in a registry map, for the builders.
+    fn http_registry(server: &str, url: &str) -> Map<String, Value> {
+        let mut registry = Map::new();
+        registry.insert(server.to_string(), json!({ "type": "http", "url": url }));
+        registry
+    }
+
+    #[test]
+    fn a_token_that_cannot_be_read_stops_the_build_and_is_not_remembered() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let server = "sync-stub-unreadable-fixture";
+        let url = "https://mcp.example.com/mcp";
+        let names = vec![server.to_string()];
+        let registry = http_registry(server, url);
+        // Stored straight into the store, so the presence cache has no
+        // answer and the build has to read.
+        let entry = crate::proxy::oauth_token_entry(server, url);
+        crate::core::secret_store::store_secret(&entry, "token").expect("store token");
+
+        set_test_fault(&entry, Some(TestFault::Unreadable));
+        let project = build_selected_servers("sync-stub-project", &names, &registry);
+        let global = build_global_selected_servers(&names, &registry);
+        set_test_fault(&entry, None);
+
+        // No map comes back, so nothing can write the server's URL over a
+        // proxy stub.
+        for err in [project.expect_err("unreadable"), global.expect_err("unreadable")] {
+            assert!(err.contains(server), "the error names the server: {err}");
+        }
+
+        // The failed read was not cached as "no token".
+        let project = build_selected_servers("sync-stub-project", &names, &registry).expect("build");
+        assert_eq!(project[server]["args"], json!(["mcp-proxy", server]));
+        let global = build_global_selected_servers(&names, &registry).expect("build");
+        assert_eq!(global[server]["args"], json!(["mcp-proxy", server]));
     }
 }

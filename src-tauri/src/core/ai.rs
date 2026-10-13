@@ -57,9 +57,16 @@ pub fn agent_features_enabled() -> bool {
         .and_then(|s| s.agent_features_enabled);
     match explicit {
         Some(value) => value,
-        None => super::agents::known_agents()
-            .iter()
-            .any(|id| super::credentials::has_api_key(id.as_str())),
+        // The answer gates buttons, so it stays a plain bool. A store that
+        // cannot be read counts as off for this call only. Nothing is
+        // remembered, and `resolve_api_key` reports the store's own error.
+        None => super::credentials::any_known_api_key_stored().unwrap_or_else(|e| {
+            eprintln!(
+                "warning: agent features are shown as off because the secret store could not be read: {}",
+                e
+            );
+            false
+        }),
     }
 }
 
@@ -71,7 +78,8 @@ pub fn agent_features_enabled() -> bool {
 ///   2. Key stored in the OS keychain for the active agent.
 ///   3. The `api_key` argument (explicitly supplied by the caller).
 ///
-/// Returns an error if features are disabled or no key is found.
+/// Returns an error if features are disabled, no key is found, or the
+/// keychain could not be read and the caller supplied no key.
 pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
     if let Ok(settings) = super::settings::read_settings() {
         if settings.agent_features_enabled == Some(false) {
@@ -82,9 +90,26 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
     }
 
     let agent_id = active_agent_id();
-    if let Ok(k) = super::credentials::get_api_key(&agent_id) {
+    api_key_from(
+        super::credentials::get_api_key_if_present(&agent_id),
+        explicit_key,
+    )
+}
+
+/// Choose between the key read from the keychain and the caller's own.
+///
+/// A stored key comes first. The caller's key is used when none is stored,
+/// and also when the keychain could not be read, because the caller has then
+/// said which key to use. With neither, a failed read is reported as that
+/// failure. Telling the user to add a key they have already stored would
+/// send them to overwrite it.
+fn api_key_from(
+    stored: Result<Option<String>, String>,
+    explicit_key: Option<&str>,
+) -> Result<String, String> {
+    if let Ok(Some(k)) = &stored {
         if !k.is_empty() {
-            return Ok(k);
+            return Ok(k.clone());
         }
     }
 
@@ -94,7 +119,15 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
         }
     }
 
-    Err("No API key found for the active agent. Add a key via Settings > Agents.".to_string())
+    match stored {
+        Err(e) => Err(format!(
+            "Could not read the API key for the active agent: {}",
+            e
+        )),
+        Ok(_) => Err(
+            "No API key found for the active agent. Add a key via Settings > Agents.".to_string(),
+        ),
+    }
 }
 
 // ── Active client factory ─────────────────────────────────────────────────────
@@ -960,6 +993,44 @@ pub(crate) fn validate_working_dir(working_dir: &str) -> Result<PathBuf, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Choosing the API key ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_stored_key_comes_before_the_callers_key() {
+        let stored = Ok(Some("stored".to_string()));
+
+        assert_eq!(api_key_from(stored, Some("explicit")), Ok("stored".to_string()));
+    }
+
+    #[test]
+    fn the_callers_key_is_used_when_none_is_stored() {
+        assert_eq!(api_key_from(Ok(None), Some("explicit")), Ok("explicit".to_string()));
+        assert_eq!(
+            api_key_from(Ok(Some(String::new())), Some("explicit")),
+            Ok("explicit".to_string())
+        );
+    }
+
+    #[test]
+    fn no_key_anywhere_asks_the_user_to_add_one() {
+        let err = api_key_from(Ok(None), None).expect_err("no key");
+
+        assert!(err.contains("No API key found"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn a_keychain_that_cannot_be_read_is_not_reported_as_no_key() {
+        let unreadable = || Err("the keychain is locked".to_string());
+
+        let err = api_key_from(unreadable(), None).expect_err("no key to use");
+        assert!(err.contains("the keychain is locked"), "unexpected error: {err}");
+        assert!(!err.contains("No API key found"), "unexpected error: {err}");
+
+        // The caller named a key, so the failed read does not stop the call.
+        assert_eq!(api_key_from(unreadable(), Some("explicit")), Ok("explicit".to_string()));
+        assert!(api_key_from(unreadable(), Some("")).is_err());
+    }
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;

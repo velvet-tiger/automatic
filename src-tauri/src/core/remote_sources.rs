@@ -1697,7 +1697,7 @@ mod tests {
             crate::proxy::store_oauth_token(name, url, "access-token").unwrap();
             crate::proxy::store_oauth_credentials(name, url, r#"{"refresh_token":"refresh"}"#)
                 .unwrap();
-            assert!(crate::proxy::has_oauth_token(name, url));
+            assert_eq!(crate::proxy::has_oauth_token(name, url), Ok(true));
 
             fs::write(
                 source.path().join("server.json"),
@@ -1713,7 +1713,7 @@ mod tests {
 
             let stored = crate::core::read_mcp_server_config(name).unwrap();
             assert!(stored.contains("https://other.example/mcp"));
-            assert!(!crate::proxy::has_oauth_token(name, other_url));
+            assert_eq!(crate::proxy::has_oauth_token(name, other_url), Ok(false));
             assert!(crate::proxy::load_oauth_token(name, other_url).is_err());
             // The entries for the old URL were tidied away.
             assert!(crate::proxy::load_oauth_token(name, url).is_err());

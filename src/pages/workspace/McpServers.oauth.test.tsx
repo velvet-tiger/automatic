@@ -59,6 +59,19 @@ describe("McpServers OAuth section", () => {
     expect(callsTo("authorize_mcp_server")).toHaveLength(0);
   });
 
+  it("offers neither sign-in nor revoke when the keychain cannot be read", async () => {
+    mockInvoke({
+      ...routes(() => false),
+      has_mcp_oauth_token: () => Promise.reject("the keychain is locked"),
+    });
+    render(<McpServers initialServer="linear" />);
+
+    expect(await screen.findByText(/the keychain is locked/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Authenticated")).not.toBeInTheDocument();
+    expect(callsTo("get_mcp_oauth_token_status")).toHaveLength(0);
+  });
+
   it("does not send the stored token to a URL that is not saved", async () => {
     mockInvoke(routes(() => true));
     render(<McpServers initialServer="linear" />);

@@ -12,8 +12,10 @@ pub fn get_api_key(provider: &str) -> Result<String, String> {
     core::get_api_key(provider)
 }
 
+/// Whether a key is stored for this provider. An error means the keychain
+/// could not be read, which is not the same as no key.
 #[tauri::command]
-pub fn has_api_key(provider: &str) -> bool {
+pub fn has_api_key(provider: &str) -> Result<bool, String> {
     core::has_api_key(provider)
 }
 

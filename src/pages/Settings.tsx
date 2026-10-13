@@ -246,9 +246,11 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       .catch(() => {});
 
     if (flag("authentication")) {
+      // A failed read is not "signed out": the tokens may be stored. The
+      // error is shown and no sign-in button is offered.
       invoke<AccountStatus>("account_status")
         .then(setAccountStatus)
-        .catch((e) => console.error("Failed to read account status", e));
+        .catch((e) => setAccountError(String(e)));
     }
   }, []);
 
@@ -280,6 +282,10 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       }));
     } catch (e) {
       setAccountError(String(e));
+      // Sign-out can fail part way through, so show what is stored now.
+      invoke<AccountStatus>("account_status")
+        .then(setAccountStatus)
+        .catch(() => {});
     } finally {
       setAccountBusy("idle");
     }
@@ -508,7 +514,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
               </p>
 
               {accountStatus === null ? (
-                <div className="text-[13px] text-text-muted">Loading…</div>
+                !accountError && <div className="text-[13px] text-text-muted">Loading…</div>
               ) : accountStatus.signed_in && accountStatus.profile ? (
                 <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark mb-4">
                   <div className="flex items-start justify-between gap-4">

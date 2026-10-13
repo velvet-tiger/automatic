@@ -31,18 +31,15 @@ pub async fn authorize_mcp_server(server_name: String, mcp_url: String) -> Resul
 
 /// Check whether a stored OAuth token exists for a given MCP server at its
 /// saved URL.
+///
+/// An error means the server's config or the keychain could not be read. The
+/// UI offers sign-in when this says no token and revoke when it says there is
+/// one, so a failed read must not be reported as either.
 #[tauri::command]
-pub fn has_mcp_oauth_token(server_name: String) -> bool {
-    match crate::core::saved_mcp_server_url(&server_name) {
-        Ok(Some(url)) => crate::proxy::has_oauth_token(&server_name, &url),
-        Ok(None) => false,
-        Err(e) => {
-            eprintln!(
-                "warning: could not read the URL of MCP server '{}': {}",
-                server_name, e
-            );
-            false
-        }
+pub fn has_mcp_oauth_token(server_name: String) -> Result<bool, String> {
+    match crate::core::saved_mcp_server_url(&server_name)? {
+        Some(url) => crate::proxy::has_oauth_token(&server_name, &url),
+        None => Ok(false),
     }
 }
 
@@ -50,22 +47,20 @@ pub fn has_mcp_oauth_token(server_name: String) -> bool {
 ///
 /// The token used is the one filed under `mcp_url`, so it is only ever sent
 /// to the URL it was issued for. A URL with no token filed under it reports
-/// `has_token: false` and sends nothing.
+/// `has_token: false` and sends nothing. A keychain that cannot be read is an
+/// error, because the token may be there.
 #[tauri::command]
 pub async fn get_mcp_oauth_token_status(
     server_name: String,
     mcp_url: String,
 ) -> Result<McpOAuthTokenStatus, String> {
-    let token = match crate::proxy::load_oauth_token(&server_name, &mcp_url) {
-        Ok(token) => token,
-        Err(_) => {
-            return Ok(McpOAuthTokenStatus {
-                has_token: false,
-                valid: false,
-                revoked: false,
-                message: None,
-            });
-        }
+    let Some(token) = crate::proxy::load_oauth_token_if_present(&server_name, &mcp_url)? else {
+        return Ok(McpOAuthTokenStatus {
+            has_token: false,
+            valid: false,
+            revoked: false,
+            message: None,
+        });
     };
 
     let client = reqwest::Client::builder()
@@ -214,10 +209,10 @@ mod tests {
     fn a_server_has_a_token_only_at_the_url_it_signed_in_at() {
         let server = "command-has-token-fixture";
         with_saved_server(server, || {
-            assert!(!has_mcp_oauth_token(server.to_string()));
+            assert_eq!(has_mcp_oauth_token(server.to_string()), Ok(false));
 
             crate::proxy::store_oauth_token(server, URL, "access-token").unwrap();
-            assert!(has_mcp_oauth_token(server.to_string()));
+            assert_eq!(has_mcp_oauth_token(server.to_string()), Ok(true));
 
             // The registry file is changed directly, so nothing tidies the
             // token away. It is still stored, and still not found.
@@ -225,7 +220,7 @@ mod tests {
             let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
             std::fs::write(dir.join(format!("{}.json", server)), config).expect("write");
 
-            assert!(!has_mcp_oauth_token(server.to_string()));
+            assert_eq!(has_mcp_oauth_token(server.to_string()), Ok(false));
             assert!(crate::proxy::load_oauth_token(server, URL).is_ok());
         });
     }
@@ -234,7 +229,7 @@ mod tests {
     fn a_server_that_is_not_saved_has_no_token() {
         let home = tempfile::tempdir().expect("tempdir");
         crate::core::with_test_home(home.path().to_path_buf(), || {
-            assert!(!has_mcp_oauth_token("command-unsaved-fixture".to_string()));
+            assert_eq!(has_mcp_oauth_token("command-unsaved-fixture".to_string()), Ok(false));
         });
     }
 
@@ -263,19 +258,49 @@ mod tests {
     }
 
     #[test]
+    fn a_keychain_that_cannot_be_read_is_an_error_not_a_missing_token() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let server = "command-unreadable-token-fixture";
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let entry = crate::proxy::leave_signed_in_server(server, URL);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let presence = has_mcp_oauth_token(server.to_string());
+            // The status check fails before it sends anything, so the URL is
+            // never contacted.
+            let status =
+                runtime.block_on(get_mcp_oauth_token_status(server.to_string(), URL.to_string()));
+            set_test_fault(&entry, None);
+
+            let err = presence.expect_err("the keychain cannot be read");
+            assert!(err.contains(server), "the error names the server: {err}");
+            assert!(status.is_err(), "a failed read is not `has_token: false`");
+
+            // Nothing was remembered from the failed read.
+            assert_eq!(has_mcp_oauth_token(server.to_string()), Ok(true));
+        });
+    }
+
+    #[test]
     fn revoke_removes_token_and_refresh_credentials() {
         let server = "revoke-test-token-and-creds-fixture";
         with_saved_server(server, || {
             crate::proxy::store_oauth_token(server, URL, "access-token").unwrap();
             crate::proxy::store_oauth_credentials(server, URL, r#"{"refresh_token":"refresh"}"#)
                 .unwrap();
-            assert!(crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(true));
 
             revoke_mcp_oauth_token(server.to_string()).unwrap();
 
             assert!(crate::proxy::load_oauth_token(server, URL).is_err());
             assert!(crate::proxy::load_oauth_credentials(server, URL).is_err());
-            assert!(!crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(false));
         });
     }
 
@@ -288,7 +313,7 @@ mod tests {
             revoke_mcp_oauth_token(server.to_string()).unwrap();
 
             assert!(crate::proxy::load_oauth_token(server, URL).is_err());
-            assert!(!crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(false));
         });
     }
 

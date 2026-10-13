@@ -31,8 +31,9 @@ pub async fn account_login() -> Result<AccountProfile, String> {
     crate::account::login().await
 }
 
-/// Revoke the stored refresh token on the webapp (best-effort) and
-/// clear all local account credentials from the keychain.
+/// Revoke the stored refresh token on the webapp and clear all local account
+/// credentials from the keychain. An error means the user may still be
+/// signed in.
 #[tauri::command]
 pub async fn account_logout() -> Result<(), String> {
     if !flag_enabled() {
@@ -46,14 +47,16 @@ pub async fn account_logout() -> Result<(), String> {
 ///
 /// When the `authentication` flag is off, always reports signed-out so the
 /// UI has a consistent shape if it ever invokes this directly.
+///
+/// An error means the keychain could not be read, so the status is not known.
 #[tauri::command]
-pub fn account_status() -> AccountStatus {
+pub fn account_status() -> Result<AccountStatus, String> {
     if !flag_enabled() {
-        return AccountStatus {
+        return Ok(AccountStatus {
             signed_in: false,
             profile: None,
             webapp_url: String::new(),
-        };
+        });
     }
     crate::account::status()
 }

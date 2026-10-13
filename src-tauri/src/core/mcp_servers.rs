@@ -1816,7 +1816,7 @@ mod tests {
     fn has_no_oauth_secrets(server: &str, url: &str) -> bool {
         crate::proxy::load_oauth_token(server, url).is_err()
             && crate::proxy::load_oauth_credentials(server, url).is_err()
-            && !crate::proxy::has_oauth_token(server, url)
+            && crate::proxy::has_oauth_token(server, url) == Ok(false)
     }
 
     /// The entry an older version stored a server's token under.
@@ -1916,7 +1916,7 @@ mod tests {
             let server = "secrets-url-changed-fixture";
             save_mcp_server_config(server, OAUTH_SERVER).expect("save");
             sign_in(server, URL);
-            assert!(crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(true));
 
             save_mcp_server_config(server, OTHER_URL_SERVER).expect("save new url");
 
@@ -1941,7 +1941,7 @@ mod tests {
             save_mcp_server_config(server, OTHER_URL_SERVER).expect("the save still goes ahead");
 
             assert!(mcp_server_url_is(server, OTHER_URL).expect("url"));
-            assert!(!crate::proxy::has_oauth_token(server, OTHER_URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, OTHER_URL), Ok(false));
             assert!(crate::proxy::load_oauth_token(server, OTHER_URL).is_err());
             // Still stored, and still only for the URL it was issued for.
             assert_eq!(crate::proxy::load_oauth_token(server, URL).expect("token"), "access-token");
@@ -1987,7 +1987,7 @@ mod tests {
                 "access-token"
             );
             assert!(crate::proxy::load_oauth_credentials(server, rewritten).is_ok());
-            assert!(crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(true));
         });
     }
 
@@ -2014,7 +2014,7 @@ mod tests {
             // from an older version.
             sign_in(server, URL);
             secret_store::store_secret(&legacy_token_entry(server), "older-token").expect("seed");
-            assert!(crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(true));
 
             save_mcp_server_config(server, OAUTH_SERVER).expect("save");
 
@@ -2067,8 +2067,8 @@ mod tests {
             save_mcp_server_config(&server.to_uppercase(), OTHER_URL_SERVER)
                 .expect("save under the other case");
 
-            assert!(!crate::proxy::has_oauth_token(server, OTHER_URL));
-            assert!(!crate::proxy::has_oauth_token(&server.to_uppercase(), OTHER_URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, OTHER_URL), Ok(false));
+            assert_eq!(crate::proxy::has_oauth_token(&server.to_uppercase(), OTHER_URL), Ok(false));
         });
     }
 
@@ -2079,7 +2079,7 @@ mod tests {
             let server = "secrets-delete-fixture";
             save_mcp_server_config(server, OAUTH_SERVER).expect("save");
             sign_in(server, URL);
-            assert!(crate::proxy::has_oauth_token(server, URL));
+            assert_eq!(crate::proxy::has_oauth_token(server, URL), Ok(true));
 
             delete_mcp_server_config(server).expect("delete");
 
@@ -2156,8 +2156,8 @@ mod tests {
             let (old, new) = ("secrets-rename-old-fixture", "secrets-rename-new-fixture");
             save_mcp_server_config(old, OAUTH_SERVER).expect("save");
             sign_in(old, URL);
-            assert!(crate::proxy::has_oauth_token(old, URL));
-            assert!(!crate::proxy::has_oauth_token(new, URL));
+            assert_eq!(crate::proxy::has_oauth_token(old, URL), Ok(true));
+            assert_eq!(crate::proxy::has_oauth_token(new, URL), Ok(false));
 
             rename_mcp_server_config(old, new).expect("rename");
 
@@ -2166,7 +2166,7 @@ mod tests {
                 crate::proxy::load_oauth_credentials(new, URL).expect("credentials"),
                 r#"{"refresh_token":"refresh"}"#
             );
-            assert!(crate::proxy::has_oauth_token(new, URL));
+            assert_eq!(crate::proxy::has_oauth_token(new, URL), Ok(true));
             assert!(has_no_oauth_secrets(old, URL));
         });
     }

@@ -1013,8 +1013,7 @@ async fn upload_bundle(bundle: &DeltaBundle) -> Result<ServerSyncResponse, Strin
     let url = format!("{}/api/library/sync", webapp);
     let client = http_client()?;
 
-    let access = keychain_load(ACCESS_TOKEN_USER)
-        .map_err(|_| "Not signed in. Please sign in first.".to_string())?;
+    let access = stored_access_token(ACCESS_TOKEN_USER)?;
 
     let resp = client
         .post(&url)
@@ -1048,8 +1047,7 @@ pub(crate) async fn webapp_authorized_get(path: &str) -> Result<reqwest::Respons
     let url = format!("{}{}", webapp, path);
     let client = http_client()?;
 
-    let access = keychain_load(ACCESS_TOKEN_USER)
-        .map_err(|_| "Not signed in. Please sign in first.".to_string())?;
+    let access = stored_access_token(ACCESS_TOKEN_USER)?;
 
     let resp = client
         .get(&url)
@@ -1082,8 +1080,7 @@ async fn handle_sync_response(resp: reqwest::Response) -> Result<ServerSyncRespo
 }
 
 async fn refresh_access_token(client: &reqwest::Client, webapp: &str) -> Result<String, String> {
-    let refresh = keychain_load(REFRESH_TOKEN_USER)
-        .map_err(|_| "Session expired. Please sign in again.".to_string())?;
+    let refresh = stored_refresh_token(REFRESH_TOKEN_USER)?;
 
     let params = [
         ("grant_type", "refresh_token"),
@@ -1136,8 +1133,34 @@ fn keychain_store(user: &str, value: &str) -> Result<(), String> {
     secret_store::store_secret(user, value)
 }
 
-fn keychain_load(user: &str) -> Result<String, String> {
-    secret_store::load_secret(user)
+/// The account's access token, stored under `entry`.
+///
+/// "Not signed in" is only said when the keychain confirms that no token is
+/// stored. A keychain that cannot be read is reported as that, because
+/// signing in again would not help.
+fn stored_access_token(entry: &str) -> Result<String, String> {
+    match secret_store::load_secret_if_present(entry) {
+        Ok(Some(token)) => Ok(token),
+        Ok(None) => Err("Not signed in. Please sign in first.".to_string()),
+        Err(e) => Err(format!(
+            "Could not read the sign-in token from the keychain: {}",
+            e
+        )),
+    }
+}
+
+/// The account's refresh token, stored under `entry`. A missing token means
+/// the session cannot be renewed. A keychain that cannot be read is reported
+/// as that.
+fn stored_refresh_token(entry: &str) -> Result<String, String> {
+    match secret_store::load_secret_if_present(entry) {
+        Ok(Some(token)) => Ok(token),
+        Ok(None) => Err("Session expired. Please sign in again.".to_string()),
+        Err(e) => Err(format!(
+            "Could not read the refresh token from the keychain: {}",
+            e
+        )),
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1145,6 +1168,54 @@ fn keychain_load(user: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Account tokens from a keychain that fails ────────────────────────────
+    //
+    // The test store is shared by the whole test process, so each test uses
+    // entries no other test uses.
+
+    #[test]
+    fn a_missing_access_token_is_not_signed_in() {
+        let err = stored_access_token("cloud-sync-test-absent-access-token")
+            .expect_err("no token");
+
+        assert!(err.contains("Not signed in"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn an_access_token_that_cannot_be_read_is_not_reported_as_not_signed_in() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let entry = "cloud-sync-test-unreadable-access-token";
+        secret_store::store_secret(entry, "access").expect("store");
+
+        set_test_fault(entry, Some(TestFault::Unreadable));
+        let read = stored_access_token(entry);
+        set_test_fault(entry, None);
+
+        let err = read.expect_err("the keychain cannot be read");
+        assert!(!err.contains("Not signed in"), "unexpected error: {err}");
+        assert!(err.contains("test fault"), "the store's own error is kept: {err}");
+        assert_eq!(stored_access_token(entry), Ok("access".to_string()));
+    }
+
+    #[test]
+    fn a_refresh_token_that_cannot_be_read_is_not_reported_as_an_expired_session() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let entry = "cloud-sync-test-unreadable-refresh-token";
+        let absent = stored_refresh_token(entry).expect_err("no token");
+        assert!(absent.contains("Session expired"), "unexpected error: {absent}");
+        secret_store::store_secret(entry, "refresh").expect("store");
+
+        set_test_fault(entry, Some(TestFault::Unreadable));
+        let read = stored_refresh_token(entry);
+        set_test_fault(entry, None);
+
+        let err = read.expect_err("the keychain cannot be read");
+        assert!(!err.contains("Session expired"), "unexpected error: {err}");
+        assert!(err.contains("test fault"), "the store's own error is kept: {err}");
+    }
 
     #[test]
     fn scrub_removes_env_values_keeps_keys() {
@@ -1894,13 +1965,13 @@ mod tests {
             crate::proxy::store_oauth_token(server, url, "access-token").expect("store token");
             crate::proxy::store_oauth_credentials(server, url, r#"{"refresh_token":"refresh"}"#)
                 .expect("store credentials");
-            assert!(crate::proxy::has_oauth_token(server, url));
+            assert_eq!(crate::proxy::has_oauth_token(server, url), Ok(true));
 
             delete_asset("mcp_server", server).expect("delete");
 
             assert!(crate::proxy::load_oauth_token(server, url).is_err());
             assert!(crate::proxy::load_oauth_credentials(server, url).is_err());
-            assert!(!crate::proxy::has_oauth_token(server, url));
+            assert_eq!(crate::proxy::has_oauth_token(server, url), Ok(false));
         });
     }
 

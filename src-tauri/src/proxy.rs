@@ -85,6 +85,23 @@ pub(crate) fn oauth_token_entry(server_name: &str, url: &str) -> String {
     oauth_entries(server_name, url).expect("a url").token
 }
 
+/// Test support: leave an HTTP server at `url` in the registry with a token
+/// in the store, and return the token's store entry.
+///
+/// Both are written directly. A save or a sign-in would leave an answer in
+/// the presence cache, and a test that gives the store a fault needs the next
+/// check to read the store. Call it inside a test home.
+#[cfg(test)]
+pub(crate) fn leave_signed_in_server(server_name: &str, url: &str) -> String {
+    let dir = crate::core::get_mcp_servers_dir().expect("registry dir");
+    std::fs::create_dir_all(&dir).expect("create the registry");
+    let config = serde_json::json!({ "type": "http", "url": url }).to_string();
+    std::fs::write(dir.join(format!("{}.json", server_name)), config).expect("write the server");
+    let entry = oauth_token_entry(server_name, url);
+    secret_store::store_secret(&entry, "access-token").expect("store the token");
+    entry
+}
+
 /// Remembers, per token entry, whether an OAuth token is present in the
 /// keychain.
 ///
@@ -208,23 +225,47 @@ pub fn delete_oauth_token(server_name: &str, url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The OAuth bearer token issued to a server for `url`, or `None` when none
+/// is stored for that URL.
+///
+/// A store that cannot be read is an error, never `None`. A server with no
+/// URL has no token.
+pub fn load_oauth_token_if_present(server_name: &str, url: &str) -> Result<Option<String>, String> {
+    let Ok(entries) = oauth_entries(server_name, url) else {
+        return Ok(None);
+    };
+    find_oauth_token(server_name, url, &entries)
+}
+
 /// Check whether an OAuth token is stored for a server at `url`.
 ///
 /// The result is cached for the life of the process. A token added or removed
 /// by another process is therefore not observed until restart.
-pub fn has_oauth_token(server_name: &str, url: &str) -> bool {
+///
+/// A store that cannot be read is an error. Sync chooses between the proxy
+/// stub and the server's own URL on this answer, so "could not read" must not
+/// pass as "no token". The error is not cached, and the next call reads the
+/// store again.
+pub fn has_oauth_token(server_name: &str, url: &str) -> Result<bool, String> {
     let Ok(entries) = oauth_entries(server_name, url) else {
-        return false;
+        return Ok(false);
     };
     if let Ok(cache) = token_presence_cache().lock() {
         if let Some(present) = cache.get(&entries.token) {
-            return *present;
+            return Ok(*present);
         }
     }
 
-    let present = matches!(find_oauth_token(server_name, url, &entries), Ok(Some(_)));
+    let present = find_oauth_token(server_name, url, &entries)
+        .map_err(|e| {
+            format!(
+                "could not check for an OAuth token for MCP server '{}': {}",
+                server_name, e
+            )
+        })?
+        .is_some();
     set_cached_token_presence(&entries.token, present);
-    present
+    Ok(present)
 }
 
 /// Store OAuth credentials (client_id + token JSON) for refresh support.
@@ -263,7 +304,7 @@ pub fn delete_oauth_credentials(server_name: &str, url: &str) -> Result<(), Stri
 }
 
 /// What became of a secret that was to be deleted.
-enum Removal {
+pub(crate) enum Removal {
     /// Nothing is stored under the entry now.
     Gone,
     /// The store answered, and the secret is still there.
@@ -275,7 +316,7 @@ enum Removal {
 
 impl Removal {
     /// Why the secret may still be stored, or `None` when it is gone.
-    fn problem(&self) -> Option<String> {
+    pub(crate) fn problem(&self) -> Option<String> {
         match self {
             Removal::Gone => None,
             Removal::StillStored { delete_err } => {
@@ -294,7 +335,7 @@ impl Removal {
 /// `delete_secret` reports a missing entry and a failed delete the same way,
 /// so a failed delete is checked by reading the entry back. The delete is
 /// tried first, so a secret that exists is removed without being read.
-fn remove_secret(entry: &str) -> Removal {
+pub(crate) fn remove_secret(entry: &str) -> Removal {
     let Err(delete_err) = secret_store::delete_secret(entry) else {
         return Removal::Gone;
     };
@@ -679,14 +720,46 @@ mod tests {
     #[test]
     fn oauth_token_presence_follows_store_and_delete() {
         let server = "proxy-test-presence-fixture";
-        assert!(!has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(false));
 
         store_oauth_token(server, URL, "token").unwrap();
-        assert!(has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(true));
         assert_eq!(load_oauth_token(server, URL).unwrap(), "token");
 
         delete_oauth_token(server, URL).unwrap();
-        assert!(!has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(false));
+    }
+
+    #[test]
+    fn a_token_that_cannot_be_read_is_an_error_and_is_not_remembered() {
+        let server = "presence-unreadable-fixture";
+        // Stored straight into the store, so the presence cache has no answer
+        // and the check has to read.
+        let entry = oauth_token_entry(server, URL);
+        secret_store::store_secret(&entry, "token").unwrap();
+
+        set_test_fault(&entry, Some(TestFault::Unreadable));
+        let present = has_oauth_token(server, URL);
+        let token = load_oauth_token_if_present(server, URL);
+        set_test_fault(&entry, None);
+
+        let err = present.expect_err("the store cannot be read");
+        assert!(err.contains(server), "the error names the server: {err}");
+        assert!(token.is_err(), "a failed read is not a missing token");
+
+        // A cached "no token" would last for the life of the process.
+        assert_eq!(has_oauth_token(server, URL), Ok(true));
+        assert_eq!(load_oauth_token_if_present(server, URL), Ok(Some("token".to_string())));
+    }
+
+    #[test]
+    fn a_token_that_is_not_stored_loads_as_none() {
+        let server = "presence-absent-fixture";
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            assert_eq!(load_oauth_token_if_present(server, URL), Ok(None));
+            assert_eq!(load_oauth_token_if_present(server, ""), Ok(None));
+        });
     }
 
     // ── A secret is found only for its server name and URL ───────────────────
@@ -697,19 +770,19 @@ mod tests {
         store_oauth_token(server, URL, "token").unwrap();
         store_oauth_credentials(server, URL, CREDENTIALS).unwrap();
 
-        assert!(has_oauth_token(server, URL));
-        assert!(!has_oauth_token(server, OTHER_URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(true));
+        assert_eq!(has_oauth_token(server, OTHER_URL), Ok(false));
         assert!(load_oauth_token(server, OTHER_URL).is_err());
         assert!(load_oauth_credentials(server, OTHER_URL).is_err());
         // Another path on the same host is another URL.
-        assert!(!has_oauth_token(server, "https://mcp.example.com/sse"));
+        assert_eq!(has_oauth_token(server, "https://mcp.example.com/sse"), Ok(false));
     }
 
     #[test]
     fn a_token_is_found_only_under_the_name_it_was_stored_for() {
         store_oauth_token("filing-test-name-fixture", URL, "token").unwrap();
 
-        assert!(!has_oauth_token("filing-test-other-name-fixture", URL));
+        assert_eq!(has_oauth_token("filing-test-other-name-fixture", URL), Ok(false));
         assert!(load_oauth_token("filing-test-other-name-fixture", URL).is_err());
     }
 
@@ -730,7 +803,7 @@ mod tests {
 
         assert!(store_oauth_token(server, "", "token").is_err());
         assert!(store_oauth_credentials(server, " ", CREDENTIALS).is_err());
-        assert!(!has_oauth_token(server, ""));
+        assert_eq!(has_oauth_token(server, ""), Ok(false));
         assert!(load_oauth_token(server, "").is_err());
     }
 
@@ -760,13 +833,13 @@ mod tests {
         store_oauth_token(server, URL, "token").unwrap();
         store_oauth_credentials(server, URL, CREDENTIALS).unwrap();
         store_oauth_token(server, OTHER_URL, "other-token").unwrap();
-        assert!(has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(true));
 
         forget_oauth_secrets(server, URL);
 
         assert_eq!(stored(&entries(server, URL).token), None);
         assert_eq!(stored(&entries(server, URL).credentials), None);
-        assert!(!has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(false));
         assert_eq!(load_oauth_token(server, OTHER_URL).unwrap(), "other-token");
     }
 
@@ -790,7 +863,7 @@ mod tests {
         forget_oauth_secrets(server, URL);
         forget_legacy_oauth_secrets(server);
 
-        assert!(!has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(false));
     }
 
     #[test]
@@ -813,7 +886,7 @@ mod tests {
 
         forget_oauth_secrets(server, URL);
 
-        assert!(!has_oauth_token(server, URL));
+        assert_eq!(has_oauth_token(server, URL), Ok(false));
     }
 
     #[test]
@@ -845,8 +918,8 @@ mod tests {
         store_oauth_token(old, URL, "token").unwrap();
         store_oauth_credentials(old, URL, CREDENTIALS).unwrap();
         // Prime the cache with the answers a sync would have recorded.
-        assert!(has_oauth_token(old, URL));
-        assert!(!has_oauth_token(new, URL));
+        assert_eq!(has_oauth_token(old, URL), Ok(true));
+        assert_eq!(has_oauth_token(new, URL), Ok(false));
 
         move_oauth_secrets(old, new, URL);
 
@@ -854,8 +927,8 @@ mod tests {
         assert_eq!(load_oauth_credentials(new, URL).unwrap(), CREDENTIALS);
         assert_eq!(stored(&entries(old, URL).token), None);
         assert_eq!(stored(&entries(old, URL).credentials), None);
-        assert!(has_oauth_token(new, URL));
-        assert!(!has_oauth_token(old, URL));
+        assert_eq!(has_oauth_token(new, URL), Ok(true));
+        assert_eq!(has_oauth_token(old, URL), Ok(false));
     }
 
     #[test]
@@ -865,15 +938,15 @@ mod tests {
         store_oauth_token(new, URL, "stale-token").unwrap();
         store_oauth_credentials(new, URL, r#"{"refresh_token":"stale"}"#).unwrap();
         secret_store::store_secret(&legacy_oauth_entries(new).token, "older-token").unwrap();
-        assert!(has_oauth_token(new, URL));
+        assert_eq!(has_oauth_token(new, URL), Ok(true));
 
         move_oauth_secrets(old, new, URL);
 
         assert_eq!(stored(&entries(new, URL).token), None);
         assert_eq!(stored(&entries(new, URL).credentials), None);
         assert_eq!(stored(&legacy_oauth_entries(new).token), None);
-        assert!(!has_oauth_token(new, URL));
-        assert!(!has_oauth_token(old, URL));
+        assert_eq!(has_oauth_token(new, URL), Ok(false));
+        assert_eq!(has_oauth_token(old, URL), Ok(false));
     }
 
     #[test]
@@ -901,7 +974,7 @@ mod tests {
 
         assert_eq!(stored(&entries(new, URL).token), None);
         assert_eq!(stored(&entries(new, URL).credentials), None);
-        assert!(!has_oauth_token(new, URL));
+        assert_eq!(has_oauth_token(new, URL), Ok(false));
     }
 
     #[test]
@@ -934,7 +1007,7 @@ mod tests {
         with_server_from_an_older_version(server, URL, || {
             let legacy = seed_legacy_secrets(server);
 
-            assert!(has_oauth_token(server, URL));
+            assert_eq!(has_oauth_token(server, URL), Ok(true));
 
             assert_eq!(load_oauth_token(server, URL).unwrap(), "old-token");
             assert_eq!(stored(&entries(server, URL).token), Some("old-token".to_string()));
@@ -950,7 +1023,7 @@ mod tests {
         with_server_from_an_older_version(server, URL, || {
             let legacy = seed_legacy_secrets(server);
 
-            assert!(!has_oauth_token(server, OTHER_URL));
+            assert_eq!(has_oauth_token(server, OTHER_URL), Ok(false));
             assert!(load_oauth_token(server, OTHER_URL).is_err());
 
             assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
@@ -1025,7 +1098,7 @@ mod tests {
             let legacy = seed_legacy_secrets(server);
             set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
 
-            assert!(!has_oauth_token(server, URL));
+            assert_eq!(has_oauth_token(server, URL), Ok(false));
             assert!(load_oauth_token(server, URL).is_err());
 
             assert_eq!(stored(&entries(server, URL).token), None);
@@ -1090,7 +1163,7 @@ mod tests {
             let legacy = legacy_oauth_entries(server);
             secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
 
-            assert!(!has_oauth_token(server, URL));
+            assert_eq!(has_oauth_token(server, URL), Ok(false));
             assert!(load_oauth_credentials(server, URL).is_err());
             assert_eq!(stored(&entries(server, URL).credentials), None);
         });

@@ -78,16 +78,10 @@ impl AgentCredential {
 
 /// Load the credential for `agent_id` from the OS keychain.
 ///
-/// For the `"anthropic"` agent the lookup falls back to the legacy `"anthropic"`
-/// keychain entry so existing users keep their stored key without re-entering it.
-///
-/// Returns `None` when no credential is stored.
-pub fn load_credential(agent_id: &str) -> Option<AgentCredential> {
-    // Attempt to read the canonical entry keyed by agent_id.
-    if let Some(token) = read_keychain_token(agent_id) {
-        return Some(AgentCredential::SingleToken(token));
-    }
-    None
+/// Returns `Ok(None)` when no credential is stored. A keychain that cannot be
+/// read is an error: the credential may be there.
+pub fn load_credential(agent_id: &str) -> Result<Option<AgentCredential>, String> {
+    Ok(read_keychain_token(agent_id)?.map(AgentCredential::SingleToken))
 }
 
 /// Store a `SingleToken` credential for `agent_id` in the OS keychain.
@@ -96,8 +90,10 @@ pub fn store_token(agent_id: &str, token: &str) -> Result<(), String> {
 }
 
 /// Return `true` if a non-empty credential is stored for `agent_id`.
-pub fn has_credential(agent_id: &str) -> bool {
-    read_keychain_token(agent_id).is_some()
+///
+/// A keychain that cannot be read is an error, not `false`.
+pub fn has_credential(agent_id: &str) -> Result<bool, String> {
+    Ok(read_keychain_token(agent_id)?.is_some())
 }
 
 /// Remove the stored credential for `agent_id` from the OS keychain.
@@ -107,11 +103,56 @@ pub fn delete_credential(agent_id: &str) -> Result<(), String> {
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 
-fn read_keychain_token(key: &str) -> Option<String> {
-    let pw = secret_store::load_secret(key).ok()?;
-    if pw.is_empty() {
-        None
-    } else {
-        Some(pw)
+/// The token stored under `key`. An empty token counts as none.
+fn read_keychain_token(key: &str) -> Result<Option<String>, String> {
+    let token = secret_store::load_secret_if_present(key)
+        .map_err(|e| format!("could not read the credential for '{}': {}", key, e))?;
+    Ok(token.filter(|token| !token.is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::secret_store::{set_test_fault, TestFault};
+
+    // The test store is shared by the whole test process, so each test uses
+    // an agent id no other test uses.
+
+    #[test]
+    fn a_stored_token_is_the_credential() {
+        let agent = "agent-credential-test-stored";
+        assert!(matches!(load_credential(agent), Ok(None)));
+        assert_eq!(has_credential(agent), Ok(false));
+
+        store_token(agent, "token").expect("store token");
+
+        let credential = load_credential(agent).expect("read").expect("a credential");
+        assert_eq!(credential.token(), "token");
+        assert_eq!(has_credential(agent), Ok(true));
+    }
+
+    #[test]
+    fn an_empty_token_is_no_credential() {
+        let agent = "agent-credential-test-empty";
+        store_token(agent, "").expect("store token");
+
+        assert!(matches!(load_credential(agent), Ok(None)));
+        assert_eq!(has_credential(agent), Ok(false));
+    }
+
+    #[test]
+    fn a_keychain_that_cannot_be_read_is_an_error_not_a_missing_credential() {
+        let agent = "agent-credential-test-unreadable";
+        store_token(agent, "token").expect("store token");
+
+        set_test_fault(agent, Some(TestFault::Unreadable));
+        let loaded = load_credential(agent);
+        let present = has_credential(agent);
+        set_test_fault(agent, None);
+
+        let err = loaded.expect_err("the keychain cannot be read");
+        assert!(err.contains(agent), "unexpected error: {err}");
+        assert!(present.is_err());
+        assert_eq!(has_credential(agent), Ok(true));
     }
 }
