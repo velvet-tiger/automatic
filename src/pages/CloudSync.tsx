@@ -96,14 +96,17 @@ export default function CloudSync() {
   const [lastSummary, setLastSummary] = useState<SyncSummary | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState("");
+  // Set when the keychain could not say whether the user is signed in. The
+  // tokens may be stored, so sign-in is not offered: it would replace them.
+  const [statusError, setStatusError] = useState("");
 
   async function refreshAccount() {
     try {
       const status = await invoke<AccountStatus>("account_status");
       setAccountStatus(status);
+      setStatusError("");
     } catch (e) {
-      // A failed read is not "signed out", so say what went wrong.
-      setSignInError(String(e));
+      setStatusError(String(e));
     }
   }
 
@@ -174,8 +177,14 @@ export default function CloudSync() {
             key names are uploaded.
           </p>
 
+          {statusError && (
+            <div className="p-4 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger mb-6">
+              Could not check whether you are signed in. {statusError}
+            </div>
+          )}
+
           {/* ── Sign-in gate ─────────────────────────────────────────── */}
-          {!signedIn && (
+          {!signedIn && !statusError && (
             <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input mb-6">
               <div className="flex items-start gap-3">
                 <LogIn size={16} className="text-text-muted mt-0.5" />

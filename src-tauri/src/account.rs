@@ -251,7 +251,7 @@ fn refresh_token_to_revoke(entries: &AccountEntries<'_>) -> Result<Option<String
     secret_store::load_secret_if_present(entries.refresh_token).map_err(|e| {
         format!(
             "Could not sign out. The keychain could not be read, so nothing in it was revoked \
-             or removed. If you were signed in, you still are: {}",
+             or removed. Any sign-in stored there is still in place: {}",
             e
         )
     })
@@ -259,9 +259,13 @@ fn refresh_token_to_revoke(entries: &AccountEntries<'_>) -> Result<Option<String
 
 /// Ask the webapp to revoke `refresh`. Best-effort: a webapp that cannot be
 /// reached must not stop the user from signing out of this machine.
+///
+/// Redirects are not followed, as in the sign-in requests. A redirect would
+/// post the refresh token again to wherever it pointed.
 async fn revoke_on_webapp(refresh: &str) {
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     else {
         return;
@@ -442,7 +446,7 @@ mod tests {
         set_test_fault(&account.refresh_token, None);
 
         let err = result.expect_err("the refresh token cannot be read");
-        assert!(err.contains("you still are"), "unexpected error: {err}");
+        assert!(err.contains("still in place"), "unexpected error: {err}");
         assert_eq!(account.stored(), [true, true, true], "nothing was deleted");
     }
 

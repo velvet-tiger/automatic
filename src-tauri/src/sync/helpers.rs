@@ -1064,6 +1064,28 @@ mod tests {
         registry
     }
 
+    /// The store is asked about every HTTP server, signed in or not. A
+    /// server that never had a token therefore also stops the build when the
+    /// store cannot be read: nothing tells it apart from one whose token
+    /// cannot be seen.
+    #[test]
+    fn a_server_that_never_signed_in_also_stops_the_build_when_the_store_cannot_be_read() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+
+        let server = "sync-stub-never-signed-in-fixture";
+        let url = "https://mcp.example.com/mcp";
+        let names = vec![server.to_string()];
+        let registry = http_registry(server, url);
+        let entry = crate::proxy::oauth_token_entry(server, url);
+
+        set_test_fault(&entry, Some(TestFault::Unreadable));
+        let built = build_selected_servers("sync-stub-project", &names, &registry);
+        set_test_fault(&entry, None);
+
+        let err = built.expect_err("unreadable");
+        assert!(err.contains(server), "the error names the server: {err}");
+    }
+
     #[test]
     fn a_token_that_cannot_be_read_stops_the_build_and_is_not_remembered() {
         use crate::core::secret_store::{set_test_fault, TestFault};

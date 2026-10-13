@@ -465,10 +465,15 @@ export default function SettingsAgents() {
                     </span>
                   )}
                   {!state.stored && !state.editing && (
-                    <span className="text-[11px] text-text-muted">Not configured</span>
+                    <span className="text-[11px] text-text-muted">
+                      {state.readError ? "Unknown" : "Not configured"}
+                    </span>
                   )}
 
-                  {!state.editing && (
+                  {/* With a keychain that could not be read, a key may be
+                      stored. Adding one would replace it, so no action is
+                      offered until the page can tell. */}
+                  {!state.editing && !state.readError && (
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => updateState(agent.provider, { editing: true, inputValue: "", inputValue2: "", revealed: false })}

@@ -258,6 +258,19 @@ mod tests {
     }
 
     #[test]
+    fn a_server_config_that_cannot_be_read_is_an_error_not_a_missing_token() {
+        let server = "command-broken-config-fixture";
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let dir = crate::core::get_mcp_servers_dir().expect("dir");
+            std::fs::create_dir_all(&dir).expect("create the registry");
+            std::fs::write(dir.join(format!("{}.json", server)), "{ not json").expect("write");
+
+            assert!(has_mcp_oauth_token(server.to_string()).is_err());
+        });
+    }
+
+    #[test]
     fn a_keychain_that_cannot_be_read_is_an_error_not_a_missing_token() {
         use crate::core::secret_store::{set_test_fault, TestFault};
 

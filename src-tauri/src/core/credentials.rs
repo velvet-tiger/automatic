@@ -31,9 +31,15 @@ fn set_cached_presence(provider: &str, present: bool) {
 /// When none is found and a read failed, the answer is not known, and that
 /// read's error is returned.
 pub(super) fn any_known_api_key_stored() -> Result<bool, String> {
+    let known = known_agents();
+    any_api_key_stored(known.iter().map(|id| id.as_str()))
+}
+
+/// [`any_known_api_key_stored`] for the given providers.
+fn any_api_key_stored<'a>(providers: impl Iterator<Item = &'a str>) -> Result<bool, String> {
     let mut failed_read = None;
-    for id in known_agents() {
-        match has_api_key(id.as_str()) {
+    for provider in providers {
+        match has_api_key(provider) {
             Ok(true) => return Ok(true),
             Ok(false) => {}
             Err(e) => failed_read = Some(e),
@@ -162,6 +168,25 @@ mod tests {
         // soon as the store can be read.
         set_test_fault(provider, None);
         assert_eq!(has_api_key(provider), Ok(true));
+    }
+
+    #[test]
+    fn a_stored_key_answers_for_the_group_whatever_the_other_reads_did() {
+        let stored = "credentials-test-group-stored-provider";
+        let unreadable = "credentials-test-group-unreadable-provider";
+        let absent = "credentials-test-group-absent-provider";
+        secret_store::store_secret(stored, "key").expect("store key");
+
+        set_test_fault(unreadable, Some(TestFault::Unreadable));
+        let with_a_key = any_api_key_stored([unreadable, absent, stored].into_iter());
+        let without_a_key = any_api_key_stored([absent, unreadable].into_iter());
+        set_test_fault(unreadable, None);
+
+        assert_eq!(with_a_key, Ok(true));
+        // No key was found and one read failed, so "none stored" is not
+        // known. The agent-features setting is left alone on this answer.
+        assert!(without_a_key.is_err());
+        assert_eq!(any_api_key_stored([absent].into_iter()), Ok(false));
     }
 
     #[test]
