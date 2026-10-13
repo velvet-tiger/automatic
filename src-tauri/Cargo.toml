@@ -44,9 +44,12 @@ tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # On Linux, `linux-native` alone is the kernel keyring, which is emptied on
-# reboot. `sync-secret-service` makes the Secret Service the default store, and
-# `crypto-rust` encrypts secrets on the D-Bus session. `linux-native` stays so
-# that secrets an older build left in the kernel keyring can still be read.
+# reboot. `sync-secret-service` makes the Secret Service the default store.
+# `crypto-rust` selects the Secret Service's Diffie-Hellman session, so secrets
+# do not cross the D-Bus session bus as plain text. That session is not a
+# security boundary: any process of the same user can read an unlocked keyring.
+# `linux-native` stays so that secrets an older build left in the kernel
+# keyring can still be read.
 keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "sync-secret-service", "crypto-rust", "windows-native"] }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -76,6 +79,11 @@ regex = "1"
 once_cell = "1"
 unicode-normalization = "0.1"
 clap = { version = "4", features = ["derive"] }
+
+# The Secret Service client that `keyring` uses. `core/secret_store.rs` calls
+# it directly to confirm the default keyring is unlocked before each call.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = "4.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
