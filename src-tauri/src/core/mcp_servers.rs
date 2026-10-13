@@ -312,10 +312,14 @@ fn legacy_oauth_urls_path() -> Result<PathBuf, String> {
 
 /// Record the URL of every stored server, unless that has been done already.
 ///
-/// Everything that changes a registry file calls this first, so the record
-/// always describes the registry as an older version left it. The first
-/// writer wins. A second process that gets here at the same time has read
-/// the same registry.
+/// Saving, deleting and renaming a server each call this first, so the record
+/// describes the registry as an older version left it. The first writer
+/// wins. A second process that gets here at the same time has read the same
+/// registry.
+///
+/// An error stops the caller from changing the registry. A record written
+/// after the change would name the new URL as the one an old secret was
+/// issued for.
 pub(crate) fn record_legacy_oauth_urls() -> Result<(), String> {
     let path = legacy_oauth_urls_path()?;
     if path.exists() {
@@ -328,31 +332,63 @@ pub(crate) fn record_legacy_oauth_urls() -> Result<(), String> {
     // Written under another name and then linked into place, so no reader
     // sees half a file and an existing record is never replaced.
     let draft = path.with_extension(format!("{}.tmp", std::process::id()));
-    fs::write(&draft, record).map_err(|e| e.to_string())?;
+    fs::write(&draft, &record)
+        .map_err(|e| format!("Failed to write {}: {}", draft.display(), e))?;
     let linked = fs::hard_link(&draft, &path);
     let _ = fs::remove_file(&draft);
     match linked {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(format!("Failed to write {}: {}", path.display(), e)),
+        // Some filesystems have no hard links.
+        Err(_) => write_new_file(&path, &record),
+    }
+}
+
+/// Write `contents` to `path` unless a file is already there, which is
+/// success. A reader may see the file before it is complete. It then fails
+/// to parse the record and uses no old secret.
+fn write_new_file(path: &Path, contents: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => file
+            .write_all(contents.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Failed to create {}: {}", path.display(), e)),
     }
 }
 
 /// The comparable URL of every stored server that has one, by server name.
+///
+/// An entry that cannot be read is left out, with a warning. A directory
+/// named like a config, or a file that is not text, must not stop every
+/// later save. A server left out gets no old secret, which is the safe side.
 fn registry_urls() -> Result<BTreeMap<String, String>, String> {
-    let entries = match fs::read_dir(get_mcp_servers_dir()?) {
+    let dir = get_mcp_servers_dir()?;
+    let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(format!("Failed to read {}: {}", dir.display(), e)),
     };
     let mut urls = BTreeMap::new();
     for entry in entries {
-        let path = entry.map_err(|e| e.to_string())?.path();
+        let path = entry
+            .map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?
+            .path();
         let Some(name) = mcp_server_name_from_path(&path) else {
             continue;
         };
-        if let StoredUrl::Known(Some(url)) = stored_server_url(&path)? {
-            urls.insert(name.to_string(), url);
+        match stored_server_url(&path) {
+            Ok(StoredUrl::Known(Some(url))) => {
+                urls.insert(name.to_string(), url);
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!(
+                "warning: could not read {} to record its URL, so no OAuth token from an older version will be used for it: {}",
+                path.display(),
+                e
+            ),
         }
     }
     Ok(urls)
@@ -1821,6 +1857,34 @@ mod tests {
             assert!(legacy_oauth_url_is(renamed, URL).expect("renamed"));
             assert!(!legacy_oauth_url_is("url-record-renamed-to-fixture", URL).expect("new name"));
         });
+    }
+
+    #[test]
+    fn the_url_record_leaves_out_an_entry_it_cannot_read() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "url-record-beside-unreadable-fixture";
+            leave_server_from_an_older_version(server, OAUTH_SERVER);
+            let dir = get_mcp_servers_dir().expect("dir");
+            fs::create_dir_all(dir.join("url-record-directory-fixture.json")).expect("a directory");
+            fs::write(dir.join("url-record-binary-fixture.json"), [0xff, 0xfe, 0x00]).expect("not text");
+
+            save_mcp_server_config(server, OTHER_URL_SERVER).expect("the save is not blocked");
+
+            assert!(legacy_oauth_url_is(server, URL).expect("recorded"));
+            assert!(!legacy_oauth_url_is("url-record-binary-fixture", URL).expect("left out"));
+        });
+    }
+
+    #[test]
+    fn a_new_file_is_written_once_and_never_replaced() {
+        let dir = tmp();
+        let path = dir.path().join("record.json");
+
+        write_new_file(&path, "first").expect("write");
+        write_new_file(&path, "second").expect("an existing file is success");
+
+        assert_eq!(fs::read_to_string(&path).expect("read"), "first");
     }
 
     #[test]

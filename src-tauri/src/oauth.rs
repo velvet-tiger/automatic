@@ -780,6 +780,29 @@ mod tests {
     }
 
     #[test]
+    fn a_refresh_uses_only_the_credentials_filed_under_the_url() {
+        let server = "refresh-other-url-fixture";
+        // Nothing listens on this port. Using these credentials would fail
+        // with a request error.
+        crate::proxy::store_oauth_credentials(
+            server,
+            "https://other.example/mcp",
+            r#"{"client_id":"c","access_token":"a","refresh_token":"r","token_endpoint":"http://127.0.0.1:9/token","acquired_at":0}"#,
+        )
+        .expect("store");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let err = runtime
+            .block_on(refresh_token(server, "https://mcp.example.com/mcp"))
+            .expect_err("no credentials for this url");
+
+        assert!(!err.contains("refresh request failed"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn authorising_at_another_url_fails_before_any_request() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {

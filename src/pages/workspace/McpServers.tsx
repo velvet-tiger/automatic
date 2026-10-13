@@ -834,8 +834,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   /**
    * Save the selected server again under a fresh `<name>-copy` name and open
    * the copy. Re-reads from disk so the copy reflects the saved config, not
-   * unsaved edits. OAuth tokens are keyed by server name in the keychain, so
-   * the copy starts unauthorised and can be signed in to a different account.
+   * unsaved edits. An OAuth token is filed under the server's name and URL,
+   * so the copy starts unauthorised and can be signed in to a different account.
    * That is the point of the feature (VEL-161).
    */
   const handleDuplicate = async () => {

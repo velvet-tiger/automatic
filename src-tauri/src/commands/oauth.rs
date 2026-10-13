@@ -155,15 +155,16 @@ pub async fn get_mcp_oauth_token_status(
 /// Remove the stored OAuth token and refresh credentials for a given MCP
 /// server.
 ///
-/// The secrets are the ones filed under the server's saved URL. The
-/// credentials go first. The UI offers Revoke only while a token is stored,
-/// so a failure must leave the token in place for a retry to be possible.
+/// The secrets are the ones filed under the server's saved URL, and any an
+/// older version stored under its name alone. The token for the saved URL
+/// goes last. The UI offers Revoke only while a token is stored, so a
+/// failure must leave that token in place for a retry to be possible.
 /// Returns an error when no token is stored, after removing any credentials
 /// that were left behind.
 #[tauri::command]
 pub fn revoke_mcp_oauth_token(server_name: String) -> Result<(), String> {
     let url = saved_url(&server_name)?;
-    crate::proxy::forget_legacy_oauth_secrets(&server_name);
+    crate::proxy::delete_legacy_oauth_secrets(&server_name)?;
     crate::proxy::delete_oauth_credentials(&server_name, &url)?;
     crate::proxy::delete_oauth_token(&server_name, &url)
 }
@@ -216,12 +217,16 @@ mod tests {
             assert!(!has_mcp_oauth_token(server.to_string()));
 
             crate::proxy::store_oauth_token(server, URL, "access-token").unwrap();
-            // Asked again through the proxy, because the command's answer
-            // above is cached for the life of the process.
-            assert!(crate::proxy::load_oauth_token(server, URL).is_ok());
+            assert!(has_mcp_oauth_token(server.to_string()));
 
-            save_server(server, OTHER_URL);
+            // The registry file is changed directly, so nothing tidies the
+            // token away. It is still stored, and still not found.
+            let dir = crate::core::get_mcp_servers_dir().expect("dir");
+            let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
+            std::fs::write(dir.join(format!("{}.json", server)), config).expect("write");
+
             assert!(!has_mcp_oauth_token(server.to_string()));
+            assert!(crate::proxy::load_oauth_token(server, URL).is_ok());
         });
     }
 
@@ -297,6 +302,25 @@ mod tests {
             assert!(revoke_mcp_oauth_token(server.to_string()).is_err());
 
             assert!(crate::proxy::load_oauth_credentials(server, URL).is_err());
+        });
+    }
+
+    #[test]
+    fn revoke_fails_while_a_token_from_an_older_version_is_still_stored() {
+        use crate::core::secret_store::{self, set_test_fault, TestFault};
+
+        let server = "revoke-test-legacy-fixture";
+        with_saved_server(server, || {
+            crate::proxy::store_oauth_token(server, URL, "access-token").unwrap();
+            let legacy_token = format!("mcp_oauth_token_{}", server);
+            secret_store::store_secret(&legacy_token, "old-token").unwrap();
+            set_test_fault(&legacy_token, Some(TestFault::DeleteRefused));
+
+            let err = revoke_mcp_oauth_token(server.to_string()).expect_err("still stored");
+
+            assert!(err.contains("old OAuth token"), "unexpected error: {err}");
+            // The token for the saved URL is left, so Revoke is still offered.
+            assert!(crate::proxy::load_oauth_token(server, URL).is_ok());
         });
     }
 
