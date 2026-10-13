@@ -311,10 +311,8 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     )
     .await?;
 
-    // 8. Store in keychain. The browser step can take minutes, and the
-    // server's URL may have been saved as something else since it began.
-    ensure_saved_url(server_name, mcp_url)?;
-    crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
+    // 8. Store in keychain, filed under the URL the token was issued for.
+    crate::proxy::store_oauth_token(server_name, mcp_url, &token_response.access_token)?;
 
     // Best-effort: store full credentials for future refresh.
     // If this fails the access token is already saved, so auth succeeded —
@@ -331,7 +329,7 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
             .map(|d| d.as_secs())
             .unwrap_or(0),
     }) {
-        if let Err(e) = crate::proxy::store_oauth_credentials(server_name, &creds_json) {
+        if let Err(e) = crate::proxy::store_oauth_credentials(server_name, mcp_url, &creds_json) {
             eprintln!("warning: could not store OAuth credentials for refresh: {e}");
         }
     }
@@ -341,10 +339,10 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
 
 /// Refuse to sign in at a URL that is not the one saved for the server.
 ///
-/// The token is stored under the server's name, and the proxy sends it to
-/// the saved URL. A token issued for any other URL would go to the wrong
-/// place. The caller's URL comes from an editor or an RPC client, so it is
-/// checked here and not trusted.
+/// The token is filed under the server's name and this URL, and the proxy
+/// asks for the one filed under the saved URL. A sign-in at any other URL
+/// would store a token nothing looks for, and the server would still show as
+/// signed out. The caller's URL comes from an editor or an RPC client.
 fn ensure_saved_url(server_name: &str, mcp_url: &str) -> Result<(), String> {
     if crate::core::mcp_server_url_is(server_name, mcp_url)? {
         return Ok(());
@@ -681,8 +679,11 @@ async fn exchange_code(
 // ── Token refresh ────────────────────────────────────────────────────────────
 
 /// Attempt to refresh an expired token using stored credentials.
-pub async fn refresh_token(server_name: &str) -> Result<String, String> {
-    let creds_json = crate::proxy::load_oauth_credentials(server_name)?;
+///
+/// `mcp_url` is the server's URL. The credentials are read from the entry
+/// for that URL, and the new token is filed under it.
+pub async fn refresh_token(server_name: &str, mcp_url: &str) -> Result<String, String> {
+    let creds_json = crate::proxy::load_oauth_credentials(server_name, mcp_url)?;
     let creds: StoredOAuthCredentials = serde_json::from_str(&creds_json)
         .map_err(|e| format!("invalid stored credentials: {}", e))?;
 
@@ -725,7 +726,7 @@ pub async fn refresh_token(server_name: &str) -> Result<String, String> {
         .map_err(|e| format!("failed to parse refresh response: {}", e))?;
 
     // Update stored credentials.
-    crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
+    crate::proxy::store_oauth_token(server_name, mcp_url, &token_response.access_token)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -741,7 +742,7 @@ pub async fn refresh_token(server_name: &str) -> Result<String, String> {
     };
     let updated_json =
         serde_json::to_string(&updated).map_err(|e| format!("failed to serialize: {}", e))?;
-    crate::proxy::store_oauth_credentials(server_name, &updated_json)?;
+    crate::proxy::store_oauth_credentials(server_name, mcp_url, &updated_json)?;
 
     Ok(token_response.access_token)
 }
@@ -800,7 +801,8 @@ mod tests {
                 .expect_err("another url");
 
             assert!(err.contains("not the URL saved"), "unexpected error: {err}");
-            assert!(!crate::proxy::has_oauth_token(server));
+            assert!(!crate::proxy::has_oauth_token(server, "https://mcp.example.com/mcp"));
+            assert!(!crate::proxy::has_oauth_token(server, "http://127.0.0.1:9/mcp"));
         });
     }
 }

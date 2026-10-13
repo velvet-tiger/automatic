@@ -654,7 +654,12 @@ mod tests {
             // A stored OAuth token is what turns a remote server into a
             // proxy stub. The secret store is shared by the whole test
             // process, so the server name is one no other test uses.
-            crate::proxy::store_oauth_token("oauth-remote-fixture", "test-token").unwrap();
+            crate::proxy::store_oauth_token(
+                "oauth-remote-fixture",
+                "https://mcp.example.com/mcp",
+                "test-token",
+            )
+            .unwrap();
 
             apply_global_mcp("cursor", vec!["oauth-remote-fixture".to_string()])
                 .expect("apply managed remote");

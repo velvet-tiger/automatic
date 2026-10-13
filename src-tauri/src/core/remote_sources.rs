@@ -1193,10 +1193,10 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
     fs::create_dir_all(&servers_dir)
         .map_err(|e| format!("Failed to create mcp_servers directory: {}", e))?;
 
-    // An install can replace a server the user is signed in to. The file is
-    // written here and not through `save_mcp_server_config`, so the check
-    // that keeps an OAuth token away from a new URL is made here.
-    super::mcp_servers::forget_oauth_secrets_on_url_change(&server.name, &config)?;
+    // An install can replace a server the user is signed in to, and give it
+    // another URL. The file is written here and not through
+    // `save_mcp_server_config`, so the secrets it stops using are tidied here.
+    super::mcp_servers::tidy_oauth_secrets_on_url_change(&server.name, &config)?;
 
     let dest = servers_dir.join(format!("{}.json", server.name));
     fs::write(&dest, content).map_err(|e| format!("Failed to write MCP server config: {}", e))
@@ -1570,7 +1570,7 @@ mod tests {
     }
 
     #[test]
-    fn installing_an_mcp_server_over_one_with_another_url_removes_its_oauth_secrets() {
+    fn an_installed_mcp_server_with_another_url_does_not_get_the_old_token() {
         let home = tempfile::tempdir().unwrap();
         let source = tempfile::tempdir().unwrap();
         crate::core::paths::with_test_home(home.path().to_path_buf(), || {
@@ -1582,9 +1582,11 @@ mod tests {
                 r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
             )
             .unwrap();
-            crate::proxy::store_oauth_token(name, "access-token").unwrap();
-            crate::proxy::store_oauth_credentials(name, r#"{"refresh_token":"refresh"}"#).unwrap();
-            assert!(crate::proxy::has_oauth_token(name));
+            let (url, other_url) = ("https://mcp.example.com/mcp", "https://other.example/mcp");
+            crate::proxy::store_oauth_token(name, url, "access-token").unwrap();
+            crate::proxy::store_oauth_credentials(name, url, r#"{"refresh_token":"refresh"}"#)
+                .unwrap();
+            assert!(crate::proxy::has_oauth_token(name, url));
 
             fs::write(
                 source.path().join("server.json"),
@@ -1600,9 +1602,11 @@ mod tests {
 
             let stored = crate::core::read_mcp_server_config(name).unwrap();
             assert!(stored.contains("https://other.example/mcp"));
-            assert!(crate::proxy::load_oauth_token(name).is_err());
-            assert!(crate::proxy::load_oauth_credentials(name).is_err());
-            assert!(!crate::proxy::has_oauth_token(name));
+            assert!(!crate::proxy::has_oauth_token(name, other_url));
+            assert!(crate::proxy::load_oauth_token(name, other_url).is_err());
+            // The entries for the old URL were tidied away.
+            assert!(crate::proxy::load_oauth_token(name, url).is_err());
+            assert!(crate::proxy::load_oauth_credentials(name, url).is_err());
         });
     }
 
@@ -1614,7 +1618,7 @@ mod tests {
             let name = "source-reinstall-secrets-fixture";
             let config = r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#;
             crate::core::save_mcp_server_config(name, config).unwrap();
-            crate::proxy::store_oauth_token(name, "access-token").unwrap();
+            crate::proxy::store_oauth_token(name, "https://mcp.example.com/mcp", "access-token").unwrap();
 
             fs::write(source.path().join("server.json"), config).unwrap();
             let server = ManifestResource {
@@ -1624,7 +1628,10 @@ mod tests {
             };
             install_mcp_server(source.path(), &server).unwrap();
 
-            assert_eq!(crate::proxy::load_oauth_token(name).unwrap(), "access-token");
+            assert_eq!(
+                crate::proxy::load_oauth_token(name, "https://mcp.example.com/mcp").unwrap(),
+                "access-token"
+            );
         });
     }
 

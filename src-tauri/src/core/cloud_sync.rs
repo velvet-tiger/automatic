@@ -1890,16 +1890,17 @@ mod tests {
                 r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
             )
             .expect("seed server");
-            crate::proxy::store_oauth_token(server, "access-token").expect("store token");
-            crate::proxy::store_oauth_credentials(server, r#"{"refresh_token":"refresh"}"#)
+            let url = "https://mcp.example.com/mcp";
+            crate::proxy::store_oauth_token(server, url, "access-token").expect("store token");
+            crate::proxy::store_oauth_credentials(server, url, r#"{"refresh_token":"refresh"}"#)
                 .expect("store credentials");
-            assert!(crate::proxy::has_oauth_token(server));
+            assert!(crate::proxy::has_oauth_token(server, url));
 
             delete_asset("mcp_server", server).expect("delete");
 
-            assert!(crate::proxy::load_oauth_token(server).is_err());
-            assert!(crate::proxy::load_oauth_credentials(server).is_err());
-            assert!(!crate::proxy::has_oauth_token(server));
+            assert!(crate::proxy::load_oauth_token(server, url).is_err());
+            assert!(crate::proxy::load_oauth_credentials(server, url).is_err());
+            assert!(!crate::proxy::has_oauth_token(server, url));
         });
     }
 
