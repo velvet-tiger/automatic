@@ -40,7 +40,11 @@ const KEYCHAIN_USER: &str = "env_encryption_key";
 const SENTINEL: &str = "enc:v1:";
 
 #[cfg(test)]
-static TEST_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+thread_local! {
+    /// The key for the running test. Each test runs on its own thread, so a
+    /// test starts with no key, as a new install does.
+    static TEST_KEY: std::cell::Cell<Option<[u8; 32]>> = const { std::cell::Cell::new(None) };
+}
 
 #[cfg(not(test))]
 static CACHED_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
@@ -51,14 +55,20 @@ static CACHED_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 /// does not yet exist.
 #[cfg(test)]
 fn get_or_create_key() -> Result<[u8; 32], String> {
-    Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()))
+    Ok(TEST_KEY.with(|stored| {
+        stored.get().unwrap_or_else(|| {
+            let key: [u8; 32] = Aes256Gcm::generate_key(OsRng).into();
+            stored.set(Some(key));
+            key
+        })
+    }))
 }
 
-/// Retrieve the encryption key for a decrypt. Tests share one key, so a value
-/// a test encrypted can be decrypted again.
+/// Retrieve the encryption key for a decrypt. Like the keychain version, it
+/// never creates a key, so a test can show that a decrypt does not.
 #[cfg(test)]
 fn existing_key() -> Result<[u8; 32], String> {
-    get_or_create_key()
+    key_for_decrypt(Ok(TEST_KEY.with(|stored| stored.get()).map(hex::encode)))
 }
 
 /// Retrieve the encryption key from the keychain, creating and storing a new
@@ -121,12 +131,13 @@ fn existing_or_new_key(
 /// Return the stored key for a decrypt. No stored key is an error here.
 ///
 /// The value being decrypted was encrypted with a key that is no longer in
-/// the store. Before this rule, the first read after the key was lost created
-/// a new key, and the old values then failed with a bare "Decryption failed".
+/// the store. A new key could not read it, and creating one would only hide
+/// that the old key was lost.
 fn key_for_decrypt(loaded: Result<Option<String>, String>) -> Result<[u8; 32], String> {
     stored_key(loaded)?.ok_or_else(|| {
         "The encryption key for this value is no longer in the keychain, so the value cannot \
-         be decrypted (no new key was created). Enter the value again to store it with a new key."
+         be decrypted (no new key was created). The value has to be entered again: delete \
+         this MCP server and add it again."
             .to_string()
     })
 }
@@ -318,6 +329,38 @@ mod tests {
     fn a_decrypt_keeps_a_failed_read_as_an_error() {
         let error = key_for_decrypt(Err("keychain is locked".to_string())).unwrap_err();
         assert!(error.contains("keychain is locked"), "error was: {error}");
+    }
+
+    // ── decrypt_value never creates a key ────────────────────────────────────
+
+    fn test_key() -> Option<[u8; 32]> {
+        TEST_KEY.with(|stored| stored.get())
+    }
+
+    #[test]
+    fn a_decrypt_with_no_key_fails_and_creates_none() {
+        // With one test thread, an earlier test may have left its key here.
+        TEST_KEY.with(|stored| stored.set(None));
+        // A well-formed value: a 12-byte nonce and a 16-byte tag.
+        let value = format!("{}{}", SENTINEL, URL_SAFE_NO_PAD.encode([0u8; 28]));
+
+        let error = decrypt_value(&value).unwrap_err();
+
+        assert!(
+            error.contains("no new key was created"),
+            "error was: {error}"
+        );
+        assert_eq!(test_key(), None, "the decrypt must not create a key");
+    }
+
+    #[test]
+    fn an_encrypt_creates_the_key_a_later_decrypt_uses() {
+        TEST_KEY.with(|stored| stored.set(None));
+
+        let encrypted = encrypt_value("value").expect("encrypt");
+
+        assert!(test_key().is_some());
+        assert_eq!(decrypt_value(&encrypted).as_deref(), Ok("value"));
     }
 
     // ── existing_or_new_key ──────────────────────────────────────────────────
