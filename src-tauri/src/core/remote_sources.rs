@@ -268,14 +268,16 @@ pub fn get_sources_dir() -> Result<PathBuf, String> {
 }
 
 /// Split an `owner/repo` slug into its owner and repository name, refusing
-/// anything GitHub would not accept as one.
+/// a slug that is not two plain names.
 ///
 /// The slug arrives from a deep link or an RPC caller and becomes two folder
 /// names under the sources cache. An existing clone folder is deleted before
 /// each clone, so a slug such as `../..` would point that deletion at a
-/// folder outside the cache. The owner may hold letters, digits and `-`, and
-/// must start with a letter or digit. The repository name may also hold `.`
-/// and `_`, and must not be `.` or `..`.
+/// folder outside the cache. The owner may hold letters, digits, `-` and
+/// `_`, and must start with a letter or digit. The repository name may also
+/// hold `.`, and must not be `.` or `..`. These are the characters GitHub
+/// uses. The check is looser than GitHub's own rules, which is safe: a slug
+/// GitHub would refuse only makes the clone fail.
 fn split_repo_slug(repo: &str) -> Result<(&str, &str), String> {
     let invalid = || format!("Invalid repo format '{}', expected 'owner/repo'", repo);
 
@@ -283,7 +285,9 @@ fn split_repo_slug(repo: &str) -> Result<(&str, &str), String> {
 
     let owner_is_valid = (1..=39).contains(&owner.len())
         && owner.starts_with(|c: char| c.is_ascii_alphanumeric())
-        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        && owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
     let name_is_valid = (1..=100).contains(&name.len())
         && name != "."
         && name != ".."
@@ -598,15 +602,19 @@ pub fn git_update_source(repo: &str) -> Result<String, String> {
 
 /// Parse the manifest from a base directory (repo root or subdirectory).
 /// Tries `automatic.json` first, falls back to `skill.json`.
+///
+/// The manifest file is resolved before it is read. A repository can commit
+/// it as a symlink, and the read would otherwise follow the link to a file
+/// outside the source.
 pub fn parse_manifest(base_dir: &Path) -> Result<AutomaticManifest, String> {
-    let automatic_path = base_dir.join("automatic.json");
-    let skill_json_path = base_dir.join("skill.json");
-
-    if automatic_path.exists() {
+    if base_dir.join("automatic.json").exists() {
+        let automatic_path =
+            resolve_path_within_root(base_dir, "automatic.json", "automatic.json")?;
         let raw = fs::read_to_string(&automatic_path)
             .map_err(|e| format!("Failed to read automatic.json: {}", e))?;
         serde_json::from_str(&raw).map_err(|e| format!("Failed to parse automatic.json: {}", e))
-    } else if skill_json_path.exists() {
+    } else if base_dir.join("skill.json").exists() {
+        let skill_json_path = resolve_path_within_root(base_dir, "skill.json", "skill.json")?;
         let raw = fs::read_to_string(&skill_json_path)
             .map_err(|e| format!("Failed to read skill.json: {}", e))?;
         let skills_json: SkillsJson =
@@ -973,10 +981,17 @@ pub fn remove_source(repo: &str) -> Result<Vec<String>, String> {
     // Remove provenance entries
     remove_all_provenance_for_source(repo)?;
 
-    // Remove the clone directory
-    let clone_path = source_clone_path(repo)?;
-    if clone_path.exists() {
-        let _ = fs::remove_dir_all(&clone_path);
+    // Remove the clone directory. An entry written by an older version can
+    // hold a slug that is refused now. It names no folder this code will
+    // delete, and the source is still unregistered below so the entry does
+    // not stay behind.
+    match source_clone_path(repo) {
+        Ok(clone_path) => {
+            if clone_path.exists() {
+                let _ = fs::remove_dir_all(&clone_path);
+            }
+        }
+        Err(e) => eprintln!("[remote_sources] Leaving the clone in place: {}", e),
     }
 
     // Remove from registry
@@ -1071,20 +1086,53 @@ fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
     sel
 }
 
-/// Refuse a manifest resource name that is not a single file or folder name.
+/// Refuse a manifest resource name that is not a single file or folder name
+/// on every platform.
 ///
 /// The name comes from the repository's manifest and becomes the file or
 /// folder name in the library. A name with a path separator, or `.` or `..`,
 /// would place the write, and for a skill the delete before it, outside the
 /// library folder for that kind.
+///
+/// [`is_valid_name`] covers those. The rest is for Windows, and is applied
+/// everywhere so a manifest installs the same way on each platform. A name
+/// with a `:` can be drive-relative (`C:name`), which replaces the library
+/// folder when joined to it, or can name an alternate data stream. Windows
+/// drops trailing dots and spaces, so `...` names the library folder itself.
+/// Control characters are refused because the name is shown and logged.
 fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
-    if is_valid_name(name) {
+    let is_one_plain_name = is_valid_name(name)
+        && !name.contains(':')
+        && !name.chars().any(char::is_control)
+        && !name.ends_with(['.', ' ']);
+    if is_one_plain_name {
         return Ok(());
     }
     Err(format!(
-        "Invalid {} name '{}': a name cannot be empty, '.' or '..', or contain a path separator",
-        kind, name
+        "Invalid {} name '{}': a name must be one file name, with no path separator, colon or control character, and no dot or space at the end",
+        kind,
+        name.escape_debug()
     ))
+}
+
+/// Resolve a path from the manifest to a real location inside `source_dir`,
+/// the folder that holds the manifest.
+///
+/// The path is written by the repository's author. An absolute path, a `..`
+/// component, or a symlink committed to the repository would otherwise make
+/// the install read a file or folder outside the source. `owner` names the
+/// resource in the error.
+fn resolve_manifest_path(source_dir: &Path, path: &str, owner: &str) -> Result<PathBuf, String> {
+    validate_relative_asset_path(path, owner)?;
+    // Reported here so the message holds the manifest's own path and not the
+    // absolute path of the clone on this machine.
+    if !source_dir.join(path).exists() {
+        return Err(format!(
+            "{} path does not exist in the repository: {}",
+            owner, path
+        ));
+    }
+    resolve_path_within_root(source_dir, path, owner)
 }
 
 /// Install a skill from the source directory.
@@ -1094,7 +1142,7 @@ fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
 fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), String> {
     ensure_resource_name("skill", &skill.name)?;
     let skill_source =
-        resolve_path_within_root(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
+        resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
 
     // Scan every text file in the skill directory before touching the
     // destination. SKILL.md is scanned as AssetKind::Skill, everything else
@@ -1178,7 +1226,7 @@ fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
 fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String> {
     ensure_resource_name("rule", &rule.name)?;
     let source_path =
-        resolve_path_within_root(source_dir, &rule.path, &format!("rule '{}'", rule.name))?;
+        resolve_manifest_path(source_dir, &rule.path, &format!("rule '{}'", rule.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read rule file {}: {}", rule.path, e))?;
 
@@ -1203,7 +1251,7 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String
 /// Install a template: copy JSON file to project_templates dir.
 fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<(), String> {
     ensure_resource_name("template", &template.name)?;
-    let source_path = resolve_path_within_root(
+    let source_path = resolve_manifest_path(
         source_dir,
         &template.path,
         &format!("template '{}'", template.name),
@@ -1233,7 +1281,7 @@ fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<()
 /// server registry.
 fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<(), String> {
     ensure_resource_name("MCP server", &server.name)?;
-    let source_path = resolve_path_within_root(
+    let source_path = resolve_manifest_path(
         source_dir,
         &server.path,
         &format!("MCP server '{}'", server.name),
@@ -1269,7 +1317,7 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
 fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), String> {
     ensure_resource_name("command", &cmd.name)?;
     let source_path =
-        resolve_path_within_root(source_dir, &cmd.path, &format!("command '{}'", cmd.name))?;
+        resolve_manifest_path(source_dir, &cmd.path, &format!("command '{}'", cmd.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read command file {}: {}", cmd.path, e))?;
 
@@ -1291,7 +1339,7 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), Stri
 fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), String> {
     ensure_resource_name("agent", &agent.name)?;
     let source_path =
-        resolve_path_within_root(source_dir, &agent.path, &format!("agent '{}'", agent.name))?;
+        resolve_manifest_path(source_dir, &agent.path, &format!("agent '{}'", agent.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read agent file {}: {}", agent.path, e))?;
 
@@ -1311,7 +1359,7 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
 
 /// Install a collection: parse JSON and append to Discover collections.
 fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<String, String> {
-    let source_path = resolve_path_within_root(
+    let source_path = resolve_manifest_path(
         source_dir,
         &coll_ref.path,
         &format!("collection '{}'", coll_ref.path),
@@ -1360,7 +1408,7 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
 /// a name that is not a plain file or folder name would point the delete
 /// outside the library.
 fn remove_installed_resource(resource_type: &str, name: &str) -> Result<(), String> {
-    ensure_resource_name(resource_type, name)?;
+    ensure_resource_name("resource", name)?;
     match resource_type {
         "skills" | "skill" => {
             let path = super::paths::get_library_skills_dir()?.join(name);
@@ -1566,16 +1614,6 @@ mod tests {
     fn test_parse_install_uri_missing_repo() {
         let result = parse_install_uri("automatic://install?ref=v1.0");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_source_clone_path() {
-        // This test validates the path construction logic
-        let repo = "acme/toolkit";
-        let parts: Vec<&str> = repo.splitn(2, '/').collect();
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], "acme");
-        assert_eq!(parts[1], "toolkit");
     }
 
     #[test]
@@ -1807,15 +1845,28 @@ mod tests {
         ("agent", install_agent, "resource.md", "# An agent\n"),
     ];
 
-    /// Names that are not a single file or folder name.
-    const UNSAFE_NAMES: [&str; 6] = [
+    /// Names that are not a single file or folder name on every platform.
+    const UNSAFE_NAMES: [&str; 12] = [
         "../../../escaped",
         "..",
         ".",
         "",
         "nested/name",
         "back\\slash",
+        // Windows: drive-relative, an alternate data stream, and names whose
+        // trailing dots and spaces are dropped.
+        "C:escaped",
+        "name:stream",
+        "...",
+        "trailing.",
+        "trailing ",
+        "line\nbreak",
     ];
+
+    /// How an unsafe name appears in an error message.
+    fn quoted(name: &str) -> String {
+        format!("'{}'", name.escape_debug())
+    }
 
     #[test]
     fn a_file_installer_refuses_a_name_that_leaves_its_directory() {
@@ -1828,7 +1879,7 @@ mod tests {
                     let err = install(&sandbox.source, &resource(name, file_name))
                         .expect_err(&format!("{} name {:?} should be refused", kind, name));
                     assert!(
-                        err.contains(&format!("'{}'", name)),
+                        err.contains(&quoted(name)),
                         "the error for {} name {:?} should name it: {}",
                         kind,
                         name,
@@ -1930,7 +1981,7 @@ mod tests {
                 let err = install_skill(&sandbox.source, &skill(name, "probe"))
                     .expect_err(&format!("skill name {:?} should be refused", name));
                 assert!(
-                    err.contains(&format!("'{}'", name)),
+                    err.contains(&quoted(name)),
                     "the error for skill name {:?} should name it: {}",
                     name,
                     err
@@ -2120,7 +2171,7 @@ mod tests {
                         "removing {} {:?} should be refused",
                         resource_type, name
                     ));
-                    assert!(err.contains(&format!("'{}'", name)), "{}", err);
+                    assert!(err.contains(&quoted(name)), "{}", err);
                 }
             }
 
@@ -2177,6 +2228,7 @@ mod tests {
                 ("acme/toolkit", "acme", "toolkit"),
                 ("Acme-1/tool.kit_2", "Acme-1", "tool.kit_2"),
                 ("acme/.github", "acme", ".github"),
+                ("mona_octo/toolkit", "mona_octo", "toolkit"),
             ] {
                 assert_eq!(
                     source_clone_path(slug),
@@ -2262,6 +2314,159 @@ mod tests {
             )
             .expect("read stored file");
             assert!(!on_disk.contains("\"value\""), "{}", on_disk);
+        });
+    }
+
+    #[test]
+    fn a_missing_manifest_path_is_reported_without_the_clone_location() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = install_rule(&sandbox.source, &resource("probe", "rules/absent.md"))
+                .expect_err("a missing file should be refused");
+            assert_eq!(
+                err,
+                "rule 'probe' path does not exist in the repository: rules/absent.md"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_symlinked_folder_is_refused_only_when_it_leaves_the_source() {
+        let sandbox = sandbox();
+        fs::write(sandbox.outside.join("resource.md"), "# Outside\n").expect("write outside");
+        fs::create_dir_all(sandbox.source.join("real")).expect("create real dir");
+        fs::write(sandbox.source.join("real/resource.md"), "# Inside\n").expect("write inside");
+        std::os::unix::fs::symlink(&sandbox.outside, sandbox.source.join("out-link"))
+            .expect("symlink out");
+        std::os::unix::fs::symlink(sandbox.source.join("real"), sandbox.source.join("in-link"))
+            .expect("symlink in");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = install_rule(&sandbox.source, &resource("probe", "out-link/resource.md"))
+                .expect_err("a path through a folder link that leaves the source is refused");
+            assert!(err.contains("'probe'"), "{}", err);
+            assert_eq!(files_under(&sandbox.home), Vec::<PathBuf>::new());
+
+            install_rule(&sandbox.source, &resource("probe", "in-link/resource.md"))
+                .expect("a link that stays inside the source is followed");
+        });
+    }
+
+    #[test]
+    fn install_skill_accepts_the_source_directory_itself() {
+        let sandbox = sandbox();
+        fs::write(sandbox.source.join("SKILL.md"), "# Root skill\n").expect("write skill");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_skill(&sandbox.source, &skill("probe", ".")).expect("install");
+            let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
+            assert!(skills_dir.join("probe/SKILL.md").exists());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_resource_in_a_subdirectory_source_cannot_reach_the_rest_of_the_clone() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let clone = source_clone_path("acme/monorepo").expect("clone path");
+            let base = clone.join("packages/ai");
+            fs::create_dir_all(&base).expect("create manifest dir");
+            fs::create_dir_all(clone.join("shared")).expect("create shared dir");
+            fs::write(base.join("rule.md"), "# Own rule\n").expect("write own rule");
+            fs::write(clone.join("shared/rule.md"), "# Shared rule\n").expect("write shared");
+            std::os::unix::fs::symlink(clone.join("shared/rule.md"), base.join("shared.md"))
+                .expect("symlink");
+
+            let manifest = AutomaticManifest {
+                name: "ai".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Test".to_string(),
+                rules: vec![
+                    resource("own-rule", "rule.md"),
+                    resource("shared-rule", "shared.md"),
+                    resource("parent-rule", "../../shared/rule.md"),
+                ],
+                ..Default::default()
+            };
+
+            let result = install_source("acme/monorepo", &manifest, None, Some("packages/ai"))
+                .expect("install");
+
+            assert_eq!(
+                result.installed.get("rules"),
+                Some(&vec!["own-rule".to_string()])
+            );
+            assert_eq!(
+                result.skipped,
+                vec![
+                    "rule:shared-rule".to_string(),
+                    "rule:parent-rule".to_string()
+                ]
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_manifest_refuses_a_manifest_that_is_a_link_out_of_the_source() {
+        for file_name in ["automatic.json", "skill.json"] {
+            let sandbox = sandbox();
+            let outside_file = sandbox.outside.join("manifest.json");
+            fs::write(
+                &outside_file,
+                r#"{"name":"outside","version":"1.0.0","description":"Outside","skills":[]}"#,
+            )
+            .expect("write outside manifest");
+            std::os::unix::fs::symlink(&outside_file, sandbox.source.join(file_name))
+                .expect("symlink");
+
+            let err = parse_manifest(&sandbox.source)
+                .expect_err(&format!("a linked {} should be refused", file_name));
+            assert!(err.contains(file_name), "{}", err);
+        }
+    }
+
+    #[test]
+    fn parse_manifest_reads_a_manifest_inside_the_source() {
+        let sandbox = sandbox();
+        fs::write(
+            sandbox.source.join("automatic.json"),
+            r#"{"name":"toolkit","version":"1.0.0","description":"Toolkit"}"#,
+        )
+        .expect("write manifest");
+
+        assert_eq!(
+            parse_manifest(&sandbox.source).expect("parse").name,
+            "toolkit"
+        );
+    }
+
+    #[test]
+    fn a_source_registered_under_a_refused_slug_can_still_be_removed() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let slug = "acme/tool/kit";
+            assert!(source_clone_path(slug).is_err());
+            upsert_source(RemoteSource {
+                repo: slug.to_string(),
+                name: "toolkit".to_string(),
+                version: "1.0.0".to_string(),
+                pin: PinningConfig::default(),
+                directory: None,
+                last_fetched: "2026-01-01T00:00:00Z".to_string(),
+                commit_sha: String::new(),
+                resources: HashMap::new(),
+                collection_slugs: vec![],
+            })
+            .expect("register");
+
+            assert_eq!(remove_source(slug), Ok(Vec::new()));
+            assert_eq!(list_sources().expect("list").len(), 0);
         });
     }
 }
