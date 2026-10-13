@@ -81,7 +81,7 @@ unicode-normalization = "0.1"
 clap = { version = "4", features = ["derive"] }
 
 # The Secret Service client that `keyring` uses. `core/secret_store.rs` calls
-# it directly to confirm the default keyring is unlocked before a read.
+# it directly to confirm the default keyring is unlocked before each call.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus-secret-service = "4.1"
 

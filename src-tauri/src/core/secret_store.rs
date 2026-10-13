@@ -127,19 +127,27 @@ fn secret_service_unavailable(detail: &str) -> String {
 /// an error: a secret handed out from the kernel keyring alone would be gone
 /// after the next reboot, with nothing to tell the user why.
 ///
-/// `legacy` is only called when nothing is stored, and `adopt` only when
-/// `legacy` found a secret.
+/// `stored_again` reads the Secret Service a second time. Several Automatic
+/// processes start together after an update, and another one may move the
+/// secret between this process's two reads: it would be in neither place
+/// this process looked. The mover writes before it deletes, so a second read
+/// finds what it moved. Without it the env-encryption key would look absent
+/// and the next encrypt would replace it.
+///
+/// `legacy` is only called when nothing is stored, `adopt` only when `legacy`
+/// found a secret, and `stored_again` only when it did not.
 #[cfg(any(test, target_os = "linux"))]
 fn stored_or_legacy(
     stored: Result<Option<String>, String>,
     legacy: impl FnOnce() -> Result<Option<String>, String>,
     adopt: impl FnOnce(&str) -> Result<(), String>,
+    stored_again: impl FnOnce() -> Result<Option<String>, String>,
 ) -> Result<Option<String>, String> {
     if let Some(secret) = stored? {
         return Ok(Some(secret));
     }
     let Some(secret) = legacy()? else {
-        return Ok(None);
+        return stored_again();
     };
     adopt(&secret).map_err(|e| {
         format!(
@@ -314,11 +322,12 @@ mod system {
 
     #[cfg(target_os = "linux")]
     pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
-        let stored = super::absent_entry_as_none(unlocked_entry(account)?.get_password());
+        let entry = unlocked_entry(account)?;
         super::stored_or_legacy(
-            stored,
+            super::absent_entry_as_none(entry.get_password()),
             || kernel_keyring::load(account),
             |secret| store(account, secret),
+            || super::absent_entry_as_none(entry.get_password()),
         )
     }
 
@@ -351,10 +360,11 @@ mod system {
     /// Ask the provider to unlock the default keyring, and fail if it stays
     /// locked.
     ///
-    /// GNOME Keyring lists locked items in a search, and `keyring` then fails
-    /// to unlock them. KeePassXC's source shows a locked database answering
-    /// with no items at all. Without this check the stored env-encryption key
-    /// would look absent there, and the next encrypt would replace it.
+    /// GNOME Keyring lists locked items in a search, so a read of a locked
+    /// keyring fails unless the user unlocks it. KeePassXC's source shows a
+    /// locked database answering with no items at all. Without this check the
+    /// stored env-encryption key would look absent there, and the next encrypt
+    /// would replace it.
     #[cfg(target_os = "linux")]
     fn confirm_default_keyring_unlocked() -> Result<(), String> {
         use dbus_secret_service::{EncryptionType, SecretService};
@@ -713,7 +723,8 @@ mod tests {
     // ── stored_or_legacy ─────────────────────────────────────────────────────
 
     /// Run `stored_or_legacy` and return what it passed to `adopt`, and
-    /// whether it called `legacy`.
+    /// whether it called `legacy`. The second read of the store finds
+    /// nothing.
     fn read_with_legacy(
         stored: Result<Option<String>, String>,
         legacy: Result<Option<String>, String>,
@@ -731,8 +742,43 @@ mod tests {
                 adopted.push(secret.to_string());
                 adopt_result
             },
+            || Ok(None),
         );
         (read, legacy_was_read, adopted)
+    }
+
+    /// Run `stored_or_legacy` with nothing in either store on the first
+    /// reads, and return whether it read the store a second time.
+    fn read_after_both_were_empty(
+        stored_again: Result<Option<String>, String>,
+    ) -> (Result<Option<String>, String>, bool) {
+        let mut store_was_read_again = false;
+        let read = stored_or_legacy(
+            Ok(None),
+            || Ok(None),
+            |_| panic!("nothing was found to adopt"),
+            || {
+                store_was_read_again = true;
+                stored_again
+            },
+        );
+        (read, store_was_read_again)
+    }
+
+    #[test]
+    fn a_secret_another_process_moved_between_the_reads_is_found() {
+        // The other process wrote to the Secret Service after this one read
+        // it, and deleted the kernel keyring copy before this one read that.
+        let (read, store_was_read_again) =
+            read_after_both_were_empty(Ok(Some("moved-by-another-process".to_string())));
+        assert_eq!(read, Ok(Some("moved-by-another-process".to_string())));
+        assert!(store_was_read_again);
+    }
+
+    #[test]
+    fn a_failed_second_read_is_an_error() {
+        let (read, _) = read_after_both_were_empty(Err("keyring is locked".to_string()));
+        assert_eq!(read, Err("keyring is locked".to_string()));
     }
 
     #[test]
@@ -760,6 +806,10 @@ mod tests {
         assert_eq!(read, Ok(None));
         assert!(legacy_was_read);
         assert!(adopted.is_empty());
+
+        let (read, store_was_read_again) = read_after_both_were_empty(Ok(None));
+        assert_eq!(read, Ok(None));
+        assert!(store_was_read_again);
     }
 
     #[test]
