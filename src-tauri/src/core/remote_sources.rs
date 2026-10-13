@@ -4,8 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::asset_security::{enforce_text_asset, should_scan_text_file, AssetKind};
-use super::paths::get_automatic_dir;
+use super::asset_security::{
+    enforce_text_asset, resolve_path_within_root, should_scan_text_file,
+    validate_relative_asset_path, AssetKind,
+};
+use super::paths::{get_automatic_dir, is_valid_name};
 use super::types::{SkillsJson, SkillsJsonAuthor, SkillsJsonRepository, SkillsJsonSkill};
 
 // ── Manifest Types (parsed from automatic.json) ─────────────────────────────
@@ -264,16 +267,49 @@ pub fn get_sources_dir() -> Result<PathBuf, String> {
     Ok(get_automatic_dir()?.join("sources"))
 }
 
-/// Returns the local clone path for a source: ~/.automatic/sources/{owner}/{repo}/
-pub fn source_clone_path(repo: &str) -> Result<PathBuf, String> {
-    let parts: Vec<&str> = repo.splitn(2, '/').collect();
-    if parts.len() != 2 {
-        return Err(format!(
-            "Invalid repo format '{}', expected 'owner/repo'",
-            repo
-        ));
+/// Split an `owner/repo` slug into its owner and repository name, refusing
+/// a slug that is not two plain names.
+///
+/// The slug arrives from a deep link or an RPC caller and becomes two folder
+/// names under the sources cache. An existing clone folder is deleted before
+/// each clone, so a slug such as `../..` would point that deletion at a
+/// folder outside the cache. The owner may hold letters, digits, `-` and
+/// `_`, and must start with a letter or digit. The repository name may also
+/// hold `.`, and must not end with one: that rules out `.` and `..`, and
+/// Windows drops a trailing dot, so `...` would name the owner's folder.
+/// These are the characters GitHub uses. The check is looser than GitHub's
+/// own rules, which is safe: a slug GitHub would refuse only makes the clone
+/// fail.
+fn split_repo_slug(repo: &str) -> Result<(&str, &str), String> {
+    let invalid = || format!("Invalid repo format '{}', expected 'owner/repo'", repo);
+
+    let (owner, name) = repo.split_once('/').ok_or_else(invalid)?;
+
+    let owner_is_valid = (1..=39).contains(&owner.len())
+        && owner.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && owner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    let name_is_valid = (1..=100).contains(&name.len())
+        && !name.ends_with('.')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+
+    if owner_is_valid && name_is_valid {
+        Ok((owner, name))
+    } else {
+        Err(invalid())
     }
-    Ok(get_sources_dir()?.join(parts[0]).join(parts[1]))
+}
+
+/// Returns the local clone path for a source: ~/.automatic/sources/{owner}/{repo}/
+///
+/// Fails for a slug that is not a GitHub `owner/repo`, so the path is always
+/// two folders below the sources cache.
+pub fn source_clone_path(repo: &str) -> Result<PathBuf, String> {
+    let (owner, name) = split_repo_slug(repo)?;
+    Ok(get_sources_dir()?.join(owner).join(name))
 }
 
 /// Resolve the base directory for manifest and resource paths.
@@ -567,15 +603,19 @@ pub fn git_update_source(repo: &str) -> Result<String, String> {
 
 /// Parse the manifest from a base directory (repo root or subdirectory).
 /// Tries `automatic.json` first, falls back to `skill.json`.
+///
+/// The manifest file is resolved before it is read. A repository can commit
+/// it as a symlink, and the read would otherwise follow the link to a file
+/// outside the source.
 pub fn parse_manifest(base_dir: &Path) -> Result<AutomaticManifest, String> {
-    let automatic_path = base_dir.join("automatic.json");
-    let skill_json_path = base_dir.join("skill.json");
-
-    if automatic_path.exists() {
+    if base_dir.join("automatic.json").exists() {
+        let automatic_path =
+            resolve_path_within_root(base_dir, "automatic.json", "automatic.json")?;
         let raw = fs::read_to_string(&automatic_path)
             .map_err(|e| format!("Failed to read automatic.json: {}", e))?;
         serde_json::from_str(&raw).map_err(|e| format!("Failed to parse automatic.json: {}", e))
-    } else if skill_json_path.exists() {
+    } else if base_dir.join("skill.json").exists() {
+        let skill_json_path = resolve_path_within_root(base_dir, "skill.json", "skill.json")?;
         let raw = fs::read_to_string(&skill_json_path)
             .map_err(|e| format!("Failed to read skill.json: {}", e))?;
         let skills_json: SkillsJson =
@@ -649,8 +689,11 @@ fn resolve_skills(
 
     // Load from skill.json reference if provided
     if let Some(ref sj_path) = skills.skill_json {
-        let full_path = source_dir.join(sj_path);
-        if full_path.exists() {
+        // Checked before the existence test, so a path that points outside
+        // the source is refused instead of being skipped as missing.
+        validate_relative_asset_path(sj_path, "skills.skill_json")?;
+        if source_dir.join(sj_path).exists() {
+            let full_path = resolve_path_within_root(source_dir, sj_path, "skills.skill_json")?;
             let raw = fs::read_to_string(&full_path).map_err(|e| {
                 format!("Failed to read referenced skill.json at {}: {}", sj_path, e)
             })?;
@@ -939,10 +982,17 @@ pub fn remove_source(repo: &str) -> Result<Vec<String>, String> {
     // Remove provenance entries
     remove_all_provenance_for_source(repo)?;
 
-    // Remove the clone directory
-    let clone_path = source_clone_path(repo)?;
-    if clone_path.exists() {
-        let _ = fs::remove_dir_all(&clone_path);
+    // Remove the clone directory. An entry written by an older version can
+    // hold a slug that is refused now. It names no folder this code will
+    // delete, and the source is still unregistered below so the entry does
+    // not stay behind.
+    match source_clone_path(repo) {
+        Ok(clone_path) => {
+            if clone_path.exists() {
+                let _ = fs::remove_dir_all(&clone_path);
+            }
+        }
+        Err(e) => eprintln!("[remote_sources] Leaving the clone in place: {}", e),
     }
 
     // Remove from registry
@@ -1037,12 +1087,63 @@ fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
     sel
 }
 
-/// Install a skill from the source directory.
-fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), String> {
-    let skill_source = source_dir.join(&skill.path);
-    if !skill_source.exists() {
-        return Err(format!("Skill path does not exist: {}", skill.path));
+/// Refuse a manifest resource name that is not a single file or folder name
+/// on every platform.
+///
+/// The name comes from the repository's manifest and becomes the file or
+/// folder name in the library. A name with a path separator, or `.` or `..`,
+/// would place the write, and for a skill the delete before it, outside the
+/// library folder for that kind.
+///
+/// [`is_valid_name`] covers those. The rest is for Windows, and is applied
+/// everywhere so a manifest installs the same way on each platform. A name
+/// with a `:` can be drive-relative (`C:name`), which replaces the library
+/// folder when joined to it, or can name an alternate data stream. Windows
+/// drops trailing dots and spaces, so `...` names the library folder itself.
+/// Control characters are refused because the name is shown and logged.
+fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
+    let is_one_plain_name = is_valid_name(name)
+        && !name.contains(':')
+        && !name.chars().any(char::is_control)
+        && !name.ends_with(['.', ' ']);
+    if is_one_plain_name {
+        return Ok(());
     }
+    Err(format!(
+        "Invalid {} name '{}': a name must be one file name, with no path separator, colon or control character, and no dot or space at the end",
+        kind,
+        name.escape_debug()
+    ))
+}
+
+/// Resolve a path from the manifest to a real location inside `source_dir`,
+/// the folder that holds the manifest.
+///
+/// The path is written by the repository's author. An absolute path, a `..`
+/// component, or a symlink committed to the repository would otherwise make
+/// the install read a file or folder outside the source. `owner` names the
+/// resource in the error.
+fn resolve_manifest_path(source_dir: &Path, path: &str, owner: &str) -> Result<PathBuf, String> {
+    validate_relative_asset_path(path, owner)?;
+    // Reported here so the message holds the manifest's own path and not the
+    // absolute path of the clone on this machine.
+    if !source_dir.join(path).exists() {
+        return Err(format!(
+            "{} path does not exist in the repository: {}",
+            owner, path
+        ));
+    }
+    resolve_path_within_root(source_dir, path, owner)
+}
+
+/// Install a skill from the source directory.
+///
+/// `skill.name` must be a plain name and `skill.path` must resolve to a
+/// folder inside `source_dir`. Both come from the repository's manifest.
+fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), String> {
+    ensure_resource_name("skill", &skill.name)?;
+    let skill_source =
+        resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
 
     // Scan every text file in the skill directory before touching the
     // destination. SKILL.md is scanned as AssetKind::Skill, everything else
@@ -1124,7 +1225,9 @@ fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
 
 /// Install a rule: read .md file, wrap in JSON, write to rules dir.
 fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String> {
-    let source_path = source_dir.join(&rule.path);
+    ensure_resource_name("rule", &rule.name)?;
+    let source_path =
+        resolve_manifest_path(source_dir, &rule.path, &format!("rule '{}'", rule.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read rule file {}: {}", rule.path, e))?;
 
@@ -1148,7 +1251,12 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String
 
 /// Install a template: copy JSON file to project_templates dir.
 fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<(), String> {
-    let source_path = source_dir.join(&template.path);
+    ensure_resource_name("template", &template.name)?;
+    let source_path = resolve_manifest_path(
+        source_dir,
+        &template.path,
+        &format!("template '{}'", template.name),
+    )?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read template file {}: {}", template.path, e))?;
 
@@ -1170,9 +1278,15 @@ fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<()
     fs::write(&dest, content).map_err(|e| format!("Failed to write template: {}", e))
 }
 
-/// Install an MCP server config: copy JSON to mcp_servers dir.
+/// Install an MCP server config: scan the JSON file and save it to the MCP
+/// server registry.
 fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<(), String> {
-    let source_path = source_dir.join(&server.path);
+    ensure_resource_name("MCP server", &server.name)?;
+    let source_path = resolve_manifest_path(
+        source_dir,
+        &server.path,
+        &format!("MCP server '{}'", server.name),
+    )?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read MCP server file {}: {}", server.path, e))?;
 
@@ -1186,25 +1300,25 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
     )?;
 
     // Validate it's valid JSON
-    let config: serde_json::Value = serde_json::from_str(&content)
+    let _: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", server.name, e))?;
 
-    let servers_dir = super::mcp_servers::get_mcp_servers_dir()?;
-    fs::create_dir_all(&servers_dir)
-        .map_err(|e| format!("Failed to create mcp_servers directory: {}", e))?;
-
-    // An install can replace a server the user is signed in to, and give it
-    // another URL. The file is written here and not through
-    // `save_mcp_server_config`, so the secrets it stops using are tidied here.
-    super::mcp_servers::tidy_oauth_secrets_on_url_change(&server.name, &config)?;
-
-    let dest = servers_dir.join(format!("{}.json", server.name));
-    fs::write(&dest, content).map_err(|e| format!("Failed to write MCP server config: {}", e))
+    // Stored through the registry's own save, so env values are encrypted
+    // like every other server's, and the OAuth secrets of a server this
+    // install replaces with another URL are tidied. A value that already
+    // carries the encryption prefix is blanked first: this install could
+    // never decrypt it, and the unreadable entry would stop cloud sync and
+    // project sync.
+    let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
+    super::mcp_servers::save_mcp_server_config(&server.name, &content)
+        .map_err(|e| format!("Failed to write MCP server config: {}", e))
 }
 
 /// Install a command: copy .md file to commands dir.
 fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), String> {
-    let source_path = source_dir.join(&cmd.path);
+    ensure_resource_name("command", &cmd.name)?;
+    let source_path =
+        resolve_manifest_path(source_dir, &cmd.path, &format!("command '{}'", cmd.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read command file {}: {}", cmd.path, e))?;
 
@@ -1224,7 +1338,9 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), Stri
 
 /// Install an agent: copy .md file to agents dir.
 fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), String> {
-    let source_path = source_dir.join(&agent.path);
+    ensure_resource_name("agent", &agent.name)?;
+    let source_path =
+        resolve_manifest_path(source_dir, &agent.path, &format!("agent '{}'", agent.name))?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read agent file {}: {}", agent.path, e))?;
 
@@ -1244,7 +1360,11 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
 
 /// Install a collection: parse JSON and append to Discover collections.
 fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<String, String> {
-    let source_path = source_dir.join(&coll_ref.path);
+    let source_path = resolve_manifest_path(
+        source_dir,
+        &coll_ref.path,
+        &format!("collection '{}'", coll_ref.path),
+    )?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read collection file {}: {}", coll_ref.path, e))?;
 
@@ -1284,7 +1404,12 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
 }
 
 /// Remove an installed resource by type and name.
+///
+/// The name is read back from `sources.json`, so it is checked again here:
+/// a name that is not a plain file or folder name would point the delete
+/// outside the library.
 fn remove_installed_resource(resource_type: &str, name: &str) -> Result<(), String> {
+    ensure_resource_name("resource", name)?;
     match resource_type {
         "skills" | "skill" => {
             let path = super::paths::get_library_skills_dir()?.join(name);
@@ -1408,13 +1533,9 @@ pub fn parse_install_uri(uri: &str) -> Result<InstallUriParams, String> {
 
     let repo = repo.ok_or("Missing 'repo' parameter in URI")?;
 
-    // Validate repo format
-    if repo.split('/').count() != 2 {
-        return Err(format!(
-            "Invalid repo format '{}', expected 'owner/repo'",
-            repo
-        ));
-    }
+    // Refused here so a bad slug never reaches the install dialog, which
+    // starts a clone as soon as it opens.
+    split_repo_slug(&repo)?;
 
     // Validate directory parameter does not contain path traversal sequences.
     if let Some(ref dir) = directory {
@@ -1494,16 +1615,6 @@ mod tests {
     fn test_parse_install_uri_missing_repo() {
         let result = parse_install_uri("automatic://install?ref=v1.0");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_source_clone_path() {
-        // This test validates the path construction logic
-        let repo = "acme/toolkit";
-        let parts: Vec<&str> = repo.splitn(2, '/').collect();
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], "acme");
-        assert_eq!(parts[1], "toolkit");
     }
 
     #[test]
@@ -1647,5 +1758,724 @@ mod tests {
             let err = scan_skill_tree(tmp.path(), "link").expect_err("should block symlink");
             assert!(err.contains("symlink"));
         }
+    }
+
+    // ── manifest names, paths and repo slugs ─────────────────────────────────
+
+    /// A test home, a source checkout and a folder outside both, in one
+    /// temporary directory.
+    struct Sandbox {
+        _tmp: tempfile::TempDir,
+        home: PathBuf,
+        source: PathBuf,
+        outside: PathBuf,
+    }
+
+    fn sandbox() -> Sandbox {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Canonical, so paths built from it compare equal to resolved paths.
+        let root = tmp.path().canonicalize().expect("canonical tempdir");
+        let sandbox = Sandbox {
+            home: root.join("home"),
+            source: root.join("source"),
+            outside: root.join("outside"),
+            _tmp: tmp,
+        };
+        for dir in [&sandbox.home, &sandbox.source, &sandbox.outside] {
+            fs::create_dir_all(dir).expect("create sandbox dir");
+        }
+        sandbox
+    }
+
+    /// Every file below `dir`, relative to it.
+    fn files_under(dir: &Path) -> Vec<PathBuf> {
+        fn walk(root: &Path, dir: &Path, found: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).expect("read dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    walk(root, &path, found);
+                } else {
+                    found.push(path.strip_prefix(root).expect("below root").to_path_buf());
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(dir, dir, &mut found);
+        found.sort();
+        found
+    }
+
+    fn resource(name: &str, path: &str) -> ManifestResource {
+        ManifestResource {
+            name: name.to_string(),
+            path: path.to_string(),
+            description: "A test resource".to_string(),
+        }
+    }
+
+    fn skill(name: &str, path: &str) -> SkillsJsonSkill {
+        SkillsJsonSkill {
+            name: name.to_string(),
+            path: path.to_string(),
+            description: "A test skill".to_string(),
+            version: None,
+            integrity: None,
+            entrypoint: None,
+            category: None,
+            tags: vec![],
+            license: None,
+            requires: None,
+            dependencies: vec![],
+        }
+    }
+
+    type FileInstaller = fn(&Path, &ManifestResource) -> Result<(), String>;
+
+    /// Each installer that copies one file, with a file name and content it
+    /// accepts.
+    const FILE_INSTALLERS: [(&str, FileInstaller, &str, &str); 5] = [
+        (
+            "MCP server",
+            install_mcp_server,
+            "resource.json",
+            r#"{"command":"npx"}"#,
+        ),
+        ("rule", install_rule, "resource.md", "# A rule\n"),
+        ("template", install_template, "resource.json", "{}"),
+        ("command", install_command, "resource.md", "# A command\n"),
+        ("agent", install_agent, "resource.md", "# An agent\n"),
+    ];
+
+    /// Names that are not a single file or folder name on every platform.
+    const UNSAFE_NAMES: [&str; 12] = [
+        "../../../escaped",
+        "..",
+        ".",
+        "",
+        "nested/name",
+        "back\\slash",
+        // Windows: drive-relative, an alternate data stream, and names whose
+        // trailing dots and spaces are dropped.
+        "C:escaped",
+        "name:stream",
+        "...",
+        "trailing.",
+        "trailing ",
+        "line\nbreak",
+    ];
+
+    /// How an unsafe name appears in an error message.
+    fn quoted(name: &str) -> String {
+        format!("'{}'", name.escape_debug())
+    }
+
+    #[test]
+    fn a_file_installer_refuses_a_name_that_leaves_its_directory() {
+        for (kind, install, file_name, content) in FILE_INSTALLERS {
+            let sandbox = sandbox();
+            fs::write(sandbox.source.join(file_name), content).expect("write source file");
+
+            crate::core::paths::with_test_home(sandbox.home.clone(), || {
+                for name in UNSAFE_NAMES {
+                    let err = install(&sandbox.source, &resource(name, file_name))
+                        .expect_err(&format!("{} name {:?} should be refused", kind, name));
+                    assert!(
+                        err.contains(&quoted(name)),
+                        "the error for {} name {:?} should name it: {}",
+                        kind,
+                        name,
+                        err
+                    );
+                }
+            });
+
+            assert_eq!(
+                files_under(&sandbox.home),
+                Vec::<PathBuf>::new(),
+                "a refused {} must write nothing",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_installer_refuses_a_path_outside_the_source_directory() {
+        for (kind, install, file_name, content) in FILE_INSTALLERS {
+            let sandbox = sandbox();
+            let outside_file = sandbox.outside.join(file_name);
+            fs::write(&outside_file, content).expect("write outside file");
+
+            let mut paths = vec![
+                outside_file.to_string_lossy().to_string(),
+                format!("../outside/{}", file_name),
+            ];
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&outside_file, sandbox.source.join("link"))
+                    .expect("symlink");
+                paths.push("link".to_string());
+            }
+
+            crate::core::paths::with_test_home(sandbox.home.clone(), || {
+                for path in &paths {
+                    let err = install(&sandbox.source, &resource("probe", path))
+                        .expect_err(&format!("{} path {:?} should be refused", kind, path));
+                    assert!(
+                        err.contains("'probe'"),
+                        "the error for {} path {:?} should name the resource: {}",
+                        kind,
+                        path,
+                        err
+                    );
+                }
+            });
+
+            assert_eq!(
+                files_under(&sandbox.home),
+                Vec::<PathBuf>::new(),
+                "a refused {} must write nothing",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_installer_accepts_a_plain_name_and_a_path_inside_the_source() {
+        for (kind, install, file_name, content) in FILE_INSTALLERS {
+            let sandbox = sandbox();
+            fs::create_dir_all(sandbox.source.join("nested")).expect("create nested dir");
+            fs::write(sandbox.source.join("nested").join(file_name), content)
+                .expect("write source file");
+
+            crate::core::paths::with_test_home(sandbox.home.clone(), || {
+                install(
+                    &sandbox.source,
+                    &resource("probe", &format!("./nested/{}", file_name)),
+                )
+                .unwrap_or_else(|e| panic!("a plain {} should install: {}", kind, e));
+            });
+
+            let written: Vec<PathBuf> = files_under(&sandbox.home)
+                .into_iter()
+                .filter(|path| path.file_stem().and_then(|stem| stem.to_str()) == Some("probe"))
+                .collect();
+            assert_eq!(written.len(), 1, "{} should be stored once", kind);
+        }
+    }
+
+    #[test]
+    fn install_skill_refuses_a_name_that_leaves_the_skills_directory() {
+        let sandbox = sandbox();
+        fs::create_dir_all(sandbox.source.join("probe")).expect("create skill dir");
+        fs::write(sandbox.source.join("probe/SKILL.md"), "# Probe\n").expect("write skill");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            // An existing library: `..` and `.` resolve to folders that exist,
+            // and an existing destination is deleted before the copy.
+            let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
+            fs::create_dir_all(skills_dir.join("existing")).expect("create existing skill");
+            fs::write(skills_dir.join("existing/SKILL.md"), "# Existing\n").expect("write");
+            fs::write(skills_dir.join("../keep.txt"), "keep").expect("write sentinel");
+            let before = files_under(&sandbox.home);
+
+            for name in UNSAFE_NAMES {
+                let err = install_skill(&sandbox.source, &skill(name, "probe"))
+                    .expect_err(&format!("skill name {:?} should be refused", name));
+                assert!(
+                    err.contains(&quoted(name)),
+                    "the error for skill name {:?} should name it: {}",
+                    name,
+                    err
+                );
+            }
+
+            assert_eq!(files_under(&sandbox.home), before);
+        });
+    }
+
+    #[test]
+    fn install_skill_refuses_a_path_outside_the_source_directory() {
+        let sandbox = sandbox();
+        fs::write(sandbox.outside.join("SKILL.md"), "# Outside\n").expect("write skill");
+
+        let mut paths = vec![
+            sandbox.outside.to_string_lossy().to_string(),
+            "../outside".to_string(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&sandbox.outside, sandbox.source.join("link"))
+                .expect("symlink");
+            paths.push("link".to_string());
+        }
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            for path in &paths {
+                let err = install_skill(&sandbox.source, &skill("probe", path))
+                    .expect_err(&format!("skill path {:?} should be refused", path));
+                assert!(
+                    err.contains("'probe'"),
+                    "the error for skill path {:?} should name the skill: {}",
+                    path,
+                    err
+                );
+            }
+        });
+
+        assert_eq!(files_under(&sandbox.home), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn install_skill_copies_a_skill_inside_the_source_directory() {
+        let sandbox = sandbox();
+        fs::create_dir_all(sandbox.source.join("skills/probe")).expect("create skill dir");
+        fs::write(sandbox.source.join("skills/probe/SKILL.md"), "# Probe\n").expect("write");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_skill(&sandbox.source, &skill("probe", "./skills/probe")).expect("install");
+            let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
+            assert_eq!(
+                fs::read_to_string(skills_dir.join("probe/SKILL.md")).expect("read"),
+                "# Probe\n"
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_skills_refuses_a_skill_json_outside_the_source_directory() {
+        let sandbox = sandbox();
+        let outside_file = sandbox.outside.join("skill.json");
+        fs::write(
+            &outside_file,
+            r#"{"name":"outside","version":"1.0.0","description":"Outside","skills":[]}"#,
+        )
+        .expect("write outside skill.json");
+
+        let mut paths = vec![
+            outside_file.to_string_lossy().to_string(),
+            "../outside/skill.json".to_string(),
+            // Refused before the filesystem is consulted, so a path that does
+            // not exist is not skipped as "no skill.json".
+            "../missing/skill.json".to_string(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_file, sandbox.source.join("link.json"))
+                .expect("symlink");
+            paths.push("link.json".to_string());
+        }
+
+        for path in paths {
+            let section = SkillsSection {
+                skill_json: Some(path.clone()),
+                entries: vec![],
+            };
+            let err = resolve_skills(&sandbox.source, &section)
+                .expect_err(&format!("skill_json {:?} should be refused", path));
+            assert!(
+                err.contains("skill_json"),
+                "the error for {:?} should name the field: {}",
+                path,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_skills_reads_a_skill_json_inside_the_source_directory() {
+        let sandbox = sandbox();
+        fs::write(
+            sandbox.source.join("skill.json"),
+            r#"{"name":"pkg","version":"1.0.0","description":"Pkg","skills":[
+                {"name":"probe","path":"./probe","description":"A probe"}]}"#,
+        )
+        .expect("write skill.json");
+
+        let found = resolve_skills(
+            &sandbox.source,
+            &SkillsSection {
+                skill_json: Some("skill.json".to_string()),
+                entries: vec![],
+            },
+        )
+        .expect("resolve");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "probe");
+
+        // A manifest may name a skill.json the repository does not have.
+        let missing = resolve_skills(
+            &sandbox.source,
+            &SkillsSection {
+                skill_json: Some("absent.json".to_string()),
+                entries: vec![],
+            },
+        )
+        .expect("a missing skill.json is skipped");
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn install_collection_refuses_a_path_outside_the_source_directory() {
+        let sandbox = sandbox();
+        let outside_file = sandbox.outside.join("collection.json");
+        fs::write(&outside_file, r#"{"slug":"planted"}"#).expect("write outside collection");
+
+        let mut paths = vec![
+            outside_file.to_string_lossy().to_string(),
+            "../outside/collection.json".to_string(),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside_file, sandbox.source.join("link.json"))
+                .expect("symlink");
+            paths.push("link.json".to_string());
+        }
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            for path in &paths {
+                let err =
+                    install_collection(&sandbox.source, &CollectionRef { path: path.clone() })
+                        .expect_err(&format!("collection path {:?} should be refused", path));
+                assert!(
+                    err.contains("collection"),
+                    "the error for {:?} should name the collection: {}",
+                    path,
+                    err
+                );
+            }
+        });
+
+        assert_eq!(files_under(&sandbox.home), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn removing_a_resource_refuses_a_name_that_leaves_its_directory() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
+            fs::create_dir_all(skills_dir.join("existing")).expect("create existing skill");
+            fs::write(skills_dir.join("existing/SKILL.md"), "# Existing\n").expect("write");
+            fs::write(skills_dir.join("../keep.txt"), "keep").expect("write sentinel");
+            let before = files_under(&sandbox.home);
+
+            for resource_type in [
+                "skills",
+                "mcp_servers",
+                "rules",
+                "templates",
+                "commands",
+                "agents",
+            ] {
+                for name in UNSAFE_NAMES {
+                    let err = remove_installed_resource(resource_type, name).expect_err(&format!(
+                        "removing {} {:?} should be refused",
+                        resource_type, name
+                    ));
+                    assert!(err.contains(&quoted(name)), "{}", err);
+                }
+            }
+
+            assert_eq!(files_under(&sandbox.home), before);
+        });
+    }
+
+    #[test]
+    fn a_repo_slug_that_is_not_an_owner_and_a_name_is_refused() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            for slug in [
+                "../..",
+                "acme/..",
+                "acme/.",
+                "acme/...",
+                "acme/toolkit.",
+                "../toolkit",
+                "./toolkit",
+                "acme/tool/kit",
+                "acme",
+                "/toolkit",
+                "acme/",
+                "",
+                "-acme/toolkit",
+                "ac.me/toolkit",
+                "acme/tool kit",
+                "acme/tool\\kit",
+                "acme/toolkit\n",
+            ] {
+                assert!(
+                    source_clone_path(slug).is_err(),
+                    "source_clone_path should refuse {:?}",
+                    slug
+                );
+
+                let mut uri = url::Url::parse("automatic://install").expect("base uri");
+                uri.query_pairs_mut().append_pair("repo", slug);
+                assert!(
+                    parse_install_uri(uri.as_str()).is_err(),
+                    "parse_install_uri should refuse {:?}",
+                    slug
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_github_repo_slug_maps_to_a_folder_inside_the_sources_directory() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let sources_dir = get_sources_dir().expect("sources dir");
+            for (slug, owner, name) in [
+                ("acme/toolkit", "acme", "toolkit"),
+                ("Acme-1/tool.kit_2", "Acme-1", "tool.kit_2"),
+                ("acme/.github", "acme", ".github"),
+                ("mona_octo/toolkit", "mona_octo", "toolkit"),
+            ] {
+                assert_eq!(
+                    source_clone_path(slug),
+                    Ok(sources_dir.join(owner).join(name))
+                );
+                let uri = format!("automatic://install?repo={}", slug);
+                assert_eq!(parse_install_uri(&uri).expect("parse").repo, slug);
+            }
+        });
+    }
+
+    #[test]
+    fn install_source_skips_an_unsafe_resource_and_installs_the_rest() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let clone = source_clone_path("acme/toolkit").expect("clone path");
+            fs::create_dir_all(&clone).expect("create clone");
+            fs::write(clone.join("rule.md"), "# A rule\n").expect("write rule");
+            fs::write(clone.join("server.json"), r#"{"command":"npx"}"#).expect("write server");
+
+            let manifest = AutomaticManifest {
+                name: "toolkit".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Test".to_string(),
+                mcp_servers: vec![resource("../../../escaped", "server.json")],
+                rules: vec![resource("good-rule", "rule.md")],
+                ..Default::default()
+            };
+
+            let result = install_source("acme/toolkit", &manifest, None, None).expect("install");
+
+            assert_eq!(
+                result.installed.get("rules"),
+                Some(&vec!["good-rule".to_string()])
+            );
+            assert!(!result.installed.contains_key("mcp_servers"));
+            assert_eq!(
+                result.skipped,
+                vec!["mcp_server:../../../escaped".to_string()]
+            );
+            assert_eq!(result.warnings.len(), 1);
+            assert!(
+                result.warnings[0].contains("'../../../escaped'"),
+                "{}",
+                result.warnings[0]
+            );
+            assert!(!sandbox.home.join("escaped.json").exists());
+            assert_eq!(
+                get_provenance("mcp_server", "../../../escaped"),
+                Ok(None),
+                "a refused resource must not be recorded"
+            );
+        });
+    }
+
+    #[test]
+    fn a_remote_mcp_server_with_a_ciphertext_like_env_value_is_stored_readable() {
+        let sandbox = sandbox();
+        fs::write(
+            sandbox.source.join("server.json"),
+            r#"{"command":"npx","env":{"PLANTED":"enc:v1:not-a-real-ciphertext","PLAIN":"value"}}"#,
+        )
+        .expect("write server");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_mcp_server(&sandbox.source, &resource("probe", "server.json"))
+                .expect("install");
+
+            let stored: serde_json::Value = serde_json::from_str(
+                &crate::core::mcp_servers::read_mcp_server_config("probe")
+                    .expect("the stored config must be readable"),
+            )
+            .expect("parse");
+            assert_eq!(stored["env"]["PLANTED"], serde_json::json!(""));
+            assert_eq!(stored["env"]["PLAIN"], serde_json::json!("value"));
+
+            // Env values go through the same encryption as every other save.
+            let on_disk = fs::read_to_string(
+                crate::core::mcp_servers::get_mcp_servers_dir()
+                    .expect("servers dir")
+                    .join("probe.json"),
+            )
+            .expect("read stored file");
+            assert!(!on_disk.contains("\"value\""), "{}", on_disk);
+        });
+    }
+
+    #[test]
+    fn a_missing_manifest_path_is_reported_without_the_clone_location() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = install_rule(&sandbox.source, &resource("probe", "rules/absent.md"))
+                .expect_err("a missing file should be refused");
+            assert_eq!(
+                err,
+                "rule 'probe' path does not exist in the repository: rules/absent.md"
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_symlinked_folder_is_refused_only_when_it_leaves_the_source() {
+        let sandbox = sandbox();
+        fs::write(sandbox.outside.join("resource.md"), "# Outside\n").expect("write outside");
+        fs::create_dir_all(sandbox.source.join("real")).expect("create real dir");
+        fs::write(sandbox.source.join("real/resource.md"), "# Inside\n").expect("write inside");
+        std::os::unix::fs::symlink(&sandbox.outside, sandbox.source.join("out-link"))
+            .expect("symlink out");
+        std::os::unix::fs::symlink(sandbox.source.join("real"), sandbox.source.join("in-link"))
+            .expect("symlink in");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = install_rule(&sandbox.source, &resource("probe", "out-link/resource.md"))
+                .expect_err("a path through a folder link that leaves the source is refused");
+            assert!(err.contains("'probe'"), "{}", err);
+            assert_eq!(files_under(&sandbox.home), Vec::<PathBuf>::new());
+
+            install_rule(&sandbox.source, &resource("probe", "in-link/resource.md"))
+                .expect("a link that stays inside the source is followed");
+        });
+    }
+
+    #[test]
+    fn install_skill_accepts_the_source_directory_itself() {
+        let sandbox = sandbox();
+        fs::write(sandbox.source.join("SKILL.md"), "# Root skill\n").expect("write skill");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_skill(&sandbox.source, &skill("probe", ".")).expect("install");
+            let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
+            assert!(skills_dir.join("probe/SKILL.md").exists());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_resource_in_a_subdirectory_source_cannot_reach_the_rest_of_the_clone() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let clone = source_clone_path("acme/monorepo").expect("clone path");
+            let base = clone.join("packages/ai");
+            fs::create_dir_all(&base).expect("create manifest dir");
+            fs::create_dir_all(clone.join("shared")).expect("create shared dir");
+            fs::write(base.join("rule.md"), "# Own rule\n").expect("write own rule");
+            fs::write(clone.join("shared/rule.md"), "# Shared rule\n").expect("write shared");
+            std::os::unix::fs::symlink(clone.join("shared/rule.md"), base.join("shared.md"))
+                .expect("symlink");
+
+            let manifest = AutomaticManifest {
+                name: "ai".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Test".to_string(),
+                rules: vec![
+                    resource("own-rule", "rule.md"),
+                    resource("shared-rule", "shared.md"),
+                    resource("parent-rule", "../../shared/rule.md"),
+                ],
+                ..Default::default()
+            };
+
+            let result = install_source("acme/monorepo", &manifest, None, Some("packages/ai"))
+                .expect("install");
+
+            assert_eq!(
+                result.installed.get("rules"),
+                Some(&vec!["own-rule".to_string()])
+            );
+            assert_eq!(
+                result.skipped,
+                vec![
+                    "rule:shared-rule".to_string(),
+                    "rule:parent-rule".to_string()
+                ]
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_manifest_refuses_a_manifest_that_is_a_link_out_of_the_source() {
+        for file_name in ["automatic.json", "skill.json"] {
+            let sandbox = sandbox();
+            let outside_file = sandbox.outside.join("manifest.json");
+            // Parses as either kind of manifest, so only the path check can
+            // refuse it.
+            fs::write(
+                &outside_file,
+                r#"{"name":"outside","version":"1.0.0","description":"Outside"}"#,
+            )
+            .expect("write outside manifest");
+            std::os::unix::fs::symlink(&outside_file, sandbox.source.join(file_name))
+                .expect("symlink");
+
+            let err = parse_manifest(&sandbox.source)
+                .expect_err(&format!("a linked {} should be refused", file_name));
+            assert!(
+                err.contains(file_name) && err.contains("escapes"),
+                "{}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn parse_manifest_reads_a_manifest_inside_the_source() {
+        let sandbox = sandbox();
+        fs::write(
+            sandbox.source.join("automatic.json"),
+            r#"{"name":"toolkit","version":"1.0.0","description":"Toolkit"}"#,
+        )
+        .expect("write manifest");
+
+        assert_eq!(
+            parse_manifest(&sandbox.source).expect("parse").name,
+            "toolkit"
+        );
+    }
+
+    #[test]
+    fn a_source_registered_under_a_refused_slug_can_still_be_removed() {
+        let sandbox = sandbox();
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let slug = "acme/tool/kit";
+            assert!(source_clone_path(slug).is_err());
+            upsert_source(RemoteSource {
+                repo: slug.to_string(),
+                name: "toolkit".to_string(),
+                version: "1.0.0".to_string(),
+                pin: PinningConfig::default(),
+                directory: None,
+                last_fetched: "2026-01-01T00:00:00Z".to_string(),
+                commit_sha: String::new(),
+                resources: HashMap::new(),
+                collection_slugs: vec![],
+            })
+            .expect("register");
+
+            assert_eq!(remove_source(slug), Ok(Vec::new()));
+            assert_eq!(list_sources().expect("list").len(), 0);
+        });
     }
 }

@@ -188,6 +188,18 @@ MCP servers, rules, templates, commands, and agents use a uniform shape:
 | `path` | Yes | Relative path to the resource file in the repo. |
 | `description` | Yes | Human-readable summary. |
 
+### Name and path rules
+
+Automatic checks every name and path in a manifest before it uses them. These rules apply to skills, collections and `skill_json` as well.
+
+A `name` must be a single file name. It cannot be empty, `.` or `..`. It cannot contain `/`, `\`, `:` or a control character, and it cannot end with a dot or a space.
+
+A `path` must be relative and must stay inside the folder that holds the manifest. It cannot be absolute, contain `..` or use `\`. A symlink is followed only when its target is inside that folder. The manifest file itself cannot be a symlink to a file outside it.
+
+A resource that breaks a rule is skipped, and the install result carries a warning that names it. The other resources still install. A `skill_json` path that breaks a rule fails the whole fetch.
+
+An MCP server config is saved the same way as a server added in the app, so its `env` values are stored encrypted. An `env` value that starts with `enc:v1:` is stored empty.
+
 ### Expected file formats per type
 
 | Type | Source format | Installed to | Notes |
@@ -288,7 +300,7 @@ Users can install a source with a single click using the hosted install URL on `
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `repo` | Yes | GitHub `owner/repo` format. |
+| `repo` | Yes | GitHub `owner/repo` format. A value that is not an owner and a repository name is refused. |
 | `ref` | No | Git ref to pin to (tag, SHA, or branch). |
 | `dir` | No | Subdirectory within the repo where `automatic.json` lives (monorepo support). |
 
