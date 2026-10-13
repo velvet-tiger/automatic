@@ -275,9 +275,11 @@ pub fn get_sources_dir() -> Result<PathBuf, String> {
 /// each clone, so a slug such as `../..` would point that deletion at a
 /// folder outside the cache. The owner may hold letters, digits, `-` and
 /// `_`, and must start with a letter or digit. The repository name may also
-/// hold `.`, and must not be `.` or `..`. These are the characters GitHub
-/// uses. The check is looser than GitHub's own rules, which is safe: a slug
-/// GitHub would refuse only makes the clone fail.
+/// hold `.`, and must not end with one: that rules out `.` and `..`, and
+/// Windows drops a trailing dot, so `...` would name the owner's folder.
+/// These are the characters GitHub uses. The check is looser than GitHub's
+/// own rules, which is safe: a slug GitHub would refuse only makes the clone
+/// fail.
 fn split_repo_slug(repo: &str) -> Result<(&str, &str), String> {
     let invalid = || format!("Invalid repo format '{}', expected 'owner/repo'", repo);
 
@@ -289,8 +291,7 @@ fn split_repo_slug(repo: &str) -> Result<(&str, &str), String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
     let name_is_valid = (1..=100).contains(&name.len())
-        && name != "."
-        && name != ".."
+        && !name.ends_with('.')
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
@@ -2188,6 +2189,8 @@ mod tests {
                 "../..",
                 "acme/..",
                 "acme/.",
+                "acme/...",
+                "acme/toolkit.",
                 "../toolkit",
                 "./toolkit",
                 "acme/tool/kit",
@@ -2416,9 +2419,11 @@ mod tests {
         for file_name in ["automatic.json", "skill.json"] {
             let sandbox = sandbox();
             let outside_file = sandbox.outside.join("manifest.json");
+            // Parses as either kind of manifest, so only the path check can
+            // refuse it.
             fs::write(
                 &outside_file,
-                r#"{"name":"outside","version":"1.0.0","description":"Outside","skills":[]}"#,
+                r#"{"name":"outside","version":"1.0.0","description":"Outside"}"#,
             )
             .expect("write outside manifest");
             std::os::unix::fs::symlink(&outside_file, sandbox.source.join(file_name))
@@ -2426,7 +2431,11 @@ mod tests {
 
             let err = parse_manifest(&sandbox.source)
                 .expect_err(&format!("a linked {} should be refused", file_name));
-            assert!(err.contains(file_name), "{}", err);
+            assert!(
+                err.contains(file_name) && err.contains("escapes"),
+                "{}",
+                err
+            );
         }
     }
 

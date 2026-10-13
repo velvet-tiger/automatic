@@ -300,7 +300,7 @@ Users can install a source with a single click using the hosted install URL on `
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `repo` | Yes | GitHub `owner/repo` format. The owner may hold letters, digits, `-` and `_`. The repo name may also hold `.`, and cannot be `.` or `..`. Anything else is refused. |
+| `repo` | Yes | GitHub `owner/repo` format. A value that is not an owner and a repository name is refused. |
 | `ref` | No | Git ref to pin to (tag, SHA, or branch). |
 | `dir` | No | Subdirectory within the repo where `automatic.json` lives (monorepo support). |
 
