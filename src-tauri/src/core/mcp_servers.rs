@@ -225,15 +225,18 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
     save_mcp_server_config(name, &super::mark_discovered_if_blocked(&config_json))
 }
 
-/// Replace every `env` value in a discovered config that carries the
-/// encryption prefix with an empty string.  The key is kept.
+/// Replace every `env` value that carries the encryption prefix with an
+/// empty string, in a config that did not come from this install's registry:
+/// one discovered in an agent file, or one a remote source provides.  The key
+/// is kept.
 ///
 /// Saving a config leaves a prefixed value as it is, because it is taken for
 /// a value that is already encrypted.  A prefixed value from an agent file is
 /// not ciphertext this install can read: sync writes decrypted values to
-/// agent files, so they never hold Automatic's ciphertext.  Stored as it is,
-/// the registry entry could never be decrypted, and cloud sync and the
-/// project's own sync would stop on it until the user deleted the server.
+/// agent files, so they never hold Automatic's ciphertext.  Nor is one from a
+/// remote source's repository, which was written on another machine.  Stored
+/// as it is, the registry entry could never be decrypted, and cloud sync and
+/// the project's own sync would stop on it until the user deleted the server.
 ///
 /// An empty value means "inherit from the environment".  The value is not
 /// encrypted as plain text instead.  It would then read back as a plain
@@ -242,7 +245,7 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
 ///
 /// Returns the input unchanged when it is not JSON, has no `env` object, or
 /// has no prefixed value, leaving the save path to report any error.
-fn blank_ciphertext_like_env_values(config_json: &str) -> String {
+pub(crate) fn blank_ciphertext_like_env_values(config_json: &str) -> String {
     let Ok(mut config) = serde_json::from_str::<serde_json::Value>(config_json) else {
         return config_json.to_string();
     };
