@@ -347,13 +347,17 @@ pub(crate) fn record_legacy_oauth_urls() -> Result<(), String> {
 /// Write `contents` to `path` unless a file is already there, which is
 /// success. A reader may see the file before it is complete. It then fails
 /// to parse the record and uses no old secret.
+///
+/// A file that could not be written in full is removed. Left in place it
+/// would count as the record for good, and it would never parse.
 fn write_new_file(path: &Path, contents: &str) -> Result<(), String> {
     use std::io::Write;
 
     match fs::OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(mut file) => file
-            .write_all(contents.as_bytes())
-            .map_err(|e| format!("Failed to write {}: {}", path.display(), e)),
+        Ok(mut file) => file.write_all(contents.as_bytes()).map_err(|e| {
+            let _ = fs::remove_file(path);
+            format!("Failed to write {}: {}", path.display(), e)
+        }),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(format!("Failed to create {}: {}", path.display(), e)),
     }
@@ -402,7 +406,8 @@ fn registry_urls() -> Result<BTreeMap<String, String>, String> {
 pub fn legacy_oauth_url_is(name: &str, url: &str) -> Result<bool, String> {
     record_legacy_oauth_urls()?;
     let path = legacy_oauth_urls_path()?;
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     let urls: BTreeMap<String, String> = serde_json::from_str(&raw)
         .map_err(|e| format!("Invalid JSON in {}: {}", path.display(), e))?;
     Ok(urls.get(name).is_some_and(|recorded| Some(recorded) == comparable_mcp_url(url).as_ref()))
