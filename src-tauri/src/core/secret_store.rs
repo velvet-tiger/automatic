@@ -165,6 +165,9 @@ fn deleted_from_either(
 #[cfg(test)]
 use memory as backend;
 
+#[cfg(test)]
+pub(crate) use memory::{set_fault as set_test_fault, Fault as TestFault};
+
 #[cfg(all(not(test), not(debug_assertions)))]
 use system as backend;
 
@@ -501,13 +504,53 @@ mod memory {
         SECRETS.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
+    /// A failure a test gives the store for one account. The map itself
+    /// cannot fail, and callers have to be tested against a store that does.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Fault {
+        /// Every call fails, as when no keychain service can be reached.
+        Unreadable,
+        /// A delete fails and the secret stays, as when the keychain refuses.
+        DeleteRefused,
+    }
+
+    fn faults() -> &'static Mutex<HashMap<String, Fault>> {
+        static FAULTS: OnceLock<Mutex<HashMap<String, Fault>>> = OnceLock::new();
+        FAULTS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Give `account` a fault, or clear it with `None`. The fault applies to
+    /// every test in the process, so the account must be one no other test
+    /// uses.
+    pub(crate) fn set_fault(account: &str, fault: Option<Fault>) {
+        let mut faults = faults().lock().expect("fault map lock");
+        match fault {
+            Some(fault) => faults.insert(account.to_string(), fault),
+            None => faults.remove(account),
+        };
+    }
+
+    fn fault(account: &str) -> Result<Option<Fault>, String> {
+        let faults = faults().lock().map_err(|e| e.to_string())?;
+        Ok(faults.get(account).copied())
+    }
+
+    fn fail_if_unreadable(account: &str) -> Result<(), String> {
+        if fault(account)? == Some(Fault::Unreadable) {
+            return Err(format!("test fault: the secret store cannot be read for '{}'", account));
+        }
+        Ok(())
+    }
+
     pub(super) fn store(account: &str, secret: &str) -> Result<(), String> {
+        fail_if_unreadable(account)?;
         let mut secrets = secrets().lock().map_err(|e| e.to_string())?;
         secrets.insert(account.to_string(), secret.to_string());
         Ok(())
     }
 
     pub(super) fn load(account: &str) -> Result<String, String> {
+        fail_if_unreadable(account)?;
         let secrets = secrets().lock().map_err(|e| e.to_string())?;
         secrets
             .get(account)
@@ -516,11 +559,16 @@ mod memory {
     }
 
     pub(super) fn load_if_present(account: &str) -> Result<Option<String>, String> {
+        fail_if_unreadable(account)?;
         let secrets = secrets().lock().map_err(|e| e.to_string())?;
         Ok(secrets.get(account).cloned())
     }
 
     pub(super) fn delete(account: &str) -> Result<(), String> {
+        fail_if_unreadable(account)?;
+        if fault(account)? == Some(Fault::DeleteRefused) {
+            return Err(format!("test fault: the secret store refused to delete '{}'", account));
+        }
         let mut secrets = secrets().lock().map_err(|e| e.to_string())?;
         secrets
             .remove(account)

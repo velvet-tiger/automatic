@@ -1255,9 +1255,11 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
         .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", server.name, e))?;
 
     // Stored through the registry's own save, so env values are encrypted
-    // like every other server's. A value that already carries the encryption
-    // prefix is blanked first: this install could never decrypt it, and the
-    // unreadable entry would stop cloud sync and project sync.
+    // like every other server's, and the OAuth secrets of a server this
+    // install replaces with another URL are tidied. A value that already
+    // carries the encryption prefix is blanked first: this install could
+    // never decrypt it, and the unreadable entry would stop cloud sync and
+    // project sync.
     let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
     super::mcp_servers::save_mcp_server_config(&server.name, &content)
         .map_err(|e| format!("Failed to write MCP server config: {}", e))
@@ -1637,6 +1639,72 @@ mod tests {
 
         let err = scan_skill_tree(tmp.path(), "bad").expect_err("should block");
         assert!(err.contains("Blocked") || err.to_lowercase().contains("curl"));
+    }
+
+    #[test]
+    fn an_installed_mcp_server_with_another_url_does_not_get_the_old_token() {
+        let home = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            // The secret store is shared by the whole test process, so the
+            // server name is one no other test uses.
+            let name = "source-install-secrets-fixture";
+            crate::core::save_mcp_server_config(
+                name,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .unwrap();
+            let (url, other_url) = ("https://mcp.example.com/mcp", "https://other.example/mcp");
+            crate::proxy::store_oauth_token(name, url, "access-token").unwrap();
+            crate::proxy::store_oauth_credentials(name, url, r#"{"refresh_token":"refresh"}"#)
+                .unwrap();
+            assert!(crate::proxy::has_oauth_token(name, url));
+
+            fs::write(
+                source.path().join("server.json"),
+                r#"{"type":"http","url":"https://other.example/mcp"}"#,
+            )
+            .unwrap();
+            let server = ManifestResource {
+                name: name.to_string(),
+                path: "server.json".to_string(),
+                description: String::new(),
+            };
+            install_mcp_server(source.path(), &server).unwrap();
+
+            let stored = crate::core::read_mcp_server_config(name).unwrap();
+            assert!(stored.contains("https://other.example/mcp"));
+            assert!(!crate::proxy::has_oauth_token(name, other_url));
+            assert!(crate::proxy::load_oauth_token(name, other_url).is_err());
+            // The entries for the old URL were tidied away.
+            assert!(crate::proxy::load_oauth_token(name, url).is_err());
+            assert!(crate::proxy::load_oauth_credentials(name, url).is_err());
+        });
+    }
+
+    #[test]
+    fn installing_an_mcp_server_with_the_same_url_keeps_its_oauth_secrets() {
+        let home = tempfile::tempdir().unwrap();
+        let source = tempfile::tempdir().unwrap();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            let name = "source-reinstall-secrets-fixture";
+            let config = r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#;
+            crate::core::save_mcp_server_config(name, config).unwrap();
+            crate::proxy::store_oauth_token(name, "https://mcp.example.com/mcp", "access-token").unwrap();
+
+            fs::write(source.path().join("server.json"), config).unwrap();
+            let server = ManifestResource {
+                name: name.to_string(),
+                path: "server.json".to_string(),
+                description: String::new(),
+            };
+            install_mcp_server(source.path(), &server).unwrap();
+
+            assert_eq!(
+                crate::proxy::load_oauth_token(name, "https://mcp.example.com/mcp").unwrap(),
+                "access-token"
+            );
+        });
     }
 
     #[test]

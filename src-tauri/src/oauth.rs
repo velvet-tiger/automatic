@@ -240,6 +240,8 @@ pub async fn register_client(
 ///
 /// Returns the access token on success.
 pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String, String> {
+    ensure_saved_url(server_name, mcp_url)?;
+
     // 1. Discover OAuth metadata.
     let metadata = discover_auth_server(mcp_url).await?;
 
@@ -309,8 +311,8 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     )
     .await?;
 
-    // 8. Store in keychain.
-    crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
+    // 8. Store in keychain, filed under the URL the token was issued for.
+    crate::proxy::store_oauth_token(server_name, mcp_url, &token_response.access_token)?;
 
     // Best-effort: store full credentials for future refresh.
     // If this fails the access token is already saved, so auth succeeded —
@@ -327,12 +329,28 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
             .map(|d| d.as_secs())
             .unwrap_or(0),
     }) {
-        if let Err(e) = crate::proxy::store_oauth_credentials(server_name, &creds_json) {
+        if let Err(e) = crate::proxy::store_oauth_credentials(server_name, mcp_url, &creds_json) {
             eprintln!("warning: could not store OAuth credentials for refresh: {e}");
         }
     }
 
     Ok(token_response.access_token)
+}
+
+/// Refuse to sign in at a URL that is not the one saved for the server.
+///
+/// The token is filed under the server's name and this URL, and the proxy
+/// asks for the one filed under the saved URL. A sign-in at any other URL
+/// would store a token nothing looks for, and the server would still show as
+/// signed out. The caller's URL comes from an editor or an RPC client.
+fn ensure_saved_url(server_name: &str, mcp_url: &str) -> Result<(), String> {
+    if crate::core::mcp_server_url_is(server_name, mcp_url)? {
+        return Ok(());
+    }
+    Err(format!(
+        "'{}' is not the URL saved for MCP server '{}'. Save your changes, or reopen the server if it was changed elsewhere, then sign in again.",
+        mcp_url, server_name
+    ))
 }
 
 // ── Callback HTML pages ───────────────────────────────────────────────────────
@@ -661,8 +679,11 @@ async fn exchange_code(
 // ── Token refresh ────────────────────────────────────────────────────────────
 
 /// Attempt to refresh an expired token using stored credentials.
-pub async fn refresh_token(server_name: &str) -> Result<String, String> {
-    let creds_json = crate::proxy::load_oauth_credentials(server_name)?;
+///
+/// `mcp_url` is the server's URL. The credentials are read from the entry
+/// for that URL, and the new token is filed under it.
+pub async fn refresh_token(server_name: &str, mcp_url: &str) -> Result<String, String> {
+    let creds_json = crate::proxy::load_oauth_credentials(server_name, mcp_url)?;
     let creds: StoredOAuthCredentials = serde_json::from_str(&creds_json)
         .map_err(|e| format!("invalid stored credentials: {}", e))?;
 
@@ -705,7 +726,7 @@ pub async fn refresh_token(server_name: &str) -> Result<String, String> {
         .map_err(|e| format!("failed to parse refresh response: {}", e))?;
 
     // Update stored credentials.
-    crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
+    crate::proxy::store_oauth_token(server_name, mcp_url, &token_response.access_token)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -721,7 +742,90 @@ pub async fn refresh_token(server_name: &str) -> Result<String, String> {
     };
     let updated_json =
         serde_json::to_string(&updated).map_err(|e| format!("failed to serialize: {}", e))?;
-    crate::proxy::store_oauth_credentials(server_name, &updated_json)?;
+    crate::proxy::store_oauth_credentials(server_name, mcp_url, &updated_json)?;
 
     Ok(token_response.access_token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::with_test_home;
+
+    #[test]
+    fn sign_in_is_refused_at_a_url_that_is_not_the_saved_one() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "sign-in-saved-url-fixture";
+            crate::core::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("save");
+
+            ensure_saved_url(server, "https://mcp.example.com/mcp").expect("the saved url");
+            let err = ensure_saved_url(server, "https://other.example/mcp")
+                .expect_err("another url");
+            assert!(err.contains("not the URL saved"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn sign_in_is_refused_for_a_server_that_is_not_saved() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            ensure_saved_url("sign-in-unsaved-fixture", "https://mcp.example.com/mcp")
+                .expect_err("no saved server");
+        });
+    }
+
+    #[test]
+    fn a_refresh_uses_only_the_credentials_filed_under_the_url() {
+        let server = "refresh-other-url-fixture";
+        // Nothing listens on this port. Using these credentials would fail
+        // with a request error.
+        crate::proxy::store_oauth_credentials(
+            server,
+            "https://other.example/mcp",
+            r#"{"client_id":"c","access_token":"a","refresh_token":"r","token_endpoint":"http://127.0.0.1:9/token","acquired_at":0}"#,
+        )
+        .expect("store");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+
+        let err = runtime
+            .block_on(refresh_token(server, "https://mcp.example.com/mcp"))
+            .expect_err("no credentials for this url");
+
+        assert!(!err.contains("refresh request failed"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn authorising_at_another_url_fails_before_any_request() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let server = "sign-in-authorise-fixture";
+            crate::core::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("save");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            // Nothing listens on this port. Reaching it would give a
+            // different error.
+            let err = runtime
+                .block_on(authorize_server(server, "http://127.0.0.1:9/mcp"))
+                .expect_err("another url");
+
+            assert!(err.contains("not the URL saved"), "unexpected error: {err}");
+            assert!(!crate::proxy::has_oauth_token(server, "https://mcp.example.com/mcp"));
+            assert!(!crate::proxy::has_oauth_token(server, "http://127.0.0.1:9/mcp"));
+        });
+    }
 }

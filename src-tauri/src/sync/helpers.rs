@@ -419,6 +419,12 @@ pub(crate) fn add_unique(items: &mut Vec<String>, value: &str) -> bool {
     }
 }
 
+/// The `url` of a server config, or an empty string when it has none. A
+/// server's OAuth token is filed under this URL.
+fn server_url(config: &Value) -> &str {
+    config.get("url").and_then(|v| v.as_str()).unwrap_or_default()
+}
+
 /// Build the selected MCP server map for a project, applying all
 /// transformations that the sync engine uses (stripping internal `_`-prefixed
 /// fields, substituting OAuth proxy configs for HTTP servers with stored
@@ -480,7 +486,7 @@ pub(crate) fn build_selected_servers(
                 .map(|t| t == "http" || t == "sse")
                 .unwrap_or(false);
 
-            if is_http && crate::proxy::has_oauth_token(server_name) {
+            if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned)) {
                 // Emit a local proxy config instead of the remote URL.
                 selected_servers.insert(
                     server_name.clone(),
@@ -539,7 +545,7 @@ pub(crate) fn build_global_selected_servers(
             .map(|t| t == "http" || t == "sse")
             .unwrap_or(false);
 
-        if is_http && crate::proxy::has_oauth_token(server_name) {
+        if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned)) {
             selected_servers.insert(
                 server_name.clone(),
                 json!({
@@ -1009,5 +1015,35 @@ mod tests {
             let loaded = load_mcp_server_configs(&[]).expect("load");
             assert!(loaded.is_empty());
         });
+    }
+
+    #[test]
+    fn a_server_gets_a_proxy_stub_only_for_a_token_filed_under_its_url() {
+        // The secret store is shared by the whole test process, so the
+        // server name is one no other test uses.
+        let server = "sync-stub-fixture";
+        let names = vec![server.to_string()];
+        let registry = |url: &str| {
+            let mut registry = Map::new();
+            registry.insert(server.to_string(), json!({ "type": "http", "url": url }));
+            registry
+        };
+        crate::proxy::store_oauth_token(server, "https://mcp.example.com/mcp", "token")
+            .expect("store token");
+
+        let signed_in = build_selected_servers(
+            "sync-stub-project",
+            &names,
+            &registry("https://mcp.example.com/mcp"),
+        );
+        assert_eq!(signed_in[server]["args"], json!(["mcp-proxy", server]));
+
+        let other_url = build_selected_servers(
+            "sync-stub-project",
+            &names,
+            &registry("https://other.example/mcp"),
+        );
+        assert_eq!(other_url[server]["url"], "https://other.example/mcp");
+        assert!(other_url[server].get("command").is_none());
     }
 }

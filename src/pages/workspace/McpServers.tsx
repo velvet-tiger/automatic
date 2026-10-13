@@ -311,8 +311,27 @@ function CommandDependencyWarning({ command }: { command: string }) {
  * header: it does not use OAuth, so the sign-in prompt is left out. A token
  * already stored for the name still shows, because sync keeps routing the
  * server through the OAuth proxy until that token is revoked.
+ *
+ * `url` is the value in the editor, which may not be saved yet. A token is
+ * issued for one URL and the proxy sends it to the saved one. So this section
+ * does not sign in while `dirty` is true, and it only ever sends the stored
+ * token to the URL as last saved. `savedRevision` changes after each save.
+ * Saving a new URL deletes the stored token, so the section asks again
+ * whether one is stored.
  */
-function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; url: string; offerSignIn: boolean }) {
+function OAuthSection({
+  serverName,
+  url,
+  offerSignIn,
+  dirty,
+  savedRevision,
+}: {
+  serverName: string;
+  url: string;
+  offerSignIn: boolean;
+  dirty: boolean;
+  savedRevision: number;
+}) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
   const [action, setAction] = useState<"authorize" | "revoke" | null>(null);
@@ -334,8 +353,30 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
       .finally(() => setChecking(false));
   }, [serverName]);
 
+  // The mount effect above has already asked for the revision this section
+  // started with.
+  const checkedRevision = useRef(savedRevision);
   useEffect(() => {
-    if (!serverName || !url || !hasToken) {
+    if (!serverName || savedRevision === checkedRevision.current) return;
+    checkedRevision.current = savedRevision;
+    invoke<boolean>("has_mcp_oauth_token", { serverName })
+      .then(setHasToken)
+      .catch(() => setHasToken(false));
+  }, [savedRevision]);
+
+  // The URL as last saved. `url` follows the editor, so it is copied only
+  // while the editor has no unsaved changes. The section can mount while the
+  // editor is dirty, and then no saved URL is known until the next save.
+  const [savedUrl, setSavedUrl] = useState(dirty ? "" : url);
+  useEffect(() => {
+    if (!dirty) setSavedUrl(url);
+  }, [dirty, url]);
+
+  // The check sends the stored token to the URL, so it uses the saved one.
+  // Typing in the URL field does not run it, and neither does a save that
+  // leaves the URL as it was.
+  useEffect(() => {
+    if (!serverName || !savedUrl || !hasToken) {
       setCheckingStatus(false);
       setTokenStatus(null);
       return;
@@ -343,9 +384,14 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
 
     let active = true;
     setCheckingStatus(true);
-    invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: url })
+    invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: savedUrl })
       .then((status) => {
         if (!active) return;
+        // The token can be deleted between the presence check and this one.
+        if (!status.has_token) {
+          setHasToken(false);
+          return;
+        }
         setTokenStatus(status);
       })
       .catch((statusError) => {
@@ -364,10 +410,10 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
     return () => {
       active = false;
     };
-  }, [serverName, url, hasToken]);
+  }, [serverName, savedUrl, hasToken]);
 
   const handleAuthorize = async () => {
-    if (!serverName || !url) return;
+    if (!serverName || !url || dirty) return;
     cancelledRef.current = false;
     setAction("authorize");
     setError(null);
@@ -462,7 +508,7 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
                       {tokenInvalid && (
                         <button
                           onClick={handleAuthorize}
-                          disabled={!url || loading}
+                          disabled={!url || loading || dirty}
                           className="px-3 py-1.5 text-[11px] font-medium bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 whitespace-nowrap"
                         >
                           Re-authenticate
@@ -479,6 +525,10 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
                   )}
                 </div>
               </div>
+
+              {dirty && tokenInvalid && (
+                <p className="text-[11px] text-text-muted">Save your changes before you sign in again.</p>
+              )}
 
               {checkingStatus && (
                 <div className="flex items-center gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3 text-[11px] text-text-muted">
@@ -522,13 +572,17 @@ function OAuthSection({ serverName, url, offerSignIn }: { serverName: string; ur
             ) : (
               <button
                 onClick={handleAuthorize}
-                disabled={!url}
+                disabled={!url || dirty}
                 className="px-4 py-1.5 text-[12px] font-medium bg-brand hover:bg-brand-hover text-white rounded shadow-sm transition-colors disabled:opacity-50 whitespace-nowrap"
               >
                 Authenticate
               </button>
             )}
           </div>
+
+          {dirty && !loading && (
+            <p className="text-[11px] text-text-muted">Save your changes before you sign in.</p>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
@@ -565,6 +619,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [config, setConfig] = useState<McpServerConfig | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Counts successful saves, so the OAuth section can re-check the stored token.
+  const [savedRevision, setSavedRevision] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
   // Editable name for existing (non-creating) servers. When it differs from
@@ -756,6 +812,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         trackMcpServerUpdated(name);
       }
       setDirty(false);
+      setSavedRevision(prev => prev + 1);
       setSaveDespiteErrors(false);
       setSelectedName(name);
       setEditName(name);
@@ -777,8 +834,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   /**
    * Save the selected server again under a fresh `<name>-copy` name and open
    * the copy. Re-reads from disk so the copy reflects the saved config, not
-   * unsaved edits. OAuth tokens are keyed by server name in the keychain, so
-   * the copy starts unauthorised and can be signed in to a different account.
+   * unsaved edits. An OAuth token is filed under the server's name and URL,
+   * so the copy starts unauthorised and can be signed in to a different account.
    * That is the point of the feature (VEL-161).
    */
   const handleDuplicate = async () => {
@@ -1555,6 +1612,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         serverName={selectedName || ""}
                         url={config.url || ""}
                         offerSignIn={!hasAuthorizationHeader(config.headers || {})}
+                        dirty={dirty}
+                        savedRevision={savedRevision}
                       />
                     )}
                   </>

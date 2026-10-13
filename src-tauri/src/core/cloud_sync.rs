@@ -1880,6 +1880,31 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_mcp_server_asset_removes_its_oauth_secrets() {
+        with_temp_home(|_| {
+            // The secret store is shared by the whole test process, so the
+            // server name is one no other test uses.
+            let server = "cloud-delete-secrets-fixture";
+            super::super::mcp_servers::save_mcp_server_config(
+                server,
+                r#"{"type":"http","url":"https://mcp.example.com/mcp"}"#,
+            )
+            .expect("seed server");
+            let url = "https://mcp.example.com/mcp";
+            crate::proxy::store_oauth_token(server, url, "access-token").expect("store token");
+            crate::proxy::store_oauth_credentials(server, url, r#"{"refresh_token":"refresh"}"#)
+                .expect("store credentials");
+            assert!(crate::proxy::has_oauth_token(server, url));
+
+            delete_asset("mcp_server", server).expect("delete");
+
+            assert!(crate::proxy::load_oauth_token(server, url).is_err());
+            assert!(crate::proxy::load_oauth_credentials(server, url).is_err());
+            assert!(!crate::proxy::has_oauth_token(server, url));
+        });
+    }
+
+    #[test]
     fn write_asset_ignores_unknown_kinds() {
         // Forward compat: if the server ever sends a newer kind we don't
         // recognise, we ignore it rather than erroring.

@@ -26,20 +26,67 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 // service names pass
 // `set_password` but fail `get_password`. Entries are differentiated by the
 // *user* field instead.
+//
+// An OAuth secret is filed under the server's name and the URL it was issued
+// for. Every function here takes both, so a secret is only ever found for
+// that pair. The proxy reads the saved URL, asks for the token for that URL,
+// and sends it there. A token issued for another URL is not found, whatever
+// happened to the server's config in between. Deleting and moving entries
+// when a server changes is tidying. Nothing depends on it for safety.
 
 use crate::core::secret_store;
+use sha2::{Digest, Sha256};
 
-/// User field for an OAuth bearer token entry.
-fn oauth_token_user(server_name: &str) -> String {
-    format!("mcp_oauth_token_{}", server_name)
+/// The store entries for one server at one URL.
+struct OAuthEntries {
+    /// The bearer token.
+    token: String,
+    /// The credentials blob, which holds the refresh token.
+    credentials: String,
 }
 
-/// User field for the full OAuth credentials blob.
-fn oauth_creds_user(server_name: &str) -> String {
-    format!("mcp_oauth_creds_{}", server_name)
+/// The entries for `server_name` at `url`.
+///
+/// The URL is hashed in the form [`crate::core::comparable_mcp_url`] gives
+/// it, so the same URL written two ways has one entry, and the URL does not
+/// show in the keychain's list. A server name cannot contain `/`, so these
+/// names never collide with the entries of [`legacy_oauth_entries`].
+///
+/// An error means the URL is empty. A server with no URL has no OAuth secrets.
+fn oauth_entries(server_name: &str, url: &str) -> Result<OAuthEntries, String> {
+    let url = crate::core::comparable_mcp_url(url).ok_or_else(|| {
+        format!(
+            "MCP server '{}' has no URL, so it has no OAuth secrets",
+            server_name
+        )
+    })?;
+    let url_key = hex::encode(Sha256::digest(url.as_bytes()));
+    Ok(OAuthEntries {
+        token: format!("mcp_oauth_token_{}/{}", server_name, url_key),
+        credentials: format!("mcp_oauth_creds_{}/{}", server_name, url_key),
+    })
 }
 
-/// Remembers, per server, whether an OAuth token is present in the keychain.
+/// The entries older versions used, filed under the server's name alone.
+///
+/// Nothing is stored under these any more. [`find_oauth_token`] moves what it
+/// finds to the entries for the server's URL.
+fn legacy_oauth_entries(server_name: &str) -> OAuthEntries {
+    OAuthEntries {
+        token: format!("mcp_oauth_token_{}", server_name),
+        credentials: format!("mcp_oauth_creds_{}", server_name),
+    }
+}
+
+/// The store entry of a server's token at `url`, for a test that gives the
+/// store a fault.
+#[cfg(test)]
+pub(crate) fn oauth_token_entry(server_name: &str, url: &str) -> String {
+    oauth_entries(server_name, url).expect("a url").token
+}
+
+/// Remembers, per token entry, whether an OAuth token is present in the
+/// keychain.
 ///
 /// Presence can only be established by reading the token, and sync walks every
 /// server of every project on each run. On macOS each read is a separate access
@@ -51,55 +98,147 @@ fn token_presence_cache() -> &'static Mutex<HashMap<String, bool>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn set_cached_token_presence(server_name: &str, present: bool) {
+fn set_cached_token_presence(token_entry: &str, present: bool) {
     if let Ok(mut cache) = token_presence_cache().lock() {
-        cache.insert(server_name.to_string(), present);
+        cache.insert(token_entry.to_string(), present);
     }
 }
 
-/// Store an OAuth bearer token in the system keychain.
-pub fn store_oauth_token(server_name: &str, token: &str) -> Result<(), String> {
-    secret_store::store_secret(&oauth_token_user(server_name), token)?;
-    set_cached_token_presence(server_name, true);
+/// Store the OAuth bearer token issued to a server for `url`.
+pub fn store_oauth_token(server_name: &str, url: &str, token: &str) -> Result<(), String> {
+    let entries = oauth_entries(server_name, url)?;
+    secret_store::store_secret(&entries.token, token)?;
+    set_cached_token_presence(&entries.token, true);
     Ok(())
 }
 
-/// Load an OAuth bearer token from the system keychain.
-pub fn load_oauth_token(server_name: &str) -> Result<String, String> {
-    secret_store::load_secret(&oauth_token_user(server_name))
+/// Load the OAuth bearer token issued to a server for `url`.
+///
+/// Returns an error when none is stored for that URL, as well as when the
+/// store fails.
+pub fn load_oauth_token(server_name: &str, url: &str) -> Result<String, String> {
+    let entries = oauth_entries(server_name, url)?;
+    find_oauth_token(server_name, url, &entries)?.ok_or_else(|| {
+        format!(
+            "no OAuth token is stored for MCP server '{}' at its URL",
+            server_name
+        )
+    })
 }
 
-/// Delete an OAuth bearer token from the system keychain.
-pub fn delete_oauth_token(server_name: &str) -> Result<(), String> {
-    secret_store::delete_secret(&oauth_token_user(server_name))?;
-    set_cached_token_presence(server_name, false);
+/// The token in `entries`, or the one an older version stored for the server.
+///
+/// `url` is the URL `entries` are for. The older token is only looked for
+/// when that is the URL it was issued for, as [`adopt_legacy_secrets`]
+/// explains.
+fn find_oauth_token(
+    server_name: &str,
+    url: &str,
+    entries: &OAuthEntries,
+) -> Result<Option<String>, String> {
+    if let Some(token) = secret_store::load_secret_if_present(&entries.token)? {
+        return Ok(Some(token));
+    }
+    if !crate::core::legacy_oauth_url_is(server_name, url)? {
+        return Ok(None);
+    }
+    adopt_legacy_secrets(server_name, entries)
+}
+
+/// Move the secrets an older version stored under the server's name alone to
+/// `entries`, and return the token. `None` when there is no such token.
+///
+/// The old entries do not say which URL they were issued for. The caller has
+/// checked that `entries` are for the URL the server had when this version
+/// first ran, which [`crate::core::legacy_oauth_url_is`] records. A server
+/// whose URL has changed since, or that was created since, adopts nothing.
+///
+/// The new entries are written first, so a second process asking at the same
+/// moment finds the token in one place or the other. The old token is then
+/// deleted, and the adoption is undone unless the store confirms that delete.
+/// An old token is so adopted at most once.
+///
+/// The old credentials move with the token and are never adopted alone.
+/// Without that, credentials left behind could later refresh into a token
+/// for another URL.
+fn adopt_legacy_secrets(
+    server_name: &str,
+    entries: &OAuthEntries,
+) -> Result<Option<String>, String> {
+    let legacy = legacy_oauth_entries(server_name);
+    let Some(token) = secret_store::load_secret_if_present(&legacy.token)? else {
+        return Ok(None);
+    };
+    let credentials = match secret_store::load_secret_if_present(&legacy.credentials) {
+        Ok(credentials) => credentials,
+        Err(e) => {
+            eprintln!(
+                "warning: could not read the stored OAuth credentials of MCP server '{}', so its token will not refresh: {}",
+                server_name, e
+            );
+            None
+        }
+    };
+
+    if let Some(credentials) = &credentials {
+        secret_store::store_secret(&entries.credentials, credentials)?;
+    }
+    secret_store::store_secret(&entries.token, &token)?;
+    if let Some(problem) = remove_secret(&legacy.token).problem() {
+        eprintln!(
+            "warning: the OAuth token of MCP server '{}' is in an old store entry that could not be deleted, so it was not used: {}",
+            server_name, problem
+        );
+        discard_secret(&entries.credentials, "the OAuth credentials", server_name);
+        discard_secret(&entries.token, "the OAuth token", server_name);
+        return Ok(None);
+    }
+    discard_secret(&legacy.credentials, "the old OAuth credentials", server_name);
+    Ok(Some(token))
+}
+
+/// Delete the OAuth bearer token issued to a server for `url`.
+///
+/// Returns an error when none is stored, matching the store. A revoke relies
+/// on that.
+pub fn delete_oauth_token(server_name: &str, url: &str) -> Result<(), String> {
+    let entries = oauth_entries(server_name, url)?;
+    secret_store::delete_secret(&entries.token)?;
+    set_cached_token_presence(&entries.token, false);
     Ok(())
 }
 
-/// Check whether an OAuth token exists for a server.
+/// Check whether an OAuth token is stored for a server at `url`.
 ///
 /// The result is cached for the life of the process. A token added or removed
 /// by another process is therefore not observed until restart.
-pub fn has_oauth_token(server_name: &str) -> bool {
+pub fn has_oauth_token(server_name: &str, url: &str) -> bool {
+    let Ok(entries) = oauth_entries(server_name, url) else {
+        return false;
+    };
     if let Ok(cache) = token_presence_cache().lock() {
-        if let Some(present) = cache.get(server_name) {
+        if let Some(present) = cache.get(&entries.token) {
             return *present;
         }
     }
 
-    let present = load_oauth_token(server_name).is_ok();
-    set_cached_token_presence(server_name, present);
+    let present = matches!(find_oauth_token(server_name, url, &entries), Ok(Some(_)));
+    set_cached_token_presence(&entries.token, present);
     present
 }
 
 /// Store OAuth credentials (client_id + token JSON) for refresh support.
-pub fn store_oauth_credentials(server_name: &str, credentials_json: &str) -> Result<(), String> {
-    secret_store::store_secret(&oauth_creds_user(server_name), credentials_json)
+pub fn store_oauth_credentials(
+    server_name: &str,
+    url: &str,
+    credentials_json: &str,
+) -> Result<(), String> {
+    secret_store::store_secret(&oauth_entries(server_name, url)?.credentials, credentials_json)
 }
 
-/// Load stored OAuth credentials JSON.
-pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
-    secret_store::load_secret(&oauth_creds_user(server_name))
+/// Load the stored OAuth credentials JSON for a server at `url`.
+pub fn load_oauth_credentials(server_name: &str, url: &str) -> Result<String, String> {
+    secret_store::load_secret(&oauth_entries(server_name, url)?.credentials)
 }
 
 /// Delete the stored OAuth credentials, which hold the refresh token.
@@ -108,26 +247,176 @@ pub fn load_oauth_credentials(server_name: &str) -> Result<String, String> {
 /// token and carries on when that store fails, so a server can have a token
 /// and no credentials. Revoking it must still work.
 ///
-/// `delete_secret` reports a missing entry and a failed delete the same way,
-/// so a failed delete is checked by reading the entry back. The call succeeds
-/// only when the store confirms that nothing is left. A read that fails is an
-/// error, because the credentials may still be there.
-pub fn delete_oauth_credentials(server_name: &str) -> Result<(), String> {
-    let account = oauth_creds_user(server_name);
-    let Err(delete_err) = secret_store::delete_secret(&account) else {
-        return Ok(());
-    };
-    match secret_store::load_secret_if_present(&account) {
-        Ok(None) => Ok(()),
-        Ok(Some(_)) => Err(format!(
-            "failed to delete OAuth credentials for '{}': {}",
-            server_name, delete_err
-        )),
-        Err(read_err) => Err(format!(
-            "could not confirm that OAuth credentials for '{}' were deleted: {} (delete failed with: {})",
-            server_name, read_err, delete_err
+/// The call succeeds only when the store confirms that nothing is left. A
+/// read that fails is an error, because the credentials may still be there.
+/// A revoke is the user asking for the secrets to be gone, so it must not
+/// report success on a guess.
+pub fn delete_oauth_credentials(server_name: &str, url: &str) -> Result<(), String> {
+    let entries = oauth_entries(server_name, url)?;
+    match remove_secret(&entries.credentials).problem() {
+        None => Ok(()),
+        Some(problem) => Err(format!(
+            "could not delete the OAuth credentials for '{}': {}",
+            server_name, problem
         )),
     }
+}
+
+/// What became of a secret that was to be deleted.
+enum Removal {
+    /// Nothing is stored under the entry now.
+    Gone,
+    /// The store answered, and the secret is still there.
+    StillStored { delete_err: String },
+    /// The delete failed, and the store could not be read to see whether the
+    /// secret is there.
+    Unconfirmed { delete_err: String, read_err: String },
+}
+
+impl Removal {
+    /// Why the secret may still be stored, or `None` when it is gone.
+    fn problem(&self) -> Option<String> {
+        match self {
+            Removal::Gone => None,
+            Removal::StillStored { delete_err } => {
+                Some(format!("the store still holds it ({})", delete_err))
+            }
+            Removal::Unconfirmed { delete_err, read_err } => Some(format!(
+                "the store could not be read to check ({}; delete failed with: {})",
+                read_err, delete_err
+            )),
+        }
+    }
+}
+
+/// Delete the secret under `entry`.
+///
+/// `delete_secret` reports a missing entry and a failed delete the same way,
+/// so a failed delete is checked by reading the entry back. The delete is
+/// tried first, so a secret that exists is removed without being read.
+fn remove_secret(entry: &str) -> Removal {
+    let Err(delete_err) = secret_store::delete_secret(entry) else {
+        return Removal::Gone;
+    };
+    match secret_store::load_secret_if_present(entry) {
+        Ok(None) => Removal::Gone,
+        Ok(Some(_)) => Removal::StillStored { delete_err },
+        Err(read_err) => Removal::Unconfirmed { delete_err, read_err },
+    }
+}
+
+/// Delete a secret that nothing should use any more. A failure is logged and
+/// not returned.
+///
+/// This is tidying. A secret left behind is still filed under its server name
+/// and URL, so it can only ever be found for that pair. Failing the caller
+/// would stop a delete, rename or save wherever the store cannot be reached,
+/// which on Linux with no Secret Service is always.
+fn discard_secret(entry: &str, what: &str, server_name: &str) {
+    if let Some(problem) = remove_secret(entry).problem() {
+        eprintln!(
+            "warning: could not delete {} of MCP server '{}': {}",
+            what, server_name, problem
+        );
+    }
+}
+
+/// Delete the OAuth secrets a server holds for `url`, and any that an older
+/// version stored under its name alone. Failures are logged, as
+/// [`discard_secret`] explains.
+///
+/// Call this when a server is deleted or stops using `url`. The old entries
+/// go too. They were issued for a URL the server no longer has, so nothing
+/// will use them.
+pub fn forget_oauth_secrets(server_name: &str, url: &str) {
+    if let Ok(entries) = oauth_entries(server_name, url) {
+        discard_secret(&entries.credentials, "the OAuth credentials", server_name);
+        discard_secret(&entries.token, "the OAuth token", server_name);
+        set_cached_token_presence(&entries.token, false);
+    }
+    forget_legacy_oauth_secrets(server_name);
+}
+
+/// Delete the OAuth secrets an older version stored under a server's name
+/// alone. Failures are logged.
+pub fn forget_legacy_oauth_secrets(server_name: &str) {
+    let legacy = legacy_oauth_entries(server_name);
+    discard_secret(&legacy.credentials, "the old OAuth credentials", server_name);
+    discard_secret(&legacy.token, "the old OAuth token", server_name);
+}
+
+/// Delete the OAuth secrets an older version stored under a server's name
+/// alone, and fail unless the store confirms they are gone.
+///
+/// A revoke uses this. An old token left behind would be adopted again the
+/// next time the token is asked for, and the server would be signed back in.
+pub fn delete_legacy_oauth_secrets(server_name: &str) -> Result<(), String> {
+    let legacy = legacy_oauth_entries(server_name);
+    for (entry, what) in [(&legacy.credentials, "credentials"), (&legacy.token, "token")] {
+        if let Some(problem) = remove_secret(entry).problem() {
+            return Err(format!(
+                "could not delete the old OAuth {} for '{}': {}",
+                what, server_name, problem
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Move the OAuth secrets a server holds for `url` from `old_name` to
+/// `new_name`, for a server that is being renamed.
+///
+/// Anything already stored for `new_name` at that URL is replaced or deleted,
+/// so the renamed server never pairs its token with credentials left by
+/// another. A failure is logged and the renamed server is signed out. The
+/// rename itself does not depend on this.
+pub fn move_oauth_secrets(old_name: &str, new_name: &str, url: &str) {
+    let (Ok(old), Ok(new)) = (oauth_entries(old_name, url), oauth_entries(new_name, url)) else {
+        return;
+    };
+    forget_legacy_oauth_secrets(new_name);
+
+    let secrets = find_oauth_token(old_name, url, &old).and_then(|token| {
+        let credentials = secret_store::load_secret_if_present(&old.credentials)?;
+        Ok((token, credentials))
+    });
+    let (token, credentials) = match secrets {
+        Ok(secrets) => secrets,
+        Err(e) => {
+            eprintln!(
+                "warning: could not read the OAuth secrets of MCP server '{}', so '{}' is signed out: {}",
+                old_name, new_name, e
+            );
+            discard_secret(&new.credentials, "a leftover OAuth secret", new_name);
+            discard_secret(&new.token, "a leftover OAuth secret", new_name);
+            set_cached_token_presence(&new.token, false);
+            return;
+        }
+    };
+
+    let stored = [(&new.credentials, &credentials), (&new.token, &token)]
+        .into_iter()
+        .try_for_each(|(entry, secret)| match secret {
+            Some(secret) => secret_store::store_secret(entry, secret),
+            None => {
+                discard_secret(entry, "a leftover OAuth secret", new_name);
+                Ok(())
+            }
+        });
+    if let Err(e) = stored {
+        eprintln!(
+            "warning: could not store the OAuth secrets of MCP server '{}' under '{}', so it is signed out: {}",
+            old_name, new_name, e
+        );
+        // Half a pair is not worth keeping.
+        discard_secret(&new.credentials, "the OAuth credentials", new_name);
+        discard_secret(&new.token, "the OAuth token", new_name);
+        set_cached_token_presence(&new.token, false);
+        return;
+    }
+    set_cached_token_presence(&new.token, token.is_some());
+
+    forget_oauth_secrets(old_name, url);
 }
 
 // ── Server config helpers ────────────────────────────────────────────────────
@@ -221,7 +510,7 @@ fn is_token_expired(status_code: u16) -> bool {
 /// automatically attempts a token refresh and retries the request once.
 pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let url = read_server_url(server_name)?;
-    let mut token = load_oauth_token(server_name).map_err(|e| {
+    let mut token = load_oauth_token(server_name, &url).map_err(|e| {
         format!(
             "No OAuth token found for '{}'. Authenticate first in the Automatic app. ({})",
             server_name, e
@@ -252,7 +541,7 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
 
         // On 401/403, attempt a silent token refresh and retry once.
         if is_token_expired(response.status().as_u16()) {
-            if let Ok(new_token) = crate::oauth::refresh_token(server_name).await {
+            if let Ok(new_token) = crate::oauth::refresh_token(server_name, &url).await {
                 token = new_token;
                 response = send_request(&client, &url, &token, &session_id, trimmed).await?;
             }
@@ -344,17 +633,482 @@ fn parse_sse_events(body: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    // Each test below uses server names no other test uses. The test secret
+    // store and the token presence cache are shared by the whole test process.
+
+    use crate::core::secret_store::{set_test_fault, TestFault};
+    use crate::core::{save_mcp_server_config, with_test_home};
+
+    const URL: &str = "https://mcp.example.com/mcp";
+    const OTHER_URL: &str = "https://other.example/mcp";
+    const CREDENTIALS: &str = r#"{"refresh_token":"refresh"}"#;
+
+    fn entries(server: &str, url: &str) -> OAuthEntries {
+        oauth_entries(server, url).expect("a url")
+    }
+
+    fn stored(entry: &str) -> Option<String> {
+        secret_store::load_secret_if_present(entry).expect("read the test store")
+    }
+
+    /// Save an HTTP server at `url` in a home of its own, then run `test`.
+    fn with_saved_server(server: &str, url: &str, test: impl FnOnce()) {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let config = serde_json::json!({ "type": "http", "url": url }).to_string();
+            save_mcp_server_config(server, &config).expect("save");
+            test();
+        });
+    }
+
+    /// Leave an HTTP server at `url` in a home of its own as an older version
+    /// would have, then run `test`. The file is written directly. A save
+    /// through this version would first record that the server did not
+    /// exist before.
+    fn with_server_from_an_older_version(server: &str, url: &str, test: impl FnOnce()) {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = crate::core::get_mcp_servers_dir().expect("dir");
+            std::fs::create_dir_all(&dir).expect("create the registry");
+            let config = serde_json::json!({ "type": "http", "url": url }).to_string();
+            std::fs::write(dir.join(format!("{}.json", server)), config).expect("write");
+            test();
+        });
+    }
+
     #[test]
     fn oauth_token_presence_follows_store_and_delete() {
         let server = "proxy-test-presence-fixture";
-        assert!(!has_oauth_token(server));
+        assert!(!has_oauth_token(server, URL));
 
-        store_oauth_token(server, "token").unwrap();
-        assert!(has_oauth_token(server));
-        assert_eq!(load_oauth_token(server).unwrap(), "token");
+        store_oauth_token(server, URL, "token").unwrap();
+        assert!(has_oauth_token(server, URL));
+        assert_eq!(load_oauth_token(server, URL).unwrap(), "token");
 
-        delete_oauth_token(server).unwrap();
-        assert!(!has_oauth_token(server));
+        delete_oauth_token(server, URL).unwrap();
+        assert!(!has_oauth_token(server, URL));
+    }
+
+    // ── A secret is found only for its server name and URL ───────────────────
+
+    #[test]
+    fn a_token_is_found_only_for_the_url_it_was_stored_for() {
+        let server = "filing-test-url-fixture";
+        store_oauth_token(server, URL, "token").unwrap();
+        store_oauth_credentials(server, URL, CREDENTIALS).unwrap();
+
+        assert!(has_oauth_token(server, URL));
+        assert!(!has_oauth_token(server, OTHER_URL));
+        assert!(load_oauth_token(server, OTHER_URL).is_err());
+        assert!(load_oauth_credentials(server, OTHER_URL).is_err());
+        // Another path on the same host is another URL.
+        assert!(!has_oauth_token(server, "https://mcp.example.com/sse"));
+    }
+
+    #[test]
+    fn a_token_is_found_only_under_the_name_it_was_stored_for() {
+        store_oauth_token("filing-test-name-fixture", URL, "token").unwrap();
+
+        assert!(!has_oauth_token("filing-test-other-name-fixture", URL));
+        assert!(load_oauth_token("filing-test-other-name-fixture", URL).is_err());
+    }
+
+    #[test]
+    fn a_url_written_two_ways_has_one_entry() {
+        let server = "filing-test-forms-fixture";
+        store_oauth_token(server, URL, "token").unwrap();
+
+        assert_eq!(
+            load_oauth_token(server, " HTTPS://MCP.Example.com:443/mcp ").unwrap(),
+            "token"
+        );
+    }
+
+    #[test]
+    fn a_server_with_no_url_has_no_secrets() {
+        let server = "filing-test-no-url-fixture";
+
+        assert!(store_oauth_token(server, "", "token").is_err());
+        assert!(store_oauth_credentials(server, " ", CREDENTIALS).is_err());
+        assert!(!has_oauth_token(server, ""));
+        assert!(load_oauth_token(server, "").is_err());
+    }
+
+    #[test]
+    fn an_entry_is_named_for_the_server_and_a_hash_of_the_url() {
+        let entries = entries("amplitude-eu", URL);
+
+        let hash = entries
+            .token
+            .strip_prefix("mcp_oauth_token_amplitude-eu/")
+            .expect("token entry prefix");
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(entries.credentials, format!("mcp_oauth_creds_amplitude-eu/{}", hash));
+        assert!(!entries.token.contains("mcp.example.com"));
+
+        let legacy = legacy_oauth_entries("amplitude-eu");
+        assert_eq!(legacy.token, "mcp_oauth_token_amplitude-eu");
+        assert_eq!(legacy.credentials, "mcp_oauth_creds_amplitude-eu");
+    }
+
+    // ── Tidying ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn forget_removes_the_secrets_for_one_url_and_leaves_the_others() {
+        let server = "forget-test-both-fixture";
+        store_oauth_token(server, URL, "token").unwrap();
+        store_oauth_credentials(server, URL, CREDENTIALS).unwrap();
+        store_oauth_token(server, OTHER_URL, "other-token").unwrap();
+        assert!(has_oauth_token(server, URL));
+
+        forget_oauth_secrets(server, URL);
+
+        assert_eq!(stored(&entries(server, URL).token), None);
+        assert_eq!(stored(&entries(server, URL).credentials), None);
+        assert!(!has_oauth_token(server, URL));
+        assert_eq!(load_oauth_token(server, OTHER_URL).unwrap(), "other-token");
+    }
+
+    #[test]
+    fn forget_removes_secrets_an_older_version_stored() {
+        let server = "forget-test-legacy-fixture";
+        let legacy = legacy_oauth_entries(server);
+        secret_store::store_secret(&legacy.token, "old-token").unwrap();
+        secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+
+        forget_oauth_secrets(server, URL);
+
+        assert_eq!(stored(&legacy.token), None);
+        assert_eq!(stored(&legacy.credentials), None);
+    }
+
+    #[test]
+    fn forget_does_nothing_when_nothing_is_stored() {
+        let server = "forget-test-empty-fixture";
+
+        forget_oauth_secrets(server, URL);
+        forget_legacy_oauth_secrets(server);
+
+        assert!(!has_oauth_token(server, URL));
+    }
+
+    #[test]
+    fn forget_carries_on_when_the_store_refuses_and_the_token_stays_with_its_url() {
+        let server = "fault-test-forget-refused-fixture";
+        store_oauth_token(server, URL, "token").unwrap();
+        set_test_fault(&entries(server, URL).token, Some(TestFault::DeleteRefused));
+
+        forget_oauth_secrets(server, URL);
+
+        assert_eq!(stored(&entries(server, URL).token), Some("token".to_string()));
+        assert!(load_oauth_token(server, OTHER_URL).is_err());
+    }
+
+    #[test]
+    fn forget_carries_on_when_the_store_cannot_be_read() {
+        let server = "fault-test-forget-unreadable-fixture";
+        set_test_fault(&entries(server, URL).token, Some(TestFault::Unreadable));
+        set_test_fault(&entries(server, URL).credentials, Some(TestFault::Unreadable));
+
+        forget_oauth_secrets(server, URL);
+
+        assert!(!has_oauth_token(server, URL));
+    }
+
+    #[test]
+    fn a_revoke_does_not_report_success_when_the_store_cannot_be_read() {
+        let server = "fault-test-revoke-fixture";
+        set_test_fault(&entries(server, URL).credentials, Some(TestFault::Unreadable));
+
+        let err = delete_oauth_credentials(server, URL).expect_err("must not guess");
+
+        assert!(err.contains("could not be read"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn a_revoke_fails_when_the_store_still_holds_the_credentials() {
+        let server = "fault-test-revoke-refused-fixture";
+        store_oauth_credentials(server, URL, CREDENTIALS).unwrap();
+        set_test_fault(&entries(server, URL).credentials, Some(TestFault::DeleteRefused));
+
+        let err = delete_oauth_credentials(server, URL).expect_err("still stored");
+
+        assert!(err.contains("still holds"), "unexpected error: {err}");
+    }
+
+    // ── Moving on a rename ───────────────────────────────────────────────────
+
+    #[test]
+    fn move_carries_both_secrets_to_the_new_name() {
+        let (old, new) = ("move-test-both-old-fixture", "move-test-both-new-fixture");
+        store_oauth_token(old, URL, "token").unwrap();
+        store_oauth_credentials(old, URL, CREDENTIALS).unwrap();
+        // Prime the cache with the answers a sync would have recorded.
+        assert!(has_oauth_token(old, URL));
+        assert!(!has_oauth_token(new, URL));
+
+        move_oauth_secrets(old, new, URL);
+
+        assert_eq!(load_oauth_token(new, URL).unwrap(), "token");
+        assert_eq!(load_oauth_credentials(new, URL).unwrap(), CREDENTIALS);
+        assert_eq!(stored(&entries(old, URL).token), None);
+        assert_eq!(stored(&entries(old, URL).credentials), None);
+        assert!(has_oauth_token(new, URL));
+        assert!(!has_oauth_token(old, URL));
+    }
+
+    #[test]
+    fn move_with_no_secrets_leaves_none_under_either_name() {
+        let (old, new) = ("move-test-empty-old-fixture", "move-test-empty-new-fixture");
+        // Secrets left under the new name by a server that no longer exists.
+        store_oauth_token(new, URL, "stale-token").unwrap();
+        store_oauth_credentials(new, URL, r#"{"refresh_token":"stale"}"#).unwrap();
+        secret_store::store_secret(&legacy_oauth_entries(new).token, "older-token").unwrap();
+        assert!(has_oauth_token(new, URL));
+
+        move_oauth_secrets(old, new, URL);
+
+        assert_eq!(stored(&entries(new, URL).token), None);
+        assert_eq!(stored(&entries(new, URL).credentials), None);
+        assert_eq!(stored(&legacy_oauth_entries(new).token), None);
+        assert!(!has_oauth_token(new, URL));
+        assert!(!has_oauth_token(old, URL));
+    }
+
+    #[test]
+    fn move_of_a_token_alone_deletes_credentials_left_under_the_new_name() {
+        let (old, new) = ("move-test-token-old-fixture", "move-test-token-new-fixture");
+        store_oauth_token(old, URL, "token").unwrap();
+        store_oauth_credentials(new, URL, r#"{"refresh_token":"stale"}"#).unwrap();
+
+        move_oauth_secrets(old, new, URL);
+
+        assert_eq!(load_oauth_token(new, URL).unwrap(), "token");
+        assert_eq!(stored(&entries(new, URL).credentials), None);
+        assert_eq!(stored(&entries(old, URL).token), None);
+    }
+
+    #[test]
+    fn a_move_that_cannot_read_the_old_secrets_leaves_the_new_name_signed_out() {
+        let (old, new) = ("fault-test-move-unreadable-old-fixture", "fault-test-move-unreadable-new-fixture");
+        // Left under the new name by a server that no longer exists.
+        store_oauth_token(new, URL, "stale-token").unwrap();
+        store_oauth_credentials(new, URL, r#"{"refresh_token":"stale"}"#).unwrap();
+        set_test_fault(&entries(old, URL).token, Some(TestFault::Unreadable));
+
+        move_oauth_secrets(old, new, URL);
+
+        assert_eq!(stored(&entries(new, URL).token), None);
+        assert_eq!(stored(&entries(new, URL).credentials), None);
+        assert!(!has_oauth_token(new, URL));
+    }
+
+    #[test]
+    fn a_move_that_cannot_store_both_secrets_leaves_none_under_the_new_name() {
+        let (old, new) = ("fault-test-move-store-old-fixture", "fault-test-move-store-new-fixture");
+        store_oauth_token(old, URL, "token").unwrap();
+        store_oauth_credentials(old, URL, CREDENTIALS).unwrap();
+        // The credentials are stored first, then the token store fails.
+        set_test_fault(&entries(new, URL).token, Some(TestFault::Unreadable));
+
+        move_oauth_secrets(old, new, URL);
+
+        assert_eq!(stored(&entries(new, URL).credentials), None);
+        assert_eq!(load_oauth_token(old, URL).unwrap(), "token");
+        assert_eq!(load_oauth_credentials(old, URL).unwrap(), CREDENTIALS);
+    }
+
+    // ── Secrets an older version stored under the name alone ─────────────────
+
+    fn seed_legacy_secrets(server: &str) -> OAuthEntries {
+        let legacy = legacy_oauth_entries(server);
+        secret_store::store_secret(&legacy.token, "old-token").unwrap();
+        secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+        legacy
+    }
+
+    #[test]
+    fn an_older_token_is_adopted_for_the_url_the_server_had() {
+        let server = "legacy-test-adopt-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+
+            assert!(has_oauth_token(server, URL));
+
+            assert_eq!(load_oauth_token(server, URL).unwrap(), "old-token");
+            assert_eq!(stored(&entries(server, URL).token), Some("old-token".to_string()));
+            assert_eq!(load_oauth_credentials(server, URL).unwrap(), CREDENTIALS);
+            assert_eq!(stored(&legacy.token), None);
+            assert_eq!(stored(&legacy.credentials), None);
+        });
+    }
+
+    #[test]
+    fn an_older_token_is_not_adopted_for_another_url() {
+        let server = "legacy-test-other-url-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+
+            assert!(!has_oauth_token(server, OTHER_URL));
+            assert!(load_oauth_token(server, OTHER_URL).is_err());
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+            assert_eq!(stored(&entries(server, OTHER_URL).token), None);
+        });
+    }
+
+    #[test]
+    fn an_older_token_does_not_follow_its_server_to_a_new_url() {
+        let server = "legacy-test-url-change-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            // The save cannot delete the old token, so it is still there.
+            set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
+
+            let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
+            save_mcp_server_config(server, &config).expect("save the new url");
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+            assert!(load_oauth_token(server, OTHER_URL).is_err());
+            assert_eq!(stored(&entries(server, OTHER_URL).token), None);
+        });
+    }
+
+    #[test]
+    fn an_older_token_does_not_follow_a_save_under_another_case_of_the_name() {
+        let server = "legacy-test-case-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            // Where the filesystem ignores case, this writes the server's own
+            // file, and tidies under a name its old token is not filed as.
+            let config = serde_json::json!({ "type": "http", "url": OTHER_URL }).to_string();
+            save_mcp_server_config(&server.to_uppercase(), &config).expect("save");
+
+            assert!(load_oauth_token(server, OTHER_URL).is_err());
+            assert!(load_oauth_token(&server.to_uppercase(), OTHER_URL).is_err());
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn a_server_created_by_this_version_does_not_adopt_an_older_token() {
+        let server = "legacy-test-new-server-fixture";
+        with_saved_server(server, URL, || {
+            // Left under the name by a server deleted long ago.
+            let legacy = legacy_oauth_entries(server);
+            secret_store::store_secret(&legacy.token, "old-token").unwrap();
+
+            assert!(load_oauth_token(server, URL).is_err());
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn an_older_token_is_not_adopted_for_a_server_that_is_not_stored() {
+        let server = "legacy-test-unsaved-fixture";
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let legacy = seed_legacy_secrets(server);
+
+            assert!(load_oauth_token(server, URL).is_err());
+
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn an_older_token_that_cannot_be_deleted_is_not_adopted() {
+        let server = "legacy-test-refused-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
+
+            assert!(!has_oauth_token(server, URL));
+            assert!(load_oauth_token(server, URL).is_err());
+
+            assert_eq!(stored(&entries(server, URL).token), None);
+        });
+    }
+
+    #[test]
+    fn an_adoption_that_cannot_delete_the_old_token_leaves_nothing_behind() {
+        let server = "legacy-test-undo-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
+
+            assert!(load_oauth_token(server, URL).is_err());
+
+            assert_eq!(stored(&entries(server, URL).token), None);
+            assert_eq!(stored(&entries(server, URL).credentials), None);
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+        });
+    }
+
+    #[test]
+    fn the_strict_delete_of_older_secrets_fails_while_one_is_still_stored() {
+        let server = "legacy-test-strict-fixture";
+        let legacy = seed_legacy_secrets(server);
+        set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
+
+        let err = delete_legacy_oauth_secrets(server).expect_err("still stored");
+
+        assert!(err.contains("old OAuth token"), "unexpected error: {err}");
+        set_test_fault(&legacy.token, None);
+        delete_legacy_oauth_secrets(server).expect("now it can be deleted");
+        assert_eq!(stored(&legacy.token), None);
+        delete_legacy_oauth_secrets(server).expect("nothing stored is success");
+    }
+
+    // ── The proxy asks for the token filed under the saved URL ───────────────
+
+    #[test]
+    fn the_proxy_does_not_start_for_a_server_whose_token_is_filed_under_another_url() {
+        let server = "run-proxy-other-url-fixture";
+        with_saved_server(server, URL, || {
+            store_oauth_token(server, OTHER_URL, "token").unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            let err = runtime
+                .block_on(run_proxy(server))
+                .expect_err("no token for the saved url")
+                .to_string();
+
+            assert!(err.contains("No OAuth token found"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn older_credentials_are_not_adopted_without_a_token() {
+        let server = "legacy-test-creds-only-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = legacy_oauth_entries(server);
+            secret_store::store_secret(&legacy.credentials, CREDENTIALS).unwrap();
+
+            assert!(!has_oauth_token(server, URL));
+            assert!(load_oauth_credentials(server, URL).is_err());
+            assert_eq!(stored(&entries(server, URL).credentials), None);
+        });
+    }
+
+    #[test]
+    fn a_rename_carries_an_older_token_to_the_new_name() {
+        let (old, new) = ("legacy-test-move-old-fixture", "legacy-test-move-new-fixture");
+        with_server_from_an_older_version(old, URL, || {
+            let legacy = seed_legacy_secrets(old);
+
+            move_oauth_secrets(old, new, URL);
+
+            assert_eq!(load_oauth_token(new, URL).unwrap(), "old-token");
+            assert_eq!(load_oauth_credentials(new, URL).unwrap(), CREDENTIALS);
+            assert_eq!(stored(&legacy.token), None);
+            assert_eq!(stored(&entries(old, URL).token), None);
+        });
     }
 
     #[test]
@@ -386,18 +1140,6 @@ mod tests {
         let events = parse_sse_events(body);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], "{\"hello\":true}");
-    }
-
-    #[test]
-    fn test_keychain_user_names() {
-        assert_eq!(
-            oauth_token_user("amplitude-eu"),
-            "mcp_oauth_token_amplitude-eu"
-        );
-        assert_eq!(
-            oauth_creds_user("amplitude-eu"),
-            "mcp_oauth_creds_amplitude-eu"
-        );
     }
 
     #[test]
