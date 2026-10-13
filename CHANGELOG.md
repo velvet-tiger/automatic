@@ -2,6 +2,31 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.35.0] - 2026-10-13
+
+### Added
+
+- A new `automatic_set_mcp_server_enabled` tool lets an agent enable or disable one of a project's MCP servers. It refuses the `automatic` server, a server the project does not use, and a server that an attached profile provides. Run `automatic_sync_project` afterwards. ([1f3508c](https://github.com/velvet-tiger/automatic/commit/1f3508c))
+- Codex supports the Interrupt hook event. The Hooks event picker offers it, and sync writes it to `.codex/hooks.json`. ([b96ded7](https://github.com/velvet-tiger/automatic/commit/b96ded7))
+- The Pi agent now shows a note about MCP servers. The `pi-mcp-adapter` blocks project servers until you approve them in Pi, so a synced server may not start until then. ([0981712](https://github.com/velvet-tiger/automatic/commit/0981712))
+
+### Changed
+
+- The task log is stored in SQLite at `~/.automatic/task_log.db`. An existing `task_log.json` is imported once and renamed to `task_log.json.migrated`. ([1b6b457](https://github.com/velvet-tiger/automatic/commit/1b6b457))
+- Debug builds keep secrets in `~/.automatic-dev/dev-secrets.json` instead of the OS keychain. Release builds still use the keychain. This is for developers only. ([b3a9681](https://github.com/velvet-tiger/automatic/commit/b3a9681))
+
+### Fixed
+
+- Project sync no longer lets a project's agent files overwrite a saved MCP server. A repository's `.mcp.json` could replace a saved server's URL and headers, and every project that used the server picked up the change. A discovered server is now added only under a name the registry does not hold. A hand edit to a server in an agent file is no longer copied back. Sync writes the saved config over it. ([92d4d5b](https://github.com/velvet-tiger/automatic/commit/92d4d5b))
+- The GitHub server from Discover now installs with its `Authorization` header. The token stays in an environment variable and is never written to disk. Sync rewrites the variable reference for Cursor, OpenCode and Codex. The server editor shows which variables a header uses. ([17fedb0](https://github.com/velvet-tiger/automatic/commit/17fedb0))
+- A failed read of an MCP server config is no longer treated as a missing server. A locked keychain or a denied prompt used to make cloud sync delete the server from the cloud library, make project sync drop it from agent files, and make a pull save empty values over stored secrets. These cases now stop with an error that names the server. A failed registry listing stops the same way. Sync checks the registry before it changes any file. ([ee23394](https://github.com/velvet-tiger/automatic/commit/ee23394), [95147d5](https://github.com/velvet-tiger/automatic/commit/95147d5), [3a166e0](https://github.com/velvet-tiger/automatic/commit/3a166e0))
+- A failed cloud sync write no longer causes data loss. Before, the next sync could delete the asset from the cloud library or upload the older local copy over the newer one. ([6ef58f9](https://github.com/velvet-tiger/automatic/commit/6ef58f9))
+- A denied or locked keychain can no longer replace the env-encryption key. This used to leave every encrypted MCP server value unreadable. A decrypt with no stored key now reports the missing key and creates nothing. ([2a5808b](https://github.com/velvet-tiger/automatic/commit/2a5808b), [0daef59](https://github.com/velvet-tiger/automatic/commit/0daef59))
+- On Linux, secrets are stored in the Secret Service over D-Bus. The kernel keyring was emptied on reboot, which lost the env-encryption key, API keys and OAuth tokens. Secrets in the old store are copied across when they are read. If the Secret Service is missing, the error says what to set up. ([cc43182](https://github.com/velvet-tiger/automatic/commit/cc43182))
+- Revoking an MCP server's OAuth token now also deletes its client id and refresh token. A failed delete stops the revoke, so you can retry. ([055add8](https://github.com/velvet-tiger/automatic/commit/055add8), [61b98e5](https://github.com/velvet-tiger/automatic/commit/61b98e5))
+- A server config found in a project file can no longer carry an env value that looks like ciphertext. Such a value is stored as empty. Before, it made cloud sync and that project's sync fail until you deleted the server. ([27f1c06](https://github.com/velvet-tiger/automatic/commit/27f1c06))
+- The OpenCode restart banner on the MCP Servers page stays dismissed. ([da9f039](https://github.com/velvet-tiger/automatic/commit/da9f039))
+
 ## [1.34.0] - 2026-10-07
 
 ### Added
