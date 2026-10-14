@@ -391,7 +391,9 @@ jobs:
         run: |
           installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
           listing=$(7z l -ba "${installers[0]}" | tr -d '\r')
-          listed=$(grep -oiE 'licenses[\\/][^\\/]+$' <<<"$listing" | sed -E 's|^[^\\/]+[\\/]||' | LC_ALL=C sort | tr '\n' ' ' || true)
+          # Every entry under a top-level licenses folder, as a path relative
+          # to it, so a file in a subfolder shows up as an extra entry.
+          listed=$(grep -oiE '(^|[\\/ ])licenses[\\/].+$' <<<"$listing" | sed -E 's#^[\\/ ]?[Ll][Ii][Cc][Ee][Nn][Ss][Ee][Ss][\\/]##' | LC_ALL=C sort | tr '\n' ' ' || true)
           expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
           if [ "$listed" != "$expected" ]; then
             echo "::error::${installers[0]} holds '$listed' in licenses, expected '$expected'"

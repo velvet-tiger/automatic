@@ -117,6 +117,17 @@ fn read_licence_file(dir: &Path, name: &str) -> Result<Option<LicenceFile>, Stri
     // after the check above.
     let file = fs::File::open(&path)
         .map_err(|e| format!("could not read licence file '{}': {}", path.display(), e))?;
+    // `open` follows symlinks. Check that the file opened is the regular
+    // file checked above, not one swapped in since.
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("could not read licence file '{}': {}", path.display(), e))?;
+    if !opened.is_file() || !same_file(&meta, &opened) {
+        return Err(format!(
+            "licence file '{}' changed while it was being read",
+            path.display()
+        ));
+    }
     let mut text = String::new();
     file.take(MAX_FILE_BYTES + 1)
         .read_to_string(&mut text)
@@ -132,6 +143,21 @@ fn read_licence_file(dir: &Path, name: &str) -> Result<Option<LicenceFile>, Stri
         file_name: name.to_string(),
         text,
     }))
+}
+
+/// True when two metadata records describe the same file. On Unix this
+/// compares device and inode numbers. Elsewhere std exposes no file identity
+/// without extra dependencies, so it compares the type and length, which the
+/// caller has already checked.
+#[cfg(unix)]
+fn same_file(checked: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    checked.dev() == opened.dev() && checked.ino() == opened.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(checked: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    checked.is_file() == opened.is_file() && checked.len() == opened.len()
 }
 
 #[cfg(test)]
