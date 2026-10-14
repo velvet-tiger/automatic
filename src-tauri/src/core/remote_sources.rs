@@ -1793,7 +1793,7 @@ fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
 /// folder when joined to it, or can name an alternate data stream. Windows
 /// drops trailing dots and spaces, so `...` names the library folder itself.
 /// Control characters are refused because the name is shown and logged.
-fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
+pub(crate) fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
     let is_one_plain_name = is_valid_name(name)
         && !name.contains(':')
         && !name.chars().any(char::is_control)

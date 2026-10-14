@@ -565,6 +565,15 @@ pub fn record_skill_scan_state(name: &str, scan: &AssetSecurityScanRecord) -> Re
     write_skill_scan_registry(&registry)
 }
 
+/// Drop the scan record for `name`. A missing record is not an error.
+pub fn remove_skill_scan_state(name: &str) -> Result<(), String> {
+    let mut registry = read_skill_scan_registry()?;
+    if registry.remove(name).is_some() {
+        write_skill_scan_registry(&registry)?;
+    }
+    Ok(())
+}
+
 pub fn get_skill_scan_state(name: &str) -> Result<Option<AssetSecurityScanRecord>, String> {
     Ok(read_skill_scan_registry()?.get(name).cloned())
 }
