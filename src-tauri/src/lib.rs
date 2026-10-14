@@ -196,6 +196,7 @@ pub fn run() {
             import_skill_from_repository,
             import_skill_from_package,
             is_agent_package_dir,
+            preview_agent_package,
             import_agent_package,
             list_installed_agent_packages,
             get_skill_collections,

@@ -59,6 +59,44 @@ interface InstalledAgentPackages {
   errors: AgentPackageListError[];
 }
 
+interface AgentPackageMcpConfig {
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
+interface AgentPackageMcpServer {
+  name: string;
+  config: AgentPackageMcpConfig;
+}
+
+interface AgentPackageSkill {
+  name: string;
+  dir: string;
+}
+
+interface AgentPackage {
+  root: string;
+  name: string;
+  version: string | null;
+  description: string | null;
+  data_dir: string;
+  skills: AgentPackageSkill[];
+  mcp_servers: AgentPackageMcpServer[];
+  invalid: AgentPackageSkippedItem[];
+  warnings: string[];
+}
+
+interface AgentPackagePreview {
+  package: AgentPackage;
+  server_projects: Record<string, string[]>;
+  skill_projects: Record<string, string[]>;
+}
+
 interface SkillImportDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -84,6 +122,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
   const [error, setError] = useState<string | null>(null);
   const [importedSkills, setImportedSkills] = useState<ImportedSkillSummary[]>([]);
   const [packageResult, setPackageResult] = useState<AgentPackageImportResult | null>(null);
+  const [packagePreview, setPackagePreview] = useState<AgentPackagePreview | null>(null);
   const [installedPackages, setInstalledPackages] = useState<InstalledAgentPackages | null>(null);
 
   const loadInstalledPackages = useCallback(async () => {
@@ -103,12 +142,29 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     setError(null);
     setImportedSkills([]);
     setPackageResult(null);
+    setPackagePreview(null);
+  };
+
+  // Packages can carry commands that agents will run, so the user sees
+  // exactly what will be added before anything is written.
+  const previewAgentPackage = async (path: string) => {
+    resetResults();
+    try {
+      setPackagePreview(await invoke<AgentPackagePreview>("preview_agent_package", { path }));
+      setStatus("idle");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    }
   };
 
   const importAgentPackage = async (path: string) => {
-    resetResults();
+    // The preview stays on screen while the import runs, so its button can show progress.
+    setStatus("importing");
+    setError(null);
     try {
       const result = await invoke<AgentPackageImportResult>("import_agent_package", { path });
+      setPackagePreview(null);
       setPackageResult(result);
       setStatus("success");
       const firstSkill = result.imported_skills[0];
@@ -147,7 +203,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     // A chosen plugin.json stands for the package folder that holds it.
     const pluginJsonSuffix = /[\\/]plugin\.json$/;
     if (pluginJsonSuffix.test(path)) {
-      await importAgentPackage(path.replace(pluginJsonSuffix, ""));
+      await previewAgentPackage(path.replace(pluginJsonSuffix, ""));
       return;
     }
     const isSkillPackage = path.toLowerCase().endsWith(".skill");
@@ -155,7 +211,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     const isAgentPackage = !isSkillPackage
       && (await invoke<boolean>("is_agent_package_dir", { path }).catch(() => false));
     if (isAgentPackage) {
-      await importAgentPackage(path);
+      await previewAgentPackage(path);
       return;
     }
 
@@ -221,6 +277,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     setError(null);
     setImportedSkills([]);
     setPackageResult(null);
+    setPackagePreview(null);
     setRepoUrl("");
     setSkillName("");
     onClose();
@@ -346,7 +403,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
                           </div>
                         </div>
                         <button
-                          onClick={() => void importAgentPackage(pkg.path)}
+                          onClick={() => void previewAgentPackage(pkg.path)}
                           disabled={status === "importing"}
                           className="px-2.5 py-1 rounded-md text-[12px] font-medium text-brand hover:bg-brand/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -465,6 +522,15 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
             );
           })()}
 
+          {packagePreview && status !== "success" && (
+            <AgentPackagePreviewPanel
+              preview={packagePreview}
+              busy={status === "importing"}
+              onConfirm={() => void importAgentPackage(packagePreview.package.root)}
+              onCancel={() => setPackagePreview(null)}
+            />
+          )}
+
           {status === "success" && packageResult && (
             <AgentPackageResultPanel result={packageResult} />
           )}
@@ -489,6 +555,13 @@ function AgentPackageResultPanel({ result }: { result: AgentPackageImportResult 
   const importedCount = result.imported_skills.length + result.imported_mcp_servers.length;
   return (
     <div className="mt-4 space-y-3">
+      {importedCount === 0 ? (
+        <div className="p-3 rounded-lg bg-bg-sidebar border border-border-strong/40">
+          <span className="text-[12px] font-medium text-text-base">
+            Nothing was imported from {result.package_name}.
+          </span>
+        </div>
+      ) : (
       <div className="p-3 rounded-lg bg-success/10 border border-success/20">
         <div className="flex items-center gap-2 mb-2">
           <CheckCircle2 size={14} className="text-success" />
@@ -519,6 +592,7 @@ function AgentPackageResultPanel({ result }: { result: AgentPackageImportResult 
           </p>
         )}
       </div>
+      )}
 
       {(skipped.length > 0 || result.warnings.length > 0) && (
         <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
@@ -539,6 +613,118 @@ function AgentPackageResultPanel({ result }: { result: AgentPackageImportResult 
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function describeServer(config: AgentPackageMcpConfig): string {
+  if (config.type === "stdio") {
+    return [config.command ?? "", ...(config.args ?? [])].join(" ");
+  }
+  return config.url ?? "";
+}
+
+function AgentPackagePreviewPanel({
+  preview,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  preview: AgentPackagePreview;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const pkg = preview.package;
+  const nothingToImport = pkg.skills.length === 0 && pkg.mcp_servers.length === 0;
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="p-3 rounded-lg bg-bg-sidebar border border-border-strong/40 space-y-3">
+        <div>
+          <div className="text-[13px] font-semibold text-text-base">
+            {pkg.name}
+            {pkg.version ? <span className="font-normal text-text-muted"> {pkg.version}</span> : null}
+          </div>
+          {pkg.description && <p className="text-[12px] text-text-muted">{pkg.description}</p>}
+          <p className="text-[12px] text-text-muted font-mono break-all">{pkg.root}</p>
+        </div>
+
+        {pkg.skills.length > 0 && (
+          <div>
+            <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">Skills</div>
+            <ul className="space-y-1 text-[12px] text-text-muted">
+              {pkg.skills.map((skill) => (
+                <li key={skill.name}>
+                  <span className="font-mono text-text-base">{skill.name}</span>
+                  {preview.skill_projects[skill.name] && (
+                    <span> · will be added to projects: {preview.skill_projects[skill.name]!.join(", ")}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {pkg.mcp_servers.length > 0 && (
+          <div>
+            <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">MCP servers</div>
+            <ul className="space-y-2 text-[12px] text-text-muted">
+              {pkg.mcp_servers.map((server) => {
+                const envKeys = Object.keys(server.config.env ?? {});
+                const headerKeys = Object.keys(server.config.headers ?? {});
+                const projects = preview.server_projects[server.name];
+                return (
+                  <li key={server.name} className="space-y-0.5">
+                    <div>
+                      <span className="font-mono text-text-base">{server.name}</span>
+                      <span> ({server.config.type})</span>
+                    </div>
+                    <div className="font-mono break-all">{describeServer(server.config)}</div>
+                    {server.config.cwd && <div>Runs in: <span className="font-mono break-all">{server.config.cwd}</span></div>}
+                    {envKeys.length > 0 && <div>Environment: <span className="font-mono">{envKeys.join(", ")}</span></div>}
+                    {headerKeys.length > 0 && <div>Headers: <span className="font-mono">{headerKeys.join(", ")}</span></div>}
+                    {projects && <div className="text-warning">Will be added to projects: {projects.join(", ")}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {(pkg.invalid.length > 0 || pkg.warnings.length > 0) && (
+          <div>
+            <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">Will not be imported</div>
+            <ul className="space-y-1 text-[12px] text-text-muted">
+              {pkg.invalid.map((item) => (
+                <li key={`${item.kind}-${item.name}`}>
+                  <span className="font-mono">{item.name}</span>: {item.reason}
+                </li>
+              ))}
+              {pkg.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          className="px-4 py-2 text-[13px] font-medium text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-lg transition-colors disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={busy || nothingToImport}
+          className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+          Import
+        </button>
+      </div>
     </div>
   );
 }

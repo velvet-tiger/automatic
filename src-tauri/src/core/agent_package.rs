@@ -44,6 +44,19 @@ const PLUGIN_FIELDS: &[&str] = &[
     "keywords",
     "extensions",
 ];
+/// `plugin.json` and `mcp.json` larger than this are refused before reading.
+const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
+/// The folders and root files the skill importer copies with a skill.
+const SKILL_COMPANION_DIRS: &[&str] = &[
+    "scripts",
+    "references",
+    "docs",
+    "assets",
+    "examples",
+    "templates",
+];
+const SKILL_COMPANION_FILES: &[&str] = &["LICENSE", "LICENSE.md", "LICENSE.txt", "README.md"];
+
 const STDIO_FIELDS: &[&str] = &["type", "command", "args", "env", "cwd"];
 const REMOTE_FIELDS: &[&str] = &["type", "url", "headers"];
 
@@ -216,6 +229,20 @@ fn path_to_string(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("Path '{}' is not valid UTF-8", path.display()))
 }
 
+/// Read a manifest file, refusing one over [`MAX_MANIFEST_BYTES`].
+fn read_capped(file: &Path, label: &str) -> Result<String, String> {
+    let size = fs::metadata(file)
+        .map_err(|e| format!("Failed to read {}: {}", label, e))?
+        .len();
+    if size > MAX_MANIFEST_BYTES {
+        return Err(format!(
+            "{} is too large ({} bytes; the limit is {} bytes)",
+            label, size, MAX_MANIFEST_BYTES
+        ));
+    }
+    fs::read_to_string(file).map_err(|e| format!("Failed to read {}: {}", label, e))
+}
+
 // ── plugin.json ──────────────────────────────────────────────────────────────
 
 fn read_plugin_manifest(root: &Path, warnings: &mut Vec<String>) -> Result<PluginManifest, String> {
@@ -230,8 +257,7 @@ fn read_plugin_manifest(root: &Path, warnings: &mut Vec<String>) -> Result<Plugi
     if !file.is_file() {
         return Err("plugin.json must be a regular file".to_string());
     }
-    let raw =
-        fs::read_to_string(&file).map_err(|e| format!("Failed to read plugin.json: {}", e))?;
+    let raw = read_capped(&file, "plugin.json")?;
     let value: Value =
         serde_json::from_str(&raw).map_err(|e| format!("plugin.json is not valid JSON: {}", e))?;
     let obj = value
@@ -482,10 +508,14 @@ fn check_skill_dir(
         return Err("the folder has no SKILL.md file".to_string());
     }
     let skill_md = resolve_inside(root, &format!("{}/SKILL.md", rel), "SKILL.md")?;
-    if !skill_md.is_file() {
-        return Err("SKILL.md is not a regular file".to_string());
+    let is_symlink = fs::symlink_metadata(dir.join("SKILL.md"))
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(true);
+    if is_symlink || !skill_md.is_file() {
+        return Err("SKILL.md must be a regular file, not a symlink".to_string());
     }
     ensure_children_inside(root, &dir)?;
+    ensure_no_companion_symlinks(&dir)?;
     Ok(Some(AgentPackageSkill {
         name: name.to_string(),
         dir: path_to_string(path)?,
@@ -521,6 +551,54 @@ fn ensure_children_inside(root: &Path, dir: &Path) -> Result<(), String> {
                 "'{}' points outside the package folder",
                 entry.file_name().to_string_lossy()
             ));
+        }
+    }
+    Ok(())
+}
+
+/// The skill importer refuses symlinks in the files it copies. Finding them
+/// here reports the skill as invalid before anything is written.
+fn ensure_no_companion_symlinks(dir: &Path) -> Result<(), String> {
+    for name in SKILL_COMPANION_FILES {
+        if fs::symlink_metadata(dir.join(name)).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "'{}' is a symlink, which skills cannot contain",
+                name
+            ));
+        }
+    }
+    for name in SKILL_COMPANION_DIRS {
+        let path = dir.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(format!(
+                    "'{}' is a symlink, which skills cannot contain",
+                    name
+                ))
+            }
+            Ok(m) if m.is_dir() => reject_symlinks_below(&path, name)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlinks_below(dir: &Path, label: &str) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read '{}': {}", label, e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read '{}': {}", label, e))?;
+        let child = format!("{}/{}", label, entry.file_name().to_string_lossy());
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to inspect '{}': {}", child, e))?;
+        if file_type.is_symlink() {
+            return Err(format!(
+                "'{}' is a symlink, which skills cannot contain",
+                child
+            ));
+        }
+        if file_type.is_dir() {
+            reject_symlinks_below(&entry.path(), &child)?;
         }
     }
     Ok(())
@@ -568,7 +646,7 @@ fn read_mcp_file(root: &Path) -> Result<Map<String, Value>, String> {
     if !file.is_file() {
         return Err("mcp.json is not a regular file".to_string());
     }
-    let raw = fs::read_to_string(&file).map_err(|e| format!("Failed to read mcp.json: {}", e))?;
+    let raw = read_capped(&file, "mcp.json")?;
     let value: Value =
         serde_json::from_str(&raw).map_err(|e| format!("mcp.json is not valid JSON: {}", e))?;
     let obj = value
@@ -635,14 +713,21 @@ fn map_stdio(obj: &Map<String, Value>, paths: &PackagePaths) -> Result<Value, St
         .and_then(Value::as_str)
         .ok_or("'command' is required and must be a string")?;
     let command = resolve_command(command, &paths.root)?;
-    let args = string_array(obj.get("args"), "args")?
+    let raw_args = string_array(obj.get("args"), "args")?;
+    for arg in &raw_args {
+        ensure_only_package_placeholders(arg, "args")?;
+    }
+    let args = raw_args
         .iter()
         .map(|arg| Value::String(expand_placeholders(arg, paths)))
         .collect::<Vec<_>>();
     let env = map_env(obj.get("env"), paths)?;
     let cwd = match obj.get("cwd") {
         None => paths.root.clone(),
-        Some(Value::String(raw)) => resolve_cwd(raw, paths)?,
+        Some(Value::String(raw)) => {
+            ensure_only_package_placeholders(raw, "cwd")?;
+            resolve_cwd(raw, paths)?
+        }
         Some(_) => return Err("'cwd' must be a string".to_string()),
     };
     let mut config = Map::new();
@@ -660,6 +745,12 @@ fn map_stdio(obj: &Map<String, Value>, paths: &PackagePaths) -> Result<Value, St
 fn resolve_command(command: &str, root: &Path) -> Result<String, String> {
     if command.is_empty() || command.chars().any(char::is_whitespace) {
         return Err("'command' must be one token with no spaces".to_string());
+    }
+    if command == "." || command == ".." || command.contains("${") {
+        return Err(format!(
+            "command '{}' must be an executable name or a './' path, with no placeholder",
+            command
+        ));
     }
     if let Some(rel) = command.strip_prefix("./") {
         let path = resolve_inside(root, rel, "command")?;
@@ -705,15 +796,48 @@ fn map_env(value: Option<&Value>, paths: &PackagePaths) -> Result<Map<String, Va
             if key == ROOT_ENV || key == DATA_ENV {
                 return Err(format!("'env' must not set '{}'", key));
             }
+            if !is_env_name(key) {
+                return Err(format!(
+                    "env name '{}' must be letters, digits and '_', and not start with a digit",
+                    key.escape_debug()
+                ));
+            }
             let text = val
                 .as_str()
                 .ok_or_else(|| format!("env value '{}' must be a string", key))?;
+            ensure_only_package_placeholders(text, &format!("env value '{}'", key))?;
             env.insert(key.clone(), Value::String(expand_placeholders(text, paths)));
         }
     }
     env.insert(ROOT_ENV.to_string(), Value::String(paths.root_str.clone()));
     env.insert(DATA_ENV.to_string(), Value::String(paths.data_str.clone()));
     Ok(env)
+}
+
+/// `[A-Za-z_][A-Za-z0-9_]*`, the names every agent and shell accepts.
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The spec leaves any `${...}` other than its two placeholders as literal
+/// text. Automatic's sync would later expand `${workspaceFolder}`,
+/// `${userHome}` and `${env:...}`, and agents rewrite `${VAR}` in headers,
+/// so such a value cannot be stored as the package wrote it.
+fn ensure_only_package_placeholders(raw: &str, label: &str) -> Result<(), String> {
+    let rest = raw
+        .replace(ROOT_PLACEHOLDER, "")
+        .replace(DATA_PLACEHOLDER, "");
+    if rest.contains("${") {
+        return Err(format!(
+            "{} '{}' uses a placeholder other than ${{PLUGIN_ROOT}} or ${{PLUGIN_DATA}}, which Automatic cannot keep as literal text",
+            label, raw
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_cwd(raw: &str, paths: &PackagePaths) -> Result<PathBuf, String> {
@@ -749,6 +873,9 @@ fn map_remote(obj: &Map<String, Value>, transport: &str) -> Result<Value, String
         .and_then(Value::as_str)
         .ok_or("'url' is required and must be a string")?;
     validate_remote_url(url)?;
+    if url.contains("${") {
+        return Err(format!("url '{}' must not contain a placeholder", url));
+    }
     let kind = if transport == "sse" { "sse" } else { "http" };
     let mut config = Map::new();
     config.insert("type".to_string(), Value::String(kind.to_string()));
@@ -799,8 +926,26 @@ fn validate_headers(value: &Value) -> Result<Map<String, Value>, String> {
     let obj = value.as_object().ok_or("'headers' must be an object")?;
     let mut seen = std::collections::HashSet::new();
     for (key, val) in obj {
-        if !val.is_string() {
-            return Err(format!("header '{}' must be a string", key));
+        let text = val
+            .as_str()
+            .ok_or_else(|| format!("header '{}' must be a string", key))?;
+        if key.is_empty() || !key.chars().all(is_header_token_char) {
+            return Err(format!(
+                "header name '{}' is not a valid HTTP header name",
+                key.escape_debug()
+            ));
+        }
+        if text.chars().any(|c| c.is_control() && c != '\t') {
+            return Err(format!(
+                "header '{}' has a control character in its value",
+                key
+            ));
+        }
+        if text.contains("${") {
+            return Err(format!(
+                "header '{}' uses a placeholder, which Automatic cannot keep as literal text",
+                key
+            ));
         }
         if !seen.insert(key.to_ascii_lowercase()) {
             return Err(format!(
@@ -812,13 +957,50 @@ fn validate_headers(value: &Value) -> Result<Map<String, Value>, String> {
     Ok(obj.clone())
 }
 
+/// RFC 7230 `tchar`.
+fn is_header_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c)
+}
+
 // ── Import ───────────────────────────────────────────────────────────────────
+
+/// Library names an import must not reuse. Read before anything is written,
+/// so a failed read leaves the library untouched.
+struct LibraryNames {
+    skills: Vec<String>,
+    servers: Vec<String>,
+}
+
+fn read_library_names() -> Result<LibraryNames, String> {
+    let mut skills = library_skill_names()?;
+    skills.push(super::mcp_servers::AUTOMATIC_SKILL_NAME.to_string());
+    let mut servers = super::mcp_servers::list_mcp_server_configs()?;
+    servers.push(super::mcp_servers::AUTOMATIC_SERVER_NAME.to_string());
+    Ok(LibraryNames { skills, servers })
+}
+
+/// Every folder in the library's skills directory, with or without a
+/// `SKILL.md`, because the import writes into a folder of that name.
+fn library_skill_names() -> Result<Vec<String>, String> {
+    let dir = super::paths::get_library_skills_dir()?;
+    match fs::read_dir(&dir) {
+        Ok(entries) => Ok(entries
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("Failed to read the skills library: {}", e)),
+    }
+}
 
 /// Read the package at `path`, then add its skills and MCP servers to the
 /// library. Names already in the library are skipped and never overwritten.
-/// Creates the package's `${PLUGIN_DATA}` folder; never deletes it.
+/// Names are compared without letter case, because the library can sit on
+/// a case-insensitive file system. Creates the package's `${PLUGIN_DATA}`
+/// folder; never deletes it.
 pub fn import_agent_package(path: &str) -> Result<AgentPackageImportResult, String> {
     let package = read_agent_package(path)?;
+    let mut names = read_library_names()?;
     fs::create_dir_all(&package.data_dir).map_err(|e| {
         format!(
             "Failed to create the data folder '{}': {}",
@@ -835,53 +1017,87 @@ pub fn import_agent_package(path: &str) -> Result<AgentPackageImportResult, Stri
         invalid: package.invalid.clone(),
         warnings: package.warnings.clone(),
     };
+    let root = PathBuf::from(&package.root);
     for skill in &package.skills {
-        import_one_skill(skill, &mut result);
+        import_one_skill(&root, skill, &mut names.skills, &mut result);
     }
-    let existing_servers = super::mcp_servers::list_mcp_server_configs()?;
     for server in &package.mcp_servers {
-        import_one_server(server, &existing_servers, &mut result);
+        import_one_server(server, &mut names.servers, &mut result);
     }
     assign_skill_collection(&package.name, &mut result);
     Ok(result)
 }
 
-fn import_one_skill(skill: &AgentPackageSkill, result: &mut AgentPackageImportResult) {
+fn import_one_skill(
+    root: &Path,
+    skill: &AgentPackageSkill,
+    taken: &mut Vec<String>,
+    result: &mut AgentPackageImportResult,
+) {
     let kind = AgentPackageItemKind::Skill;
-    if super::skills::skill_exists(&skill.name) || super::mcp_servers::is_builtin_skill(&skill.name)
-    {
+    if super::contains_ignore_ascii_case(taken, &skill.name) {
         result
             .conflicts
             .push(skipped(kind, &skill.name, conflict_reason()));
         return;
     }
-    let skill_md = Path::new(&skill.dir).join("SKILL.md");
-    match super::skills::import_skill_from_local_path(&skill_md.to_string_lossy()) {
-        Ok(_) => result.imported_skills.push(skill.name.clone()),
+    taken.push(skill.name.clone());
+    match import_skill_files(root, skill) {
+        Ok(()) => result.imported_skills.push(skill.name.clone()),
         Err(e) => result.invalid.push(skipped(kind, &skill.name, e)),
     }
 }
 
+/// Check the skill again just before copying, because the package folder
+/// can change after it was read. If the copy fails part way, remove the
+/// library folder it created, so no half-written skill is left behind.
+fn import_skill_files(root: &Path, skill: &AgentPackageSkill) -> Result<(), String> {
+    let source = Path::new(&skill.dir);
+    check_skill_dir(root, &skill.name, source)?.ok_or("the skill folder is no longer a folder")?;
+    let target = super::paths::get_library_skills_dir()?.join(&skill.name);
+    let existed = fs::symlink_metadata(&target).is_ok();
+    let skill_md = source.join("SKILL.md");
+    let imported = super::skills::import_skill_from_local_path(&skill_md.to_string_lossy());
+    if let Err(e) = imported {
+        if !existed {
+            if let Err(cleanup) = fs::remove_dir_all(&target) {
+                if cleanup.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!(
+                        "{}. The partly written skill at '{}' could not be removed: {}",
+                        e,
+                        target.display(),
+                        cleanup
+                    ));
+                }
+            }
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
 fn import_one_server(
     server: &AgentPackageMcpServer,
-    existing: &[String],
+    taken: &mut Vec<String>,
     result: &mut AgentPackageImportResult,
 ) {
     let kind = AgentPackageItemKind::McpServer;
-    if existing.contains(&server.name) || super::mcp_servers::is_builtin_mcp_server(&server.name) {
+    if super::contains_ignore_ascii_case(taken, &server.name) {
         result
             .conflicts
             .push(skipped(kind, &server.name, conflict_reason()));
         return;
     }
+    taken.push(server.name.clone());
     match save_server(server) {
         Ok(()) => result.imported_mcp_servers.push(server.name.clone()),
         Err(e) => result.invalid.push(skipped(kind, &server.name, e)),
     }
 }
 
-/// Same path as a remote-source install: security scan, blank anything that
-/// looks like ciphertext, then the registry's own save (which encrypts env).
+/// Same steps as a remote-source install: security scan, blank anything
+/// that looks like ciphertext, then a registry write that encrypts env. The
+/// write is create-only, so it can never replace an existing server.
 fn save_server(server: &AgentPackageMcpServer) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&server.config)
         .map_err(|e| format!("Failed to serialise MCP server '{}': {}", server.name, e))?;
@@ -891,8 +1107,7 @@ fn save_server(server: &AgentPackageMcpServer) -> Result<(), String> {
         &content,
     )?;
     let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
-    super::mcp_servers::save_mcp_server_config(&server.name, &content)
-        .map_err(|e| format!("Failed to save MCP server '{}': {}", server.name, e))
+    super::mcp_servers::create_mcp_server_config(&server.name, &content)
 }
 
 fn conflict_reason() -> String {
@@ -1458,6 +1673,304 @@ mod tests {
             assert_eq!(listed.packages[0].skill_count, 1);
             assert_eq!(listed.errors.len(), 1);
             assert!(listed.errors[0].path.ends_with("empty"));
+        });
+    }
+
+    fn library_skill_dir(name: &str) -> PathBuf {
+        crate::core::paths::get_library_skills_dir()
+            .unwrap()
+            .join(name)
+    }
+
+    fn server_file(name: &str) -> PathBuf {
+        crate::core::mcp_servers::get_mcp_servers_dir()
+            .unwrap()
+            .join(format!("{}.json", name))
+    }
+
+    fn conflict_names(result: &AgentPackageImportResult) -> Vec<String> {
+        result.conflicts.iter().map(|c| c.name.clone()).collect()
+    }
+
+    #[test]
+    fn case_variant_of_an_existing_server_is_a_conflict() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({"GitHub": {"type": "sse", "url": "https://new.example/s"}}),
+            );
+            crate::core::mcp_servers::save_mcp_server_config(
+                "github",
+                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
+            )
+            .unwrap();
+            let before = fs::read_to_string(server_file("github")).unwrap();
+            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert_eq!(conflict_names(&result), vec!["GitHub"]);
+            assert!(result.imported_mcp_servers.is_empty());
+            assert_eq!(fs::read_to_string(server_file("github")).unwrap(), before);
+        });
+    }
+
+    #[test]
+    fn case_variant_of_the_builtin_server_and_skill_is_a_conflict() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "Automatic");
+            write_mcp(
+                root,
+                json!({
+                    "automatic": {"type": "sse", "url": "https://e.com/a"},
+                    "Automatic": {"type": "sse", "url": "https://e.com/b"}
+                }),
+            );
+            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert_eq!(
+                conflict_names(&result),
+                vec!["Automatic", "Automatic", "automatic"]
+            );
+            assert!(result.imported_mcp_servers.is_empty());
+            assert!(result.imported_skills.is_empty());
+            assert!(!server_file("automatic").exists());
+        });
+    }
+
+    #[test]
+    fn two_case_variants_in_one_package_import_once() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({
+                    "FOO": {"type": "sse", "url": "https://e.com/upper"},
+                    "foo": {"type": "sse", "url": "https://e.com/lower"}
+                }),
+            );
+            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert_eq!(result.imported_mcp_servers, vec!["FOO"]);
+            assert_eq!(conflict_names(&result), vec!["foo"]);
+            let saved = crate::core::mcp_servers::read_mcp_server_config("FOO").unwrap();
+            assert!(saved.contains("upper"));
+        });
+    }
+
+    #[test]
+    fn create_only_save_refuses_an_existing_file() {
+        with_package(|_| {
+            crate::core::mcp_servers::save_mcp_server_config(
+                "srv",
+                r#"{"type":"sse","url":"https://keep.example"}"#,
+            )
+            .unwrap();
+            let err = crate::core::mcp_servers::create_mcp_server_config(
+                "srv",
+                r#"{"type":"sse","url":"https://new.example"}"#,
+            )
+            .unwrap_err();
+            assert!(err.contains("already exists"));
+            assert!(fs::read_to_string(server_file("srv"))
+                .unwrap()
+                .contains("keep.example"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_in_companion_folder_marks_skill_invalid_before_writing() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "x");
+            write(&root.join("notes.md"), "inside the package");
+            fs::create_dir_all(root.join("skills/x/scripts/nested")).unwrap();
+            std::os::unix::fs::symlink(
+                root.join("notes.md"),
+                root.join("skills/x/scripts/nested/link.md"),
+            )
+            .unwrap();
+            let package = read(root).unwrap();
+            assert_eq!(invalid_names(&package), vec!["x"]);
+            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert!(result.imported_skills.is_empty());
+            assert!(!library_skill_dir("x").exists());
+        });
+    }
+
+    #[test]
+    fn failed_companion_copy_leaves_no_partial_skill() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "x");
+            write(
+                &root.join("skills/x/scripts/key.md"),
+                "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+            );
+            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert!(result.imported_skills.is_empty());
+            assert_eq!(result.invalid.len(), 1);
+            assert!(!library_skill_dir("x").exists());
+            // Re-importing still reports it as invalid, not as a conflict.
+            let again = import_agent_package(root.to_str().unwrap()).unwrap();
+            assert!(again.conflicts.is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_md_swapped_for_a_symlink_after_reading_is_not_imported() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "x");
+            let package = read(root).unwrap();
+            let skill_md = root.join("skills/x/SKILL.md");
+            write(&root.join("other.md"), "---\nname: x\n---\nswapped\n");
+            fs::remove_file(&skill_md).unwrap();
+            std::os::unix::fs::symlink(root.join("other.md"), &skill_md).unwrap();
+            let skill = &package.skills[0];
+            assert!(import_skill_files(root, skill).is_err());
+            assert!(!library_skill_dir("x").exists());
+        });
+    }
+
+    #[test]
+    fn oversized_manifests_are_refused() {
+        with_package(|root| {
+            let mut manifest = plugin_json("demo");
+            manifest["description"] = json!("a".repeat(MAX_MANIFEST_BYTES as usize));
+            write_plugin(root, &manifest);
+            assert!(read(root).unwrap_err().contains("too large"));
+            write_plugin(root, &plugin_json("demo"));
+            let big = "x".repeat(MAX_MANIFEST_BYTES as usize);
+            write_mcp(
+                root,
+                json!({"r": {"type": "sse", "url": "https://e.com/s", "headers": {"X-Pad": big}}}),
+            );
+            assert!(read(root)
+                .unwrap()
+                .warnings
+                .iter()
+                .any(|w| w.contains("too large")));
+        });
+    }
+
+    #[test]
+    fn env_names_and_header_names_and_values_are_checked() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({
+                    "empty": {"type": "stdio", "command": "node", "env": {"": "x"}},
+                    "equals": {"type": "stdio", "command": "node", "env": {"A=B": "x"}},
+                    "newline": {"type": "stdio", "command": "node", "env": {"A\nB": "x"}},
+                    "digit": {"type": "stdio", "command": "node", "env": {"1A": "x"}},
+                    "goodenv": {"type": "stdio", "command": "node", "env": {"_A1": "x"}},
+                    "crlf": {"type": "sse", "url": "https://e.com", "headers": {"X-A": "a\r\nX-B: b"}},
+                    "space": {"type": "sse", "url": "https://e.com", "headers": {"X A": "a"}},
+                    "colon": {"type": "sse", "url": "https://e.com", "headers": {"X:A": "a"}},
+                    "goodhdr": {"type": "sse", "url": "https://e.com", "headers": {"X-Api_Key": "a\tb"}}
+                }),
+            );
+            let package = read(root).unwrap();
+            let mut bad = invalid_names(&package);
+            bad.sort();
+            assert_eq!(
+                bad,
+                vec!["colon", "crlf", "digit", "empty", "equals", "newline", "space"]
+            );
+            assert_eq!(package.mcp_servers.len(), 2);
+        });
+    }
+
+    #[test]
+    fn foreign_placeholders_skip_the_entry() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({
+                    "arg": {"type": "stdio", "command": "node", "args": ["${workspaceFolder}"]},
+                    "env": {"type": "stdio", "command": "node", "env": {"A": "${env:HOME}"}},
+                    "home": {"type": "stdio", "command": "node", "cwd": "${userHome}"},
+                    "hdr": {"type": "sse", "url": "https://e.com", "headers": {"A": "Bearer ${TOKEN}"}},
+                    "ok": {"type": "stdio", "command": "node", "args": ["${PLUGIN_ROOT}", "$HOME", "{x}"]}
+                }),
+            );
+            let package = read(root).unwrap();
+            let mut bad = invalid_names(&package);
+            bad.sort();
+            assert_eq!(bad, vec!["arg", "env", "hdr", "home"]);
+            assert_eq!(server(&package, "ok")["args"][1], "$HOME");
+        });
+    }
+
+    #[test]
+    fn dot_names_and_placeholders_are_not_commands() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({
+                    "dot": {"type": "stdio", "command": "."},
+                    "dotdot": {"type": "stdio", "command": ".."},
+                    "ph": {"type": "stdio", "command": "${PLUGIN_ROOT}"}
+                }),
+            );
+            let package = read(root).unwrap();
+            let mut bad = invalid_names(&package);
+            bad.sort();
+            assert_eq!(bad, vec!["dot", "dotdot", "ph"]);
+        });
+    }
+
+    #[test]
+    fn plugin_data_cwd_cannot_escape() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({"up": {"type": "stdio", "command": "node", "cwd": "${PLUGIN_DATA}/../x"}}),
+            );
+            assert_eq!(invalid_names(&read(root).unwrap()), vec!["up"]);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifests_symlinked_outside_the_package_are_refused() {
+        with_package(|root| {
+            let outside = TempDir::new().unwrap();
+            write(
+                &outside.path().join("plugin.json"),
+                &plugin_json("demo").to_string(),
+            );
+            std::os::unix::fs::symlink(
+                outside.path().join("plugin.json"),
+                root.join("plugin.json"),
+            )
+            .unwrap();
+            assert!(read(root).unwrap_err().contains("outside"));
+
+            fs::remove_file(root.join("plugin.json")).unwrap();
+            write_plugin(root, &plugin_json("demo"));
+            let mcp = json!({"$schema": AGENT_PACKAGE_MCP_SCHEMA, "mcpServers": {}});
+            write(&outside.path().join("mcp.json"), &mcp.to_string());
+            std::os::unix::fs::symlink(outside.path().join("mcp.json"), root.join("mcp.json"))
+                .unwrap();
+            let package = read(root).unwrap();
+            assert!(package.warnings.iter().any(|w| w.contains("outside")));
+        });
+    }
+
+    #[test]
+    fn full_author_object_is_accepted() {
+        with_package(|root| {
+            let mut manifest = plugin_json("demo");
+            manifest["author"] =
+                json!({"name": "A", "email": "a@example.com", "url": "https://a.example"});
+            manifest["keywords"] = json!(["x", "y"]);
+            write_plugin(root, &manifest);
+            assert!(read(root).is_ok());
         });
     }
 }
