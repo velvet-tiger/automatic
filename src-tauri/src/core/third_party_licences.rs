@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::Path;
 
 /// The folder inside the app's resource directory that holds the files.
@@ -47,10 +47,11 @@ pub struct ThirdPartyLicences {
 ///
 /// A missing `dir` is not an error: development builds have none. A known
 /// file that is missing is skipped, since `system-libraries.txt` exists only
-/// on Linux. A known name that is a symlink, a folder, too large or not
-/// UTF-8 is an error, because a release bundle never holds one.
+/// on Linux. A `dir` that is a symlink, or a known name that is a symlink, a
+/// folder, too large or not UTF-8, is an error, because a release bundle
+/// never holds one.
 pub fn read_third_party_licences(dir: &Path) -> Result<ThirdPartyLicences, String> {
-    match fs::metadata(dir) {
+    match fs::symlink_metadata(dir) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => {
             return Err(format!(
@@ -112,8 +113,21 @@ fn read_licence_file(dir: &Path, name: &str) -> Result<Option<LicenceFile>, Stri
             MAX_FILE_BYTES
         ));
     }
-    let text = fs::read_to_string(&path)
+    // The limit is applied to the read as well, in case the file grows
+    // after the check above.
+    let file = fs::File::open(&path)
         .map_err(|e| format!("could not read licence file '{}': {}", path.display(), e))?;
+    let mut text = String::new();
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("could not read licence file '{}': {}", path.display(), e))?;
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!(
+            "licence file '{}' is more than the {} byte limit",
+            path.display(),
+            MAX_FILE_BYTES
+        ));
+    }
     Ok(Some(LicenceFile {
         file_name: name.to_string(),
         text,
@@ -193,6 +207,19 @@ mod tests {
         std::os::unix::fs::symlink(&outside, dir.join("interface.txt")).unwrap();
         let err = read_third_party_licences(&dir).unwrap_err();
         assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_folder_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("elsewhere");
+        fs::create_dir(&real).unwrap();
+        fs::write(real.join("rust-crates.txt"), "crates").unwrap();
+        let link = tmp.path().join("licenses");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let err = read_third_party_licences(&link).unwrap_err();
+        assert!(err.contains("is not a folder"), "{err}");
     }
 
     #[test]

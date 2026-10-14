@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { isAcceptedLicence, packageRootFromModuleId, renderLicences } from "./frontend-licenses";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  type BundleEntry,
+  collectLicences,
+  isAcceptedLicence,
+  packageRootFromModuleId,
+  renderLicences,
+} from "./frontend-licenses";
 
 describe("packageRootFromModuleId", () => {
   it("finds an unscoped package", () => {
@@ -73,5 +82,97 @@ describe("renderLicences", () => {
     expect(text.indexOf("alpha 2.0.0 (ISC)")).toBeLessThan(text.indexOf("zeta 1.0.0 (MIT)"));
     expect(text).toContain("https://www.npmjs.com/package/alpha/v/2.0.0");
     expect(text).toContain("--- LICENSE ---\n\nA");
+  });
+});
+
+describe("collectLicences", () => {
+  let root: string;
+
+  function addPackage(name: string, license: string, files: Record<string, string>): string {
+    const dir = path.join(root, "node_modules", ...name.split("/"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, version: "1.0.0", license }));
+    for (const [file, text] of Object.entries(files)) writeFileSync(path.join(dir, file), text);
+    return dir;
+  }
+
+  function chunk(modules: Record<string, number>): BundleEntry {
+    const entries = Object.entries(modules).map(([id, renderedLength]) => [id, { renderedLength }] as const);
+    return { type: "chunk", modules: Object.fromEntries(entries) };
+  }
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), "frontend-licences-"));
+    // Always added: Tailwind's CSS is emitted without a module id.
+    addPackage("tailwindcss", "MIT", { LICENSE: "Copyright (c) Tailwind Labs" });
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("lists packages with rendered code and skips tree-shaken ones", () => {
+    const used = addPackage("used", "MIT", { LICENSE: "used licence" });
+    const unused = addPackage("unused", "MIT", { LICENSE: "unused licence" });
+    const text = collectLicences(root, [chunk({ [`${used}/index.js`]: 10, [`${unused}/index.js`]: 0 })]);
+    expect(text).toContain("used 1.0.0 (MIT)");
+    expect(text).toContain("tailwindcss 1.0.0 (MIT)");
+    expect(text).not.toContain("unused 1.0.0");
+  });
+
+  it("lists CSS modules and assets that come from a package", () => {
+    const css = addPackage("some-css", "MIT", { LICENSE: "css licence" });
+    const font = addPackage("@fonts/inter", "OFL-1.1 OR MIT", { LICENSE: "font licence" });
+    const text = collectLicences(root, [
+      chunk({ [`${css}/style.css`]: 0 }),
+      { type: "asset", originalFileNames: [`${font}/inter.woff2`] },
+    ]);
+    expect(text).toContain("some-css 1.0.0 (MIT)");
+    expect(text).toContain("@fonts/inter 1.0.0 (OFL-1.1 OR MIT)");
+  });
+
+  it("adds Vite, cut at its bundled-dependency licences, when its helpers are used", () => {
+    const used = addPackage("used", "MIT", { LICENSE: "used licence" });
+    addPackage("vite", "MIT", {
+      "LICENSE.md": "# Vite core license\nVite MIT text\n\n# Licenses of bundled dependencies\nother text",
+    });
+    const text = collectLicences(root, [chunk({ [`${used}/index.js`]: 1, "\0vite/preload-helper.js": 1 })]);
+    expect(text).toContain("vite 1.0.0 (MIT)");
+    expect(text).toContain("Vite MIT text");
+    expect(text).not.toContain("other text");
+  });
+
+  it("fails when Vite's licence file loses the heading it is cut at", () => {
+    const used = addPackage("used", "MIT", { LICENSE: "used licence" });
+    addPackage("vite", "MIT", { "LICENSE.md": "# Vite core license\nno heading here" });
+    expect(() => collectLicences(root, [chunk({ [`${used}/index.js`]: 1, "\0vite/preload-helper.js": 1 })])).toThrow(
+      /LICENCE_FILE_CUT_AT/,
+    );
+  });
+
+  it("borrows the licence text of @tauri-apps/api for the Tauri plugin packages", () => {
+    addPackage("@tauri-apps/api", "Apache-2.0 OR MIT", { LICENSE_MIT: "Tauri Apps Contributors MIT" });
+    const plugin = addPackage("@tauri-apps/plugin-opener", "MIT OR Apache-2.0", { "LICENSE.spdx": "spdx only" });
+    const text = collectLicences(root, [chunk({ [`${plugin}/index.js`]: 5 })]);
+    expect(text).toMatch(/@tauri-apps\/plugin-opener 1\.0\.0[\s\S]*spdx only[\s\S]*Tauri Apps Contributors MIT/);
+  });
+
+  it("fails on a licence that is not accepted", () => {
+    const gpl = addPackage("gpl-thing", "GPL-3.0-only", { LICENSE: "GPL" });
+    expect(() => collectLicences(root, [chunk({ [`${gpl}/index.js`]: 1 })])).toThrow(/does not accept/);
+  });
+
+  it("fails on a package with no licence text", () => {
+    const bare = addPackage("bare", "MIT", {});
+    expect(() => collectLicences(root, [chunk({ [`${bare}/index.js`]: 1 })])).toThrow(/ships no licence text/);
+  });
+
+  it("fails on a licence file that is a symlink", () => {
+    const linked = addPackage("linked", "MIT", {});
+    writeFileSync(path.join(root, "outside.txt"), "not a licence");
+    symlinkSync(path.join(root, "outside.txt"), path.join(linked, "LICENSE"));
+    expect(() => collectLicences(root, [chunk({ [`${linked}/index.js`]: 1 })])).toThrow(/is a symlink/);
+  });
+
+  it("fails when the bundle holds no npm package", () => {
+    expect(() => collectLicences(root, [chunk({ [`${root}/src/main.tsx`]: 100 })])).toThrow(/No npm packages/);
   });
 });

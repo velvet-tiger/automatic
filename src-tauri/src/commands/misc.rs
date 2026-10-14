@@ -111,9 +111,10 @@ pub fn restart_app(app: tauri::AppHandle) {
 
 /// Read the third-party licence files that release builds ship in the app's
 /// resource folder. Takes no path from the caller. Returns no files and no
-/// folder for a build without them, such as a development build.
+/// folder for a build without them, such as a development build. It is async
+/// so that reading several megabytes runs off the main thread.
 #[tauri::command]
-pub fn read_third_party_licences(
+pub async fn read_third_party_licences(
     app: tauri::AppHandle,
 ) -> Result<core::ThirdPartyLicences, String> {
     use tauri::Manager;

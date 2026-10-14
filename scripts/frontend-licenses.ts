@@ -11,7 +11,7 @@
 // licence is not accepted below. A new licence is then a decision someone
 // makes, not something that slips in.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 
@@ -122,7 +122,16 @@ function readManifest(root: string): PackageManifest {
 function readLicenceFiles(root: string, packageName: string): { name: string; text: string }[] {
   const cutAt = LICENCE_FILE_CUT_AT[packageName];
   return readdirSync(root)
-    .filter((entry) => LICENCE_FILE_PATTERN.test(entry) && statSync(path.join(root, entry)).isFile())
+    .filter((entry) => {
+      if (!LICENCE_FILE_PATTERN.test(entry)) return false;
+      const stats = lstatSync(path.join(root, entry));
+      // The file ships in the app. A symlink could pull in a file from
+      // outside the package, so it stops the build instead of being followed.
+      if (stats.isSymbolicLink()) {
+        throw new Error(`${packageName}: ${entry} is a symlink. Licence files must be regular files.`);
+      }
+      return stats.isFile();
+    })
     .sort()
     .map((entry) => {
       const text = readFileSync(path.join(root, entry), "utf8").trimEnd();
@@ -190,6 +199,56 @@ export function renderLicences(packages: LicensedPackage[]): string {
   return `${header}\n\n${sections.join("\n\n")}\n`;
 }
 
+// CSS imported from JavaScript is listed in the chunk with no rendered
+// length, because its text goes to a CSS asset instead.
+const STYLE_MODULE_PATTERN = /\.(css|scss|sass|less|styl|stylus)(\?|$)/;
+
+/** The parts of a Rollup output entry that the licence list reads. */
+export type BundleEntry =
+  | { type: "chunk"; modules: Record<string, { renderedLength: number }> }
+  | { type: "asset"; originalFileNames: readonly string[] };
+
+/**
+ * Writes the notices text for a build: every npm package with code in the
+ * output chunks, CSS or other assets taken from a package, Tailwind's
+ * generated CSS, and Vite when its helpers are in the bundle. Throws when a
+ * package fails the licence checks or when no package is found at all.
+ */
+export function collectLicences(projectRoot: string, bundle: Iterable<BundleEntry>): string {
+  const roots = new Set<string>();
+  let usesViteHelpers = false;
+  for (const output of bundle) {
+    if (output.type === "asset") {
+      for (const fileName of output.originalFileNames) {
+        const root = packageRootFromModuleId(fileName);
+        if (root !== null) roots.add(root);
+      }
+      continue;
+    }
+    for (const [id, info] of Object.entries(output.modules)) {
+      if (info.renderedLength === 0 && !STYLE_MODULE_PATTERN.test(id)) continue;
+      if (id.startsWith(VITE_VIRTUAL_PREFIX)) {
+        usesViteHelpers = true;
+        continue;
+      }
+      const root = packageRootFromModuleId(id);
+      if (root !== null) roots.add(root);
+    }
+  }
+  if (roots.size === 0) {
+    throw new Error("No npm packages were found in the bundle. The licence list would be empty.");
+  }
+  const extra = usesViteHelpers ? [...EMITTED_WITHOUT_MODULE, "vite"] : EMITTED_WITHOUT_MODULE;
+  for (const name of extra) roots.add(resolvePackageRoot(projectRoot, name));
+
+  const byKey = new Map<string, LicensedPackage>();
+  for (const root of roots) {
+    const pkg = collectPackage(root, projectRoot);
+    byKey.set(`${pkg.name}@${pkg.version}`, pkg);
+  }
+  return renderLicences([...byKey.values()]);
+}
+
 /** The Vite plugin. It runs only for `vite build`. */
 export function thirdPartyLicences(): Plugin {
   let projectRoot = process.cwd();
@@ -200,35 +259,10 @@ export function thirdPartyLicences(): Plugin {
       projectRoot = config.root;
     },
     generateBundle(_options, bundle) {
-      const roots = new Set<string>();
-      let usesViteHelpers = false;
-      for (const output of Object.values(bundle)) {
-        if (output.type !== "chunk") continue;
-        for (const [id, info] of Object.entries(output.modules)) {
-          if (info.renderedLength === 0) continue;
-          if (id.startsWith(VITE_VIRTUAL_PREFIX)) {
-            usesViteHelpers = true;
-            continue;
-          }
-          const root = packageRootFromModuleId(id);
-          if (root !== null) roots.add(root);
-        }
-      }
-      const extra = usesViteHelpers ? [...EMITTED_WITHOUT_MODULE, "vite"] : EMITTED_WITHOUT_MODULE;
-      for (const name of extra) roots.add(resolvePackageRoot(projectRoot, name));
-
-      if (roots.size === 0) {
-        this.error("No npm packages were found in the bundle. The licence list would be empty.");
-      }
-      const byKey = new Map<string, LicensedPackage>();
-      for (const root of roots) {
-        const pkg = collectPackage(root, projectRoot);
-        byKey.set(`${pkg.name}@${pkg.version}`, pkg);
-      }
       this.emitFile({
         type: "asset",
         fileName: OUTPUT_FILE,
-        source: renderLicences([...byKey.values()]),
+        source: collectLicences(projectRoot, Object.values(bundle)),
       });
     },
   };

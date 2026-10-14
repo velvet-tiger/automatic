@@ -58,6 +58,7 @@ system_suffix() {
   esac
 }
 
+script_dir=$(cd "$(dirname "$0")" && pwd)
 appimage_abs=$(realpath "$appimage")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -94,26 +95,20 @@ fi
 
 # One dpkg call for every file. dpkg prints "pkg[:arch][, pkg...]: /path" for
 # each match, and exits non-zero when a pattern matches nothing. Unmatched
-# files are caught below.
+# files are caught below. scripts/dpkg-owners.awk reads the output and skips
+# the lines dpkg prints about diverted files, such as the TIFF loader
+# release.yml sets aside.
 patterns=()
 while IFS= read -r file; do
   patterns+=("*$(system_suffix "$file")")
 done <"$work/system-files"
-dpkg -S "${patterns[@]}" 2>/dev/null | grep -v '^diversion by ' >"$work/dpkg-owners" || true
+dpkg -S "${patterns[@]}" >"$work/dpkg-owners" 2>/dev/null || true
 
 : >"$work/file-packages"
 failed=0
 while IFS= read -r file; do
   suffix=$(system_suffix "$file")
-  owners=$(awk -v suffix="$suffix" '
-    {
-      split_at = index($0, ": /")
-      if (split_at == 0) next
-      path = substr($0, split_at + 2)
-      if (substr(path, length(path) - length(suffix) + 1) != suffix) next
-      n = split(substr($0, 1, split_at - 1), pkgs, ", ")
-      for (i = 1; i <= n; i++) { sub(/:.*/, "", pkgs[i]); print pkgs[i] }
-    }' "$work/dpkg-owners" | LC_ALL=C sort -u)
+  owners=$(awk -v suffix="$suffix" -f "$script_dir/dpkg-owners.awk" "$work/dpkg-owners" | LC_ALL=C sort -u)
   count=$(printf '%s' "$owners" | grep -c . || true)
   if [ "$count" -eq 0 ]; then
     echo "error: no installed package owns a file ending in '$suffix' (AppImage file $file)" >&2
@@ -125,6 +120,24 @@ while IFS= read -r file; do
     printf '%s\t%s\n' "$owners" "$file" >>"$work/file-packages"
   fi
 done <"$work/system-files"
+[ "$failed" -eq 0 ] || exit 1
+
+# The match above is by path suffix. linuxdeploy finds libraries through the
+# dynamic linker, which looks in /usr/local first. A library of the same name
+# there may be the one that was copied, and it belongs to no package.
+while IFS=$'\t' read -r _ file; do
+  case "$file" in
+    usr/lib/*/*) continue ;;
+    usr/lib/*) name=${file#usr/lib/} ;;
+    *) continue ;;
+  esac
+  for dir in /usr/local/lib /usr/local/lib64 /usr/local/lib/x86_64-linux-gnu; do
+    if [ -e "$dir/$name" ]; then
+      echo "error: $dir/$name exists, so the AppImage's $file may not come from the package this script found" >&2
+      failed=1
+    fi
+  done
+done <"$work/file-packages"
 [ "$failed" -eq 0 ] || exit 1
 
 cut -f1 "$work/file-packages" | LC_ALL=C sort -u >"$work/packages"
@@ -139,6 +152,37 @@ while IFS= read -r pkg; do
   esac
   if [ ! -f "/usr/share/doc/$pkg/copyright" ]; then
     echo "error: $pkg has no /usr/share/doc/$pkg/copyright" >&2
+    exit 1
+  fi
+done <"$work/packages"
+
+# The Launchpad address and "apt-get source" line below are right only for
+# packages from the Ubuntu archive. Each installed version must be available
+# from an Ubuntu archive source, not only from a PPA or a local .deb.
+# GitHub's runners reach the archive through a mirror list file.
+is_ubuntu_source() {
+  case "$1" in
+    *ubuntu.com/ubuntu*) return 0 ;;
+    mirror+file:*)
+      local list=${1#mirror+file:}
+      [ -f "$list" ] && ! grep -v -E '^\s*(#|$)' "$list" | grep -v -q 'ubuntu\.com/ubuntu'
+      return
+      ;;
+  esac
+  return 1
+}
+while IFS= read -r pkg; do
+  version=$(dpkg-query -W -f='${Version}' "$pkg")
+  sources=$(apt-cache policy "$pkg" | awk -v v="$version" '
+    /^ (\*\*\*|   ) [^ ]/ { current = ($2 == v); next }
+    current && /^        +[0-9]+ / { print $2 }
+  ')
+  from_ubuntu=0
+  for source in $sources; do
+    if is_ubuntu_source "$source"; then from_ubuntu=1; fi
+  done
+  if [ "$from_ubuntu" -eq 0 ]; then
+    echo "error: $pkg $version is not available from the Ubuntu archive (sources: $(echo "$sources" | tr '\n' ' '))" >&2
     exit 1
   fi
 done <"$work/packages"
@@ -221,5 +265,11 @@ EOF
     cat "$licence"
   done <"$work/common-licenses"
 } >"$out"
+
+# The app shows this file as UTF-8 text and refuses a file that is not.
+if ! iconv -f UTF-8 -t UTF-8 "$out" >/dev/null 2>&1; then
+  echo "error: $out is not valid UTF-8. A copyright file uses another encoding." >&2
+  exit 1
+fi
 
 echo "wrote $out: $(wc -l <"$work/packages") packages, $(wc -l <"$work/system-files") files, $(wc -l <"$work/common-licenses") licence texts" >&2

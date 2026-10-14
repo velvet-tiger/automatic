@@ -24,6 +24,15 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 # recognise, and needs a `clarify` entry in about.toml.
 no_licence_file=" linux-keyutils block2 dispatch2 objc2 objc2-app-kit objc2-core-foundation objc2-encode objc2-exception-helper objc2-foundation objc2-osa-kit objc2-web-kit "
 
+# THIRD_PARTY_NOTICES.md names the webview2-com-sys version whose Microsoft
+# WebView2 loader is linked into the Windows build. A different version may
+# carry another SDK, so its notice must be checked when the crate changes.
+webview2_version=$(awk '$0 == "name = \"webview2-com-sys\"" { getline; gsub(/version = |"/, ""); print }' "$root/src-tauri/Cargo.lock")
+if [ -z "$webview2_version" ] || ! grep -q "\`webview2-com-sys\` $webview2_version " "$root/THIRD_PARTY_NOTICES.md"; then
+  echo "THIRD_PARTY_NOTICES.md does not name webview2-com-sys '${webview2_version:-?}', the version in Cargo.lock. Check which WebView2 SDK it bundles and update the notice." >&2
+  exit 1
+fi
+
 separator=$(printf '=%.0s' $(seq 1 80))
 
 mkdir -p "$out_dir"
@@ -71,14 +80,31 @@ generate() {
     exit 1
   fi
 
+  # Any other warning or error fails the run too, such as a `git` clarify
+  # entry whose file could not be fetched. cargo-about reports problems both
+  # as "warning: ..." diagnostics and as timestamped "[WARN]" or "[ERROR]"
+  # log lines. The only expected one is for about.toml entries that match no
+  # crate built for this release.
+  local unexpected
+  unexpected=$(grep -E '^(warning|error)(\[[^]]*\])?:|\[[^]]*(WARN|ERROR)[^]]*\]' "$log" |
+    grep -v -F 'warning: config found for a crate not present in the graph' || true)
+  if [ -n "$unexpected" ]; then
+    echo "$name: cargo-about reported a problem, shown in its output above:" >&2
+    echo "$unexpected" >&2
+    exit 1
+  fi
+
   # The same check from the other side, in case a later cargo-about words that
   # warning differently. A crate that is not built for this release is not
   # listed at all, which is fine.
-  local crate listed
+  # Each version of the crate is checked on its own, so that two versions
+  # listed once each do not pass as one crate listed twice.
+  local crate once
   for crate in $two_licence_crates; do
-    listed=$(grep -c "^  $crate " "$out" || true)
-    if [ "${listed:-0}" -eq 1 ]; then
-      echo "$name: '$crate' is listed under one licence, expected its own and the one about.toml adds" >&2
+    once=$(awk -v c="$crate" '$1 == c && $3 ~ /^https:\/\/crates\.io\// { n[$2]++ }
+      END { for (v in n) if (n[v] == 1) print v }' "$out")
+    if [ -n "$once" ]; then
+      echo "$name: '$crate' $once is listed under one licence, expected its own and the one about.toml adds" >&2
       exit 1
     fi
   done

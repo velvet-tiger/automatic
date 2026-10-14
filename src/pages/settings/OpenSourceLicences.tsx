@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen, X } from "lucide-react";
@@ -40,6 +40,12 @@ export default function OpenSourceLicences({ onClose }: OpenSourceLicencesProps)
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Move focus into the dialog so keyboard and screen-reader users land in it.
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,10 +92,12 @@ export default function OpenSourceLicences({ onClose }: OpenSourceLicencesProps)
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="open-source-licences-title"
-        className="w-full max-w-3xl mx-4 h-[80vh] flex flex-col rounded-xl border border-border-strong/40 bg-bg-input shadow-2xl"
+        className="w-full max-w-3xl mx-4 h-[80vh] flex flex-col rounded-xl border border-border-strong/40 bg-bg-input shadow-2xl outline-none"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40">
           <h3 id="open-source-licences-title" className="text-[14px] font-semibold text-text-base">
@@ -131,8 +139,10 @@ export default function OpenSourceLicences({ onClose }: OpenSourceLicencesProps)
                   return (
                     <button
                       key={file.file_name}
+                      id={`licence-tab-${file.file_name}`}
                       role="tab"
                       aria-selected={selected}
+                      aria-controls="licence-tabpanel"
                       onClick={() => setActiveFile(file.file_name)}
                       className={`px-3 py-1.5 rounded-md text-[13px] transition-colors ${
                         selected
@@ -158,7 +168,11 @@ export default function OpenSourceLicences({ onClose }: OpenSourceLicencesProps)
               )}
             </div>
             {revealError !== null && <p className="px-5 pt-2 text-[12px] text-danger">{revealError}</p>}
-            <div role="tabpanel" className="flex-1 min-h-0 mx-5 my-4 overflow-y-auto custom-scrollbar rounded-lg border border-border-strong/40 bg-bg-base">
+            <div
+              id="licence-tabpanel"
+              role="tabpanel"
+              aria-labelledby={active !== null ? `licence-tab-${active.file_name}` : undefined}
+              className="flex-1 min-h-0 mx-5 my-4 overflow-y-auto custom-scrollbar rounded-lg border border-border-strong/40 bg-bg-base">
               <pre className="px-4 py-3 text-[12px] leading-relaxed text-text-base font-mono whitespace-pre-wrap break-words">
                 {active?.text ?? ""}
               </pre>

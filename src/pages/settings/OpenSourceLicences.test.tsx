@@ -52,6 +52,12 @@ describe("OpenSourceLicences", () => {
     });
   });
 
+  it("moves focus into the dialog when it opens", () => {
+    mockInvoke({ read_third_party_licences: { folder: null, files: [] } });
+    render(<OpenSourceLicences onClose={() => {}} />);
+    expect(screen.getByRole("dialog")).toHaveFocus();
+  });
+
   it("closes on Escape", () => {
     mockInvoke({ read_third_party_licences: { folder: null, files: [] } });
     const onClose = vi.fn();

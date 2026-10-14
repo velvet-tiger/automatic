@@ -15,7 +15,9 @@ jobs:
   # Writes the licence list of the Rust crates in each platform's build. It is
   # a job of its own so that the third-party install action and the tool it
   # downloads never run in the build job, which signs the app and holds the
-  # signing secrets. This job gets a read-only token and no secrets.
+  # signing secrets. This job gets a read-only token and no secrets, and its
+  # actions are pinned to commits. It is not fully walled off: every job in a
+  # run can write to the run's Actions cache, which `build` restores.
   licenses:
     timeout-minutes: 15
     runs-on: ubuntu-22.04
@@ -28,7 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
 
       # Pinned to a commit, and the tool to a version, so that neither can
       # change under a release.
@@ -142,12 +144,21 @@ jobs:
       # aside keeps both out of the AppImage. TIFF images then load only where
       # the user's system has the loader. scripts/appimage-system-licenses.sh
       # fails the build if libjbig comes back.
+      #
+      # The loader moves to the folder above 2.10.0. linuxdeploy-plugin-gtk
+      # copies the whole 2.10.0 folder, so a renamed copy left beside the
+      # other loaders would still be bundled, with libtiff and libjbig.
       - name: Set aside the TIFF image loader (Linux)
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          loader=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders/libpixbufloader-tiff.so
-          sudo dpkg-divert --local --rename --divert "$loader.disabled" --add "$loader"
-          sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
+          pixbuf_dir=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0
+          loader="$pixbuf_dir/2.10.0/loaders/libpixbufloader-tiff.so"
+          sudo dpkg-divert --local --rename --divert "$pixbuf_dir/libpixbufloader-tiff.so.diverted" --add "$loader"
+          sudo "$pixbuf_dir/gdk-pixbuf-query-loaders" --update-cache
+          if find "$pixbuf_dir/2.10.0" -iname '*tiff*' | grep -q . || grep -qi tiff "$pixbuf_dir/2.10.0/loaders.cache"; then
+            echo "::error::a TIFF loader is still in $pixbuf_dir/2.10.0"
+            exit 1
+          fi
 
       # The list of system libraries the AppImage carries is only known once
       # linuxdeploy has built one. This first build makes that AppImage. It
@@ -380,13 +391,13 @@ jobs:
         run: |
           installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
           listing=$(7z l -ba "${installers[0]}" | tr -d '\r')
-          for file in THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt; do
-            if ! grep -qiE "licenses[\\/]$file\$" <<<"$listing"; then
-              echo "::error::${installers[0]} holds no licenses/$file"
-              echo "$listing"
-              exit 1
-            fi
-          done
+          listed=$(grep -oiE 'licenses[\\/][^\\/]+$' <<<"$listing" | sed -E 's|^[^\\/]+[\\/]||' | LC_ALL=C sort | tr '\n' ' ' || true)
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::${installers[0]} holds '$listed' in licenses, expected '$expected'"
+            echo "$listing"
+            exit 1
+          fi
 
       # Lists the final AppImage the same way, which also repeats the deny
       # list check, and compares its files with the first build's.
@@ -406,6 +417,22 @@ jobs:
             echo "::error::the AppImage's licenses folder holds '$listed', expected '$expected'"
             exit 1
           fi
+          # Tauri downloads the AppImage runtime from a moving build.
+          # THIRD_PARTY_NOTICES.md names the versions of the libraries linked
+          # into it. Stop if the runtime now carries other versions.
+          offset=$("$GITHUB_WORKSPACE/${appimages[0]}" --appimage-offset)
+          head -c "$offset" "${appimages[0]}" | strings >"$RUNNER_TEMP/runtime-strings.txt"
+          for component in libfuse zstd zlib; do
+            version=$(grep -oE "^- $component [0-9][0-9.]*[0-9]" THIRD_PARTY_NOTICES.md | awk '{ print $3 }')
+            case "$component" in
+              zlib) found=$(grep -c -F "inflate $version " "$RUNNER_TEMP/runtime-strings.txt" || true) ;;
+              *) found=$(grep -c -x -F "$version" "$RUNNER_TEMP/runtime-strings.txt" || true) ;;
+            esac
+            if [ -z "$version" ] || [ "${found:-0}" -eq 0 ]; then
+              echo "::error::the AppImage runtime does not carry $component '${version:-?}' as THIRD_PARTY_NOTICES.md says. Update the notice."
+              exit 1
+            fi
+          done
 
   # Runs after all platform builds succeed. Downloads the .sig workflow artifacts uploaded
   # by each build job, generates a valid latest.json, and uploads it to the draft release.
