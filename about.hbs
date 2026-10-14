@@ -1,0 +1,26 @@
+Licences of the Rust crates in this build of Automatic
+======================================================
+
+cargo-about wrote this file from Cargo.lock, for this build's platform. It
+lists every Rust crate used to build the app, grouped by licence text. That
+includes crates used only while building. A crate that bundles a C library is
+listed under that library's licence too.
+
+Each crate's source is at the crates.io address beside its name.
+
+The other files in this folder cover the interface's npm packages, the
+material Automatic adapts or vendors, and on Linux the system libraries the
+AppImage carries (in THIRD_PARTY_NOTICES.md).
+
+{{#each licenses}}
+================================================================================
+{{{name}}} ({{{id}}})
+
+Used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}  https://crates.io/crates/{{{crate.name}}}/{{{crate.version}}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

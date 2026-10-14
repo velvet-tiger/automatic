@@ -1,0 +1,443 @@
+# Configuration for cargo-about, which writes rust-crates.txt: the licence of
+# every crate used to build the app for one release platform. The release
+# workflow ships that file inside each app bundle, in the `licenses` resource
+# folder, and the app shows it under Settings > Support.
+# `scripts/third-party-licenses.sh` runs the tool. `make licenses` runs the
+# script locally.
+
+# Licences a dependency may carry. A crate offered under several is taken
+# under the first one listed here. A crate with none of them fails the run, so
+# a new licence is a decision someone makes, not something that slips in.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "Unicode-3.0",
+]
+
+# The app's own crates (`automatic` and `cli-bin`'s `automatic-cli`) are not
+# third-party code. They are skipped because their Cargo.toml files set
+# `publish = false`.
+private = { ignore = true }
+
+# Build scripts' dependencies are included. Some of their code, such as
+# tauri-build's, is compiled into the app.
+ignore-build-dependencies = false
+ignore-dev-dependencies = true
+
+# ── Licences accepted for named crates only ─────────────────────────────────
+#
+# MPL-2.0 covers each file of these crates. They are used unmodified, and the
+# generated file says where each crate's source is, which is what MPL-2.0
+# asks of a binary that contains them. option-ext comes in through dirs. The
+# others come in through tauri-utils, which reads and rewrites HTML.
+[option-ext]
+accepted = ["MPL-2.0"]
+
+[cssparser]
+accepted = ["MPL-2.0"]
+
+[cssparser-macros]
+accepted = ["MPL-2.0"]
+
+[dtoa-short]
+accepted = ["MPL-2.0"]
+
+[selectors]
+accepted = ["MPL-2.0"]
+
+# Zlib asks only that the notice stays with the source. It is accepted per
+# crate so that each new Zlib crate is still looked at.
+[foldhash]
+accepted = ["Zlib"]
+
+# Linux only. A dependency of system-deps, which the GTK crates' build scripts
+# use to find system libraries. The LLVM exception removes Apache-2.0's
+# notice requirement for compiled code, but the text is shipped anyway.
+[target-lexicon]
+accepted = ["Apache-2.0 WITH LLVM-exception"]
+
+# Linux only. Public-domain dedication, with a fallback licence that needs no
+# notice.
+[tiny-keccak]
+accepted = ["CC0-1.0"]
+
+# ── Clarifications ────────────────────────────────────────────────────────────
+#
+# cargo-about finds a crate's licence text by looking for licence files it
+# recognises. The entries below name a file it would otherwise miss. Each
+# checksum is the SHA-256 of that file.
+#
+# When a new crate version changes a file, cargo-about only warns and falls
+# back to what it would have printed without the entry. The script turns that
+# warning into a failure, so the entry is checked and updated before a
+# release.
+#
+# An entry applies only when the crate is built for the target, so cargo-about
+# warns that the others match no crate. That warning is expected.
+
+# ── C libraries bundled inside a crate ────────────────────────────────────────
+#
+# These crates build a C library from source they carry and link it into the
+# binary. The crate's declared licence covers only its Rust code, so each
+# entry adds the C library's own licence. Its `license` joins the two with
+# AND, and the script checks that the crate is listed under both.
+#
+# libdbus is not here. The app links the system's copy, so libdbus-sys
+# builds none of it in. The Linux AppImage carries the system's libdbus.
+# THIRD_PARTY_NOTICES.md covers the AppImage's system libraries.
+# SQLite (in libsqlite3-sys) and liblzma (in lzma-sys) are public domain.
+# THIRD_PARTY_NOTICES.md names them.
+
+# zstd, on every platform.
+[zstd-sys.clarify]
+license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+
+[[zstd-sys.clarify.files]]
+path = "LICENSE.Mit"
+license = "MIT"
+checksum = "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8"
+
+[[zstd-sys.clarify.files]]
+path = "zstd/LICENSE"
+license = "BSD-3-Clause"
+checksum = "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+
+# bzip2, on every platform.
+[bzip2-sys]
+accepted = ["bzip2-1.0.6"]
+
+[bzip2-sys.clarify]
+license = "(MIT OR Apache-2.0) AND bzip2-1.0.6"
+
+[[bzip2-sys.clarify.files]]
+path = "LICENSE-MIT"
+license = "MIT"
+checksum = "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e"
+
+[[bzip2-sys.clarify.files]]
+path = "bzip2-1.0.8/LICENSE"
+license = "bzip2-1.0.6"
+checksum = "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
+
+# ── Data bundled inside a crate ───────────────────────────────────────────────
+
+# regex-syntax compiles in tables made from the Unicode Character Database.
+# The tables carry Unicode's data-files licence, which the crate's manifest
+# does not declare.
+[regex-syntax]
+accepted = ["Unicode-DFS-2016"]
+
+[regex-syntax.clarify]
+license = "(MIT OR Apache-2.0) AND Unicode-DFS-2016"
+
+[[regex-syntax.clarify.files]]
+path = "LICENSE-MIT"
+license = "MIT"
+checksum = "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+
+[[regex-syntax.clarify.files]]
+path = "src/unicode_tables/LICENSE-UNICODE"
+license = "Unicode-DFS-2016"
+checksum = "74db5baf44a41b1000312c673544b3374e4198af5605c7f9080a402cec42cfa3"
+
+# ── Licence files cargo-about does not recognise ──────────────────────────────
+#
+# Without these entries each crate is printed under a generic MIT text with
+# "<year> <copyright holders>" in place of its copyright line.
+
+# One file holds chrono's copyright line and both of its licences.
+[chrono.clarify]
+license = "MIT OR Apache-2.0"
+
+[[chrono.clarify.files]]
+path = "LICENSE.txt"
+license = "MIT"
+checksum = "946c9835d8034d24404f8cfec5f4654cee5dad17e944afc3d06d742cf2882831"
+
+# The windows-rs crates name their licence files in lower case. They all carry
+# the same file.
+[windows-link.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-link.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-sys.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-sys.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-targets.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-targets.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows_x86_64_msvc.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows_x86_64_msvc.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-collections.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-collections.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-core.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-core.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-future.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-future.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-implement.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-implement.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-interface.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-interface.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-numerics.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-numerics.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-registry.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-registry.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-result.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-result.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-strings.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-strings.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-threading.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-threading.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+[windows-version.clarify]
+license = "MIT OR Apache-2.0"
+
+[[windows-version.clarify.files]]
+path = "license-mit"
+license = "MIT"
+checksum = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+
+# The Tauri crates name their licence files LICENSE_MIT and
+# LICENSE_APACHE-2.0. Each is offered under MIT or Apache-2.0 and taken under
+# MIT. Releases change the year range in some of them, so expect new
+# checksums after a Tauri upgrade.
+[tauri.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-build.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-build.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-codegen.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-codegen.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-macros.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-macros.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-plugin-deep-link.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-plugin-deep-link.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607"
+
+[tauri-plugin-dialog.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-plugin-dialog.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607"
+
+[tauri-plugin-fs.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-plugin-fs.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607"
+
+[tauri-plugin-opener.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-plugin-opener.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607"
+
+[tauri-plugin-updater.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-plugin-updater.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607"
+
+[tauri-runtime.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-runtime.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-runtime-wry.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-runtime-wry.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+[tauri-utils.clarify]
+license = "MIT OR Apache-2.0"
+
+[[tauri-utils.clarify.files]]
+path = "LICENSE_MIT"
+license = "MIT"
+checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+
+# ── Other licence files cargo-about does not recognise ────────────────────────
+
+# Offered under BSD-3-Clause or MIT, and ships only the BSD text. It is taken
+# under BSD-3-Clause.
+[brotli-decompressor.clarify]
+license = "BSD-3-Clause"
+
+[[brotli-decompressor.clarify.files]]
+path = "LICENSE"
+license = "BSD-3-Clause"
+checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+
+# Offered under Apache-2.0 or MIT, and ships only the Apache text, with its
+# copyright line on the first line. It is taken under Apache-2.0.
+[cargo_toml.clarify]
+license = "Apache-2.0"
+
+[[cargo_toml.clarify.files]]
+path = "LICENSE"
+license = "Apache-2.0"
+checksum = "ee874098519e956c23a3c5c7e20581f8e9b1d70aa05eb178f983be9775090a2f"
+
+[minisign-verify.clarify]
+license = "MIT"
+
+[[minisign-verify.clarify.files]]
+path = "LICENSE"
+license = "MIT"
+checksum = "42c8695fbc468866d9756be99af0ba4e37d733f8daa3c8827c8d80b8bec1b2f9"
+
+# COPYING holds the copyright lines and names both licences. The crate ships
+# neither licence text, and its repository has none. The MIT text is printed
+# in this file under many other crates.
+[siphasher.clarify]
+license = "MIT OR Apache-2.0"
+
+[[siphasher.clarify.files]]
+path = "COPYING"
+license = "MIT"
+checksum = "c962ee4d1d05ddc138b202b2540219ebc57893fcf97b364852094a9a94ce1365"
+
+# Apache-2.0 for the crate, and MIT for code it takes from libm. The MIT file
+# lists libm's and musl's copyright lines.
+[dpi.clarify]
+license = "Apache-2.0 AND MIT"
+
+[[dpi.clarify.files]]
+path = "LICENSE"
+license = "Apache-2.0"
+checksum = "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+
+[[dpi.clarify.files]]
+path = "LICENSE-LIBM-MIT"
+license = "MIT"
+checksum = "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997"
