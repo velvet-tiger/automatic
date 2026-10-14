@@ -67,7 +67,22 @@ impl FailedReads {
     /// The error to report for `entry` without reading the store, or `None`
     /// when the store should be read.
     pub(crate) fn remembered(&self, entry: &str, read: StoreRead) -> Option<String> {
-        self.remembered_within(entry, read.retry_after())
+        self.remembered_for(entry, read, read.retry_after())
+    }
+
+    /// [`Self::remembered`] with the wait given. A user who asked and got a
+    /// remembered failure is told so, and that trying again soon will read
+    /// the store. Without that, a retry straight after a mistaken "Deny"
+    /// returns the same error with nothing to explain it.
+    fn remembered_for(&self, entry: &str, read: StoreRead, max_age: Duration) -> Option<String> {
+        let error = self.remembered_within(entry, max_age)?;
+        Some(match read {
+            StoreRead::Now => format!(
+                "{} (The secret store failed a moment ago and was not asked again. Try again in a few seconds.)",
+                error
+            ),
+            StoreRead::Background => error,
+        })
     }
 
     fn remembered_within(&self, entry: &str, max_age: Duration) -> Option<String> {
@@ -126,6 +141,21 @@ mod tests {
         assert_eq!(StoreRead::Now.retry_after(), Duration::ZERO);
         assert_eq!(failed().remembered(ENTRY, StoreRead::Now), None);
         assert!(failed().remembered(ENTRY, StoreRead::Background).is_some());
+    }
+
+    #[test]
+    fn a_user_who_gets_a_remembered_failure_is_told_to_try_again() {
+        let reads = failed();
+
+        let told = reads.remembered_for(ENTRY, StoreRead::Now, LONG).expect("remembered");
+        assert!(told.starts_with("the keychain is locked"), "unexpected error: {told}");
+        assert!(told.contains("Try again in a few seconds"), "unexpected error: {told}");
+
+        // A timer has no one to tell.
+        assert_eq!(
+            reads.remembered_for(ENTRY, StoreRead::Background, LONG),
+            Some("the keychain is locked".to_string())
+        );
     }
 
     #[test]

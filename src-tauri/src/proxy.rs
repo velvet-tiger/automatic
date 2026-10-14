@@ -203,16 +203,31 @@ fn look_for_oauth_token(
         Ok(true) => adopt_legacy_secrets(server_name, entries).map(settled),
         Ok(false) => Ok(settled(None)),
         Err(e) => {
-            eprintln!(
-                "warning: could not tell whether an older version stored a token for MCP server '{}', so any such token is not used: {}",
-                server_name, e
-            );
+            // This look is repeated on every check while the record stays
+            // unreadable, so the warning is given once for each server.
+            if first_warning_about_url_record(server_name) {
+                eprintln!(
+                    "warning: could not tell whether an older version stored a token for MCP server '{}', so any such token is not used: {}",
+                    server_name, e
+                );
+            }
             Ok(TokenLookup {
                 token: None,
                 settled: false,
             })
         }
     }
+}
+
+/// Whether this process has not yet warned that the record of old URLs
+/// could not be read for `server_name`.
+fn first_warning_about_url_record(server_name: &str) -> bool {
+    static WARNED: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    WARNED
+        .get_or_init(Default::default)
+        .lock()
+        .map(|mut warned| warned.insert(server_name.to_string()))
+        .unwrap_or(true)
 }
 
 /// Move the secrets an older version stored under the server's name alone to
