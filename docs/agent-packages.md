@@ -71,9 +71,10 @@ Stored as `{"type": "http" | "sse", "url", "headers"}`.
 
 - Skills go through the normal single-skill import, including its security scan and companion-file checks.
 - Servers go through the same steps as a remote-source install: security scan, ciphertext blanking, and the registry save that encrypts env values. A Docker config the sync guard would block is skipped.
-- A name that already exists in the library is skipped and reported as a conflict. It is never overwritten. Names are compared without letter case (Unicode lowercase), including against the built-in `automatic`, and against earlier items in the same package.
-- A name that differs only in letter case from a name a project uses is a conflict. The reason names the project. Sync on a case-insensitive disk would otherwise give that project the new item without the preview showing it.
-- Writes are create-only. A server file is opened with `create_new`. A skill folder is created with `create_dir`, and an existing folder is a conflict. On a file system that ignores case or Unicode normalisation (APFS, NTFS), a variant of an existing name therefore can never be written into, even one the name check does not catch, such as `café` in NFC and NFD forms.
+- Skill folder names must follow the Agent Skills name rule: 1 to 64 lowercase letters, digits and single hyphens, not at either end. Other folders are reported as invalid skills.
+- A name that already exists in the library is skipped and reported as a conflict. It is never overwritten. Names are compared after Unicode NFC normalisation and lowercasing, including against the built-in `automatic`, and against earlier items in the same package.
+- A name that differs only in letter case or Unicode normalisation from a name a project uses is a conflict. The reason names the project. Sync on a case-insensitive disk would otherwise give that project the new item without the preview showing it.
+- Writes are create-only. A server file is opened with `create_new`. A skill folder is created with `create_dir`, and an existing folder is a conflict. On a file system that ignores case or Unicode normalisation (APFS, NTFS), a variant of an existing name therefore can never be written into. The name check catches the same variants first, so this is a second guard.
 - Each skill is checked again just before it is copied. If the copy fails part way, the new library folder and its entry in `skill-scans.json` are removed.
 - Imported skills are grouped in a collection named after the package.
 

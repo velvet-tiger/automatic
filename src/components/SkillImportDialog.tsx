@@ -181,7 +181,16 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
       const firstSkill = result.imported_skills[0];
       if (firstSkill) onImport(firstSkill);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      // A refused import usually means the package changed. Refresh the
+      // preview so the user confirms what is on disk now, not the old digest.
+      try {
+        setPackagePreview(await invoke<AgentPackagePreview>("preview_agent_package", { path }));
+      } catch {
+        // The package can no longer be read at all; the import error explains why.
+        setPackagePreview(null);
+      }
+      setError(message);
       setStatus("error");
     }
   };

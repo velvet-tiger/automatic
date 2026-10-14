@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
 
 use super::asset_security::{enforce_text_asset, validate_relative_asset_path, AssetKind};
 use super::paths::{get_automatic_dir, home_dir};
@@ -566,6 +567,12 @@ fn check_skill_dir(
         return Ok(None);
     }
     super::remote_sources::ensure_resource_name("skill", name)?;
+    if !is_agent_skill_name(name) {
+        return Err(
+            "the folder name is not a valid Agent Skills name (lowercase letters, digits and single hyphens, up to 64 characters)"
+                .to_string(),
+        );
+    }
     if !has_exact_child(&dir, "SKILL.md") {
         return Err("the folder has no SKILL.md file".to_string());
     }
@@ -1085,10 +1092,27 @@ fn read_project_references() -> Result<Vec<ProjectReferences>, String> {
     Ok(references)
 }
 
-/// Equal, or equal once lowercased. Library files can sit on a file system
-/// that ignores letter case, where both names reach the same file.
+/// Equal, or equal once NFC-normalised and lowercased. Library files can sit
+/// on a file system that ignores letter case and Unicode normalisation
+/// (APFS, NTFS), where both names reach the same file.
 fn same_name(a: &str, b: &str) -> bool {
-    a == b || a.to_lowercase() == b.to_lowercase()
+    a == b || fold_name(a) == fold_name(b)
+}
+
+fn fold_name(name: &str) -> String {
+    name.nfc().collect::<String>().to_lowercase()
+}
+
+/// The Agent Skills name rule: 1-64 of `a-z`, `0-9` and single hyphens, not
+/// at either end. https://agentskills.io/specification
+fn is_agent_skill_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
 }
 
 /// Decide which skills and servers an import adds. Pure: the preview and
@@ -1964,7 +1988,9 @@ mod tests {
     fn case_variant_of_the_builtin_server_and_skill_is_a_conflict() {
         with_package(|root| {
             write_plugin(root, &plugin_json("demo"));
-            write_skill(root, "Automatic");
+            // Skill folders must be lowercase under the Agent Skills rule, so
+            // the builtin skill can only collide by its exact name.
+            write_skill(root, "automatic");
             write_mcp(
                 root,
                 json!({
@@ -1975,7 +2001,7 @@ mod tests {
             let result = import(root).unwrap();
             assert_eq!(
                 conflict_names(&result),
-                vec!["Automatic", "Automatic", "automatic"]
+                vec!["automatic", "Automatic", "automatic"]
             );
             assert!(result.imported_mcp_servers.is_empty());
             assert!(result.imported_skills.is_empty());
@@ -2248,16 +2274,21 @@ mod tests {
     }
 
     #[test]
-    fn unicode_case_variant_of_a_library_skill_is_a_conflict() {
+    fn unicode_case_variant_of_a_library_server_is_a_conflict() {
         with_package(|root| {
-            crate::core::skills::save_skill("Äbc", "---\nname: Äbc\n---\noriginal\n").unwrap();
+            crate::core::mcp_servers::save_mcp_server_config(
+                "Äbc",
+                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
+            )
+            .unwrap();
             write_plugin(root, &plugin_json("demo"));
-            write_skill(root, "äbc");
+            write_mcp(
+                root,
+                json!({"äbc": {"type": "sse", "url": "https://new.example/s"}}),
+            );
             let result = import(root).unwrap();
             assert_eq!(conflict_names(&result), vec!["äbc"]);
-            assert!(crate::core::skills::read_skill_raw("Äbc")
-                .unwrap()
-                .contains("original"));
+            assert!(result.imported_mcp_servers.is_empty());
         });
     }
 
@@ -2284,25 +2315,56 @@ mod tests {
     }
 
     #[test]
-    fn unicode_normalisation_variant_does_not_overwrite() {
+    fn unicode_normalisation_variant_of_a_server_is_a_conflict() {
         with_package(|root| {
             let nfd = "cafe\u{301}";
             let nfc = "caf\u{e9}";
-            crate::core::skills::save_skill(nfd, "---\nname: cafe\n---\noriginal\n").unwrap();
+            crate::core::mcp_servers::save_mcp_server_config(
+                nfd,
+                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
+            )
+            .unwrap();
             write_plugin(root, &plugin_json("demo"));
-            write_skill(root, nfc);
-            let library = crate::core::paths::get_library_skills_dir().unwrap();
-            let insensitive = names_collide(&library, nfd, nfc);
+            write_mcp(
+                root,
+                json!({ nfc: {"type": "sse", "url": "https://new.example/s"}}),
+            );
             let result = import(root).unwrap();
-            assert!(crate::core::skills::read_skill_raw(nfd)
-                .unwrap()
-                .contains("original"));
-            if insensitive {
-                assert_eq!(conflict_names(&result), vec![nfc]);
-                assert!(result.imported_skills.is_empty());
-            } else {
-                assert_eq!(result.imported_skills, vec![nfc]);
+            assert_eq!(conflict_names(&result), vec![nfc]);
+            assert!(result.imported_mcp_servers.is_empty());
+        });
+    }
+
+    #[test]
+    fn project_reference_differing_only_in_normalisation_is_a_conflict() {
+        with_package(|root| {
+            save_project_named("site", &["cafe\u{301}"], &[]);
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({"caf\u{e9}": {"type": "sse", "url": "https://e.com/s"}}),
+            );
+            let result = import(root).unwrap();
+            assert_eq!(conflict_names(&result), vec!["caf\u{e9}"]);
+        });
+    }
+
+    #[test]
+    fn skill_names_must_follow_the_agent_skills_rule() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            for name in ["Upper", "äbc", "a--b", "-a", "a-", "a_b"] {
+                write_skill(root, name);
             }
+            write_skill(root, "good-name-2");
+            let package = read(root).unwrap();
+            let names: Vec<&str> = package.skills.iter().map(|s| s.name.as_str()).collect();
+            assert_eq!(names, vec!["good-name-2"]);
+            let mut invalid = invalid_names(&package);
+            invalid.sort();
+            let mut expected = vec!["-a", "Upper", "a-", "a--b", "a_b", "äbc"];
+            expected.sort();
+            assert_eq!(invalid, expected);
         });
     }
 
