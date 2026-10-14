@@ -16,9 +16,10 @@ import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
 import { MarkdownPreview } from "../components/MarkdownPreview";
 import { flag } from "../lib/flags";
-import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut, Terminal } from "lucide-react";
+import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut, Terminal, Scale } from "lucide-react";
 import SettingsAgents from "./settings/Agents";
 import SettingsCommandLine from "./settings/CommandLine";
+import OpenSourceLicences from "./settings/OpenSourceLicences";
 
 type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "cli" | "support";
 
@@ -164,6 +165,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   const [showEraseDataModal, setShowEraseDataModal] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showLicencesModal, setShowLicencesModal] = useState(false);
   const [eraseInput, setEraseInput] = useState("");
   const [erasingData, setErasingData] = useState(false);
   const eraseConfirmationMatches = eraseInput.trim().toLowerCase() === "erase";
@@ -830,6 +832,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   <FileText size={14} className="inline-block mr-1.5 -mt-0.5" />
                   Terms of Service
                 </button>
+                <button
+                  onClick={() => setShowLicencesModal(true)}
+                  className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+                >
+                  <Scale size={14} className="inline-block mr-1.5 -mt-0.5" />
+                  Open-source licences
+                </button>
               </div>
             </div>
           )}
@@ -1267,6 +1276,8 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
           </div>
         </div>
       )}
+
+      {showLicencesModal && <OpenSourceLicences onClose={() => setShowLicencesModal(false)} />}
 
       {showPrivacyModal && (
         <div

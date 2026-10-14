@@ -347,6 +347,7 @@ pub fn run() {
             get_all_activity,
             track_event,
             restart_app,
+            read_third_party_licences,
             open_directory_dialog,
             open_file_dialog,
             subscribe_newsletter,
