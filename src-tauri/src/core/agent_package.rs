@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
 use super::asset_security::{enforce_text_asset, validate_relative_asset_path, AssetKind};
 use super::paths::{get_automatic_dir, home_dir};
@@ -106,6 +107,33 @@ pub struct AgentPackage {
     pub mcp_servers: Vec<AgentPackageMcpServer>,
     pub invalid: Vec<AgentPackageSkippedItem>,
     pub warnings: Vec<String>,
+    /// SHA-256 over `plugin.json`, `mcp.json` and each skill's `SKILL.md`.
+    /// An import must be given the digest its preview showed.
+    pub digest: String,
+}
+
+/// A skill or server the import will add, and the projects that already
+/// name it and so receive it on the post-import sync.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentPackagePlannedItem {
+    pub name: String,
+    pub projects: Vec<String>,
+}
+
+/// What an import of a package will do. Built by one pure function that
+/// both the preview and the import use.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentPackagePlan {
+    pub skills: Vec<AgentPackagePlannedItem>,
+    pub mcp_servers: Vec<AgentPackagePlannedItem>,
+    pub conflicts: Vec<AgentPackageSkippedItem>,
+}
+
+/// The read package and its plan, shown before the user confirms.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPackagePreview {
+    pub package: AgentPackage,
+    pub plan: AgentPackagePlan,
 }
 
 /// The outcome of `import_agent_package`.
@@ -157,6 +185,7 @@ struct PackagePaths {
 
 /// Metadata from a validated `plugin.json`.
 struct PluginManifest {
+    raw: String,
     name: String,
     version: Option<String>,
     description: Option<String>,
@@ -190,8 +219,11 @@ pub fn read_agent_package(path: &str) -> Result<AgentPackage, String> {
     let paths = package_paths(root, &manifest.name)?;
     let mut invalid = Vec::new();
     let skills = discover_skills(&paths.root, &mut invalid, &mut warnings);
-    let mcp_servers = read_mcp_servers(&paths, &mut invalid, &mut warnings);
+    let mut mcp_raw = None;
+    let mcp_servers = read_mcp_servers(&paths, &mut mcp_raw, &mut invalid, &mut warnings);
+    let digest = package_digest(&manifest.raw, mcp_raw.as_deref(), &skills);
     Ok(AgentPackage {
+        digest,
         root: paths.root_str,
         name: manifest.name,
         version: manifest.version,
@@ -263,7 +295,36 @@ fn read_plugin_manifest(root: &Path, warnings: &mut Vec<String>) -> Result<Plugi
     let obj = value
         .as_object()
         .ok_or("plugin.json must contain a JSON object")?;
-    parse_plugin_manifest(obj, warnings)
+    let mut manifest = parse_plugin_manifest(obj, warnings)?;
+    manifest.raw = raw;
+    Ok(manifest)
+}
+
+/// Hash every file whose content decides what the import writes, each part
+/// length-prefixed so two different packages cannot hash alike. Companion
+/// files are not covered; each skill is re-checked just before it is copied.
+fn package_digest(plugin_raw: &str, mcp_raw: Option<&str>, skills: &[AgentPackageSkill]) -> String {
+    let mut hasher = Sha256::new();
+    hash_part(&mut hasher, b"plugin.json", plugin_raw.as_bytes());
+    match mcp_raw {
+        Some(raw) => hash_part(&mut hasher, b"mcp.json", raw.as_bytes()),
+        None => hash_part(&mut hasher, b"no mcp.json", b""),
+    }
+    for skill in skills {
+        // An unreadable SKILL.md hashes as a marker. The import then fails
+        // for that skill with the read error, so nothing unseen is written.
+        let content = fs::read(Path::new(&skill.dir).join("SKILL.md"))
+            .unwrap_or_else(|_| b"unreadable".to_vec());
+        hash_part(&mut hasher, skill.name.as_bytes(), &content);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn hash_part(hasher: &mut Sha256, label: &[u8], content: &[u8]) {
+    hasher.update((label.len() as u64).to_le_bytes());
+    hasher.update(label);
+    hasher.update((content.len() as u64).to_le_bytes());
+    hasher.update(content);
 }
 
 fn parse_plugin_manifest(
@@ -296,6 +357,7 @@ fn parse_plugin_manifest(
     validate_package_name(&name)?;
     validate_optional_fields(obj, warnings)?;
     Ok(PluginManifest {
+        raw: String::new(),
         name,
         version: optional_string(obj, "version")?,
         description: optional_string(obj, "description")?,
@@ -616,15 +678,17 @@ fn skipped(kind: AgentPackageItemKind, name: &str, reason: String) -> AgentPacka
 
 /// Read and map `mcp.json`. A file-level problem disables MCP for the
 /// package with a warning; a bad entry skips only that entry.
+/// `raw` receives the file's text when it could be read, for the digest.
 fn read_mcp_servers(
     paths: &PackagePaths,
+    raw: &mut Option<String>,
     invalid: &mut Vec<AgentPackageSkippedItem>,
     warnings: &mut Vec<String>,
 ) -> Vec<AgentPackageMcpServer> {
     if fs::symlink_metadata(paths.root.join("mcp.json")).is_err() {
         return Vec::new();
     }
-    let servers = match read_mcp_file(&paths.root) {
+    let servers = match read_mcp_file(&paths.root, raw) {
         Ok(servers) => servers,
         Err(e) => {
             warnings.push(format!("{}. No MCP servers were read.", e));
@@ -641,14 +705,14 @@ fn read_mcp_servers(
     mapped
 }
 
-fn read_mcp_file(root: &Path) -> Result<Map<String, Value>, String> {
+fn read_mcp_file(root: &Path, raw_out: &mut Option<String>) -> Result<Map<String, Value>, String> {
     let file = resolve_inside(root, "mcp.json", "mcp.json")?;
     if !file.is_file() {
         return Err("mcp.json is not a regular file".to_string());
     }
-    let raw = read_capped(&file, "mcp.json")?;
+    let raw = raw_out.insert(read_capped(&file, "mcp.json")?);
     let value: Value =
-        serde_json::from_str(&raw).map_err(|e| format!("mcp.json is not valid JSON: {}", e))?;
+        serde_json::from_str(raw).map_err(|e| format!("mcp.json is not valid JSON: {}", e))?;
     let obj = value
         .as_object()
         .ok_or("mcp.json must contain a JSON object")?;
@@ -966,7 +1030,7 @@ fn is_header_token_char(c: char) -> bool {
 
 /// Library names an import must not reuse. Read before anything is written,
 /// so a failed read leaves the library untouched.
-struct LibraryNames {
+pub(crate) struct LibraryNames {
     skills: Vec<String>,
     servers: Vec<String>,
 }
@@ -993,14 +1057,164 @@ fn library_skill_names() -> Result<Vec<String>, String> {
     }
 }
 
-/// Read the package at `path`, then add its skills and MCP servers to the
-/// library. Names already in the library are skipped and never overwritten.
-/// Names are compared without letter case, because the library can sit on
-/// a case-insensitive file system. Creates the package's `${PLUGIN_DATA}`
-/// folder; never deletes it.
-pub fn import_agent_package(path: &str) -> Result<AgentPackageImportResult, String> {
+/// The skill and server names one project uses.
+pub(crate) struct ProjectReferences {
+    project: String,
+    skills: Vec<String>,
+    servers: Vec<String>,
+}
+
+/// Read every project's skill and server names. A project that cannot be
+/// read is skipped, as the post-import sync skips it, so it receives
+/// nothing from the import either.
+fn read_project_references() -> Result<Vec<ProjectReferences>, String> {
+    let mut references = Vec::new();
+    for ident in super::list_project_idents()? {
+        let Ok(raw) = super::read_project(&ident) else {
+            continue;
+        };
+        let Ok(project) = serde_json::from_str::<super::Project>(&raw) else {
+            continue;
+        };
+        references.push(ProjectReferences {
+            project: project.name,
+            skills: project.skills,
+            servers: project.mcp_servers,
+        });
+    }
+    Ok(references)
+}
+
+/// Equal, or equal once lowercased. Library files can sit on a file system
+/// that ignores letter case, where both names reach the same file.
+fn same_name(a: &str, b: &str) -> bool {
+    a == b || a.to_lowercase() == b.to_lowercase()
+}
+
+/// Decide which skills and servers an import adds. Pure: the preview and
+/// the import both call it with names read beforehand, so they agree.
+fn plan_agent_package(
+    package: &AgentPackage,
+    library: &LibraryNames,
+    projects: &[ProjectReferences],
+) -> AgentPackagePlan {
+    let mut plan = AgentPackagePlan::default();
+    let skill_refs = project_refs(projects, |p| &p.skills);
+    let server_refs = project_refs(projects, |p| &p.servers);
+    let skills = package.skills.iter().map(|s| s.name.as_str());
+    let (planned, conflicts) = plan_kind(
+        AgentPackageItemKind::Skill,
+        skills,
+        &library.skills,
+        &skill_refs,
+    );
+    plan.skills = planned;
+    plan.conflicts.extend(conflicts);
+    let servers = package.mcp_servers.iter().map(|s| s.name.as_str());
+    let (planned, conflicts) = plan_kind(
+        AgentPackageItemKind::McpServer,
+        servers,
+        &library.servers,
+        &server_refs,
+    );
+    plan.mcp_servers = planned;
+    plan.conflicts.extend(conflicts);
+    plan
+}
+
+/// `(project name, referenced name)` pairs for one kind.
+fn project_refs<'a>(
+    projects: &'a [ProjectReferences],
+    names: impl Fn(&'a ProjectReferences) -> &'a Vec<String>,
+) -> Vec<(&'a str, &'a str)> {
+    projects
+        .iter()
+        .flat_map(|p| {
+            names(p)
+                .iter()
+                .map(move |n| (p.project.as_str(), n.as_str()))
+        })
+        .collect()
+}
+
+fn plan_kind<'a>(
+    kind: AgentPackageItemKind,
+    names: impl Iterator<Item = &'a str>,
+    taken: &[String],
+    refs: &[(&str, &str)],
+) -> (Vec<AgentPackagePlannedItem>, Vec<AgentPackageSkippedItem>) {
+    let mut planned: Vec<AgentPackagePlannedItem> = Vec::new();
+    let mut conflicts = Vec::new();
+    for name in names {
+        match plan_conflict(name, taken, &planned, refs) {
+            Some(reason) => conflicts.push(skipped(kind, name, reason)),
+            None => planned.push(AgentPackagePlannedItem {
+                name: name.to_string(),
+                projects: refs
+                    .iter()
+                    .filter(|(_, r)| *r == name)
+                    .map(|(p, _)| p.to_string())
+                    .collect(),
+            }),
+        }
+    }
+    (planned, conflicts)
+}
+
+/// Why `name` cannot be imported, or `None` when it can.
+fn plan_conflict(
+    name: &str,
+    taken: &[String],
+    planned: &[AgentPackagePlannedItem],
+    refs: &[(&str, &str)],
+) -> Option<String> {
+    if taken.iter().any(|t| same_name(t, name)) {
+        return Some(conflict_reason());
+    }
+    if planned.iter().any(|p| same_name(&p.name, name)) {
+        return Some(
+            "another item in this package has the same name in different letter case".to_string(),
+        );
+    }
+    refs.iter()
+        .find(|(_, r)| *r != name && same_name(r, name))
+        .map(|(project, r)| {
+            format!(
+                "the name differs only in letter case from '{}' used by project {}",
+                r, project
+            )
+        })
+}
+
+/// Read a package and plan its import without changing anything.
+pub fn preview_agent_package(path: &str) -> Result<AgentPackagePreview, String> {
     let package = read_agent_package(path)?;
-    let mut names = read_library_names()?;
+    let plan = plan_agent_package(
+        &package,
+        &read_library_names()?,
+        &read_project_references()?,
+    );
+    Ok(AgentPackagePreview { package, plan })
+}
+
+/// Read the package at `path`, plan the import as the preview did, then add
+/// the planned skills and servers. Refuses when the package's digest is not
+/// `expected_digest`, the one its preview showed. Every write is
+/// create-only, so nothing in the library is ever replaced. Creates the
+/// package's `${PLUGIN_DATA}` folder; never deletes it.
+pub fn import_agent_package(
+    path: &str,
+    expected_digest: &str,
+) -> Result<AgentPackageImportResult, String> {
+    let package = read_agent_package(path)?;
+    if package.digest != expected_digest {
+        return Err("The package changed after the preview. Preview it again.".to_string());
+    }
+    let plan = plan_agent_package(
+        &package,
+        &read_library_names()?,
+        &read_project_references()?,
+    );
     fs::create_dir_all(&package.data_dir).map_err(|e| {
         format!(
             "Failed to create the data folder '{}': {}",
@@ -1013,82 +1227,109 @@ pub fn import_agent_package(path: &str) -> Result<AgentPackageImportResult, Stri
         data_dir: package.data_dir.clone(),
         imported_skills: Vec::new(),
         imported_mcp_servers: Vec::new(),
-        conflicts: Vec::new(),
+        conflicts: plan.conflicts.clone(),
         invalid: package.invalid.clone(),
         warnings: package.warnings.clone(),
     };
-    let root = PathBuf::from(&package.root);
-    for skill in &package.skills {
-        import_one_skill(&root, skill, &mut names.skills, &mut result);
-    }
-    for server in &package.mcp_servers {
-        import_one_server(server, &mut names.servers, &mut result);
-    }
+    apply_plan(&package, &plan, &mut result);
     assign_skill_collection(&package.name, &mut result);
     Ok(result)
 }
 
-fn import_one_skill(
-    root: &Path,
-    skill: &AgentPackageSkill,
-    taken: &mut Vec<String>,
+fn apply_plan(
+    package: &AgentPackage,
+    plan: &AgentPackagePlan,
     result: &mut AgentPackageImportResult,
 ) {
-    let kind = AgentPackageItemKind::Skill;
-    if super::contains_ignore_ascii_case(taken, &skill.name) {
-        result
-            .conflicts
-            .push(skipped(kind, &skill.name, conflict_reason()));
-        return;
+    let root = PathBuf::from(&package.root);
+    for item in &plan.skills {
+        if let Some(skill) = package.skills.iter().find(|s| s.name == item.name) {
+            import_one_skill(&root, skill, result);
+        }
     }
-    taken.push(skill.name.clone());
+    for item in &plan.mcp_servers {
+        if let Some(server) = package.mcp_servers.iter().find(|s| s.name == item.name) {
+            import_one_server(server, result);
+        }
+    }
+}
+
+/// Why a skill write did not happen.
+#[derive(Debug)]
+enum SkillWriteError {
+    /// The library folder already exists, perhaps under another letter case
+    /// or Unicode normalisation of the name.
+    Conflict,
+    Failed(String),
+}
+
+fn import_one_skill(root: &Path, skill: &AgentPackageSkill, result: &mut AgentPackageImportResult) {
+    let kind = AgentPackageItemKind::Skill;
     match import_skill_files(root, skill) {
         Ok(()) => result.imported_skills.push(skill.name.clone()),
-        Err(e) => result.invalid.push(skipped(kind, &skill.name, e)),
+        Err(SkillWriteError::Conflict) => {
+            result
+                .conflicts
+                .push(skipped(kind, &skill.name, conflict_reason()))
+        }
+        Err(SkillWriteError::Failed(e)) => result.invalid.push(skipped(kind, &skill.name, e)),
     }
 }
 
 /// Check the skill again just before copying, because the package folder
-/// can change after it was read. If the copy fails part way, remove the
-/// library folder it created, so no half-written skill is left behind.
-fn import_skill_files(root: &Path, skill: &AgentPackageSkill) -> Result<(), String> {
+/// can change after it was read. The library folder is created with
+/// `create_dir`, never `create_dir_all`, so an existing folder the file
+/// system treats as the same name is never written into. If the copy fails
+/// part way, the folder and its scan record are removed.
+fn import_skill_files(root: &Path, skill: &AgentPackageSkill) -> Result<(), SkillWriteError> {
     let source = Path::new(&skill.dir);
-    check_skill_dir(root, &skill.name, source)?.ok_or("the skill folder is no longer a folder")?;
-    let target = super::paths::get_library_skills_dir()?.join(&skill.name);
-    let existed = fs::symlink_metadata(&target).is_ok();
-    let skill_md = source.join("SKILL.md");
-    let imported = super::skills::import_skill_from_local_path(&skill_md.to_string_lossy());
-    if let Err(e) = imported {
-        if !existed {
-            if let Err(cleanup) = fs::remove_dir_all(&target) {
-                if cleanup.kind() != std::io::ErrorKind::NotFound {
-                    return Err(format!(
-                        "{}. The partly written skill at '{}' could not be removed: {}",
-                        e,
-                        target.display(),
-                        cleanup
-                    ));
-                }
-            }
+    check_skill_dir(root, &skill.name, source)
+        .map_err(SkillWriteError::Failed)?
+        .ok_or_else(|| SkillWriteError::Failed("the skill folder is no longer a folder".into()))?;
+    let library = super::paths::get_library_skills_dir().map_err(SkillWriteError::Failed)?;
+    fs::create_dir_all(&library).map_err(|e| {
+        SkillWriteError::Failed(format!("Failed to create the skills library: {}", e))
+    })?;
+    let target = library.join(&skill.name);
+    match fs::create_dir(&target) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(SkillWriteError::Conflict)
         }
-        return Err(e);
+        Err(e) => {
+            return Err(SkillWriteError::Failed(format!(
+                "Failed to create the skill folder: {}",
+                e
+            )))
+        }
     }
-    Ok(())
+    let skill_md = source.join("SKILL.md");
+    super::skills::import_skill_from_local_path(&skill_md.to_string_lossy())
+        .map(|_| ())
+        .map_err(|e| SkillWriteError::Failed(remove_partial_skill(&target, &skill.name, e)))
 }
 
-fn import_one_server(
-    server: &AgentPackageMcpServer,
-    taken: &mut Vec<String>,
-    result: &mut AgentPackageImportResult,
-) {
-    let kind = AgentPackageItemKind::McpServer;
-    if super::contains_ignore_ascii_case(taken, &server.name) {
-        result
-            .conflicts
-            .push(skipped(kind, &server.name, conflict_reason()));
-        return;
+/// Remove a skill folder this import created, and its scan record. Returns
+/// the error to report, extended when the cleanup itself failed.
+fn remove_partial_skill(target: &Path, name: &str, error: String) -> String {
+    let mut message = error;
+    if let Err(e) = fs::remove_dir_all(target) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            message.push_str(&format!(
+                ". The partly written skill at '{}' could not be removed: {}",
+                target.display(),
+                e
+            ));
+        }
     }
-    taken.push(server.name.clone());
+    if let Err(e) = super::skills::remove_skill_scan_state(name) {
+        message.push_str(&format!(". Its scan record could not be removed: {}", e));
+    }
+    message
+}
+
+fn import_one_server(server: &AgentPackageMcpServer, result: &mut AgentPackageImportResult) {
+    let kind = AgentPackageItemKind::McpServer;
     match save_server(server) {
         Ok(()) => result.imported_mcp_servers.push(server.name.clone()),
         Err(e) => result.invalid.push(skipped(kind, &server.name, e)),
@@ -1221,6 +1462,12 @@ mod tests {
         read_agent_package(root.to_str().unwrap())
     }
 
+    /// Import as the dialog does: with the digest a fresh read reports.
+    fn import(root: &Path) -> Result<AgentPackageImportResult, String> {
+        let digest = read(root)?.digest;
+        import_agent_package(root.to_str().unwrap(), &digest)
+    }
+
     fn server<'a>(package: &'a AgentPackage, name: &str) -> &'a Value {
         &package
             .mcp_servers
@@ -1296,7 +1543,7 @@ mod tests {
     fn import_adds_skills_and_servers_and_creates_data_dir() {
         with_package(|root| {
             write_full_package(root);
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert_eq!(result.imported_skills, vec!["alpha", "beta"]);
             let mut servers = result.imported_mcp_servers.clone();
             servers.sort();
@@ -1323,7 +1570,7 @@ mod tests {
             )
             .unwrap();
 
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             let conflicts: Vec<_> = result.conflicts.iter().map(|c| c.name.as_str()).collect();
             assert_eq!(conflicts, vec!["alpha", "remote"]);
             assert_eq!(result.imported_skills, vec!["beta"]);
@@ -1398,7 +1645,7 @@ mod tests {
             manifest["extensions"] = json!("nope");
             write_plugin(root, &manifest);
             write_skill(root, "alpha");
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert_eq!(result.imported_skills, vec!["alpha"]);
             assert!(result.warnings.iter().any(|w| w.contains("'colour'")));
             assert!(result.warnings.iter().any(|w| w.contains("extensions")));
@@ -1706,7 +1953,7 @@ mod tests {
             )
             .unwrap();
             let before = fs::read_to_string(server_file("github")).unwrap();
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert_eq!(conflict_names(&result), vec!["GitHub"]);
             assert!(result.imported_mcp_servers.is_empty());
             assert_eq!(fs::read_to_string(server_file("github")).unwrap(), before);
@@ -1725,7 +1972,7 @@ mod tests {
                     "Automatic": {"type": "sse", "url": "https://e.com/b"}
                 }),
             );
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert_eq!(
                 conflict_names(&result),
                 vec!["Automatic", "Automatic", "automatic"]
@@ -1747,7 +1994,7 @@ mod tests {
                     "foo": {"type": "sse", "url": "https://e.com/lower"}
                 }),
             );
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert_eq!(result.imported_mcp_servers, vec!["FOO"]);
             assert_eq!(conflict_names(&result), vec!["foo"]);
             let saved = crate::core::mcp_servers::read_mcp_server_config("FOO").unwrap();
@@ -1790,7 +2037,7 @@ mod tests {
             .unwrap();
             let package = read(root).unwrap();
             assert_eq!(invalid_names(&package), vec!["x"]);
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert!(result.imported_skills.is_empty());
             assert!(!library_skill_dir("x").exists());
         });
@@ -1805,12 +2052,12 @@ mod tests {
                 &root.join("skills/x/scripts/key.md"),
                 "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
             );
-            let result = import_agent_package(root.to_str().unwrap()).unwrap();
+            let result = import(root).unwrap();
             assert!(result.imported_skills.is_empty());
             assert_eq!(result.invalid.len(), 1);
             assert!(!library_skill_dir("x").exists());
             // Re-importing still reports it as invalid, not as a conflict.
-            let again = import_agent_package(root.to_str().unwrap()).unwrap();
+            let again = import(root).unwrap();
             assert!(again.conflicts.is_empty());
         });
     }
@@ -1971,6 +2218,198 @@ mod tests {
             manifest["keywords"] = json!(["x", "y"]);
             write_plugin(root, &manifest);
             assert!(read(root).is_ok());
+        });
+    }
+
+    /// True when the file system under `dir` treats `a` and `b` as one name.
+    fn names_collide(dir: &Path, a: &str, b: &str) -> bool {
+        let probe = dir.join(format!("probe-{}", a));
+        fs::create_dir_all(&probe).unwrap();
+        let collide = dir.join(format!("probe-{}", b)).exists();
+        fs::remove_dir_all(&probe).unwrap();
+        collide
+    }
+
+    fn save_project_named(name: &str, servers: &[&str], skills: &[&str]) {
+        let dir = crate::core::paths::home_dir()
+            .unwrap()
+            .join(format!("proj-{}", name));
+        fs::create_dir_all(&dir).unwrap();
+        let project = crate::core::Project {
+            name: name.to_string(),
+            directory: dir.to_str().unwrap().to_string(),
+            mcp_servers: servers.iter().map(|s| s.to_string()).collect(),
+            skills: skills.iter().map(|s| s.to_string()).collect(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            ..Default::default()
+        };
+        crate::core::save_project(name, &serde_json::to_string(&project).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn unicode_case_variant_of_a_library_skill_is_a_conflict() {
+        with_package(|root| {
+            crate::core::skills::save_skill("Äbc", "---\nname: Äbc\n---\noriginal\n").unwrap();
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "äbc");
+            let result = import(root).unwrap();
+            assert_eq!(conflict_names(&result), vec!["äbc"]);
+            assert!(crate::core::skills::read_skill_raw("Äbc")
+                .unwrap()
+                .contains("original"));
+        });
+    }
+
+    #[test]
+    fn skill_write_is_create_only_on_the_file_system() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "abc");
+            crate::core::skills::save_skill("Abc", "---\nname: Abc\n---\noriginal\n").unwrap();
+            let library = crate::core::paths::get_library_skills_dir().unwrap();
+            let insensitive = names_collide(&library, "Abc", "abc");
+            // Bypasses the plan to reach the write itself.
+            let skill = read(root).unwrap().skills.remove(0);
+            let outcome = import_skill_files(root, &skill);
+            if insensitive {
+                assert!(matches!(outcome, Err(SkillWriteError::Conflict)));
+                assert!(crate::core::skills::read_skill_raw("Abc")
+                    .unwrap()
+                    .contains("original"));
+            } else {
+                assert!(outcome.is_ok());
+            }
+        });
+    }
+
+    #[test]
+    fn unicode_normalisation_variant_does_not_overwrite() {
+        with_package(|root| {
+            let nfd = "cafe\u{301}";
+            let nfc = "caf\u{e9}";
+            crate::core::skills::save_skill(nfd, "---\nname: cafe\n---\noriginal\n").unwrap();
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, nfc);
+            let library = crate::core::paths::get_library_skills_dir().unwrap();
+            let insensitive = names_collide(&library, nfd, nfc);
+            let result = import(root).unwrap();
+            assert!(crate::core::skills::read_skill_raw(nfd)
+                .unwrap()
+                .contains("original"));
+            if insensitive {
+                assert_eq!(conflict_names(&result), vec![nfc]);
+                assert!(result.imported_skills.is_empty());
+            } else {
+                assert_eq!(result.imported_skills, vec![nfc]);
+            }
+        });
+    }
+
+    #[test]
+    fn project_reference_differing_only_in_case_is_a_conflict() {
+        with_package(|root| {
+            save_project_named("site", &["github"], &["Alpha"]);
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "alpha");
+            write_mcp(
+                root,
+                json!({"GitHub": {"type": "sse", "url": "https://e.com/s"}}),
+            );
+            let result = import(root).unwrap();
+            assert_eq!(conflict_names(&result), vec!["alpha", "GitHub"]);
+            assert!(result
+                .conflicts
+                .iter()
+                .all(|c| c.reason.contains("project site")));
+            assert!(result.imported_mcp_servers.is_empty() && result.imported_skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn preview_plans_conflicts_and_lists_projects_only_for_new_items() {
+        with_package(|root| {
+            save_project_named("site", &["remote", "fresh"], &[]);
+            crate::core::mcp_servers::save_mcp_server_config(
+                "remote",
+                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
+            )
+            .unwrap();
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({
+                    "remote": {"type": "sse", "url": "https://e.com/a"},
+                    "fresh": {"type": "sse", "url": "https://e.com/b"}
+                }),
+            );
+            let preview = preview_agent_package(root.to_str().unwrap()).unwrap();
+            assert_eq!(
+                preview.plan.mcp_servers,
+                vec![AgentPackagePlannedItem {
+                    name: "fresh".into(),
+                    projects: vec!["site".into()]
+                }]
+            );
+            let conflicts: Vec<_> = preview
+                .plan
+                .conflicts
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect();
+            assert_eq!(conflicts, vec!["remote"]);
+            let result =
+                import_agent_package(root.to_str().unwrap(), &preview.package.digest).unwrap();
+            assert_eq!(result.imported_mcp_servers, vec!["fresh"]);
+            assert_eq!(conflict_names(&result), vec!["remote"]);
+        });
+    }
+
+    #[test]
+    fn failed_skill_import_removes_its_scan_record() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "x");
+            write(
+                &root.join("skills/x/scripts/key.md"),
+                "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
+            );
+            let result = import(root).unwrap();
+            assert_eq!(result.invalid.len(), 1);
+            assert!(crate::core::skills::get_skill_scan_state("x")
+                .unwrap()
+                .is_none());
+        });
+    }
+
+    #[test]
+    fn a_change_after_the_preview_is_refused() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_skill(root, "alpha");
+            write_mcp(
+                root,
+                json!({"r": {"type": "sse", "url": "https://e.com/s"}}),
+            );
+            let digest = read(root).unwrap().digest;
+
+            write(
+                &root.join("skills/alpha/SKILL.md"),
+                "---\nname: alpha\n---\nchanged\n",
+            );
+            let err = import_agent_package(root.to_str().unwrap(), &digest).unwrap_err();
+            assert!(err.contains("changed after the preview"));
+
+            let digest = read(root).unwrap().digest;
+            write_mcp(
+                root,
+                json!({"r": {"type": "sse", "url": "https://other.example/s"}}),
+            );
+            assert!(import_agent_package(root.to_str().unwrap(), &digest).is_err());
+
+            let digest = read(root).unwrap().digest;
+            assert_eq!(read(root).unwrap().digest, digest, "the digest is stable");
+            assert!(import_agent_package(root.to_str().unwrap(), &digest).is_ok());
         });
     }
 }

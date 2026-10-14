@@ -89,12 +89,23 @@ interface AgentPackage {
   mcp_servers: AgentPackageMcpServer[];
   invalid: AgentPackageSkippedItem[];
   warnings: string[];
+  digest: string;
+}
+
+interface AgentPackagePlannedItem {
+  name: string;
+  projects: string[];
+}
+
+interface AgentPackagePlan {
+  skills: AgentPackagePlannedItem[];
+  mcp_servers: AgentPackagePlannedItem[];
+  conflicts: AgentPackageSkippedItem[];
 }
 
 interface AgentPackagePreview {
   package: AgentPackage;
-  server_projects: Record<string, string[]>;
-  skill_projects: Record<string, string[]>;
+  plan: AgentPackagePlan;
 }
 
 interface SkillImportDialogProps {
@@ -158,12 +169,12 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     }
   };
 
-  const importAgentPackage = async (path: string) => {
+  const importAgentPackage = async (path: string, expectedDigest: string) => {
     // The preview stays on screen while the import runs, so its button can show progress.
     setStatus("importing");
     setError(null);
     try {
-      const result = await invoke<AgentPackageImportResult>("import_agent_package", { path });
+      const result = await invoke<AgentPackageImportResult>("import_agent_package", { path, expectedDigest });
       setPackagePreview(null);
       setPackageResult(result);
       setStatus("success");
@@ -526,7 +537,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
             <AgentPackagePreviewPanel
               preview={packagePreview}
               busy={status === "importing"}
-              onConfirm={() => void importAgentPackage(packagePreview.package.root)}
+              onConfirm={() => void importAgentPackage(packagePreview.package.root, packagePreview.package.digest)}
               onCancel={() => setPackagePreview(null)}
             />
           )}
@@ -636,7 +647,13 @@ function AgentPackagePreviewPanel({
   onCancel: () => void;
 }) {
   const pkg = preview.package;
-  const nothingToImport = pkg.skills.length === 0 && pkg.mcp_servers.length === 0;
+  const plan = preview.plan;
+  const plannedServers = plan.mcp_servers.flatMap((item) => {
+    const server = pkg.mcp_servers.find((s) => s.name === item.name);
+    return server ? [{ server, projects: item.projects }] : [];
+  });
+  const skipped = [...plan.conflicts, ...pkg.invalid];
+  const nothingToImport = plan.skills.length === 0 && plan.mcp_servers.length === 0;
   return (
     <div className="mt-4 space-y-3">
       <div className="p-3 rounded-lg bg-bg-sidebar border border-border-strong/40 space-y-3">
@@ -649,15 +666,15 @@ function AgentPackagePreviewPanel({
           <p className="text-[12px] text-text-muted font-mono break-all">{pkg.root}</p>
         </div>
 
-        {pkg.skills.length > 0 && (
+        {plan.skills.length > 0 && (
           <div>
             <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">Skills</div>
             <ul className="space-y-1 text-[12px] text-text-muted">
-              {pkg.skills.map((skill) => (
+              {plan.skills.map((skill) => (
                 <li key={skill.name}>
                   <span className="font-mono text-text-base">{skill.name}</span>
-                  {preview.skill_projects[skill.name] && (
-                    <span> · will be added to projects: {preview.skill_projects[skill.name]!.join(", ")}</span>
+                  {skill.projects.length > 0 && (
+                    <span className="text-warning"> · will be added to projects: {skill.projects.join(", ")}</span>
                   )}
                 </li>
               ))}
@@ -665,14 +682,13 @@ function AgentPackagePreviewPanel({
           </div>
         )}
 
-        {pkg.mcp_servers.length > 0 && (
+        {plannedServers.length > 0 && (
           <div>
             <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">MCP servers</div>
             <ul className="space-y-2 text-[12px] text-text-muted">
-              {pkg.mcp_servers.map((server) => {
+              {plannedServers.map(({ server, projects }) => {
                 const envKeys = Object.keys(server.config.env ?? {});
                 const headerKeys = Object.keys(server.config.headers ?? {});
-                const projects = preview.server_projects[server.name];
                 return (
                   <li key={server.name} className="space-y-0.5">
                     <div>
@@ -683,7 +699,7 @@ function AgentPackagePreviewPanel({
                     {server.config.cwd && <div>Runs in: <span className="font-mono break-all">{server.config.cwd}</span></div>}
                     {envKeys.length > 0 && <div>Environment: <span className="font-mono">{envKeys.join(", ")}</span></div>}
                     {headerKeys.length > 0 && <div>Headers: <span className="font-mono">{headerKeys.join(", ")}</span></div>}
-                    {projects && <div className="text-warning">Will be added to projects: {projects.join(", ")}</div>}
+                    {projects.length > 0 && <div className="text-warning">Will be added to projects: {projects.join(", ")}</div>}
                   </li>
                 );
               })}
@@ -691,11 +707,11 @@ function AgentPackagePreviewPanel({
           </div>
         )}
 
-        {(pkg.invalid.length > 0 || pkg.warnings.length > 0) && (
+        {(skipped.length > 0 || pkg.warnings.length > 0) && (
           <div>
             <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1">Will not be imported</div>
             <ul className="space-y-1 text-[12px] text-text-muted">
-              {pkg.invalid.map((item) => (
+              {skipped.map((item) => (
                 <li key={`${item.kind}-${item.name}`}>
                   <span className="font-mono">{item.name}</span>: {item.reason}
                 </li>

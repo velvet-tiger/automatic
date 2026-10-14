@@ -1,28 +1,11 @@
-use std::collections::BTreeMap;
-
-use serde::Serialize;
-
 use crate::core;
 
-use super::projects::{
-    sync_projects_referencing_mcp_server, sync_projects_referencing_skill, with_each_project_mut,
-};
+use super::projects::{sync_projects_referencing_mcp_server, sync_projects_referencing_skill};
 
 // ── Agent Plugin packages ────────────────────────────────────────────────────
 //
 // Each command reads files, so each runs on a blocking thread and never on
 // the main thread.
-
-/// What an import would add, shown to the user before they confirm it.
-#[derive(Debug, Clone, Serialize)]
-pub struct AgentPackagePreview {
-    pub package: core::AgentPackage,
-    /// For each MCP server name in the package, the projects that already
-    /// reference it. Importing the server writes it into those projects.
-    pub server_projects: BTreeMap<String, Vec<String>>,
-    /// The same for each skill name.
-    pub skill_projects: BTreeMap<String, Vec<String>>,
-}
 
 /// True when the folder has a `plugin.json` at its root, so the import
 /// dialog should treat it as an Agent Plugin package.
@@ -33,30 +16,27 @@ pub async fn is_agent_package_dir(path: String) -> Result<bool, String> {
         .map_err(|e| format!("is_agent_package_dir task join error: {e}"))
 }
 
-/// Read a package without changing anything, for the confirm step.
+/// Read a package and plan its import without changing anything, for the
+/// confirm step. The plan lists the projects each new item reaches.
 #[tauri::command]
-pub async fn preview_agent_package(path: String) -> Result<AgentPackagePreview, String> {
-    tokio::task::spawn_blocking(move || {
-        let package = core::read_agent_package(&path)?;
-        let (skill_projects, server_projects) = referencing_projects(&package);
-        Ok(AgentPackagePreview {
-            package,
-            server_projects,
-            skill_projects,
-        })
-    })
-    .await
-    .map_err(|e| format!("preview_agent_package task join error: {e}"))?
+pub async fn preview_agent_package(path: String) -> Result<core::AgentPackagePreview, String> {
+    tokio::task::spawn_blocking(move || core::preview_agent_package(&path))
+        .await
+        .map_err(|e| format!("preview_agent_package task join error: {e}"))?
 }
 
 /// Import an Agent Plugin package's skills and MCP servers into the library.
-/// Only new names are added. Projects that already referenced one of those
-/// names are synced, as for any other library save; the preview lists them
-/// so the user agrees to that before importing.
+/// `expected_digest` is the digest the preview showed; the import refuses a
+/// package that changed since. Projects that already referenced one of the
+/// new names are synced, as for any other library save; the preview lists
+/// them so the user agrees to that before importing.
 #[tauri::command]
-pub async fn import_agent_package(path: String) -> Result<core::AgentPackageImportResult, String> {
+pub async fn import_agent_package(
+    path: String,
+    expected_digest: String,
+) -> Result<core::AgentPackageImportResult, String> {
     tokio::task::spawn_blocking(move || {
-        let result = core::import_agent_package(&path)?;
+        let result = core::import_agent_package(&path, &expected_digest)?;
         for name in &result.imported_skills {
             core::record_recently_added("skills", name);
             sync_projects_referencing_skill(name);
@@ -76,32 +56,4 @@ pub async fn list_installed_agent_packages() -> Result<core::InstalledAgentPacka
     tokio::task::spawn_blocking(core::list_installed_agent_packages)
         .await
         .map_err(|e| format!("list_installed_agent_packages task join error: {e}"))?
-}
-
-type ProjectsByName = BTreeMap<String, Vec<String>>;
-
-/// The projects naming each of the package's skills and servers, matched
-/// exactly as the post-import sync matches them.
-fn referencing_projects(package: &core::AgentPackage) -> (ProjectsByName, ProjectsByName) {
-    let mut skills = ProjectsByName::new();
-    let mut servers = ProjectsByName::new();
-    with_each_project_mut(|_, project| {
-        for skill in &package.skills {
-            if project.skills.iter().any(|name| name == &skill.name) {
-                skills
-                    .entry(skill.name.clone())
-                    .or_default()
-                    .push(project.name.clone());
-            }
-        }
-        for server in &package.mcp_servers {
-            if project.mcp_servers.iter().any(|name| name == &server.name) {
-                servers
-                    .entry(server.name.clone())
-                    .or_default()
-                    .push(project.name.clone());
-            }
-        }
-    });
-    (skills, servers)
 }

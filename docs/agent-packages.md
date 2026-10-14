@@ -12,7 +12,9 @@ Skills → Import → Local File.
 - **Select File** also accepts a `plugin.json` file. Automatic imports the folder that holds it.
 - The dialog lists the packages found in `~/.agents/plugins`, one level deep. Each has an Import button.
 
-Before anything is written, the dialog shows a preview. It lists the package name and version, and each skill. For each MCP server it shows the type, the full command and arguments (or the URL), the working folder, and the names of its environment variables and headers. Values are not shown. When a project already names a skill or server, the preview says which projects it will be added to. Nothing is imported until the user clicks Import.
+Before anything is written, the dialog shows a preview. It lists the package name and version, and each skill. For each MCP server it shows the type, the full command and arguments (or the URL), the working folder, and the names of its environment variables and headers. Values are not shown. When a project already names a skill or server, the preview says which projects it will be added to. Items that conflict are listed under "Will not be imported" with the reason. Nothing is imported until the user clicks Import.
+
+The preview and the import plan the import with the same function, so they agree on what is added and what conflicts. The preview also returns a SHA-256 digest of `plugin.json`, `mcp.json` and each skill's `SKILL.md`. The import is given that digest. If the package changed after the preview, the import refuses with "The package changed after the preview. Preview it again." Companion files are not in the digest; each skill is checked again just before it is copied.
 
 The result lists the imported skills and servers, the items that were skipped with a reason, and any warnings.
 
@@ -69,9 +71,10 @@ Stored as `{"type": "http" | "sse", "url", "headers"}`.
 
 - Skills go through the normal single-skill import, including its security scan and companion-file checks.
 - Servers go through the same steps as a remote-source install: security scan, ciphertext blanking, and the registry save that encrypts env values. A Docker config the sync guard would block is skipped.
-- A name that already exists in the library is skipped and reported as a conflict. It is never overwritten. Names are compared without letter case, including against the built-in `automatic`, and against earlier items in the same package.
-- A server is written with a create-only open, so even a server added in the meantime is never replaced.
-- Each skill is checked again just before it is copied. If the copy fails part way, the new library folder is removed.
+- A name that already exists in the library is skipped and reported as a conflict. It is never overwritten. Names are compared without letter case (Unicode lowercase), including against the built-in `automatic`, and against earlier items in the same package.
+- A name that differs only in letter case from a name a project uses is a conflict. The reason names the project. Sync on a case-insensitive disk would otherwise give that project the new item without the preview showing it.
+- Writes are create-only. A server file is opened with `create_new`. A skill folder is created with `create_dir`, and an existing folder is a conflict. On a file system that ignores case or Unicode normalisation (APFS, NTFS), a variant of an existing name therefore can never be written into, even one the name check does not catch, such as `café` in NFC and NFD forms.
+- Each skill is checked again just before it is copied. If the copy fails part way, the new library folder and its entry in `skill-scans.json` are removed.
 - Imported skills are grouped in a collection named after the package.
 
 ## Limits
