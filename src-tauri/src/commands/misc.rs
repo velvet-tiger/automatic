@@ -107,6 +107,23 @@ pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
+// ── Open-Source Licences ──────────────────────────────────────────────────────
+
+/// Read the third-party licence files that release builds ship in the app's
+/// resource folder. Takes no path from the caller. Returns no files and no
+/// folder for a build without them, such as a development build.
+#[tauri::command]
+pub fn read_third_party_licences(
+    app: tauri::AppHandle,
+) -> Result<core::ThirdPartyLicences, String> {
+    use tauri::Manager;
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("could not find the app's resource folder: {}", e))?;
+    core::read_third_party_licences(&resource_dir.join(core::LICENCES_DIR))
+}
+
 // ── Directory / File Pickers ──────────────────────────────────────────────────
 
 /// Open a native folder-picker dialog and return the selected path.

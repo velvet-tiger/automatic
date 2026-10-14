@@ -1,4 +1,4 @@
-.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli dev-signing-setup dev-secrets-import
+.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli dev-signing-setup dev-secrets-import licenses
 
 # Default target
 .DEFAULT_GOAL := help
@@ -50,6 +50,9 @@ test: ## Run Rust backend tests
 
 cli: ## Run the CLI locally (usage: make cli ARGS="projects list")
 	cd src-tauri && cargo run --quiet -- $(ARGS)
+
+licenses: ## Write each release platform's Rust crate licence file to src-tauri/target/licenses/ (needs cargo-about 0.9.2)
+	bash scripts/third-party-licenses.sh src-tauri/target/licenses
 
 format: ## Format code (Rust)
 	cd src-tauri && cargo fmt

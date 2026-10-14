@@ -12,22 +12,68 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Writes the licence list of the Rust crates in each platform's build. It is
+  # a job of its own so that the third-party install action and the tool it
+  # downloads never run in the build job, which signs the app and holds the
+  # signing secrets. This job gets a read-only token and no secrets.
+  licenses:
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes, so the token is not left in .git/config.
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # Pinned to a commit, and the tool to a version, so that neither can
+      # change under a release.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-about@0.9.2
+
+      # Fails when a crate's licence is not accepted in about.toml, when a
+      # licence file pinned there has changed, or when a crate would be
+      # printed without its copyright line.
+      - name: Generate for every release platform
+        run: bash scripts/third-party-licenses.sh licenses
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-licenses
+          path: licenses/*.txt
+          if-no-files-found: error
+
   build:
-    timeout-minutes: 30
+    needs: licenses
+    # The Linux leg builds the AppImage twice. See "List the AppImage's
+    # system libraries".
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # `name` matches a file that scripts/third-party-licenses.sh writes.
+        # Every leg bundles the licence files through tauri.release.conf.json.
         include:
-          - os: macos-latest
+          - name: darwin-universal
+            os: macos-latest
             target: universal-apple-darwin
-            args: --target universal-apple-darwin --bundles app,updater
-          - os: ubuntu-22.04
+            args: --target universal-apple-darwin --bundles app,updater --config src-tauri/tauri.release.conf.json
+          - name: linux-x86_64
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            args: --bundles appimage
-          - os: windows-latest
+            args: --bundles appimage --config src-tauri/tauri.release.conf.json
+          - name: windows-x86_64
+            os: windows-latest
             target: x86_64-pc-windows-msvc
-            args: --bundles nsis
+            args: --bundles nsis --config src-tauri/tauri.release.conf.json
 
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +114,57 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Download the third-party licence files
+        uses: actions/download-artifact@v4
+        with:
+          name: third-party-licenses
+          path: licenses-artifact
+
+      # tauri.release.conf.json bundles everything in src-tauri/licenses/.
+      # The file comes from another job. Take it only as a plain file, so
+      # that nothing else on this runner can be copied into a public bundle.
+      - name: Stage the Rust crate licence file
+        shell: bash
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
+        run: |
+          licence_file="licenses-artifact/$MATRIX_NAME.txt"
+          if [ ! -f "$licence_file" ] || [ -L "$licence_file" ]; then
+            echo "::error::$licence_file is missing or is not a regular file"
+            exit 1
+          fi
+          mkdir -p src-tauri/licenses
+          cp "$licence_file" src-tauri/licenses/rust-crates.txt
+
+      # The gdk-pixbuf TIFF loader needs libtiff, which needs libjbig. JBIG-KIT
+      # is GPL-2+ only, and the AppImage would carry it. Setting the loader
+      # aside keeps both out of the AppImage. TIFF images then load only where
+      # the user's system has the loader. scripts/appimage-system-licenses.sh
+      # fails the build if libjbig comes back.
+      - name: Set aside the TIFF image loader (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          loader=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders/libpixbufloader-tiff.so
+          sudo dpkg-divert --local --rename --divert "$loader.disabled" --add "$loader"
+          sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
+
+      # The list of system libraries the AppImage carries is only known once
+      # linuxdeploy has built one. This first build makes that AppImage. It
+      # gets no secrets and writes no updater signature. The script then
+      # writes system-libraries.txt into the staging folder, so that the real
+      # build below bundles it.
+      - name: List the AppImage's system libraries (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          npm run tauri build -- --bundles appimage --config src-tauri/tauri.release.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
+          if [ "${#appimages[@]}" -ne 1 ] || [ ! -f "${appimages[0]}" ]; then
+            echo "::error::expected one AppImage, found: ${appimages[*]}"
+            exit 1
+          fi
+          bash scripts/appimage-system-licenses.sh "${appimages[0]}" src-tauri/licenses/system-libraries.txt "$RUNNER_TEMP/appimage-files-first.txt"
+          rm -rf src-tauri/target/release/bundle/appimage
 
       # Build the console-subsystem CLI binary and stage it where
       # tauri.windows.conf.json's `externalBin` entry expects to find it.
@@ -262,6 +359,53 @@ jobs:
           ATTIO_API_KEY: ${{ secrets.ATTIO_API_KEY }}
         with:
           args: ${{ matrix.args }}
+
+      # The checks below look inside the finished bundles. A tag build has
+      # already uploaded them to the draft release by now. The draft stays
+      # unpublished if a check fails, because `publish` needs this job.
+      - name: Check the bundled licence files (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          dir=src-tauri/target/universal-apple-darwin/release/bundle/macos/Automatic.app/Contents/Resources/licenses
+          listed=$(ls "$dir" | LC_ALL=C sort | tr '\n' ' ')
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::$dir holds '$listed', expected '$expected'"
+            exit 1
+          fi
+
+      - name: Check the bundled licence files (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
+          listing=$(7z l -ba "${installers[0]}" | tr -d '\r')
+          for file in THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt; do
+            if ! grep -qiE "licenses[\\/]$file\$" <<<"$listing"; then
+              echo "::error::${installers[0]} holds no licenses/$file"
+              echo "$listing"
+              exit 1
+            fi
+          done
+
+      # Lists the final AppImage the same way, which also repeats the deny
+      # list check, and compares its files with the first build's.
+      - name: Check the bundled licence files (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
+          bash scripts/appimage-system-licenses.sh "${appimages[0]}" "$RUNNER_TEMP/system-libraries-final.txt" "$RUNNER_TEMP/appimage-files-final.txt"
+          if ! diff -u "$RUNNER_TEMP/appimage-files-first.txt" "$RUNNER_TEMP/appimage-files-final.txt"; then
+            echo "::error::the released AppImage holds different files from the one system-libraries.txt was written from"
+            exit 1
+          fi
+          (cd "$RUNNER_TEMP" && rm -rf check && mkdir check && cd check && "$GITHUB_WORKSPACE/${appimages[0]}" --appimage-extract >/dev/null)
+          listed=$(ls "$RUNNER_TEMP/check/squashfs-root/usr/lib/Automatic/licenses" | LC_ALL=C sort | tr '\n' ' ')
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt system-libraries.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::the AppImage's licenses folder holds '$listed', expected '$expected'"
+            exit 1
+          fi
 
   # Runs after all platform builds succeed. Downloads the .sig workflow artifacts uploaded
   # by each build job, generates a valid latest.json, and uploads it to the draft release.

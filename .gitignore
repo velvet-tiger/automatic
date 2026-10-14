@@ -27,6 +27,11 @@ src-tauri/tauri.dev.conf.json
 # here with the target-triple suffix expected by the bundler).
 /src-tauri/binaries/
 
+# Staging area for the generated licence files that release builds bundle
+# through src-tauri/tauri.release.conf.json (rust-crates.txt, and on Linux
+# system-libraries.txt). release.yml fills it.
+/src-tauri/licenses/
+
 # Editor directories and files
 .vscode/*
 .vscode/
