@@ -299,7 +299,12 @@ export default function SettingsAgents() {
   };
 
   const anyKeyStored = AGENTS.some((a) => keyStates[a.provider]?.stored);
-  const featuresEnabled = enabledOverride ?? anyKeyStored;
+  // The backend keeps agent features on when the keychain could not say
+  // whether a key is stored, so that using one shows the keychain's error.
+  // The toggle follows the same rule, or it would say off while the rest of
+  // the app shows the AI controls.
+  const anyKeyUnknown = AGENTS.some((a) => keyStates[a.provider]?.readError);
+  const featuresEnabled = enabledOverride ?? (anyKeyStored || anyKeyUnknown);
 
   const effectiveActiveAgent = activeAgent ?? "anthropic";
 

@@ -164,6 +164,15 @@ pub fn load_oauth_token(server_name: &str, url: &str) -> Result<String, String> 
     })
 }
 
+/// What a look for a server's token found.
+struct TokenLookup {
+    token: Option<String>,
+    /// False when the record of old URLs could not be read. An old token may
+    /// then be adopted by a later look, so "no token" is this look's answer
+    /// only and must not be remembered.
+    settled: bool,
+}
+
 /// The token in `entries`, or the one an older version stored for the server.
 ///
 /// `url` is the URL `entries` are for. The older token is only looked for
@@ -174,25 +183,36 @@ fn find_oauth_token(
     url: &str,
     entries: &OAuthEntries,
 ) -> Result<Option<String>, String> {
+    look_for_oauth_token(server_name, url, entries).map(|lookup| lookup.token)
+}
+
+fn look_for_oauth_token(
+    server_name: &str,
+    url: &str,
+    entries: &OAuthEntries,
+) -> Result<TokenLookup, String> {
+    let settled = |token| TokenLookup { token, settled: true };
     if let Some(token) = secret_store::load_secret_if_present(&entries.token)? {
-        return Ok(Some(token));
+        return Ok(settled(Some(token)));
     }
     // The record of old URLs is a file, not the secret store. When it cannot
     // be read, the old secrets go unused, as `legacy_oauth_url_is` says. An
     // error here would stop every sync of a server that has no token, with
     // nothing in the app to repair the file.
-    let issued_for_this_url =
-        crate::core::legacy_oauth_url_is(server_name, url).unwrap_or_else(|e| {
+    match crate::core::legacy_oauth_url_is(server_name, url) {
+        Ok(true) => adopt_legacy_secrets(server_name, entries).map(settled),
+        Ok(false) => Ok(settled(None)),
+        Err(e) => {
             eprintln!(
                 "warning: could not tell whether an older version stored a token for MCP server '{}', so any such token is not used: {}",
                 server_name, e
             );
-            false
-        });
-    if !issued_for_this_url {
-        return Ok(None);
+            Ok(TokenLookup {
+                token: None,
+                settled: false,
+            })
+        }
     }
-    adopt_legacy_secrets(server_name, entries)
 }
 
 /// Move the secrets an older version stored under the server's name alone to
@@ -303,17 +323,18 @@ pub(crate) fn oauth_token_presence(
         return Err(error);
     }
 
-    let present = find_oauth_token(server_name, url, &entries)
-        .map(|token| token.is_some())
-        .map_err(|e| {
-            format!(
-                "could not check for an OAuth token for MCP server '{}': {}",
-                server_name, e
-            )
-        });
-    failed_token_reads().record(&entries.token, &present);
-    let present = present?;
-    set_cached_token_presence(&entries.token, present);
+    let lookup = look_for_oauth_token(server_name, url, &entries).map_err(|e| {
+        format!(
+            "could not check for an OAuth token for MCP server '{}': {}",
+            server_name, e
+        )
+    });
+    failed_token_reads().record(&entries.token, &lookup);
+    let lookup = lookup?;
+    let present = lookup.token.is_some();
+    if lookup.settled {
+        set_cached_token_presence(&entries.token, present);
+    }
     Ok(present)
 }
 
@@ -1026,6 +1047,11 @@ mod tests {
                 Some("old-token".to_string()),
                 "the old token is left where it was"
             );
+
+            // "No token" was this look's answer only. With the record
+            // readable again the old token is adopted, in the same process.
+            std::fs::remove_file(home.join("mcp_oauth_legacy_urls.json")).expect("remove");
+            assert_eq!(has_oauth_token(server, URL), Ok(true));
         });
     }
 

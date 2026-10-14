@@ -963,6 +963,7 @@ export function ProjectEditor({
         if (synced) {
           setDriftReport({ drifted: false, agents: [] });
           setDriftByProject((prev) => ({ ...prev, [name]: false }));
+          setDriftCheckError(null);
           refreshProblemsReport(name);
           // Rules and instruction settings change the generated files. Leave
           // them alone while the user has an instruction file open for edit.
@@ -2162,6 +2163,7 @@ export function ProjectEditor({
       if (toSave.directory && toSave.agents.length > 0) {
         setDriftReport({ drifted: false, agents: [] });
         setDriftByProject((prev) => ({ ...prev, [name]: false }));
+        setDriftCheckError(null);
       }
 
       // Write any pending unified instruction content from one or more template applies.
@@ -2856,6 +2858,7 @@ export function ProjectEditor({
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
       setDriftReport({ drifted: false, agents: [] });
       setDriftByProject((prev) => ({ ...prev, [name]: false }));
+      setDriftCheckError(null);
       notifyProjectUpdated();
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
@@ -2892,6 +2895,7 @@ export function ProjectEditor({
       setDirty(false);
       setDriftReport({ drifted: false, agents: [] });
       setDriftByProject((prev) => ({ ...prev, [name]: false }));
+      setDriftCheckError(null);
       notifyProjectUpdated();
       setRebuildPreview(null);
       setSyncStatus("Rebuilt project state");

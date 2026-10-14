@@ -68,8 +68,29 @@ describe("McpServers OAuth section", () => {
 
     expect(await screen.findByText(/the keychain is locked/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated")).not.toBeInTheDocument();
     expect(callsTo("get_mcp_oauth_token_status")).toHaveLength(0);
+  });
+
+  it("lets the user sign in again when the stored token cannot be checked", async () => {
+    let signedIn = false;
+    mockInvoke({
+      ...routes(() => signedIn),
+      has_mcp_oauth_token: () =>
+        signedIn ? Promise.resolve(true) : Promise.reject("an old entry could not be deleted"),
+      authorize_mcp_server: () => {
+        signedIn = true;
+        return "token";
+      },
+    });
+    render(<McpServers initialServer="linear" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in again" }));
+
+    expect(await screen.findByText("Authenticated")).toBeInTheDocument();
+    expect(screen.queryByText(/an old entry could not be deleted/)).not.toBeInTheDocument();
+    expect(callsTo("authorize_mcp_server")).toHaveLength(1);
   });
 
   it("does not call the token expired when the check could not run", async () => {

@@ -229,7 +229,32 @@ pub async fn login() -> Result<AccountProfile, String> {
 /// An error means the user may still be signed in, and says which secrets
 /// are still stored. Success means the keychain confirmed that none are.
 pub async fn logout() -> Result<(), String> {
-    sign_out_of_keychain(&webapp_url(), &ACCOUNT_ENTRIES).await
+    sign_out_of_keychain(&webapp_url(), &ACCOUNT_ENTRIES)
+        .await
+        .map_err(|problem| problem.message())
+}
+
+/// Why a sign-out of the keychain did not end cleanly.
+#[derive(Debug, PartialEq)]
+enum SignOutProblem {
+    /// A token is still stored, or may be, so the user is still signed in.
+    /// The text is a complete message.
+    StillSignedIn(String),
+    /// The tokens are gone, so the user is signed out, but something is left
+    /// to say. The text completes "You are signed out on this device, but".
+    SignedOutBut(String),
+}
+
+impl SignOutProblem {
+    /// The problem as a message for the user.
+    fn message(&self) -> String {
+        match self {
+            SignOutProblem::StillSignedIn(message) => message.clone(),
+            SignOutProblem::SignedOutBut(what) => {
+                format!("You are signed out on this device, but {}", what)
+            }
+        }
+    }
 }
 
 /// Revoke the refresh token in `entries` on the webapp at `webapp` and
@@ -237,28 +262,41 @@ pub async fn logout() -> Result<(), String> {
 ///
 /// The secrets are deleted whether or not the webapp could be told. A user
 /// who signs out wants them off this machine, and may be offline. A revoke
-/// that failed is still reported, as an error that says the machine is
-/// signed out: the session may live on at the webapp, and the refresh token
-/// that could have ended it is gone.
-async fn sign_out_of_keychain(webapp: &str, entries: &AccountEntries<'_>) -> Result<(), String> {
+/// that failed is still reported: the session may live on at the webapp, and
+/// the refresh token that could have ended it is gone.
+async fn sign_out_of_keychain(
+    webapp: &str,
+    entries: &AccountEntries<'_>,
+) -> Result<(), SignOutProblem> {
     let revoked = match refresh_token_to_revoke(entries)? {
         Some(refresh) => revoke_on_webapp(webapp, &refresh).await,
         None => Ok(()),
     };
-    match (delete_account_secrets(entries), revoked) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(revoke)) => Err(format!(
-            "You are signed out on this device, but the Automatic server could not be told \
-             to end the session: {} The session may still be valid there. To end it, sign in \
-             and sign out again when the server can be reached.",
+    let not_told = revoked.err().map(|revoke| {
+        format!(
+            "the Automatic server could not be told to end the session: {} The session may \
+             stay valid on the server.",
             with_full_stop(&revoke)
-        )),
-        (Err(delete), Ok(())) => Err(delete),
-        (Err(delete), Err(revoke)) => Err(format!(
-            "{} The Automatic server could also not be told to end the session: {}",
-            with_full_stop(&delete),
-            revoke
-        )),
+        )
+    });
+    match (delete_account_secrets(entries), not_told) {
+        (Ok(()), None) => Ok(()),
+        (Ok(()), Some(not_told)) => Err(SignOutProblem::SignedOutBut(not_told)),
+        (Err(problem), None) => Err(problem),
+        (Err(SignOutProblem::StillSignedIn(message)), Some(not_told)) => {
+            Err(SignOutProblem::StillSignedIn(format!(
+                "{} Also, {}",
+                with_full_stop(&message),
+                not_told
+            )))
+        }
+        (Err(SignOutProblem::SignedOutBut(what)), Some(not_told)) => {
+            Err(SignOutProblem::SignedOutBut(format!(
+                "{} Also, {}",
+                with_full_stop(&what),
+                not_told
+            )))
+        }
     }
 }
 
@@ -268,13 +306,15 @@ async fn sign_out_of_keychain(webapp: &str, entries: &AccountEntries<'_>) -> Res
 /// A keychain that cannot be read is an error, and sign-out stops there with
 /// nothing deleted. The token may be stored, and going on would leave it
 /// valid on the webapp while the user is told they are signed out.
-fn refresh_token_to_revoke(entries: &AccountEntries<'_>) -> Result<Option<String>, String> {
+fn refresh_token_to_revoke(
+    entries: &AccountEntries<'_>,
+) -> Result<Option<String>, SignOutProblem> {
     secret_store::load_secret_if_present(entries.refresh_token).map_err(|e| {
-        format!(
+        SignOutProblem::StillSignedIn(format!(
             "Could not sign out. The keychain could not be read, so nothing in it was revoked \
              or removed. Any sign-in stored there is still in place: {}",
             e
-        )
+        ))
     })
 }
 
@@ -311,26 +351,25 @@ async fn revoke_on_webapp(webapp: &str, refresh: &str) -> Result<(), String> {
 /// status check calls the user signed in while the access token and the
 /// profile are stored, so they go last, and the first secret that will not go
 /// stops the rest. The user then still sees the sign-out button.
-fn delete_account_secrets(entries: &AccountEntries<'_>) -> Result<(), String> {
+fn delete_account_secrets(entries: &AccountEntries<'_>) -> Result<(), SignOutProblem> {
     let tokens = [
         (entries.refresh_token, "refresh token"),
         (entries.access_token, "access token"),
     ];
     for (entry, what) in tokens {
         if let Some(problem) = crate::proxy::remove_secret(entry).problem() {
-            return Err(format!(
+            return Err(SignOutProblem::StillSignedIn(format!(
                 "Could not finish signing out, and you are still signed in. The {} could not \
                  be removed from the keychain: {}",
                 what, problem
-            ));
+            )));
         }
     }
     if let Some(problem) = crate::proxy::remove_secret(entries.profile).problem() {
-        return Err(format!(
-            "You are signed out, but your stored name and email could not be removed from \
-             the keychain: {}",
+        return Err(SignOutProblem::SignedOutBut(format!(
+            "your stored name and email could not be removed from the keychain: {}",
             problem
-        ));
+        )));
     }
     Ok(())
 }
@@ -445,12 +484,28 @@ mod tests {
         format!("http://127.0.0.1:{}", port)
     }
 
-    fn sign_out(entries: &AccountEntries<'_>) -> Result<(), String> {
+    fn sign_out(entries: &AccountEntries<'_>) -> Result<(), SignOutProblem> {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime")
             .block_on(sign_out_of_keychain(&unreachable_webapp(), entries))
+    }
+
+    /// The message of a sign-out that left the user signed in.
+    fn still_signed_in(result: Result<(), SignOutProblem>) -> String {
+        match result.expect_err("the sign-out did not finish") {
+            SignOutProblem::StillSignedIn(message) => message,
+            other => panic!("expected to be still signed in: {other:?}"),
+        }
+    }
+
+    /// What was left to say after a sign-out that removed the tokens.
+    fn signed_out_but(result: Result<(), SignOutProblem>) -> String {
+        match result.expect_err("something was left to say") {
+            SignOutProblem::SignedOutBut(what) => what,
+            other => panic!("expected to be signed out: {other:?}"),
+        }
     }
 
     #[test]
@@ -491,7 +546,7 @@ mod tests {
         let result = sign_out(&account.entries());
         set_test_fault(&account.refresh_token, None);
 
-        let err = result.expect_err("the refresh token cannot be read");
+        let err = still_signed_in(result);
         assert!(err.contains("still in place"), "unexpected error: {err}");
         assert_eq!(account.stored(), [true, true, true], "nothing was deleted");
     }
@@ -506,7 +561,7 @@ mod tests {
             let result = delete_account_secrets(&account.entries());
             set_test_fault(&entry, None);
 
-            let err = result.expect_err("a token is still stored");
+            let err = still_signed_in(result);
             assert!(err.contains(what), "the error names the {what}: {err}");
             assert!(err.contains("still signed in"), "unexpected error: {err}");
             // The access token and the profile are still stored, so the
@@ -527,8 +582,8 @@ mod tests {
         let result = delete_account_secrets(&account.entries());
         set_test_fault(&account.profile, None);
 
-        let err = result.expect_err("the profile may still be stored");
-        assert!(err.contains("You are signed out"), "unexpected error: {err}");
+        let err = signed_out_but(result);
+        assert!(err.contains("name and email"), "unexpected error: {err}");
         assert_eq!(account.stored(), [false, false, true]);
         assert!(!status_of(&account.entries()).expect("status").signed_in);
     }
@@ -537,12 +592,31 @@ mod tests {
     fn a_webapp_that_cannot_be_reached_is_reported_and_the_secrets_still_go() {
         let account = SignedIn::new("account-test-revoke-unreachable");
 
-        let err = sign_out(&account.entries()).expect_err("the revoke did not happen");
+        let result = sign_out(&account.entries());
 
-        assert!(err.contains("signed out on this device"), "unexpected error: {err}");
+        let message = result.as_ref().expect_err("the revoke did not happen").message();
+        assert!(message.starts_with("You are signed out on this device, but"), "{message}");
+        let err = signed_out_but(result);
         assert!(err.contains("could not be told"), "unexpected error: {err}");
+        // Signing in and out again would not end the old session, so the
+        // message must not say it would.
+        assert!(!err.contains("sign in"), "unexpected error: {err}");
         assert!(!err.contains("refresh"), "the token is not in the message: {err}");
         assert_eq!(account.stored(), [false, false, false]);
+    }
+
+    #[test]
+    fn a_failed_revoke_and_a_token_that_will_not_go_are_both_reported_as_still_signed_in() {
+        let account = SignedIn::new("account-test-revoke-and-refused");
+
+        set_test_fault(&account.access_token, Some(TestFault::DeleteRefused));
+        let result = sign_out(&account.entries());
+        set_test_fault(&account.access_token, None);
+
+        let err = still_signed_in(result);
+        assert!(err.contains("access token"), "unexpected error: {err}");
+        assert!(err.contains("could not be told"), "unexpected error: {err}");
+        assert!(status_of(&account.entries()).expect("status").signed_in);
     }
 
     #[test]

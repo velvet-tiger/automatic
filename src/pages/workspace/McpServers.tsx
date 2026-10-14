@@ -434,6 +434,7 @@ function OAuthSection({
     try {
       await invoke("authorize_mcp_server", { serverName, mcpUrl: url });
       if (!cancelledRef.current) setHasToken(true);
+      if (!cancelledRef.current) setPresenceError(null);
       if (!cancelledRef.current) setTokenStatus(null);
     } catch (e) {
       if (!cancelledRef.current) setError(String(e));
@@ -472,9 +473,35 @@ function OAuthSection({
         </label>
         <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
           <AlertTriangle size={12} className="text-danger mt-0.5 shrink-0" />
-          <p className="text-[11px] text-danger">
-            Could not check whether this server is signed in. {presenceError}
-          </p>
+          <div className="flex-1 min-w-0 space-y-2">
+            <p className="text-[11px] text-danger">
+              Could not check whether this server is signed in. {presenceError}
+            </p>
+            {/* Signing in again files a new token under this server and URL,
+                which is found before anything else is read. It is the way
+                out when an old entry in the keychain cannot be used. */}
+            {offerSignIn && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAuthorize}
+                  disabled={!url || loading || dirty}
+                  className="px-3 py-1.5 text-[11px] font-medium text-text-base border border-border-strong/40 hover:border-brand/50 rounded transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  {action === "authorize" ? "Waiting..." : "Sign in again"}
+                </button>
+                {action === "authorize" && (
+                  <button
+                    onClick={handleCancel}
+                    className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors whitespace-nowrap"
+                  >
+                    Cancel
+                  </button>
+                )}
+                {dirty && <span className="text-[11px] text-text-muted">Save your changes first.</span>}
+              </div>
+            )}
+            {error && <p className="text-[11px] text-danger">{error}</p>}
+          </div>
         </div>
       </section>
     );
