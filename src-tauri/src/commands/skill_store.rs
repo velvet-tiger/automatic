@@ -40,10 +40,6 @@ pub async fn import_remote_skill(
         installed_at,
     )?;
     sync_projects_referencing_skill(&name);
-    // Mark getting-started flag; best-effort — never block the install.
-    if let Err(e) = core::mark_skill_installed() {
-        eprintln!("[automatic] Failed to mark skill_installed flag: {}", e);
-    }
     Ok(())
 }
 

@@ -25,18 +25,6 @@ pub struct OnboardingData {
     pub email: String,
 }
 
-/// Tracks which "Getting Started" checklist items have been completed.
-/// Each flag is set to true the first time the corresponding action is taken.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct GettingStartedFlags {
-    /// Set to true the first time a skill is installed from the skill store.
-    #[serde(default)]
-    pub skill_installed: bool,
-    /// Set to true the first time a project template is imported.
-    #[serde(default)]
-    pub template_imported: bool,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     /// How items (skills, etc.) are synced to agent directories: `"symlink"` or `"copy"`.
@@ -58,9 +46,6 @@ pub struct Settings {
     /// Agent IDs that are automatically pre-selected when creating a new project.
     #[serde(default)]
     pub default_agents: Vec<String>,
-    /// Tracks which getting-started checklist items the user has completed.
-    #[serde(default)]
-    pub getting_started: GettingStartedFlags,
     /// Set to true once the user dismisses the welcome message on the dashboard.
     #[serde(default)]
     pub welcome_dismissed: bool,
@@ -153,7 +138,6 @@ impl Default for Settings {
             wizard_completed: false,
             onboarding: OnboardingData::default(),
             default_agents: Vec::new(),
-            getting_started: GettingStartedFlags::default(),
             welcome_dismissed: false,
             default_agent_options: HashMap::new(),
             bundled_skills_version: None,
@@ -226,27 +210,6 @@ pub fn erase_app_data() -> Result<(), String> {
     super::install_default_skills()?;
     super::install_default_subagents()?;
 
-    Ok(())
-}
-
-/// Mark a getting-started flag as completed and persist settings.
-/// This is a best-effort operation — errors are logged but not propagated
-/// so that the primary action (install / import) is never blocked.
-pub fn mark_skill_installed() -> Result<(), String> {
-    let mut settings = read_settings()?;
-    if !settings.getting_started.skill_installed {
-        settings.getting_started.skill_installed = true;
-        write_settings(&settings)?;
-    }
-    Ok(())
-}
-
-pub fn mark_template_imported() -> Result<(), String> {
-    let mut settings = read_settings()?;
-    if !settings.getting_started.template_imported {
-        settings.getting_started.template_imported = true;
-        write_settings(&settings)?;
-    }
     Ok(())
 }
 
@@ -435,25 +398,31 @@ mod tests {
         assert_eq!(loaded.sync_mode, "symlink");
     }
 
-    // ── Getting-started flags ─────────────────────────────────────────────────
+    // ── Legacy keys ───────────────────────────────────────────────────────────
 
+    /// Settings files written before the Getting Started checklist was removed
+    /// still carry a `getting_started` object. They must keep parsing: a parse
+    /// failure makes `read_settings` fall back to defaults and lose every value.
     #[test]
-    fn getting_started_flags_default_to_false() {
-        let s = Settings::default();
-        assert!(!s.getting_started.skill_installed);
-        assert!(!s.getting_started.template_imported);
-    }
+    fn legacy_getting_started_key_still_parses() {
+        let legacy = r#"{
+            "sync_mode": "copy",
+            "wizard_completed": true,
+            "default_agents": ["claude"],
+            "getting_started": { "skill_installed": true, "template_imported": false }
+        }"#;
 
-    #[test]
-    fn getting_started_flags_persist() {
+        // Parse directly so a regression reports the serde error itself.
+        let parsed: Settings = serde_json::from_str(legacy).expect("legacy settings parse");
+        assert_eq!(parsed.sync_mode, "copy");
+
+        // And through the file path, where a parse failure would silently become defaults.
         let dir = tmp();
-        let mut s = Settings::default();
-        s.getting_started.skill_installed = true;
-        write_at(dir.path(), &s).expect("write");
-
+        fs::write(settings_path(dir.path()), legacy).expect("write legacy settings");
         let loaded = read_at(dir.path()).expect("read");
-        assert!(loaded.getting_started.skill_installed);
-        assert!(!loaded.getting_started.template_imported);
+        assert_eq!(loaded.sync_mode, "copy");
+        assert!(loaded.wizard_completed);
+        assert_eq!(loaded.default_agents, vec!["claude".to_string()]);
     }
 
     // ── Agent features toggle ─────────────────────────────────────────────────

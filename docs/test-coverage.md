@@ -67,7 +67,7 @@ MCP server config CRUD with integrated env encryption/decryption. Critical integ
 > **Action:** Tests added to `core/mcp_servers.rs` — see `#[cfg(test)]` block.
 
 #### `core/settings.rs` (0 tests)
-Settings read/write/reset. Default values, missing file handling, flag setters (mark_skill_installed, dismiss_welcome).
+Settings read/write/reset. Default values, missing file handling, flag setters (dismiss_welcome).
 
 > **Action:** Tests added to `core/settings.rs` — see `#[cfg(test)]` block.
 
