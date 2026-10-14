@@ -168,6 +168,41 @@ pub fn read_featured_community_json() -> Result<String, String> {
     read_json_file(&featured_community_path()?)
 }
 
+/// Read the Discover collections as a list of entries. A missing file is an
+/// empty list. A file that does not parse is an error, so a caller that
+/// writes the list back never replaces entries it could not read.
+pub(crate) fn read_collection_entries() -> Result<Vec<serde_json::Value>, String> {
+    let path = collections_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+}
+
+/// Replace the Discover collections with `entries`.
+pub(crate) fn write_collection_entries(entries: &[serde_json::Value]) -> Result<(), String> {
+    let path = collections_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+    let json = serde_json::to_string_pretty(entries)
+        .map_err(|e| format!("Failed to serialize collections: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+/// The bundled collection with `slug`, as the first run writes it, or
+/// `None` when no bundled collection has that slug.
+pub(crate) fn seed_collection(slug: &str) -> Result<Option<serde_json::Value>, String> {
+    let seeds: Vec<serde_json::Value> = serde_json::from_str(SEED_COLLECTIONS)
+        .map_err(|e| format!("Failed to parse the bundled collections: {}", e))?;
+    Ok(seeds
+        .into_iter()
+        .find(|entry| entry.get("slug").and_then(|v| v.as_str()) == Some(slug)))
+}
+
 fn read_json_file(path: &PathBuf) -> Result<String, String> {
     if path.exists() {
         fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))
