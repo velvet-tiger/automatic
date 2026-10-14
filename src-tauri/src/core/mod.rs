@@ -51,6 +51,7 @@ mod rules_injection;
 pub(crate) mod secret_store;
 mod settings;
 mod skill_store;
+pub(crate) mod store_reads;
 mod skills;
 mod subagents;
 pub mod task_log;

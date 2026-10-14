@@ -4,6 +4,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::core::store_reads::StoreRead;
 use crate::core::Project;
 
 /// Load the configs of the named MCP servers from the Automatic registry.
@@ -441,10 +442,15 @@ fn server_url(config: &Value) -> &str {
 /// an OAuth token. That decides between the proxy stub and the server's own
 /// URL, so there is no map to return: writing the URL over a stub would cut
 /// a signed-in server off from its token. The error names the server.
+///
+/// `read` says who is asking. A sync passes [`StoreRead::Now`]. The drift
+/// check runs on a timer and passes [`StoreRead::Background`], so it does not
+/// ask a store that has just failed.
 pub(crate) fn build_selected_servers(
     automatic_project: &str,
     server_names: &[String],
     mcp_config: &Map<String, Value>,
+    read: StoreRead,
 ) -> Result<Map<String, Value>, String> {
     let mut selected_servers = Map::new();
     let automatic_binary = find_automatic_binary();
@@ -491,7 +497,9 @@ pub(crate) fn build_selected_servers(
                 .map(|t| t == "http" || t == "sse")
                 .unwrap_or(false);
 
-            if is_http && crate::proxy::has_oauth_token(server_name, server_url(&cleaned))? {
+            if is_http
+                && crate::proxy::oauth_token_presence(server_name, server_url(&cleaned), read)?
+            {
                 // Emit a local proxy config instead of the remote URL.
                 selected_servers.insert(
                     server_name.clone(),
@@ -951,7 +959,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(automatic_project_env_value(&project), project.id);
-        let servers = build_selected_servers(automatic_project_env_value(&project), &[], &Map::new())
+        let servers = build_selected_servers(automatic_project_env_value(&project), &[], &Map::new(), StoreRead::Now)
             .expect("no servers to check");
         assert_eq!(
             servers["automatic"]["env"]["AUTOMATIC_PROJECT"],
@@ -1043,6 +1051,7 @@ mod tests {
             "sync-stub-project",
             &names,
             &registry("https://mcp.example.com/mcp"),
+            StoreRead::Now,
         )
         .expect("build");
         assert_eq!(signed_in[server]["args"], json!(["mcp-proxy", server]));
@@ -1051,6 +1060,7 @@ mod tests {
             "sync-stub-project",
             &names,
             &registry("https://other.example/mcp"),
+            StoreRead::Now,
         )
         .expect("build");
         assert_eq!(other_url[server]["url"], "https://other.example/mcp");
@@ -1079,7 +1089,7 @@ mod tests {
         let entry = crate::proxy::oauth_token_entry(server, url);
 
         set_test_fault(&entry, Some(TestFault::Unreadable));
-        let built = build_selected_servers("sync-stub-project", &names, &registry);
+        let built = build_selected_servers("sync-stub-project", &names, &registry, StoreRead::Now);
         set_test_fault(&entry, None);
 
         let err = built.expect_err("unreadable");
@@ -1100,7 +1110,7 @@ mod tests {
         crate::core::secret_store::store_secret(&entry, "token").expect("store token");
 
         set_test_fault(&entry, Some(TestFault::Unreadable));
-        let project = build_selected_servers("sync-stub-project", &names, &registry);
+        let project = build_selected_servers("sync-stub-project", &names, &registry, StoreRead::Now);
         let global = build_global_selected_servers(&names, &registry);
         set_test_fault(&entry, None);
 
@@ -1111,7 +1121,7 @@ mod tests {
         }
 
         // The failed read was not cached as "no token".
-        let project = build_selected_servers("sync-stub-project", &names, &registry).expect("build");
+        let project = build_selected_servers("sync-stub-project", &names, &registry, StoreRead::Now).expect("build");
         assert_eq!(project[server]["args"], json!(["mcp-proxy", server]));
         let global = build_global_selected_servers(&names, &registry).expect("build");
         assert_eq!(global[server]["args"], json!(["mcp-proxy", server]));

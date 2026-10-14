@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
+use crate::core::store_reads::StoreRead;
 use crate::core::{self, Project, ProjectMode};
 
 use super::autodetect::{autodetect_inner, AgentAdoption};
@@ -165,6 +166,7 @@ fn sync_to_directory_inner(
         automatic_project_env_value(project),
         &enabled_mcp_servers,
         &mcp_config,
+        StoreRead::Now,
     )?;
 
     // In Silent mode all synced files are written under .automatic/silent/

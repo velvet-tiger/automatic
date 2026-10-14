@@ -40,8 +40,9 @@ pub fn store_secret(account: &str, secret: &str) -> Result<(), String> {
 /// Load the secret stored under `account`.
 ///
 /// Returns an error when nothing is stored, as well as when the backend
-/// fails. Callers that only need presence use `.is_ok()`. Callers that must
-/// tell the two apart use [`load_secret_if_present`].
+/// fails. A caller that asks whether a secret is stored uses
+/// [`load_secret_if_present`]. `.is_ok()` here would report a store that
+/// cannot be read as "nothing stored".
 pub fn load_secret(account: &str) -> Result<String, String> {
     backend::load(account)
 }
@@ -64,10 +65,9 @@ pub fn delete_secret(account: &str) -> Result<(), String> {
 
 /// Check the backend configuration. Call once at startup.
 ///
-/// The presence checks treat every error as "nothing stored". Without this
-/// check, a mistyped `AUTOMATIC_KEYCHAIN` would look like an empty store, and
-/// sync would write agent config as if no OAuth token existed. Release and
-/// test builds have nothing to configure.
+/// A mistyped `AUTOMATIC_KEYCHAIN` makes every call to the store fail. This
+/// check reports it at startup, with the variable's name, before a sync or a
+/// sign-in runs into it. Release and test builds have nothing to configure.
 pub fn check_secret_store_config() -> Result<(), String> {
     #[cfg(all(not(test), debug_assertions))]
     {

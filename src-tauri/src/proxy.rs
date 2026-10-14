@@ -35,6 +35,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 // when a server changes is tidying. Nothing depends on it for safety.
 
 use crate::core::secret_store;
+use crate::core::store_reads::{FailedReads, StoreRead};
 use sha2::{Digest, Sha256};
 
 /// The store entries for one server at one URL.
@@ -113,6 +114,13 @@ pub(crate) fn leave_signed_in_server(server_name: &str, url: &str) -> String {
 fn token_presence_cache() -> &'static Mutex<HashMap<String, bool>> {
     static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The token presence reads that failed, for [`StoreRead::Background`]
+/// checks.
+fn failed_token_reads() -> &'static FailedReads {
+    static FAILED: OnceLock<FailedReads> = OnceLock::new();
+    FAILED.get_or_init(FailedReads::default)
 }
 
 fn set_cached_token_presence(token_entry: &str, present: bool) {
@@ -203,6 +211,11 @@ fn find_oauth_token(
 /// The old credentials move with the token and are never adopted alone.
 /// Without that, credentials left behind could later refresh into a token
 /// for another URL.
+///
+/// A store that fails part way through is an error, never "no token". The
+/// old token is still stored, and the next call tries again. Old credentials
+/// that cannot be read stop the adoption: going on would delete them unread,
+/// and the token could then never refresh.
 fn adopt_legacy_secrets(
     server_name: &str,
     entries: &OAuthEntries,
@@ -211,29 +224,24 @@ fn adopt_legacy_secrets(
     let Some(token) = secret_store::load_secret_if_present(&legacy.token)? else {
         return Ok(None);
     };
-    let credentials = match secret_store::load_secret_if_present(&legacy.credentials) {
-        Ok(credentials) => credentials,
-        Err(e) => {
-            eprintln!(
-                "warning: could not read the stored OAuth credentials of MCP server '{}', so its token will not refresh: {}",
-                server_name, e
-            );
-            None
-        }
-    };
+    let credentials = secret_store::load_secret_if_present(&legacy.credentials).map_err(|e| {
+        format!(
+            "the OAuth credentials an older version stored for MCP server '{}' could not be read, so its token was not used: {}",
+            server_name, e
+        )
+    })?;
 
     if let Some(credentials) = &credentials {
         secret_store::store_secret(&entries.credentials, credentials)?;
     }
     secret_store::store_secret(&entries.token, &token)?;
     if let Some(problem) = remove_secret(&legacy.token).problem() {
-        eprintln!(
-            "warning: the OAuth token of MCP server '{}' is in an old store entry that could not be deleted, so it was not used: {}",
-            server_name, problem
-        );
         discard_secret(&entries.credentials, "the OAuth credentials", server_name);
         discard_secret(&entries.token, "the OAuth token", server_name);
-        return Ok(None);
+        return Err(format!(
+            "the OAuth token of MCP server '{}' is in an old store entry that could not be deleted, so it was not used: {}",
+            server_name, problem
+        ));
     }
     discard_secret(&legacy.credentials, "the old OAuth credentials", server_name);
     Ok(Some(token))
@@ -272,6 +280,17 @@ pub fn load_oauth_token_if_present(server_name: &str, url: &str) -> Result<Optio
 /// pass as "no token". The error is not cached, and the next call reads the
 /// store again.
 pub fn has_oauth_token(server_name: &str, url: &str) -> Result<bool, String> {
+    oauth_token_presence(server_name, url, StoreRead::Now)
+}
+
+/// [`has_oauth_token`] for a caller that says who is asking. A background
+/// check reports a recent failed read again without asking the store, as
+/// [`StoreRead`] explains.
+pub(crate) fn oauth_token_presence(
+    server_name: &str,
+    url: &str,
+    read: StoreRead,
+) -> Result<bool, String> {
     let Ok(entries) = oauth_entries(server_name, url) else {
         return Ok(false);
     };
@@ -280,15 +299,20 @@ pub fn has_oauth_token(server_name: &str, url: &str) -> Result<bool, String> {
             return Ok(*present);
         }
     }
+    if let Some(error) = failed_token_reads().remembered(&entries.token, read) {
+        return Err(error);
+    }
 
     let present = find_oauth_token(server_name, url, &entries)
+        .map(|token| token.is_some())
         .map_err(|e| {
             format!(
                 "could not check for an OAuth token for MCP server '{}': {}",
                 server_name, e
             )
-        })?
-        .is_some();
+        });
+    failed_token_reads().record(&entries.token, &present);
+    let present = present?;
     set_cached_token_presence(&entries.token, present);
     Ok(present)
 }
@@ -576,6 +600,34 @@ fn is_token_expired(status_code: u16) -> bool {
 
 // ── Proxy entry point ────────────────────────────────────────────────────────
 
+/// What the proxy says when a server has no OAuth token at its saved URL.
+fn no_oauth_token_message(server_name: &str) -> String {
+    format!(
+        "No OAuth token found for '{}'. Authenticate first in the Automatic app.",
+        server_name
+    )
+}
+
+/// What the proxy says when the store could not be read for a server's
+/// token. Signing in again would not help, so the message does not ask for
+/// it. It carries the store's own error.
+fn unreadable_oauth_token_message(server_name: &str, error: &str) -> String {
+    format!(
+        "Could not read the OAuth token for '{}' from the secret store: {}",
+        server_name, error
+    )
+}
+
+/// The token stored for `server_name` at `url`, or the message the proxy
+/// ends with.
+fn stored_token_or_error(server_name: &str, url: &str) -> Result<String, String> {
+    match load_oauth_token_if_present(server_name, url) {
+        Ok(Some(token)) => Ok(token),
+        Ok(None) => Err(no_oauth_token_message(server_name)),
+        Err(e) => Err(unreadable_oauth_token_message(server_name, &e)),
+    }
+}
+
 /// Run the MCP proxy for `server_name`.
 ///
 /// Reads JSON-RPC from stdin, relays to the remote server over HTTP with the
@@ -586,12 +638,7 @@ fn is_token_expired(status_code: u16) -> bool {
 /// automatically attempts a token refresh and retries the request once.
 pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let url = read_server_url(server_name)?;
-    let mut token = load_oauth_token(server_name, &url).map_err(|e| {
-        format!(
-            "No OAuth token found for '{}'. Authenticate first in the Automatic app. ({})",
-            server_name, e
-        )
-    })?;
+    let mut token = stored_token_or_error(server_name, &url)?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -1191,11 +1238,60 @@ mod tests {
             let legacy = seed_legacy_secrets(server);
             set_test_fault(&legacy.token, Some(TestFault::DeleteRefused));
 
-            assert_eq!(has_oauth_token(server, URL), Ok(false));
+            // The token is stored and was not used. That is an error, and
+            // not "no token": sync would write the server's URL over its
+            // proxy stub on that answer.
+            let err = has_oauth_token(server, URL).expect_err("the old token is still stored");
+            assert!(err.contains("could not be deleted"), "unexpected error: {err}");
             assert!(load_oauth_token(server, URL).is_err());
-
             assert_eq!(stored(&entries(server, URL).token), None);
+
+            // Nothing was remembered, so the adoption works once the store
+            // lets the old token go.
+            set_test_fault(&legacy.token, None);
+            assert_eq!(has_oauth_token(server, URL), Ok(true));
         });
+    }
+
+    #[test]
+    fn older_credentials_that_cannot_be_read_stop_the_adoption_and_are_kept() {
+        let server = "legacy-test-unreadable-creds-fixture";
+        with_server_from_an_older_version(server, URL, || {
+            let legacy = seed_legacy_secrets(server);
+            set_test_fault(&legacy.credentials, Some(TestFault::Unreadable));
+
+            let err = has_oauth_token(server, URL).expect_err("the credentials cannot be read");
+            set_test_fault(&legacy.credentials, None);
+
+            assert!(err.contains("could not be read"), "unexpected error: {err}");
+            assert_eq!(stored(&entries(server, URL).token), None, "nothing was adopted");
+            assert_eq!(stored(&legacy.token), Some("old-token".to_string()));
+            assert!(stored(&legacy.credentials).is_some(), "the credentials were not deleted");
+
+            // With the store readable again the token and its credentials
+            // move together.
+            assert_eq!(has_oauth_token(server, URL), Ok(true));
+            assert!(stored(&entries(server, URL).credentials).is_some());
+        });
+    }
+
+    #[test]
+    fn a_background_check_does_not_read_a_store_that_just_failed() {
+        let server = "presence-background-fixture";
+        let entry = oauth_token_entry(server, URL);
+        secret_store::store_secret(&entry, "token").unwrap();
+        set_test_fault(&entry, Some(TestFault::Unreadable));
+        assert!(has_oauth_token(server, URL).is_err());
+        set_test_fault(&entry, None);
+
+        // The store would answer now. The background check does not ask it,
+        // so a locked keychain is not prompted for on every drift check.
+        assert!(oauth_token_presence(server, URL, StoreRead::Background).is_err());
+
+        // A check the user asked for reads, and its answer is then used by
+        // background checks too.
+        assert_eq!(has_oauth_token(server, URL), Ok(true));
+        assert_eq!(oauth_token_presence(server, URL, StoreRead::Background), Ok(true));
     }
 
     #[test]
@@ -1229,6 +1325,28 @@ mod tests {
     }
 
     // ── The proxy asks for the token filed under the saved URL ───────────────
+
+    #[test]
+    fn the_proxy_reports_a_store_that_cannot_be_read_and_does_not_ask_for_sign_in() {
+        let server = "run-proxy-unreadable-fixture";
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let entry = leave_signed_in_server(server, URL);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let result = runtime.block_on(run_proxy(server));
+            set_test_fault(&entry, None);
+
+            let err = result.expect_err("the token cannot be read").to_string();
+            assert!(err.contains("Could not read the OAuth token"), "unexpected error: {err}");
+            assert!(err.contains("test fault"), "the store's own error is kept: {err}");
+            assert!(!err.contains("Authenticate first"), "unexpected error: {err}");
+        });
+    }
 
     #[test]
     fn the_proxy_does_not_start_for_a_server_whose_token_is_filed_under_another_url() {

@@ -281,9 +281,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
         webapp_url: prev?.webapp_url ?? "",
       }));
     } catch (e) {
-      // The signed-in view stays, so the user can try again. A sign-out that
-      // failed part way through may have left a token stored.
       setAccountError(String(e));
+      // The error says what happened. The status says what is stored now: a
+      // sign-out that could not remove a token leaves the user signed in, so
+      // the sign-out button is still there to try again.
+      invoke<AccountStatus>("account_status")
+        .then(setAccountStatus)
+        .catch(() => {});
     } finally {
       setAccountBusy("idle");
     }

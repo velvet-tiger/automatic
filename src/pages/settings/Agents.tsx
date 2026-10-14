@@ -420,7 +420,11 @@ export default function SettingsAgents() {
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium text-text-base">{agent.label}</div>
                     <div className="text-[11px] text-text-muted">
-                      {hasKey ? agent.providerLabel : "No key configured"}
+                      {hasKey
+                        ? agent.providerLabel
+                        : keyStates[agent.provider]?.readError
+                          ? "Key status unknown"
+                          : "No key configured"}
                     </div>
                   </div>
                   <div

@@ -72,6 +72,18 @@ describe("McpServers OAuth section", () => {
     expect(callsTo("get_mcp_oauth_token_status")).toHaveLength(0);
   });
 
+  it("does not call the token expired when the check could not run", async () => {
+    mockInvoke({
+      ...routes(() => true),
+      get_mcp_oauth_token_status: () => Promise.reject("the keychain is locked"),
+    });
+    render(<McpServers initialServer="linear" />);
+
+    expect(await screen.findByText(/the keychain is locked/)).toBeInTheDocument();
+    expect(screen.queryByText("Authentication expired")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Re-authenticate" })).not.toBeInTheDocument();
+  });
+
   it("does not send the stored token to a URL that is not saved", async () => {
     mockInvoke(routes(() => true));
     render(<McpServers initialServer="linear" />);

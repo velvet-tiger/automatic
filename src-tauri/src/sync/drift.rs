@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
+use crate::core::store_reads::StoreRead;
 use crate::core::{Project, ProjectMode, ProjectSummary};
 
 use super::helpers::{
@@ -498,15 +499,25 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     // (strips internal `_` fields, substitutes OAuth proxy configs).
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    // The drift check runs on a timer, so it is a background read: it does
+    // not ask a secret store that has just failed.
     let selected_servers = build_selected_servers(
         automatic_project_env_value(project),
         &enabled_mcp_servers,
         &mcp_config,
+        StoreRead::Background,
     )?;
     let summaries = crate::core::get_project_summaries()?;
     let alternate_servers: Vec<Map<String, Value>> = equivalent_project_idents(project, &summaries)
         .iter()
-        .map(|ident| build_selected_servers(ident, &enabled_mcp_servers, &mcp_config))
+        .map(|ident| {
+            build_selected_servers(
+                ident,
+                &enabled_mcp_servers,
+                &mcp_config,
+                StoreRead::Background,
+            )
+        })
         .collect::<Result<_, _>>()?;
 
     // Build skill contents with dedup: library-backed skills win over stale
@@ -2848,7 +2859,20 @@ mod tests {
 
             let err = drift.expect_err("drift check must stop on a token it cannot read");
             assert!(err.contains(server), "error names the server: {}", err);
-            check_project_drift(&project).expect("drift check once the store can be read");
+
+            // The check runs on a timer, so it does not ask a store that has
+            // just failed. It reports the same failure again. With a locked
+            // keychain every read can raise a prompt.
+            let again = check_project_drift(&project).expect_err("the failure is remembered");
+            assert_eq!(again, err);
+
+            // A check the user asked for reads the store, and the drift
+            // check then uses its answer.
+            assert_eq!(
+                crate::proxy::has_oauth_token(server, "https://mcp.example.com/mcp"),
+                Ok(true)
+            );
+            check_project_drift(&project).expect("drift check once the store has answered");
         });
     }
 
@@ -3177,7 +3201,7 @@ mod tests {
         let project = identity_project();
         let no_servers = Map::new();
         let expected =
-            build_selected_servers(automatic_project_env_value(&project), &[], &no_servers)
+            build_selected_servers(automatic_project_env_value(&project), &[], &no_servers, StoreRead::Now)
                 .expect("no servers to check");
         assert_eq!(
             expected["automatic"]["env"]["AUTOMATIC_PROJECT"],
@@ -3187,7 +3211,7 @@ mod tests {
         let own = summary_of(&project, &project.name, &project.id, &project.local_key);
         let alternates: Vec<Map<String, Value>> = equivalent_project_idents(&project, &[own])
             .iter()
-            .map(|ident| build_selected_servers(ident, &[], &no_servers).expect("no servers to check"))
+            .map(|ident| build_selected_servers(ident, &[], &no_servers, StoreRead::Now).expect("no servers to check"))
             .collect();
         assert_eq!(alternates.len(), 2, "the local key and the name");
 
@@ -3196,7 +3220,7 @@ mod tests {
         for (agent_instance, file) in agents {
             for legacy_value in [project.name.as_str(), project.local_key.as_str()] {
                 let dir = tempdir().unwrap();
-                let legacy = build_selected_servers(legacy_value, &[], &no_servers)
+                let legacy = build_selected_servers(legacy_value, &[], &no_servers, StoreRead::Now)
                     .expect("no servers to check");
                 agent_instance.write_mcp_config(dir.path(), &legacy).unwrap();
                 let mut files: Vec<DriftedFile> = Vec::new();
@@ -3211,7 +3235,7 @@ mod tests {
             }
 
             let dir = tempdir().unwrap();
-            let stranger = build_selected_servers("someone-else", &[], &no_servers)
+            let stranger = build_selected_servers("someone-else", &[], &no_servers, StoreRead::Now)
                 .expect("no servers to check");
             agent_instance.write_mcp_config(dir.path(), &stranger).unwrap();
             let mut files: Vec<DriftedFile> = Vec::new();

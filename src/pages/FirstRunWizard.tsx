@@ -477,11 +477,14 @@ function StepApiKey({
   value,
   onChange,
   existingKeyHint,
+  keyReadError,
 }: {
   value: string;
   onChange: (v: string) => void;
   /** Last-4 hint of a key already stored in the keychain, if any. */
   existingKeyHint: string | null;
+  /** Why the keychain could not say whether a key is stored, when it could not. */
+  keyReadError: string | null;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -578,6 +581,12 @@ function StepApiKey({
           </div>
         )}
 
+        {keyReadError && (
+          <p className="text-[12px] text-danger">
+            Could not check the keychain for a stored key. A key you enter here may replace one
+            that is already stored. {keyReadError}
+          </p>
+        )}
         {value.trim() && !value.trim().startsWith("sk-ant-") && (
           <p className="text-[12px] text-warning">
             Anthropic API keys typically start with <span className="font-mono">sk-ant-</span>
@@ -684,6 +693,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   const [autoDetectedIds, setAutoDetectedIds] = useState<string[]>([]);
   // The full key stored in the keychain (for hint display only — never re-saved unless changed).
   const [existingApiKey, setExistingApiKey] = useState<string | null>(null);
+  const [apiKeyReadError, setApiKeyReadError] = useState<string | null>(null);
 
   // Pre-populate answers from any previously saved onboarding data.
   // On a fresh first run (no saved agents) also auto-detect installed agents.
@@ -717,12 +727,17 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
           theme: (localStorage.getItem("automatic.theme") as Theme | null) ?? "system",
         });
 
-        // Load existing Anthropic key for hint display (non-fatal if absent).
+        // Load existing Anthropic key for hint display. No key is fine. A
+        // keychain that could not be read is not "no key": one may be
+        // stored, and the key step says so before the user types over it.
         try {
-          const key: string = await invoke("get_api_key", { provider: "anthropic" });
-          if (key) setExistingApiKey(key);
-        } catch {
-          // No key stored — that's fine.
+          const stored = await invoke<boolean>("has_api_key", { provider: "anthropic" });
+          if (stored) {
+            const key: string = await invoke("get_api_key", { provider: "anthropic" });
+            if (key) setExistingApiKey(key);
+          }
+        } catch (e) {
+          setApiKeyReadError(String(e));
         }
       } catch (e) {
         console.error("[wizard] Failed to load saved settings:", e);
@@ -907,6 +922,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               value={answers.anthropicApiKey}
               onChange={(v) => setAnswers((a) => ({ ...a, anthropicApiKey: v }))}
               existingKeyHint={existingApiKey}
+              keyReadError={apiKeyReadError}
             />
           )}
           {step === 5 && (

@@ -163,8 +163,17 @@ export default function Projects({
           if (!cancelled) {
             setDriftByProject((prev) => ({ ...prev, [key]: report.drifted }));
           }
-        } catch {
-          // skip silently
+        } catch (e) {
+          // The check could not run, so the last answer may be out of date.
+          // Drop it: the project then shows as not yet checked, never as in
+          // sync. The project's own page shows the reason.
+          console.error(`check_project_drift failed for ${key}:`, e);
+          if (!cancelled) {
+            setDriftByProject((prev) => {
+              const { [key]: _stale, ...rest } = prev;
+              return rest;
+            });
+          }
         }
         await new Promise((res) => setTimeout(res, 200));
       }

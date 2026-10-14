@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+use super::store_reads::StoreRead;
 use super::agents::{
     message::{neutral_to_anthropic, ContentBlock, NeutralContent, NeutralMessage, ToolDef},
     AgentClientDyn, GatewayConfig,
@@ -57,16 +58,13 @@ pub fn agent_features_enabled() -> bool {
         .and_then(|s| s.agent_features_enabled);
     match explicit {
         Some(value) => value,
-        // The answer gates buttons, so it stays a plain bool. A store that
-        // cannot be read counts as off for this call only. Nothing is
-        // remembered, and `resolve_api_key` reports the store's own error.
-        None => super::credentials::any_known_api_key_stored().unwrap_or_else(|e| {
-            eprintln!(
-                "warning: agent features are shown as off because the secret store could not be read: {}",
-                e
-            );
-            false
-        }),
+        // The answer only decides what a page shows, so it is a background
+        // read and a plain bool. When the keychain could not say, the
+        // features stay on. Using one then reports the keychain's own error
+        // through `resolve_api_key`. Off would hide every AI control and
+        // give the user no reason.
+        None => super::credentials::any_known_api_key_stored(StoreRead::Background)
+            .unwrap_or(true),
     }
 }
 

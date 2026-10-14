@@ -339,6 +339,10 @@ function OAuthSection({
   // Set when the keychain could not say whether a token is stored. That is
   // neither "signed in" nor "signed out", so neither action is offered.
   const [presenceError, setPresenceError] = useState<string | null>(null);
+  // Set when the check of the stored token could not run: the keychain could
+  // not be read, or the server could not be reached. The token is then not
+  // known to be bad, so the section does not call it expired.
+  const [statusCheckError, setStatusCheckError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
   const loading = action !== null;
@@ -391,11 +395,13 @@ function OAuthSection({
     if (!serverName || !savedUrl || !hasToken) {
       setCheckingStatus(false);
       setTokenStatus(null);
+      setStatusCheckError(null);
       return;
     }
 
     let active = true;
     setCheckingStatus(true);
+    setStatusCheckError(null);
     invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: savedUrl })
       .then((status) => {
         if (!active) return;
@@ -408,12 +414,8 @@ function OAuthSection({
       })
       .catch((statusError) => {
         if (!active) return;
-        setTokenStatus({
-          has_token: true,
-          valid: false,
-          revoked: false,
-          message: String(statusError),
-        });
+        setTokenStatus(null);
+        setStatusCheckError(String(statusError));
       })
       .finally(() => {
         if (active) setCheckingStatus(false);
@@ -555,6 +557,15 @@ function OAuthSection({
 
               {dirty && tokenInvalid && (
                 <p className="text-[11px] text-text-muted">Save your changes before you sign in again.</p>
+              )}
+
+              {statusCheckError && !checkingStatus && (
+                <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/8 px-4 py-3">
+                  <AlertTriangle size={12} className="text-warning mt-0.5 shrink-0" />
+                  <p className="text-[11px] text-text-muted">
+                    Could not check whether the stored token is still accepted. {statusCheckError}
+                  </p>
+                </div>
               )}
 
               {checkingStatus && (

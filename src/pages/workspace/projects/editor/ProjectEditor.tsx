@@ -365,6 +365,9 @@ export function ProjectEditor({
   // Drift detection state
   // null = unknown/not yet checked, DriftReport = result of last check
   const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
+  // Why the last drift check could not run, when it could not. Shown as a
+  // banner, because a check that fails silently leaves "In Sync" on screen.
+  const [driftCheckError, setDriftCheckError] = useState<string | null>(null);
   const driftCheckInFlight = useRef(false);
 
   // Project problems state (e.g. MCP user-scope conflicts)
@@ -987,6 +990,8 @@ export function ProjectEditor({
   // with the project page when an in-memory edit (e.g. an autodetect merge
   // performed by `selectProject`) makes the project dirty on entry.
   useEffect(() => {
+    // A failure belongs to the project it was seen on.
+    setDriftCheckError(null);
     const name = selectedKey;
     if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
       return;
@@ -1009,9 +1014,18 @@ export function ProjectEditor({
         }
         if (driftResult.status === "rejected") {
           console.error(`check_project_drift failed for ${name}:`, driftResult.reason);
+          // The last report may be out of date, so it goes. The project then
+          // shows as not yet checked, never as in sync.
+          setDriftCheckError(String(driftResult.reason));
+          setDriftReport(null);
+          setDriftByProject((prev) => {
+            const { [name]: _stale, ...rest } = prev;
+            return rest;
+          });
           return;
         }
         const report = JSON.parse(driftResult.value) as DriftReport;
+        setDriftCheckError(null);
         setDriftReport(report);
         setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
 
@@ -3286,6 +3300,19 @@ export function ProjectEditor({
                   <Copy size={11} />
                   Copy prompt
                 </button>
+              </div>
+            )}
+
+            {/* ── Drift check failure ──────────────────────────────── */}
+            {driftCheckError && !isCreating && project.directory && project.agents.length > 0 && (
+              <div className="border-b border-danger/25 bg-danger/10">
+                <div className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
+                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                  <span>
+                    <span className="font-medium">Could not check this project for changes.</span>{" "}
+                    {driftCheckError}
+                  </span>
+                </div>
               </div>
             )}
 
