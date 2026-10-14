@@ -742,6 +742,11 @@ fn read_mcp_file(root: &Path, raw_out: &mut Option<String>) -> Result<Map<String
 /// Validate one `mcpServers` entry and map it to Automatic's format.
 fn map_mcp_entry(name: &str, entry: &Value, paths: &PackagePaths) -> Result<Value, String> {
     super::remote_sources::ensure_resource_name("MCP server", name)?;
+    if !is_package_server_name(name) {
+        return Err(
+            "the server name must use only ASCII letters, digits, '.', '_' and '-'".to_string(),
+        );
+    }
     let obj = entry.as_object().ok_or("the entry must be an object")?;
     let transport = obj
         .get("type")
@@ -1101,6 +1106,17 @@ fn same_name(a: &str, b: &str) -> bool {
 
 fn fold_name(name: &str) -> String {
     name.nfc().collect::<String>().to_lowercase()
+}
+
+/// Automatic's rule for package server names. The spec sets none, but APFS
+/// folds some non-ASCII letters onto ASCII ones (`ſ` opens `s`), so a
+/// non-ASCII name could reach a project's `<name>.json` reference without the
+/// preview's case check seeing it.
+fn is_package_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// The Agent Skills name rule: 1-64 of `a-z`, `0-9` and single hyphens, not
@@ -2274,21 +2290,30 @@ mod tests {
     }
 
     #[test]
-    fn unicode_case_variant_of_a_library_server_is_a_conflict() {
+    fn non_ascii_server_names_are_invalid() {
         with_package(|root| {
-            crate::core::mcp_servers::save_mcp_server_config(
-                "Äbc",
-                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
-            )
-            .unwrap();
             write_plugin(root, &plugin_json("demo"));
             write_mcp(
                 root,
-                json!({"äbc": {"type": "sse", "url": "https://new.example/s"}}),
+                json!({
+                    "äbc": {"type": "sse", "url": "https://e.com/a"},
+                    "caf\u{e9}": {"type": "sse", "url": "https://e.com/b"},
+                    "po\u{17f}tgres": {"type": "sse", "url": "https://e.com/c"},
+                    "ok.name_1-x": {"type": "sse", "url": "https://e.com/d"}
+                }),
             );
-            let result = import(root).unwrap();
-            assert_eq!(conflict_names(&result), vec!["äbc"]);
-            assert!(result.imported_mcp_servers.is_empty());
+            let package = read(root).unwrap();
+            let names: Vec<&str> = package
+                .mcp_servers
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(names, vec!["ok.name_1-x"]);
+            let mut invalid = invalid_names(&package);
+            invalid.sort();
+            let mut expected = vec!["äbc", "caf\u{e9}", "po\u{17f}tgres"];
+            expected.sort();
+            assert_eq!(invalid, expected);
         });
     }
 
@@ -2311,41 +2336,6 @@ mod tests {
             } else {
                 assert!(outcome.is_ok());
             }
-        });
-    }
-
-    #[test]
-    fn unicode_normalisation_variant_of_a_server_is_a_conflict() {
-        with_package(|root| {
-            let nfd = "cafe\u{301}";
-            let nfc = "caf\u{e9}";
-            crate::core::mcp_servers::save_mcp_server_config(
-                nfd,
-                r#"{"type":"http","url":"https://keep.example/mcp"}"#,
-            )
-            .unwrap();
-            write_plugin(root, &plugin_json("demo"));
-            write_mcp(
-                root,
-                json!({ nfc: {"type": "sse", "url": "https://new.example/s"}}),
-            );
-            let result = import(root).unwrap();
-            assert_eq!(conflict_names(&result), vec![nfc]);
-            assert!(result.imported_mcp_servers.is_empty());
-        });
-    }
-
-    #[test]
-    fn project_reference_differing_only_in_normalisation_is_a_conflict() {
-        with_package(|root| {
-            save_project_named("site", &["cafe\u{301}"], &[]);
-            write_plugin(root, &plugin_json("demo"));
-            write_mcp(
-                root,
-                json!({"caf\u{e9}": {"type": "sse", "url": "https://e.com/s"}}),
-            );
-            let result = import(root).unwrap();
-            assert_eq!(conflict_names(&result), vec!["caf\u{e9}"]);
         });
     }
 
