@@ -139,8 +139,8 @@ pub struct ProjectSummary {
 
 /// Every registered project with its keys, sorted by name.
 ///
-/// Unlike `read_project` this writes nothing: it reads the registry entry
-/// and the folder's config and state files only. Keys follow the stage 2
+/// It reads the registry entry and the folder's config and state files only,
+/// without the enrichment `read_project` does. Keys follow the stage 2
 /// precedence (`resolve_stored_keys`): `id` from the folder's config, then
 /// the registry cache; `local_key` from the registry, then the state file.
 /// An entry that cannot be parsed is listed by name with no keys, as
@@ -206,7 +206,64 @@ pub fn local_key_of(project: &Project) -> Option<String> {
 
 /// Read a project by identifier (a `local_key` or a name). The returned
 /// project's `name` is always the registry name, never the identifier.
+///
+/// Writes nothing into the project folder. [`refresh_project_files`] carries
+/// what a read resolves (keys, enrichment, the legacy split) back to disk.
 pub fn read_project(name: &str) -> Result<String, String> {
+    let resolved = resolve_project(name)?;
+    let mut project = resolved.project;
+    // The name comes from the registry entry, never from the committed
+    // config, which can differ (for example after a teammate renamed the
+    // project and this machine pulled). Callers save back with
+    // `project_ident(&project)`, its `local_key`, because the name may be
+    // shared. It is never the entry's `local_key`: see
+    // `registry_entry_name`.
+    project.name = resolved.registry_name;
+
+    serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
+}
+
+/// Write what [`read_project`] resolves back into the project folder: keys
+/// cached in the registry, a corrected `local_key` in a copied state file,
+/// current enrichment, and the split of a legacy combined `project.json`.
+/// Writes only files whose content changed. Does nothing for a project with
+/// no folder or a missing one, since writing would recreate the folder.
+///
+/// The committed `name` is left as the folder has it, so a refresh never
+/// renames a project a teammate renamed upstream.
+pub fn refresh_project_files(name: &str) -> Result<(), String> {
+    let resolved = resolve_project(name)?;
+    let project = resolved.project;
+    if project.directory.is_empty() || project.directory_missing {
+        return Ok(());
+    }
+    write_project_files(&project)
+}
+
+/// Run [`refresh_project_files`] for every registered project. Returns the
+/// identifier and error of each project that could not be refreshed.
+pub fn refresh_all_project_files() -> Result<Vec<(String, String)>, String> {
+    let mut failed = Vec::new();
+    for ident in list_project_idents()? {
+        if let Err(e) = refresh_project_files(&ident) {
+            failed.push((ident, e));
+        }
+    }
+    Ok(failed)
+}
+
+/// A project as its folder and registry entry resolve it, before the
+/// registry name is applied.
+struct ResolvedProject {
+    /// `name` is still the folder config's name.
+    project: Project,
+    registry_name: String,
+}
+
+/// Resolve a project by identifier without writing to its folder. Seeds
+/// missing user-level registry entries from the project's metadata (see
+/// `restore_to_user_registries`).
+fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
     }
@@ -231,7 +288,7 @@ pub fn read_project(name: &str) -> Result<String, String> {
 
     // If directory is set, read the full project from the project directory.
     // A malformed file there is an error rather than a fallback to registry
-    // data: the write-back below would otherwise replace it.
+    // data: a refresh or save would otherwise replace it.
     let mut project = if !registry_project.directory.is_empty() {
         read_project_files(&registry_project.directory, name)?.unwrap_or(registry_project)
     } else {
@@ -240,7 +297,7 @@ pub fn read_project(name: &str) -> Result<String, String> {
     // `id` from the folder's config, else the pointer's cache; `local_key`
     // from the pointer, else the state file (see `resolve_stored_keys`). A
     // copied state file therefore cannot hand this checkout another
-    // checkout's key, and the write-back below corrects it. No key is minted
+    // checkout's key, and `refresh_project_files` corrects it. No key is minted
     // here: minting belongs to the create paths and the startup backfill.
     let resolved = resolve_stored_keys(&ProjectKeys::of(&project), Some(&registry_keys));
     project.id = resolved.id;
@@ -257,30 +314,14 @@ pub fn read_project(name: &str) -> Result<String, String> {
     // seeds the local registries so skills regain their provenance.
     restore_to_user_registries(&project);
 
-    // Enrich with current user-level metadata and persist so the project
-    // config stays up-to-date on disk (important for portability).
-    // Skip the write-back when the directory is missing — we cannot write to
-    // a path that does not exist, and doing so would recreate the folder.
-    // The write-back also carries keys resolved from the registry cache into
-    // the folder, which is how a folder that returns gets its keys back.
+    // Enrich with current user-level metadata so callers see the current
+    // snapshot. Saves and `refresh_project_files` persist it.
     enrich_project(&mut project);
-    if !project.directory.is_empty() && !project.directory_missing {
-        if let Err(e) = write_project_files(&project) {
-            eprintln!("read_project: could not refresh files for '{}': {}", name, e);
-        }
-    }
 
-    // The name comes from the registry entry, never from the committed
-    // config, which can differ (for example after a teammate renamed the
-    // project and this machine pulled). Callers save back with
-    // `project_ident(&project)`, its `local_key`, because the name may be
-    // shared. It is never the entry's `local_key`: see
-    // `registry_entry_name`. Set after the
-    // write-back so a read never rewrites the committed name on its own.
-    project.name = name.to_string();
-
-    let formatted = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
-    Ok(formatted)
+    Ok(ResolvedProject {
+        project,
+        registry_name: name.to_string(),
+    })
 }
 
 // ── Restore from project to user-level registries ───────────────────────────
@@ -829,7 +870,7 @@ pub struct ImportedProject {
 /// `~/.automatic/projects/{local_key}.json`. A name another project already
 /// uses is allowed (stage 6). The caller has checked that no project owns
 /// the directory (see [`inspect_project_directory`]). The on-disk config is
-/// left untouched here; the first `read_project` writes the keys into it.
+/// left untouched here; [`refresh_project_files`] writes the keys into it.
 pub fn import_existing_project(directory: &str) -> Result<ImportedProject, String> {
     if directory.is_empty() {
         return Err("A project directory is required to import.".into());
@@ -2374,12 +2415,118 @@ mod tests {
             let loaded = load("cached");
             assert_eq!(loaded.id, "cached-id");
             assert_eq!(loaded.local_key, "cached-key");
-            // The read's write-back carries them into the folder.
+            assert_ne!(
+                read_json(&dir.join(CONFIG_FILE_NAME))["id"],
+                "cached-id",
+                "a read alone writes nothing into the folder"
+            );
+            // The refresh carries them into the folder.
+            refresh_project_files("cached").expect("refresh");
             assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], "cached-id");
             assert_eq!(
                 read_json(&dir.join(".automatic").join("project.json"))["local_key"],
                 "cached-key"
             );
+        });
+    }
+
+    #[test]
+    fn read_writes_nothing_into_the_folder() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("quiet", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("quiet", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            // Unsorted, unenriched files that any write would rewrite.
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let state_path = dir.join(".automatic").join("project.json");
+            let config = format!(r#"{{"name":"quiet","id":"{}"}}"#, project.id);
+            let state = r#"{"local_key":"stale-copied-key"}"#;
+            fs::write(&config_path, &config).expect("write config");
+            fs::write(&state_path, state).expect("write state");
+
+            let loaded = load("quiet");
+            assert_eq!(loaded.local_key, project.local_key, "the pointer's key is returned");
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), config);
+            assert_eq!(fs::read_to_string(&state_path).unwrap(), state);
+        });
+    }
+
+    #[test]
+    fn refresh_keeps_the_committed_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("local-name", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("local-name", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let mut config = read_json(&config_path);
+            config["name"] = serde_json::json!("renamed-upstream");
+            fs::write(&config_path, config.to_string()).expect("write config");
+
+            refresh_project_files(&project.local_key).expect("refresh");
+            assert_eq!(read_json(&config_path)["name"], "renamed-upstream");
+            assert_eq!(load(&project.local_key).name, "local-name");
+        });
+    }
+
+    #[test]
+    fn refresh_skips_a_missing_folder() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("gone");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("gone", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("gone", &serde_json::to_string(&project).unwrap()).expect("save");
+            fs::remove_dir_all(&dir).expect("remove folder");
+
+            refresh_project_files(&project.local_key).expect("refresh");
+            assert!(!dir.exists(), "the missing folder is not recreated");
+        });
+    }
+
+    #[test]
+    fn refresh_splits_a_legacy_combined_file() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("old");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("old", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("old", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            // Fold the config back into project.json, as before VEL-115.
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let state_path = dir.join(".automatic").join("project.json");
+            let mut combined = read_json(&state_path);
+            for (k, v) in read_json(&config_path).as_object().unwrap() {
+                combined[k] = v.clone();
+            }
+            fs::write(&state_path, combined.to_string()).expect("write legacy");
+            fs::remove_file(&config_path).expect("remove config");
+
+            load(&project.local_key);
+            assert!(!config_path.exists(), "a read does not split the legacy file");
+
+            refresh_project_files(&project.local_key).expect("refresh");
+            assert!(config_path.is_file(), "the refresh writes the config file");
+            assert!(read_json(&config_path).get("local_key").is_none());
+            assert!(dir.join(".automatic").join("project.legacy.json").is_file());
         });
     }
 
@@ -2494,10 +2641,11 @@ mod tests {
             let loaded = load(&name);
             assert_eq!(loaded.local_key, pointer_key, "the pointer is authoritative");
             assert_eq!(loaded.id, source.id, "a copy shares the committed id");
+            refresh_project_files(&name).expect("refresh");
             assert_eq!(
                 read_json(&copy_dir.join(&state_rel))["local_key"],
                 pointer_key.as_str(),
-                "the write-back corrects the copied state file"
+                "the refresh corrects the copied state file"
             );
             assert_eq!(load("source").local_key, source.local_key);
         });
@@ -2697,11 +2845,13 @@ mod tests {
             let local_key = pointer["local_key"].as_str().expect("local_key cached").to_string();
             assert_eq!(registry_file("gone"), registry_stem_file(&local_key));
 
-            // When the folder returns, the next read writes the cached keys in.
+            // When the folder returns, a read resolves the cached keys and
+            // the next refresh writes them in.
             fs::create_dir_all(&dir).expect("restore folder");
             let loaded = load("gone");
             assert_eq!(loaded.id, id);
             assert_eq!(loaded.local_key, local_key);
+            refresh_all_project_files().expect("refresh");
             assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], id.as_str());
         });
     }
@@ -3341,7 +3491,7 @@ mod tests {
             let dir = home.path().join("repo");
             fs::create_dir_all(&dir).expect("mkdir");
             let project = keyed_project("site", &dir);
-            // A pointer and folder files that `read_project` would rewrite:
+            // A pointer and folder files that `refresh_project_files` would rewrite:
             // the pointer lacks `id`, and the config lacks enrichment.
             let pointer = registry_stem_file(&project.local_key);
             fs::write(

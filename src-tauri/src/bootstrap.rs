@@ -95,6 +95,11 @@ pub fn run_startup_housekeeping() {
     // anything below re-syncs projects, so those saves already carry the
     // keys. Idempotent, and locked because the GUI and every `mcp-serve`
     // process run this at the same time.
+    // Whether this process ran the backfill. A process that found the lock
+    // held also skips the file refresh below: the holder is saving keys into
+    // the same folders, and a refresh read before those saves would write
+    // keyless files over them. The holder refreshes after it finishes.
+    let mut backfill_ran = false;
     match core::ensure_project_keys() {
         Ok(core::ProjectKeyBackfill::LockHeld) => eprintln!(
             "[automatic] project key backfill skipped: another process holds the lock"
@@ -105,6 +110,7 @@ pub fn run_startup_housekeeping() {
             failed,
             stores,
         }) => {
+            backfill_ran = true;
             if !updated.is_empty() {
                 eprintln!("[automatic] minted project keys for: {:?}", updated);
             }
@@ -183,6 +189,22 @@ pub fn run_startup_housekeeping() {
     }
     if let Err(e) = core::install_default_subagents() {
         eprintln!("[automatic] sub-agent install error: {}", e);
+    }
+
+    // Carry what a read resolves into each project folder: keys cached in
+    // the registry, current enrichment and the legacy `project.json` split.
+    // Reads write nothing, so this is where those reach disk outside a save.
+    // Runs after the installs above so the enrichment snapshot reflects the
+    // current library. Unchanged files are not rewritten.
+    if backfill_ran {
+        match core::refresh_all_project_files() {
+            Ok(failed) => {
+                for (ident, e) in failed {
+                    eprintln!("[automatic] project file refresh error for '{}': {}", ident, e);
+                }
+            }
+            Err(e) => eprintln!("[automatic] project file refresh error: {}", e),
+        }
     }
 
     // On an actual version upgrade the bundled skills, rules,

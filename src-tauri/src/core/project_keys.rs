@@ -403,8 +403,8 @@ fn ensure_keys_for_project(path: &Path) -> Result<bool, String> {
     let ident = entry_ident(&entry);
     let name = ident.as_str();
     let directory = entry.directory()?.unwrap_or_default();
-    // Probe without `read_project`, whose enrichment write-back would touch
-    // every project on every start even when nothing is missing.
+    // Probe the stored keys first, so a project with both keys is not read
+    // and enriched on every start.
     if stored_project_keys(Some(&entry.path), &directory)?.is_complete() {
         return Ok(false);
     }
@@ -418,7 +418,7 @@ fn ensure_keys_for_project(path: &Path) -> Result<bool, String> {
 
     if project.directory_missing {
         // Saving would recreate the folder. Cache the keys in the pointer;
-        // the next read after the folder returns writes them into it.
+        // the startup refresh after the folder returns writes them into it.
         write_registry_pointer(&entry.path, &project)?;
     } else {
         let data = serde_json::to_string(&project)

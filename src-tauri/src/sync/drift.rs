@@ -1110,24 +1110,12 @@ fn collect_skills_drift(
                     let disk_file = skill_dir.join(&skill_name).join("SKILL.md");
                     let rel_path = format!("{}/{}/SKILL.md", relative.display(), skill_name);
 
-                    // The bundled `automatic` skill documents the Automatic MCP
-                    // service itself.  Its content is fully owned by the app and
-                    // ships with each release — the user has no agency over it,
-                    // so reporting drift would only generate noise that resolves
-                    // on the next sync.  Auto-heal it silently and skip
-                    // reporting.
-                    let is_managed_skill = skill_name == crate::core::AUTOMATIC_SKILL_NAME;
+                    // The bundled `automatic` skill is reported like any other
+                    // skill. A drift check only reports and never repairs, and
+                    // startup re-syncs every project right after an upgrade
+                    // reinstalls it, so there is no upgrade window to hide.
 
                     if !disk_file.exists() {
-                        if is_managed_skill {
-                            if let Ok(content) = fs::read_to_string(&tmp_file) {
-                                if let Some(parent) = disk_file.parent() {
-                                    let _ = fs::create_dir_all(parent);
-                                }
-                                let _ = fs::write(&disk_file, content);
-                            }
-                            continue;
-                        }
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "missing".into(),
@@ -1154,10 +1142,6 @@ fn collect_skills_drift(
                         }
                     };
                     if expected != actual {
-                        if is_managed_skill {
-                            let _ = fs::write(&disk_file, &expected);
-                            continue;
-                        }
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "modified".into(),
@@ -1735,6 +1719,80 @@ mod tests {
                 .map(|f| format!("{} ({})", f.path, f.reason))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// A drift check reports a missing or edited bundled `automatic` skill
+    /// and writes nothing into the project.
+    #[test]
+    fn automatic_skill_drift_is_reported_not_repaired() {
+        let project_dir = tempdir().unwrap();
+        let name = crate::core::AUTOMATIC_SKILL_NAME.to_string();
+        let skill_contents = vec![(
+            name.clone(),
+            "# Automatic skill content\n".to_string(),
+        )];
+        let selected = vec![name.clone()];
+        let root = project_dir.path().to_path_buf();
+
+        let mut missing: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &ClaudeCode,
+            &root,
+            &skill_contents,
+            &selected,
+            &[],
+            &mut missing,
+        );
+        assert!(
+            missing.iter().any(|f| f.reason == "missing" && f.path.contains(&name)),
+            "a missing automatic skill is reported, got: {:?}",
+            missing
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+        for skill_dir in ClaudeCode.skill_dirs(&root) {
+            assert!(
+                !skill_dir.join(&name).exists(),
+                "the drift check must not write {}",
+                skill_dir.display()
+            );
+        }
+
+        ClaudeCode
+            .sync_skills(project_dir.path(), &skill_contents, &selected, &[])
+            .expect("sync_skills should succeed");
+        let edited = "# Edited by hand\n";
+        let mut edited_paths = Vec::new();
+        for skill_dir in ClaudeCode.skill_dirs(&root) {
+            let file = skill_dir.join(&name).join("SKILL.md");
+            if file.is_file() {
+                fs::write(&file, edited).unwrap();
+                edited_paths.push(file);
+            }
+        }
+        assert!(!edited_paths.is_empty(), "sync wrote the skill");
+
+        let mut modified: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &ClaudeCode,
+            &root,
+            &skill_contents,
+            &selected,
+            &[],
+            &mut modified,
+        );
+        assert!(
+            modified.iter().any(|f| f.reason == "modified" && f.path.contains(&name)),
+            "an edited automatic skill is reported, got: {:?}",
+            modified
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+        for file in edited_paths {
+            assert_eq!(fs::read_to_string(&file).unwrap(), edited, "the edit is left alone");
+        }
     }
 
     /// Lay out a project the way the sync engine leaves one: the canonical

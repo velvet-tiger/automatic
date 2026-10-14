@@ -13,7 +13,7 @@ pub fn get_projects() -> Result<Vec<String>, String> {
 }
 
 /// Every registered project as `{local_key, id, name, directory}`, sorted by
-/// name. Reads only; unlike `read_project` it never writes project files.
+/// name. Reads only, without the enrichment `read_project` does.
 #[tauri::command]
 pub fn get_project_summaries() -> Result<Vec<core::ProjectSummary>, String> {
     core::get_project_summaries()
@@ -415,6 +415,14 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 #[tauri::command]
 pub fn import_existing_project(directory: &str) -> Result<core::ImportedProject, String> {
     let imported = core::import_existing_project(directory)?;
+    // Write the new checkout's keys into the folder now, as a save would.
+    // The import itself only writes the registry pointer.
+    if let Err(e) = core::refresh_project_files(&imported.local_key) {
+        eprintln!(
+            "[automatic] could not write keys into imported project '{}': {}",
+            imported.name, e
+        );
+    }
     activity::log(
         &imported.local_key,
         ActivityEvent::ProjectCreated,
