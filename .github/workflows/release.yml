@@ -1,3 +1,5 @@
+# Builds, signs and publishes a release from a tag.
+# Unsigned branch test builds live in ci-build.yml.
 name: Release
 
 permissions:
@@ -7,14 +9,10 @@ on:
   push:
     tags:
       - '**'
-    branches:
-      - ci/**
-  workflow_dispatch:
 
 jobs:
   build:
-    # Tag builds restore no cache, and a cold universal macOS build can take longer than 30 minutes.
-    timeout-minutes: 60
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     # Tag builds upload release assets with GITHUB_TOKEN.
     permissions:
@@ -41,28 +39,17 @@ jobs:
           # No step uses git with the token. tauri-action and gh read GITHUB_TOKEN from env.
           persist-credentials: false
 
-      # Other jobs and workflows can write caches that this job would restore.
-      # A poisoned cache would then run code next to the signing keys. Tag builds
-      # hold those keys, so they restore no npm or Rust cache. Branch and dispatch
-      # builds hold no secrets and keep the cache for speed.
+      # This workflow holds the signing keys, so it restores no Actions cache.
+      # Other jobs and workflows can write caches.
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          # An empty string turns setup-node caching off.
-          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'npm' || '' }}
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
-
-      - name: Cache Rust build
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          key: ${{ matrix.target }}
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -104,8 +91,8 @@ jobs:
              binaries/automatic-cli-x86_64-pc-windows-msvc.exe
 
       # Import the Apple Developer ID certificate into the macOS keychain for signing.
-      # Only tag builds sign. The certificate goes to RUNNER_TEMP, not the workspace,
-      # and the final step deletes the keychain and the file.
+      # The certificate goes to RUNNER_TEMP, not the workspace, and the final
+      # step deletes the keychain and the file.
       - name: Import Apple Developer certificate
         if: matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         env:
@@ -132,7 +119,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
-          RUST_LOG: debug
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -252,19 +238,6 @@ jobs:
           name: sig-windows
           path: src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           if-no-files-found: error
-
-      # Branch and dispatch builds are unsigned test builds that get no secrets.
-      # A branch push should not hold signing keys. Signing and notarization are
-      # only exercised by tag builds. The --config override turns off updater
-      # artifacts, which need the private key, and the macOS signing identity,
-      # which needs the keychain.
-      - name: Build Tauri app (branch / dispatch)
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
-        env:
-          RUST_LOG: debug
-        with:
-          args: ${{ matrix.args }} --config '{"bundle":{"createUpdaterArtifacts":false,"macOS":{"signingIdentity":null}}}'
 
       - name: Delete macOS signing keychain
         if: always() && matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
