@@ -356,4 +356,81 @@ mod tests {
             assert_eq!(after.file_rules["_project"], vec!["source-remove-cmd-kept"]);
         });
     }
+
+    #[test]
+    fn a_removal_that_fails_at_the_end_prunes_on_the_retry() {
+        with_temp_home(|_| {
+            install_fixture_source();
+            let (_keep, _dir) = make_project("source-remove-project", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec![RULE.to_string()]);
+            });
+            // Every resource is deleted, then unregistering the source fails.
+            remote_sources::fail_sources_writes_after(Some(0));
+            let first = remove_remote_source(REPO.to_string());
+            remote_sources::fail_sources_writes_after(None);
+            assert!(first.is_err(), "{:?}", first);
+            assert_eq!(read_back("source-remove-project").file_rules["_project"], vec![RULE]);
+
+            let raw = remove_remote_source(REPO.to_string()).expect("retry");
+
+            let result: remote_sources::RemoveResult = serde_json::from_str(&raw).expect("parse");
+            assert!(
+                result.removed.contains(&format!("rules:{RULE}")),
+                "{:?}",
+                result
+            );
+            assert_eq!(result.removed.len(), 5, "{:?}", result);
+            assert!(read_back("source-remove-project").file_rules.is_empty());
+            assert_eq!(remote_sources::get_source(REPO), Ok(None));
+        });
+    }
+
+    #[test]
+    fn an_update_that_fails_at_the_end_prunes_on_the_retry() {
+        with_temp_home(|_| {
+            let clone = remote_sources::source_clone_path(REPO).expect("clone path");
+            fs::create_dir_all(&clone).expect("create clone");
+            fs::write(clone.join("rule.md"), "# A rule\n").expect("write rule");
+            fs::write(clone.join("command.md"), "# A command\n").expect("write command");
+            let manifest = |with_rule: bool| {
+                let mut manifest = serde_json::json!({
+                    "name": "commands", "version": "1.0.0", "description": "Test",
+                    "commands": [{ "name": COMMAND, "path": "command.md", "description": "" }],
+                });
+                if with_rule {
+                    manifest["rules"] =
+                        serde_json::json!([{ "name": RULE, "path": "rule.md", "description": "" }]);
+                }
+                fs::write(clone.join("automatic.json"), manifest.to_string()).expect("manifest");
+            };
+            manifest(true);
+            let parsed = remote_sources::parse_manifest(&clone).expect("parse manifest");
+            remote_sources::install_source(REPO, &parsed, None, None).expect("install");
+            let (_keep, _dir) = make_project("source-remove-project", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec![RULE.to_string()]);
+            });
+            manifest(false);
+            let reinstall = |repo: &str| {
+                let existing = remote_sources::get_source(repo)?.expect("registered");
+                remote_sources::reinstall_source(repo, &existing)
+            };
+
+            // The reinstall's write and the write of every name succeed. The
+            // last write, after the rule is deleted, fails.
+            remote_sources::fail_sources_writes_after(Some(2));
+            let first = update_remote_source_with(REPO, reinstall);
+            remote_sources::fail_sources_writes_after(None);
+            assert!(first.is_err(), "{:?}", first);
+            assert_eq!(read_back("source-remove-project").file_rules["_project"], vec![RULE]);
+
+            let raw = update_remote_source_with(REPO, reinstall).expect("retry");
+
+            let result: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(result["removed"]["rules"], serde_json::json!([RULE]), "{}", raw);
+            assert!(read_back("source-remove-project").file_rules.is_empty());
+            assert_eq!(remote_sources::get_provenance("rule", RULE), Ok(None));
+        });
+    }
 }

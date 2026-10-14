@@ -234,12 +234,15 @@ pub struct UpdateResult {
     /// Resources dropped from the manifest that could not be removed. Each
     /// keeps its provenance and stays listed on the source, so a later
     /// update or removal tries again.
+    #[serde(default)]
     pub failed: Vec<RemovalFailure>,
     /// Resources dropped from the manifest and left in place, as
     /// `type:name`, because someone else owns them or another registered
     /// source also lists them.
+    #[serde(default)]
     pub kept: Vec<String>,
     /// Problems that did not stop the update, including the reinstall's.
+    #[serde(default)]
     pub warnings: Vec<String>,
     /// Previous version.
     pub old_version: String,
@@ -253,15 +256,19 @@ pub struct RemoveResult {
     /// Resources and collections removed, as `type:name`. The type is the
     /// key the source lists them under, such as `skills` or `mcp_servers`,
     /// and `collection` for a collection.
+    #[serde(default)]
     pub removed: Vec<String>,
     /// Resources and collections that could not be removed. Each keeps its
     /// provenance.
+    #[serde(default)]
     pub failed: Vec<RemovalFailure>,
     /// Resources and collections left in place because someone else owns
     /// them or another registered source also lists them.
+    #[serde(default)]
     pub kept: Vec<String>,
     /// Problems that did not stop a removal, such as an OAuth secret the
     /// store would not delete.
+    #[serde(default)]
     pub warnings: Vec<String>,
 }
 
@@ -447,6 +454,13 @@ thread_local! {
     static PROVENANCE_WRITES_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Test support: let `writes` more writes of sources.json succeed on this
+/// thread, then fail every one. `None` removes the limit.
+#[cfg(test)]
+pub(crate) fn fail_sources_writes_after(writes: Option<usize>) {
+    SOURCES_WRITES_LEFT.with(|left| left.set(writes));
+}
+
 /// Save the sources registry.
 fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     #[cfg(test)]
@@ -588,6 +602,38 @@ fn provenance_type(resource_type: &str) -> Option<&'static str> {
         "agents" | "agent" => Some("agent"),
         _ => None,
     }
+}
+
+/// Drop each provenance record `repo` owns for a name this install did not
+/// install and the source's previous entry does not list.
+///
+/// Such a record is stale. It is left when a clear fails after a removal,
+/// and nothing installed by the repo stands behind it. Left in place, a
+/// later removal of the repo would treat a name the user created since as
+/// the repo's, and delete it.
+fn drop_stale_provenance(
+    repo: &str,
+    installed: &HashMap<String, Vec<String>>,
+    previous: Option<&RemoteSource>,
+) -> Result<(), String> {
+    let mut current: HashSet<String> = listed_resources(installed)
+        .into_iter()
+        .map(|(resource_type, name)| provenance_key(resource_type, name))
+        .collect();
+    if let Some(previous) = previous {
+        current.extend(
+            listed_resources(&previous.resources)
+                .into_iter()
+                .map(|(resource_type, name)| provenance_key(resource_type, name)),
+        );
+    }
+    let mut prov = read_provenance()?;
+    let before = prov.len();
+    prov.retain(|key, owner| owner != repo || current.contains(key));
+    if prov.len() != before {
+        save_provenance(&prov)?;
+    }
+    Ok(())
 }
 
 /// The plural type a source lists resources under, for a provenance type.
@@ -925,6 +971,7 @@ pub fn install_source(
     }
 
     let base_dir = resolve_base_dir(repo, directory)?;
+    let previous = get_source(repo)?;
 
     let mut installed: HashMap<String, Vec<String>> = HashMap::new();
     let mut skipped = Vec::new();
@@ -1079,6 +1126,10 @@ pub fn install_source(
         }
     }
 
+    if let Err(e) = drop_stale_provenance(repo, &installed, previous.as_ref()) {
+        warnings.push(format!("Failed to clear old provenance records: {}", e));
+    }
+
     // Register the source — use clone_path (repo root) for git SHA
     let commit_sha = git_head_sha(&clone_path).unwrap_or_default();
     let pin = manifest.pinning.clone().unwrap_or_default();
@@ -1130,12 +1181,14 @@ pub fn remove_source(repo: &str) -> Result<RemoveResult, String> {
     let others = other_sources(repo)?;
 
     let mut result = RemoveResult::default();
+    let mut removed = Vec::new();
     for (resource_type, name) in resources_of(repo, &source.resources)? {
         let key = format!("{}:{}", resource_type, name);
         match remove_owned_resource(repo, &others, &resource_type, &name) {
             ResourceOutcome::Removed(warnings) => {
                 result.removed.push(key);
                 result.warnings.extend(warnings);
+                removed.push((resource_type, name));
             }
             ResourceOutcome::Kept => result.kept.push(key),
             ResourceOutcome::Failed(error) => result.failed.push(RemovalFailure {
@@ -1168,6 +1221,14 @@ pub fn remove_source(repo: &str) -> Result<RemoveResult, String> {
     }
 
     remove_source_entry(repo)?;
+
+    // A record that stays is stale, as no entry lists its name. The next
+    // install of this repo drops it, see `drop_stale_provenance`.
+    for (resource_type, name, error) in release_removed_provenance(repo, &removed) {
+        result
+            .warnings
+            .push(unreleased_warning(&resource_type, &name, &error));
+    }
 
     Ok(result)
 }
@@ -1282,18 +1343,37 @@ fn remove_owned_resource(
             )),
         };
     }
+    // The caller releases the provenance once the source's entry no longer
+    // lists the name. See [`release_removed_provenance`].
     match remove_installed_resource(resource_type, name) {
-        Ok(mut warnings) => {
-            if let Err(error) = release_provenance_of(repo, resource_type, name) {
-                warnings.push(format!(
-                    "Removed {}:{}, but its provenance could not be cleared: {}",
-                    resource_type, name, error
-                ));
-            }
-            ResourceOutcome::Removed(warnings)
-        }
+        Ok(warnings) => ResourceOutcome::Removed(warnings),
         Err(error) => ResourceOutcome::Failed(error),
     }
+}
+
+/// Clear the provenance of each removed `(type, name)`. Returns each one
+/// that could not be cleared, with the reason.
+///
+/// Run only after the source's entry is written without these names. A
+/// failure before then leaves the source as their owner, so a retry finds
+/// each name gone and reports it removed, and the caller prunes it. Cleared
+/// earlier, a retry would see no owner and keep the names instead.
+fn release_removed_provenance(repo: &str, removed: &[(String, String)]) -> Vec<(String, String, String)> {
+    removed
+        .iter()
+        .filter_map(|(resource_type, name)| {
+            release_provenance_of(repo, resource_type, name)
+                .err()
+                .map(|error| (resource_type.clone(), name.clone(), error))
+        })
+        .collect()
+}
+
+fn unreleased_warning(resource_type: &str, name: &str, error: &str) -> String {
+    format!(
+        "Removed {}:{}, but its provenance could not be cleared: {}",
+        resource_type, name, error
+    )
 }
 
 fn collection_key(slug: &str) -> String {
@@ -1390,7 +1470,7 @@ pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
 
 /// Reinstall a source from its updated clone, then remove what the new
 /// manifest dropped.
-fn reinstall_source(repo: &str, existing: &RemoteSource) -> Result<UpdateResult, String> {
+pub(crate) fn reinstall_source(repo: &str, existing: &RemoteSource) -> Result<UpdateResult, String> {
     let base_dir = resolve_base_dir(repo, existing.directory.as_deref())?;
     let mut manifest = parse_manifest(&base_dir)?;
     resolve_manifest_skills(&base_dir, &mut manifest)?;
@@ -1465,9 +1545,36 @@ fn remove_dropped_resources(
         &others,
         &mut removals,
     );
-    upsert_source(entry)?;
+    upsert_source(entry.clone())?;
+
+    // A name whose provenance stays is listed again, so the next update or
+    // removal finds it gone and clears the record then.
+    let unreleased = release_removed_provenance(repo, &removed_names(&removals.removed));
+    if !unreleased.is_empty() {
+        for (resource_type, name, error) in &unreleased {
+            removals
+                .warnings
+                .push(unreleased_warning(resource_type, name, error));
+            list_once(&mut entry.resources, resource_type, name);
+        }
+        if let Err(error) = upsert_source(entry) {
+            removals.warnings.push(format!(
+                "Could not list the names whose provenance stays on the source: {}",
+                error
+            ));
+        }
+    }
 
     Ok(removals)
+}
+
+/// Each `(type, name)` in an update's removed map, without collections.
+fn removed_names(removed: &HashMap<String, Vec<String>>) -> Vec<(String, String)> {
+    listed_resources(removed)
+        .into_iter()
+        .filter(|(resource_type, _)| *resource_type != "collection")
+        .map(|(resource_type, name)| (resource_type.to_string(), name.to_string()))
+        .collect()
 }
 
 /// Remove each resource `old` lists that `manifest` no longer names. A name
@@ -1955,55 +2062,19 @@ fn remove_installed_resource(resource_type: &str, name: &str) -> Result<Vec<Stri
         .ok_or_else(|| format!("Unknown resource type: {}", resource_type))?;
     super::deletion_guards::ensure_deletable(kind, name)?;
 
-    let mut warnings = Vec::new();
     match kind {
-        LibraryAssetKind::Skill => {
-            let dir = super::paths::get_library_skills_dir()?;
-            if has_exact_entry(&dir, name)? {
-                match fs::remove_dir_all(dir.join(name)) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(format!("Failed to remove skill: {}", e)),
-                }
-            }
-            // The tidying `core::delete_skill` does. That function also
-            // deletes from external skill folders, so it is not called.
-            if let Err(e) = super::skill_store::remove_skill_source(name) {
-                warnings.push(format!("Could not clear the source record of skill '{}': {}", name, e));
-            }
-            if let Err(e) = super::skills::remove_skill_collection(name) {
-                warnings.push(format!("Could not clear the collection of skill '{}': {}", name, e));
-            }
-            remove_recently_added("skills", name);
-        }
-        LibraryAssetKind::McpServer => {
-            // Checked first, so a server that only matches in another case
-            // keeps its secrets too.
-            let dir = super::mcp_servers::get_mcp_servers_dir()?;
-            if has_exact_entry(&dir, &format!("{}.json", name))? {
-                let secret_problems = super::mcp_servers::delete_mcp_server_config_reporting(name)
-                    .map_err(|e| format!("Failed to remove MCP server: {}", e))?;
-                warnings.extend(secret_problems);
-            } else {
-                remove_recently_added("mcp_servers", name);
-            }
-        }
+        LibraryAssetKind::Skill => remove_library_skill(name),
+        LibraryAssetKind::McpServer => remove_library_mcp_server(name),
+        LibraryAssetKind::Template => remove_library_template(name),
         LibraryAssetKind::Rule => {
             remove_exact_file(&super::rules::get_rules_dir()?, &format!("{}.json", name), "rule")?;
             remove_recently_added("rules", name);
-        }
-        LibraryAssetKind::Template => {
-            let dir = super::templates::get_templates_dir()?;
-            if has_exact_entry(&dir, &format!("{}.json", name))? {
-                super::templates::delete_template(name)
-                    .map_err(|e| format!("Failed to remove template: {}", e))?;
-            } else {
-                remove_recently_added("templates", name);
-            }
+            Ok(Vec::new())
         }
         LibraryAssetKind::Command => {
             remove_exact_file(&super::paths::get_commands_dir()?, &format!("{}.md", name), "command")?;
             remove_recently_added("commands", name);
+            Ok(Vec::new())
         }
         LibraryAssetKind::Subagent => {
             remove_exact_file(
@@ -2012,9 +2083,60 @@ fn remove_installed_resource(resource_type: &str, name: &str) -> Result<Vec<Stri
                 "agent",
             )?;
             remove_recently_added("subagents", name);
+            Ok(Vec::new())
         }
     }
+}
+
+/// Remove a skill from the library, and its registry records.
+fn remove_library_skill(name: &str) -> Result<Vec<String>, String> {
+    let dir = super::paths::get_library_skills_dir()?;
+    if has_exact_entry(&dir, name)? {
+        match fs::remove_dir_all(dir.join(name)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Failed to remove skill: {}", e)),
+        }
+    }
+    // The tidying `core::delete_skill` does. That function also deletes from
+    // external skill folders, so it is not called.
+    let mut warnings = Vec::new();
+    if let Err(e) = super::skill_store::remove_skill_source(name) {
+        warnings.push(format!("Could not clear the source record of skill '{}': {}", name, e));
+    }
+    if let Err(e) = super::skills::remove_skill_collection(name) {
+        warnings.push(format!("Could not clear the collection of skill '{}': {}", name, e));
+    }
+    remove_recently_added("skills", name);
     Ok(warnings)
+}
+
+/// Remove an MCP server from the library, with its OAuth secrets.
+///
+/// The exact-name check comes first, so a server that only matches in
+/// another case keeps its secrets too. A server whose file is already gone
+/// still has its old name-only secrets deleted: the caller has checked that
+/// the source owns the name.
+fn remove_library_mcp_server(name: &str) -> Result<Vec<String>, String> {
+    let dir = super::mcp_servers::get_mcp_servers_dir()?;
+    if has_exact_entry(&dir, &format!("{}.json", name))? {
+        return super::mcp_servers::delete_mcp_server_config_reporting(name)
+            .map_err(|e| format!("Failed to remove MCP server: {}", e));
+    }
+    remove_recently_added("mcp_servers", name);
+    Ok(crate::proxy::forget_legacy_oauth_secrets_reporting(name))
+}
+
+/// Remove a project template from the library.
+fn remove_library_template(name: &str) -> Result<Vec<String>, String> {
+    let dir = super::templates::get_templates_dir()?;
+    if has_exact_entry(&dir, &format!("{}.json", name))? {
+        super::templates::delete_template(name)
+            .map_err(|e| format!("Failed to remove template: {}", e))?;
+    } else {
+        remove_recently_added("templates", name);
+    }
+    Ok(Vec::new())
 }
 
 /// Whether `dir` holds an entry named exactly `file_name`, compared byte
@@ -3440,7 +3562,20 @@ mod tests {
                 assert!(path.exists(), "the other source's {kind} should survive");
             }
             assert!(collection_slugs().contains(&other.collection));
-            assert_eq!(provenance_of(OTHER_REPO).len(), 6);
+            assert_eq!(
+                provenance_of(OTHER_REPO),
+                sorted(
+                    other
+                        .keys()
+                        .into_iter()
+                        .filter(|key| !key.starts_with("collection:"))
+                        .map(|key| {
+                            let (kind, name) = key.split_once(':').expect("type:name");
+                            provenance_key(kind, name)
+                        })
+                        .collect()
+                )
+            );
             assert!(get_source(OTHER_REPO).expect("read").is_some());
         });
     }
@@ -3739,6 +3874,7 @@ mod tests {
                 .entry("skills".to_string())
                 .or_default()
                 .push("group/skill".to_string());
+            upsert_source(old.clone()).expect("register as an older version would");
             record_provenance("skill", "group/skill", REPO).unwrap();
             let reinstall = install_source(REPO, &manifest, None, None).expect("reinstall");
 
@@ -4340,7 +4476,96 @@ mod tests {
             assert_eq!(removals.warnings.len(), 2, "{:?}", removals.warnings);
             assert!(!library_path("rules", &names.rule).exists());
             assert!(!library_path("commands", &names.command).exists());
+            // Listed again, so the next update finishes the job.
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.resources.get("rules"), Some(&vec![names.rule.clone()]));
+            assert_eq!(
+                entry.resources.get("commands"),
+                Some(&vec![names.command.clone()])
+            );
+
+            let retry = remove_dropped_resources(REPO, &entry, &second, &reinstall)
+                .expect("retry");
+            assert_eq!(retry.removed.get("rules"), Some(&vec![names.rule.clone()]));
+            assert_eq!(get_provenance("rule", &names.rule), Ok(None));
+            assert_eq!(get_provenance("command", &names.command), Ok(None));
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.resources.get("rules"), None);
         });
+    }
+
+    #[test]
+    fn a_stale_provenance_record_never_deletes_what_the_user_made_later() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-stale");
+            let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            install_source(REPO, &manifest, None, None).expect("install");
+            // The clears fail, so the records stay with no entry behind them.
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            let first = remove_source(REPO);
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            assert_eq!(first.expect("remove").warnings.len(), 6);
+            assert_eq!(get_provenance("rule", &names.rule), Ok(Some(REPO.to_string())));
+
+            // The user makes a rule with the same name, then installs a new
+            // version of the repo that no longer has it.
+            crate::core::save_rule(&names.rule, "Mine", "My own rule.\n").expect("save rule");
+            let without_rule = AutomaticManifest {
+                rules: Vec::new(),
+                // The removal deleted the clone. A new install clones again.
+                ..write_every_kind(REPO, &names, r#"{"command":"npx"}"#)
+            };
+            install_source(REPO, &without_rule, None, None).expect("reinstall");
+            assert_eq!(get_provenance("rule", &names.rule), Ok(None));
+
+            let result = remove_source(REPO).expect("remove again");
+
+            assert!(
+                !result.removed.contains(&format!("rules:{}", names.rule)),
+                "{:?}",
+                result
+            );
+            let raw = fs::read_to_string(library_path("rules", &names.rule)).expect("read");
+            assert!(raw.contains("My own rule."), "{}", raw);
+        });
+    }
+
+    #[test]
+    fn a_removed_server_whose_file_is_gone_loses_its_old_name_only_secrets() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let server = "source-remove-nofile-server";
+            let legacy_token = format!("mcp_oauth_token_{server}");
+            let legacy_credentials = format!("mcp_oauth_creds_{server}");
+            crate::core::secret_store::store_secret(&legacy_token, "old-token").unwrap();
+            crate::core::secret_store::store_secret(&legacy_credentials, "{}").unwrap();
+            register(REPO, &[("mcp_servers", &[server])], &[]);
+            record_provenance("mcp_server", server, REPO).unwrap();
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert_eq!(result.removed, vec![format!("mcp_servers:{server}")]);
+            for entry in [&legacy_token, &legacy_credentials] {
+                assert_eq!(
+                    crate::core::secret_store::load_secret_if_present(entry),
+                    Ok(None),
+                    "{entry} should be deleted"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn older_result_json_without_the_new_fields_still_parses() {
+        let removed: RemoveResult = serde_json::from_str(r#"{"removed":["rules:x"]}"#)
+            .expect("an older remove result");
+        assert_eq!(removed.removed, vec!["rules:x".to_string()]);
+        let update: UpdateResult = serde_json::from_str(
+            r#"{"added":{},"updated":{},"removed":{},"old_version":"1","new_version":"2"}"#,
+        )
+        .expect("an older update result");
+        assert!(update.failed.is_empty() && update.kept.is_empty() && update.warnings.is_empty());
     }
 
     // ── round 1: provenance helpers ─────────────────────────────────────────
