@@ -39,6 +39,7 @@ import {
   Info,
   ExternalLink,
   Search,
+  Compass,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 
@@ -675,9 +676,11 @@ interface McpServersProps {
   initialServer?: string | null;
   /** Called after the initialServer has been consumed so the parent can clear it. */
   onInitialServerConsumed?: () => void;
+  /** Opens Discover MCP Servers. Shown in the empty state so new users find ready-made servers. */
+  onBrowseDiscover?: () => void;
 }
 
-export default function McpServers({ initialServer = null, onInitialServerConsumed }: McpServersProps = {}) {
+export default function McpServers({ initialServer = null, onInitialServerConsumed, onBrowseDiscover }: McpServersProps = {}) {
   const [servers, setServers] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
   const recentIds = useRecentlyAdded("mcp_servers", recentRefresh);
@@ -1209,14 +1212,25 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
             <h2 className="text-[15px] font-medium text-text-base mb-2">No MCP servers yet</h2>
             <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
               Configure Model Context Protocol servers that give your agents access to filesystems,
-              databases, and developer tools. Add them here, then assign them to projects.
+              databases, and developer tools. Add your own or browse ready-made servers in Discover,
+              then assign them to projects.
             </p>
-            <button
-              onClick={startCreate}
-              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
-            >
-              <Plus size={14} /> New Server
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={startCreate}
+                className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Plus size={14} /> New Server
+              </button>
+              {onBrowseDiscover && (
+                <button
+                  onClick={onBrowseDiscover}
+                  className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
+                >
+                  <Compass size={14} /> Browse servers
+                </button>
+              )}
+            </div>
           </>
         }
         noMatchState={

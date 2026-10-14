@@ -31,6 +31,7 @@ import {
   Tag,
   ChevronDown,
   Puzzle,
+  Compass,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { SkillAvatar } from "../../components/SkillAvatar";
@@ -634,9 +635,11 @@ interface SkillsProps {
   onNavigateToProject?: (projectKey: string) => void;
   /** Navigate to the Project Templates tab, pre-selecting the given template. */
   onNavigateToTemplate?: (name: string) => void;
+  /** Opens the Discover skill store. Shown in the empty state so new users find ready-made skills. */
+  onBrowseDiscover?: () => void;
 }
 
-export default function Skills({ initialSkill = null, onInitialSkillConsumed, onNavigateToProject, onNavigateToTemplate }: SkillsProps = {}) {
+export default function Skills({ initialSkill = null, onInitialSkillConsumed, onNavigateToProject, onNavigateToTemplate, onBrowseDiscover }: SkillsProps = {}) {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
   const recentIds = useRecentlyAdded("skills", recentRefresh);
@@ -1320,7 +1323,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             </div>
             <h2 className="text-[15px] font-medium text-text-base mb-2">No skills yet</h2>
             <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
-              Skills are reusable instruction sets that agents load on demand. Create your first skill or import one to get started.
+              Skills are reusable instruction sets that agents load on demand. Create your own, import one, or browse ready-made skills in Discover.
             </p>
             <div className="flex items-center gap-3">
               <button
@@ -1335,6 +1338,14 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               >
                 <Download size={14} /> Import
               </button>
+              {onBrowseDiscover && (
+                <button
+                  onClick={onBrowseDiscover}
+                  className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
+                >
+                  <Compass size={14} /> Browse skills
+                </button>
+              )}
             </div>
           </>
         }
