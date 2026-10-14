@@ -2,7 +2,7 @@
 
 All notable changes to Automatic are documented here.
 
-## [1.35.0] - 2026-10-13
+## [1.35.1] - 2026-10-14
 
 ### Added
 
@@ -13,6 +13,7 @@ All notable changes to Automatic are documented here.
 ### Changed
 
 - The task log is stored in SQLite at `~/.automatic/task_log.db`. An existing `task_log.json` is imported once and renamed to `task_log.json.migrated`. ([1b6b457](https://github.com/velvet-tiger/automatic/commit/1b6b457))
+- The bundled library is now v0.2.1. Its rules tell agents to fix a defect they find instead of reporting it and leaving it open. ([adc92e5](https://github.com/velvet-tiger/automatic/commit/adc92e5))
 - Debug builds keep secrets in `~/.automatic-dev/dev-secrets.json` instead of the OS keychain. Release builds still use the keychain. This is for developers only. ([b3a9681](https://github.com/velvet-tiger/automatic/commit/b3a9681))
 
 ### Fixed
@@ -25,6 +26,9 @@ All notable changes to Automatic are documented here.
 - On Linux, secrets are stored in the Secret Service over D-Bus. The kernel keyring was emptied on reboot, which lost the env-encryption key, API keys and OAuth tokens. Secrets in the old store are copied across when they are read. If the Secret Service is missing, the error says what to set up. ([cc43182](https://github.com/velvet-tiger/automatic/commit/cc43182))
 - Revoking an MCP server's OAuth token now also deletes its client id and refresh token. A failed delete stops the revoke, so you can retry. ([055add8](https://github.com/velvet-tiger/automatic/commit/055add8), [61b98e5](https://github.com/velvet-tiger/automatic/commit/61b98e5))
 - A server config found in a project file can no longer carry an env value that looks like ciphertext. Such a value is stored as empty. Before, it made cloud sync and that project's sync fail until you deleted the server. ([27f1c06](https://github.com/velvet-tiger/automatic/commit/27f1c06))
+- An MCP server's OAuth token is now stored under the server's name and its URL, so the token is only sent to the URL it was issued for. Deleting a server deletes its OAuth token and credentials. Renaming it moves them. Saving it with another URL deletes them. Before, a new server created under a deleted server's name looked signed in and was sent the old token. A token from an older version moves to the new entry the first time it is used at the server's saved URL. If you go back to an older version, sign in to the server again. ([dc1f628](https://github.com/velvet-tiger/automatic/commit/dc1f628), [b0fe6a6](https://github.com/velvet-tiger/automatic/commit/b0fe6a6), [1284a3b](https://github.com/velvet-tiger/automatic/commit/1284a3b))
+- Installing from a remote source now checks the repository name, the resource names and the manifest paths. A manifest could name a resource such as `../../../x` and write a file outside the library, or point at a file outside the clone. A name that ends with a dot is refused, because Windows drops the dot. ([56e6694](https://github.com/velvet-tiger/automatic/commit/56e6694), [b3db806](https://github.com/velvet-tiger/automatic/commit/b3db806), [784a7d6](https://github.com/velvet-tiger/automatic/commit/784a7d6))
+- On Linux, a locked keyring no longer makes a stored secret look missing, which could have replaced the env-encryption key. The old kernel keyring copy is removed once the Secret Service holds the value. Two copies of Automatic that start together no longer race while they move a secret. ([3d718c6](https://github.com/velvet-tiger/automatic/commit/3d718c6), [80b24b4](https://github.com/velvet-tiger/automatic/commit/80b24b4))
 - The OpenCode restart banner on the MCP Servers page stays dismissed. ([da9f039](https://github.com/velvet-tiger/automatic/commit/da9f039))
 
 ## [1.34.0] - 2026-10-07
