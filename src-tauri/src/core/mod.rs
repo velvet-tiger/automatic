@@ -95,7 +95,7 @@ pub use projects::*;
 pub use recently_added::*;
 pub use rules::*;
 pub use rules_injection::*;
-pub use secret_store::check_secret_store_config;
+pub use secret_store::{check_secret_store_config, set_unlock_prompt, UnlockPrompt};
 pub use settings::*;
 pub use skill_store::*;
 pub use skills::*;

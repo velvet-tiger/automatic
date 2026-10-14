@@ -21,6 +21,12 @@ fn main() {
         .get(1)
         .map(|verb| verb == "mcp-serve" || verb == "mcp-proxy")
         .unwrap_or(false);
+    // An agent starts these, and nobody may be there to answer a keyring
+    // unlock prompt. A prompt nobody answers would hold the agent up, so a
+    // locked keyring is an error at once.
+    if is_stdio_subcommand {
+        automatic_lib::core::set_unlock_prompt(automatic_lib::core::UnlockPrompt::Never);
+    }
     if !is_stdio_subcommand {
         // Must run before anything spawns a subprocess or resolves a binary
         // on $PATH — a Finder/Dock-launched GUI app otherwise inherits a

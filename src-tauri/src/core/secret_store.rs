@@ -27,6 +27,13 @@
 //! providers answer a search of a locked keyring with "no items", and a
 //! stored secret would then look absent.
 //!
+//! A locked keyring makes the provider show an unlock prompt, and the call
+//! waits for it. [`set_unlock_prompt`] decides how long. A process an agent
+//! started (`mcp-serve`, `mcp-proxy`) shows none, because nobody may be
+//! there to answer. Every other process waits a bounded time. After a call
+//! finds the keyring still locked, calls in the next few seconds fail at once
+//! with the same error instead of prompting again.
+//!
 //! Older builds kept secrets in the kernel keyring, which the kernel empties
 //! on reboot. A read that finds nothing in the Secret Service looks there and
 //! moves what it finds to the Secret Service. A store or a delete removes the
@@ -61,6 +68,100 @@ pub fn load_secret_if_present(account: &str) -> Result<Option<String>, String> {
 /// Returns an error when nothing is stored, matching the OS keychain.
 pub fn delete_secret(account: &str) -> Result<(), String> {
     backend::delete(account)
+}
+
+/// Whether this process may show the keyring's unlock prompt.
+///
+/// Only the Linux Secret Service asks this. The macOS Keychain and the
+/// Windows Credential Manager show their own dialogs, which no setting here
+/// changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnlockPrompt {
+    /// Show the prompt and wait up to this many seconds for an answer.
+    WaitUpTo(u64),
+    /// Never show the prompt. A locked keyring is an error at once.
+    Never,
+}
+
+/// How long a process that sets no policy waits for the unlock prompt.
+/// Long enough to type a password, short enough that a prompt nobody sees
+/// does not hold the call for good.
+#[cfg(any(test, target_os = "linux"))]
+const DEFAULT_UNLOCK_WAIT_SECS: u64 = 60;
+
+static UNLOCK_PROMPT: std::sync::OnceLock<UnlockPrompt> = std::sync::OnceLock::new();
+
+/// Set this process's unlock prompt policy. Call once at startup, before
+/// the first secret is read. A later call has no effect.
+///
+/// A process an agent starts should pass [`UnlockPrompt::Never`]: an
+/// `mcp-proxy` waiting on a prompt nobody answers holds up the agent that
+/// started it. Without a call the process waits 60 seconds.
+pub fn set_unlock_prompt(policy: UnlockPrompt) {
+    let _ = UNLOCK_PROMPT.set(policy);
+}
+
+/// This process's unlock prompt policy.
+#[cfg(any(test, target_os = "linux"))]
+fn unlock_prompt() -> UnlockPrompt {
+    UNLOCK_PROMPT
+        .get()
+        .copied()
+        .unwrap_or(UnlockPrompt::WaitUpTo(DEFAULT_UNLOCK_WAIT_SECS))
+}
+
+/// The prompt timeout the Secret Service client takes for `policy`. Zero
+/// makes it cancel the prompt without showing it.
+#[cfg(any(test, target_os = "linux"))]
+fn prompt_timeout_secs(policy: UnlockPrompt) -> u64 {
+    match policy {
+        UnlockPrompt::WaitUpTo(seconds) => seconds,
+        UnlockPrompt::Never => 0,
+    }
+}
+
+/// What a locked keyring is called in an error, by policy. A process that
+/// never prompts says so, or the user cannot tell why no prompt appeared.
+#[cfg(any(test, target_os = "linux"))]
+fn locked_keyring_detail(policy: UnlockPrompt) -> &'static str {
+    match policy {
+        UnlockPrompt::WaitUpTo(_) => "the default keyring is still locked",
+        UnlockPrompt::Never => {
+            "the default keyring is locked, and this process does not show an unlock prompt \
+             because an agent started it. Unlock the keyring in your desktop session, or open \
+             Automatic and let it ask"
+        }
+    }
+}
+
+/// How long a keyring found still locked stays known as locked. Calls in
+/// that time fail at once instead of prompting again. One sync can read many
+/// secrets, and a prompt for each would follow one "Cancel" with another.
+#[cfg(any(test, target_os = "linux"))]
+const LOCKED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// When the keyring was last found unusable, and the error then.
+#[cfg(any(test, target_os = "linux"))]
+type LockedSince = std::sync::Mutex<Option<(std::time::Instant, String)>>;
+
+/// The error from `memo` when it is younger than `max_age`.
+#[cfg(any(test, target_os = "linux"))]
+fn recent_failure(memo: &LockedSince, max_age: std::time::Duration) -> Option<String> {
+    let memo = memo.lock().ok()?;
+    let (failed_at, error) = memo.as_ref()?;
+    (failed_at.elapsed() < max_age).then(|| error.clone())
+}
+
+/// Keep the outcome of a check of the keyring: its error when it failed,
+/// nothing when it worked.
+#[cfg(any(test, target_os = "linux"))]
+fn remember_check(memo: &LockedSince, outcome: &Result<(), String>) {
+    if let Ok(mut memo) = memo.lock() {
+        *memo = outcome
+            .as_ref()
+            .err()
+            .map(|error| (std::time::Instant::now(), error.clone()));
+    }
 }
 
 /// Check the backend configuration. Call once at startup.
@@ -365,21 +466,59 @@ mod system {
     /// locked database answering with no items at all. Without this check the
     /// stored env-encryption key would look absent there, and the next encrypt
     /// would replace it.
+    ///
+    /// The prompt waits as long as [`super::set_unlock_prompt`] allows. A
+    /// check that fails is remembered for a few seconds, and the calls in
+    /// that time fail with the same error without prompting again.
     #[cfg(target_os = "linux")]
     fn confirm_default_keyring_unlocked() -> Result<(), String> {
+        static LOCKED_SINCE: super::LockedSince = std::sync::Mutex::new(None);
+
+        if let Some(error) = super::recent_failure(&LOCKED_SINCE, super::LOCKED_RETRY_AFTER) {
+            return Err(error);
+        }
+        let outcome = check_default_keyring_unlocked(super::unlock_prompt());
+        super::remember_check(&LOCKED_SINCE, &outcome);
+        outcome
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_default_keyring_unlocked(policy: super::UnlockPrompt) -> Result<(), String> {
         use dbus_secret_service::{EncryptionType, SecretService};
         use keyring::secret_service::{decode_error, get_collection};
+        use keyring::Error;
 
-        // No secret crosses this session, so it needs no encryption.
-        let service = SecretService::connect(EncryptionType::Plain)
-            .map_err(|e| keychain_error(decode_error(e)))?;
+        // No secret crosses this session, so it needs no encryption. The
+        // timeout bounds the unlock prompt that `get_collection` may raise.
+        // Without it the call waits for an answer for as long as a year.
+        let service = SecretService::connect_with_max_prompt_timeout(
+            EncryptionType::Plain,
+            super::prompt_timeout_secs(policy),
+        )
+        .map_err(|e| keychain_error(decode_error(e)))?;
         // `get_collection` requests the unlock. The check below reads the
         // result, because a provider may accept the request and stay locked.
-        let collection = get_collection(&service, "default").map_err(keychain_error)?;
+        // A prompt that was dismissed, timed out or never shown comes back
+        // as `Prompt`, and a keyring that stayed locked as `Locked`. Other
+        // failures, such as no default keyring, keep their own message.
+        let collection = match get_collection(&service, "default") {
+            Ok(collection) => collection,
+            Err(Error::NoStorageAccess(inner))
+                if matches!(
+                    inner.downcast_ref::<dbus_secret_service::Error>(),
+                    Some(dbus_secret_service::Error::Prompt | dbus_secret_service::Error::Locked)
+                ) =>
+            {
+                return Err(super::secret_service_unavailable(super::locked_keyring_detail(
+                    policy,
+                )));
+            }
+            Err(e) => return Err(keychain_error(e)),
+        };
         match collection.is_locked() {
             Ok(false) => Ok(()),
             Ok(true) => Err(super::secret_service_unavailable(
-                "the default keyring is still locked",
+                super::locked_keyring_detail(policy),
             )),
             Err(e) => Err(keychain_error(decode_error(e))),
         }
@@ -710,6 +849,49 @@ mod tests {
 
         let not_text = keyring::Error::BadEncoding(vec![0xff]);
         assert!(absent_entry_as_none(Err(not_text)).is_err());
+    }
+
+    // ── The unlock prompt ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_process_that_never_prompts_asks_for_a_zero_timeout() {
+        assert_eq!(prompt_timeout_secs(UnlockPrompt::Never), 0);
+        assert_eq!(prompt_timeout_secs(UnlockPrompt::WaitUpTo(45)), 45);
+    }
+
+    #[test]
+    fn a_process_that_sets_no_policy_waits_a_bounded_time() {
+        // The test binary sets no policy.
+        assert_eq!(unlock_prompt(), UnlockPrompt::WaitUpTo(DEFAULT_UNLOCK_WAIT_SECS));
+    }
+
+    #[test]
+    fn a_locked_keyring_error_says_why_no_prompt_appeared() {
+        let never = secret_service_unavailable(locked_keyring_detail(UnlockPrompt::Never));
+        let waited = secret_service_unavailable(locked_keyring_detail(UnlockPrompt::WaitUpTo(60)));
+
+        assert!(never.contains("does not show an unlock prompt"), "{never}");
+        assert!(never.contains("open Automatic"), "{never}");
+        assert!(waited.contains("still locked"), "{waited}");
+        assert!(!waited.contains("does not show"), "{waited}");
+    }
+
+    #[test]
+    fn a_keyring_found_locked_is_not_asked_again_for_a_few_seconds() {
+        let memo: LockedSince = std::sync::Mutex::new(None);
+        assert_eq!(recent_failure(&memo, LOCKED_RETRY_AFTER), None);
+
+        remember_check(&memo, &Err("the default keyring is still locked".to_string()));
+        assert_eq!(
+            recent_failure(&memo, LOCKED_RETRY_AFTER),
+            Some("the default keyring is still locked".to_string())
+        );
+        // Once the time has passed the keyring is checked again.
+        assert_eq!(recent_failure(&memo, std::time::Duration::ZERO), None);
+
+        // A check that worked forgets the failure.
+        remember_check(&memo, &Ok(()));
+        assert_eq!(recent_failure(&memo, LOCKED_RETRY_AFTER), None);
     }
 
     #[test]
