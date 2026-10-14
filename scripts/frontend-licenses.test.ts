@@ -120,10 +120,11 @@ describe("collectLicences", () => {
 
   it("lists CSS modules and assets that come from a package", () => {
     const css = addPackage("some-css", "MIT", { LICENSE: "css licence" });
-    const font = addPackage("@fonts/inter", "OFL-1.1 OR MIT", { LICENSE: "font licence" });
+    addPackage("@fonts/inter", "OFL-1.1 OR MIT", { LICENSE: "font licence" });
     const text = collectLicences(root, [
       chunk({ [`${css}/style.css`]: 0 }),
-      { type: "asset", originalFileNames: [`${font}/inter.woff2`] },
+      // Vite names assets relative to the project root.
+      { type: "asset", originalFileNames: ["node_modules/@fonts/inter/inter.woff2"] },
     ]);
     expect(text).toContain("some-css 1.0.0 (MIT)");
     expect(text).toContain("@fonts/inter 1.0.0 (OFL-1.1 OR MIT)");

@@ -219,8 +219,10 @@ export function collectLicences(projectRoot: string, bundle: Iterable<BundleEntr
   let usesViteHelpers = false;
   for (const output of bundle) {
     if (output.type === "asset") {
+      // Vite gives asset names relative to the project root
+      // ("node_modules/pkg/font.woff2"), so they are made absolute first.
       for (const fileName of output.originalFileNames) {
-        const root = packageRootFromModuleId(fileName);
+        const root = packageRootFromModuleId(path.resolve(projectRoot, fileName));
         if (root !== null) roots.add(root);
       }
       continue;
