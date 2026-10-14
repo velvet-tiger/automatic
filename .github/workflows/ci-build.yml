@@ -1,0 +1,244 @@
+# Builds unsigned test bundles of a branch on all three platforms.
+# It gets no secrets and a read-only token, because code on a branch should
+# never run next to the signing keys. Signed builds happen only in release.yml,
+# on tags. It also runs the licence steps, so a branch catches a licence
+# failure before a tag uploads assets to a draft release. Keep the licenses
+# job, the shared setup steps and the licence steps in step with release.yml.
+name: CI Build
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - ci/**
+  workflow_dispatch:
+
+jobs:
+  # A copy of the licenses job in release.yml. There it is a job of its own
+  # so that the third-party install action never runs next to the signing
+  # keys. This workflow holds no keys, so here it only keeps the two
+  # workflows alike.
+  licenses:
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Nothing here pushes, so the token is not left in .git/config.
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      # Pinned to a commit, and the tool to a version, so that neither can
+      # change under a release.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-about@0.9.2
+
+      # Fails when a crate's licence is not accepted in about.toml, when a
+      # licence file pinned there has changed, or when a crate would be
+      # printed without its copyright line.
+      - name: Generate for every release platform
+        run: bash scripts/third-party-licenses.sh licenses
+
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: third-party-licenses
+          path: licenses/*.txt
+          if-no-files-found: error
+
+  build:
+    needs: licenses
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `name` matches a file that scripts/third-party-licenses.sh writes.
+        # Every leg bundles the licence files through tauri.release.conf.json.
+        include:
+          - name: darwin-universal
+            os: macos-latest
+            target: universal-apple-darwin
+            args: --target universal-apple-darwin --bundles app,updater --config src-tauri/tauri.release.conf.json
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: --bundles appimage --config src-tauri/tauri.release.conf.json
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --bundles nsis --config src-tauri/tauri.release.conf.json
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # build.rs packs the automatic-library submodule into the binary
+          submodules: true
+          # No step uses git with the token.
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libsecret-1-dev \
+            libdbus-1-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Download the third-party licence files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: third-party-licenses
+          path: licenses-artifact
+
+      # tauri.release.conf.json bundles everything in src-tauri/licenses/.
+      # The file comes from another job. Take it only as a plain file, so
+      # that nothing else on this runner can be copied into a public bundle.
+      # It must also be text and under 10 MB, so a bad file fails the build.
+      - name: Stage the Rust crate licence file
+        shell: bash
+        env:
+          MATRIX_NAME: ${{ matrix.name }}
+        run: |
+          licence_file="licenses-artifact/$MATRIX_NAME.txt"
+          if [ ! -f "$licence_file" ] || [ -L "$licence_file" ]; then
+            echo "::error::$licence_file is missing or is not a regular file"
+            exit 1
+          fi
+          if [ "$(wc -c <"$licence_file")" -ge 10000000 ] || ! grep -Iq . "$licence_file"; then
+            echo "::error::$licence_file is over 10 MB, empty, or not text"
+            exit 1
+          fi
+          mkdir -p src-tauri/licenses
+          cp "$licence_file" src-tauri/licenses/rust-crates.txt
+
+      # The gdk-pixbuf TIFF loader needs libtiff, which needs libjbig. JBIG-KIT
+      # is GPL-2+ only, and the AppImage would carry it. Setting the loader
+      # aside keeps both out of the AppImage. TIFF images then load only where
+      # the user's system has the loader. The Linux check at the end of this
+      # job fails the build if libtiff or libjbig comes back.
+      #
+      # The loader moves to the folder above 2.10.0. linuxdeploy-plugin-gtk
+      # copies the whole 2.10.0 folder, so a renamed copy left beside the
+      # other loaders would still be bundled, with libtiff and libjbig.
+      - name: Set aside the TIFF image loader (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          pixbuf_dir=/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0
+          loader="$pixbuf_dir/2.10.0/loaders/libpixbufloader-tiff.so"
+          sudo dpkg-divert --local --rename --divert "$pixbuf_dir/libpixbufloader-tiff.so.diverted" --add "$loader"
+          sudo "$pixbuf_dir/gdk-pixbuf-query-loaders" --update-cache
+          if find "$pixbuf_dir/2.10.0" -iname '*tiff*' | grep -q . || grep -qi tiff "$pixbuf_dir/2.10.0/loaders.cache"; then
+            echo "::error::a TIFF loader is still in $pixbuf_dir/2.10.0"
+            exit 1
+          fi
+
+      # Build the console-subsystem CLI binary and stage it where
+      # tauri.windows.conf.json's `externalBin` entry expects to find it.
+      # Tauri's externalBin convention requires the target-triple suffix.
+      #
+      # The placeholder file is needed because `cargo build -p automatic-cli`
+      # transitively builds the parent `automatic` crate, whose `tauri-build`
+      # build script validates that every `externalBin` path exists. Without
+      # the placeholder, the parent's build script fails before cli-bin has
+      # a chance to produce the real binary. We copy the real file over the
+      # placeholder once cli-bin finishes; the subsequent `tauri build`
+      # bundle step then ships the real binary inside the installer.
+      - name: Build and stage automatic-cli (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cd src-tauri
+          mkdir -p binaries
+          touch binaries/automatic-cli-x86_64-pc-windows-msvc.exe
+          cargo build --release -p automatic-cli
+          cp target/release/automatic-cli.exe \
+             binaries/automatic-cli-x86_64-pc-windows-msvc.exe
+
+      # --no-sign skips macOS codesigning, notarization, Windows signing and
+      # updater signing. Without it the build would need the signing keys.
+      - name: Build Tauri app (unsigned)
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
+        with:
+          args: ${{ matrix.args }} --no-sign
+
+      # The checks below look inside the finished bundles. They do not depend
+      # on signing, so they test the same files a tag build ships.
+      - name: Check the bundled licence files (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          dir=src-tauri/target/universal-apple-darwin/release/bundle/macos/Automatic.app/Contents/Resources/licenses
+          listed=$(ls "$dir" | LC_ALL=C sort | tr '\n' ' ')
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::$dir holds '$listed', expected '$expected'"
+            exit 1
+          fi
+
+      - name: Check the bundled licence files (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
+          listing=$(7z l -ba "${installers[0]}" | tr -d '\r')
+          # Every entry under a top-level licenses folder, as a path relative
+          # to it, so a file in a subfolder shows up as an extra entry.
+          listed=$(grep -oiE '(^|[\\/ ])licenses[\\/].+$' <<<"$listing" | sed -E 's#^[\\/ ]?[Ll][Ii][Cc][Ee][Nn][Ss][Ee][Ss][\\/]##' | LC_ALL=C sort | tr '\n' ' ' || true)
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::${installers[0]} holds '$listed' in licenses, expected '$expected'"
+            echo "$listing"
+            exit 1
+          fi
+
+      - name: Check the bundled licence files (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
+          (cd "$RUNNER_TEMP" && rm -rf check && mkdir check && cd check && "$GITHUB_WORKSPACE/${appimages[0]}" --appimage-extract >/dev/null)
+          root="$RUNNER_TEMP/check/squashfs-root"
+          listed=$(ls "$root/usr/lib/Automatic/licenses" | LC_ALL=C sort | tr '\n' ' ')
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
+          if [ "$listed" != "$expected" ]; then
+            echo "::error::the AppImage's licenses folder holds '$listed', expected '$expected'"
+            exit 1
+          fi
+          # libjbig is GPL-2+ only. See "Set aside the TIFF image loader".
+          if find "$root" \( -name 'libjbig*' -o -name 'libtiff*' -o -name '*pixbufloader-tiff*' \) | grep .; then
+            echo "::error::the AppImage carries libtiff or libjbig"
+            exit 1
+          fi

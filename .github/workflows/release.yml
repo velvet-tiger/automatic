@@ -1,30 +1,29 @@
+# Builds, signs and publishes a release from a tag.
+# Unsigned branch test builds live in ci-build.yml.
 name: Release
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   push:
     tags:
       - '**'
-    branches:
-      - ci/**
-  workflow_dispatch:
 
 jobs:
   # Writes the licence list of the Rust crates in each platform's build. It is
   # a job of its own so that the third-party install action and the tool it
   # downloads never run in the build job, which signs the app and holds the
   # signing secrets. This job gets a read-only token and no secrets, and its
-  # actions are pinned to commits. It is not fully walled off: every job in a
-  # run can write to the run's Actions cache, which `build` restores.
+  # actions are pinned to commits. `build` restores no Actions cache, so this
+  # job cannot reach it through one.
   licenses:
     timeout-minutes: 15
     runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Nothing here pushes, so the token is not left in .git/config.
           persist-credentials: false
@@ -35,7 +34,7 @@ jobs:
       # Pinned to a commit, and the tool to a version, so that neither can
       # change under a release.
       - name: Install cargo-about
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-about@0.9.2
 
@@ -46,7 +45,7 @@ jobs:
         run: bash scripts/third-party-licenses.sh licenses
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: third-party-licenses
           path: licenses/*.txt
@@ -56,6 +55,9 @@ jobs:
     needs: licenses
     timeout-minutes: 30
     runs-on: ${{ matrix.os }}
+    # Tag builds upload release assets with GITHUB_TOKEN.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -76,27 +78,24 @@ jobs:
             args: --bundles nsis --config src-tauri/tauri.release.conf.json
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # build.rs packs the automatic-library submodule into the binary
           submodules: true
+          # No step uses git with the token. tauri-action and gh read GITHUB_TOKEN from env.
+          persist-credentials: false
 
+      # This workflow holds the signing keys, so it restores no Actions cache.
+      # Other jobs and workflows can write caches.
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: npm
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          key: ${{ matrix.target }}
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -116,7 +115,7 @@ jobs:
         run: npm ci
 
       - name: Download the third-party licence files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: third-party-licenses
           path: licenses-artifact
@@ -124,6 +123,7 @@ jobs:
       # tauri.release.conf.json bundles everything in src-tauri/licenses/.
       # The file comes from another job. Take it only as a plain file, so
       # that nothing else on this runner can be copied into a public bundle.
+      # It must also be text and under 10 MB, so a bad file fails the build.
       - name: Stage the Rust crate licence file
         shell: bash
         env:
@@ -132,6 +132,10 @@ jobs:
           licence_file="licenses-artifact/$MATRIX_NAME.txt"
           if [ ! -f "$licence_file" ] || [ -L "$licence_file" ]; then
             echo "::error::$licence_file is missing or is not a regular file"
+            exit 1
+          fi
+          if [ "$(wc -c <"$licence_file")" -ge 10000000 ] || ! grep -Iq . "$licence_file"; then
+            echo "::error::$licence_file is over 10 MB, empty, or not text"
             exit 1
           fi
           mkdir -p src-tauri/licenses
@@ -181,23 +185,25 @@ jobs:
              binaries/automatic-cli-x86_64-pc-windows-msvc.exe
 
       # Import the Apple Developer ID certificate into the macOS keychain for signing.
+      # The certificate goes to RUNNER_TEMP, not the workspace, and the final
+      # step deletes the keychain and the file.
       - name: Import Apple Developer certificate
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           # Increase keychain timeout to avoid relocking
           security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import "$RUNNER_TEMP/certificate.p12" -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           # Grant codesign partition access to avoid UI prompts
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm certificate.p12
+          rm "$RUNNER_TEMP/certificate.p12"
 
       # On tag pushes: build, sign, notarize, and publish a draft release.
       # latest.json is generated by the separate `publish` job once all platforms are done.
@@ -205,9 +211,8 @@ jobs:
       # fails to find .sig files for universal macOS builds. The `publish` job handles it.
       - name: Build and publish Tauri app (tag)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
-          RUST_LOG: debug
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -260,7 +265,7 @@ jobs:
 
       - name: Stash macOS signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sig-macos
           path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
@@ -290,7 +295,7 @@ jobs:
 
       - name: Stash Linux signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sig-linux
           path: src-tauri/target/release/bundle/appimage/*.AppImage.sig
@@ -322,35 +327,17 @@ jobs:
 
       - name: Stash Windows signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sig-windows
           path: src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           if-no-files-found: error
 
-      - name: Build Tauri app (branch / dispatch)
-        if: "!startsWith(github.ref, 'refs/tags/')"
-        uses: tauri-apps/tauri-action@v0
-        env:
-          RUST_LOG: debug
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Fallbacks for tauri-bundler / xcrun notarytool natively
-          AC_USERNAME: ${{ secrets.APPLE_ID }}
-          AC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Brandfetch CDN client ID — inlined into the JS bundle at build time by Vite
-          VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
-          # Baked into the Rust binary at compile time via option_env!()
-          AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY }}
-          ATTIO_API_KEY: ${{ secrets.ATTIO_API_KEY }}
-        with:
-          args: ${{ matrix.args }}
+      - name: Delete macOS signing keychain
+        if: always() && matrix.os == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          security delete-keychain build.keychain || true
+          rm -f "$RUNNER_TEMP/certificate.p12"
 
       # The checks below look inside the finished bundles. A tag build has
       # already uploaded them to the draft release by now. The draft stays
@@ -406,23 +393,29 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    # Uploads latest.json and publishes the draft release with GITHUB_TOKEN.
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # No step uses git with the token. gh reads GITHUB_TOKEN from env.
+          persist-credentials: false
 
       - name: Download macOS signature
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sig-macos
           path: sigs/macos
 
       - name: Download Linux signature
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sig-linux
           path: sigs/linux
 
       - name: Download Windows signature
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sig-windows
           path: sigs/windows
@@ -462,7 +455,7 @@ jobs:
 
           export PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          python3 - <<PYEOF
+          python3 - <<'PYEOF'
           import glob
           import json
           import os
