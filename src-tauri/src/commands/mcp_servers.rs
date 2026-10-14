@@ -66,13 +66,20 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
         return Err(format!("Cannot delete built-in MCP server '{}'", name));
     }
     core::delete_mcp_server_config(name)?;
+    prune_mcp_server_references(name);
+    Ok(())
+}
+
+/// Take a deleted MCP server out of every profile, project and global
+/// selection, and re-sync what changed. Run after the server's config is
+/// deleted.
+pub(crate) fn prune_mcp_server_references(name: &str) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::McpServer, name);
     prune_mcp_server_from_projects(name);
     // Drop the server from every agent's global selection and rewrite the
     // affected files so the entry disappears from any place Automatic
     // manages it.
     crate::sync::global_mcp::prune_server_from_global(name);
-    Ok(())
 }
 
 #[tauri::command]

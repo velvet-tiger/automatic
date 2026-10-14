@@ -33,10 +33,16 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
 #[tauri::command]
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     core::delete_rule(machine_name)?;
+    prune_rule_references(machine_name);
+    Ok(())
+}
+
+/// Take a deleted rule out of every profile, project and template, and
+/// re-sync the projects that changed. Run after the rule is deleted.
+pub(crate) fn prune_rule_references(machine_name: &str) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::Rule, machine_name);
     prune_rule_from_projects(machine_name);
     prune_rule_from_templates(machine_name);
-    Ok(())
 }
 
 /// A project that references a rule, with its current sync status.

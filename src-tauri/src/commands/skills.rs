@@ -49,9 +49,15 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
         ));
     }
     core::delete_skill(name)?;
+    prune_skill_references(name);
+    Ok(())
+}
+
+/// Take a deleted skill out of every profile and project, and re-sync the
+/// projects that changed. Run after the skill is deleted.
+pub(crate) fn prune_skill_references(name: &str) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::Skill, name);
     super::projects::prune_skill_from_projects(name);
-    Ok(())
 }
 
 /// Import a skill from an external scan directory (e.g. `~/.agents/skills/`

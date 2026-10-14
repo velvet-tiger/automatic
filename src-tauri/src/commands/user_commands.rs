@@ -41,10 +41,16 @@ pub fn rename_user_command(old_name: String, new_name: String) -> Result<(), Str
 #[tauri::command]
 pub fn delete_user_command(machine_name: String) -> Result<(), String> {
     core::delete_user_command(&machine_name)?;
+    prune_user_command_references(&machine_name);
+    Ok(())
+}
+
+/// Take a deleted command out of every profile, and bring the projects that
+/// use those profiles back in step. Run after the command is deleted.
+pub(crate) fn prune_user_command_references(machine_name: &str) {
     for profile in
-        core::prune_asset_from_profiles(core::ProfileResourceKind::UserCommand, &machine_name)
+        core::prune_asset_from_profiles(core::ProfileResourceKind::UserCommand, machine_name)
     {
         reconcile_projects_referencing_profile(&profile);
     }
-    Ok(())
 }

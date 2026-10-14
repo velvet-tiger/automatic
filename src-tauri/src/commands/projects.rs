@@ -1673,14 +1673,14 @@ pub(crate) fn prune_rule_from_projects(rule_name: &str) {
 }
 
 #[cfg(test)]
-mod propagation_tests {
+pub(crate) mod propagation_tests {
     use super::*;
     use tempfile::tempdir;
 
     /// Run `test` with a thread-local override of Automatic's HOME directory.
     /// Uses `core::paths::with_test_home` so parallel tests in other modules
     /// cannot race on the process-wide `$HOME` env var.
-    fn with_temp_home<T>(test: impl FnOnce(&std::path::Path) -> T) -> T {
+    pub(crate) fn with_temp_home<T>(test: impl FnOnce(&std::path::Path) -> T) -> T {
         let home = tempdir().expect("temp home");
         let home_path = home.path().to_path_buf();
         crate::core::with_test_home(home_path.clone(), || test(&home_path))
@@ -1688,7 +1688,7 @@ mod propagation_tests {
 
     /// Create and persist a project whose directory is an empty tempdir.
     /// Returns the directory path so the test can inspect it after a sync.
-    fn make_project(
+    pub(crate) fn make_project(
         name: &str,
         mutate: impl FnOnce(&mut core::Project),
     ) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -1788,7 +1788,7 @@ mod propagation_tests {
         });
     }
 
-    fn read_back(name: &str) -> core::Project {
+    pub(crate) fn read_back(name: &str) -> core::Project {
         serde_json::from_str(&core::read_project(name).expect("read project")).expect("parse")
     }
 
@@ -2356,6 +2356,139 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let raw = core::read_project("alpha").expect("read");
             let loaded: core::Project = serde_json::from_str(&raw).expect("parse");
             assert_eq!(loaded.skills, vec!["new".to_string()]);
+        });
+    }
+
+    // ── delete commands prune what they delete ───────────────────────────────
+
+    fn save_profile(name: &str, edit: impl FnOnce(&mut core::ProjectProfile)) {
+        let mut profile = core::ProjectProfile {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        edit(&mut profile);
+        let data = serde_json::to_string(&profile).expect("profile json");
+        core::save_project_profile(name, &data).expect("save profile");
+    }
+
+    fn read_profile(name: &str) -> core::ProjectProfile {
+        core::read_project_profile_parsed(name).expect("read profile")
+    }
+
+    #[test]
+    fn deleting_an_mcp_server_prunes_it_from_projects_profiles_and_global_selections() {
+        with_temp_home(|_| {
+            // Named with the prefix no other test uses: the secret store is
+            // shared by the whole test process.
+            let name = "source-remove-delete-server";
+            core::save_mcp_server_config(name, r#"{"type":"stdio","command":"echo"}"#)
+                .expect("save server");
+            save_profile("delete-profile", |p| p.mcp_servers = vec![name.to_string()]);
+            let (_keep, dir) = make_project("project-a", |p| {
+                p.mcp_servers = vec![name.to_string()];
+            });
+            sync_projects_referencing_mcp_server(name);
+            crate::sync::global_mcp::apply_global_mcp("cursor", vec![name.to_string()])
+                .expect("select globally");
+            let mcp_json = || std::fs::read_to_string(dir.join(".mcp.json")).unwrap_or_default();
+            assert!(mcp_json().contains(name), "the project was synced first");
+
+            super::super::mcp_servers::delete_mcp_server_config(name).expect("delete");
+
+            assert!(read_back("project-a").mcp_servers.is_empty());
+            assert!(read_profile("delete-profile").mcp_servers.is_empty());
+            let state = core::global_mcp::load_global_mcp_state().expect("global state");
+            assert!(state.agents["cursor"].selected.is_empty());
+            assert!(!mcp_json().contains(name), "{}", mcp_json());
+        });
+    }
+
+    #[test]
+    fn deleting_a_rule_prunes_it_from_projects_profiles_and_templates() {
+        with_temp_home(|_| {
+            core::save_rule("delete-rule", "Delete Rule", "Body.\n").expect("save rule");
+            core::save_rule("keep-rule", "Keep Rule", "Body.\n").expect("save rule");
+            save_profile("delete-profile", |p| p.rules = vec!["delete-rule".to_string()]);
+            save_template_with_rules("with-rule", &["delete-rule", "keep-rule"]);
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.file_rules.insert(
+                    "_project".to_string(),
+                    vec!["delete-rule".to_string(), "keep-rule".to_string()],
+                );
+            });
+
+            super::super::rules::delete_rule("delete-rule").expect("delete");
+
+            assert_eq!(read_back("project-a").file_rules["_project"], vec!["keep-rule"]);
+            assert!(read_profile("delete-profile").rules.is_empty());
+            assert_eq!(template_rules("with-rule"), vec!["keep-rule"]);
+        });
+    }
+
+    #[test]
+    fn deleting_a_skill_prunes_it_from_projects_and_profiles() {
+        with_temp_home(|_| {
+            core::save_skill(
+                "delete-skill",
+                "---\nname: delete-skill\ndescription: A skill\n---\n# Skill\n",
+            )
+            .expect("save skill");
+            save_profile("delete-profile", |p| p.skills = vec!["delete-skill".to_string()]);
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.skills = vec!["delete-skill".to_string()];
+            });
+
+            super::super::skills::delete_skill("delete-skill").expect("delete");
+
+            assert!(read_back("project-a").skills.is_empty());
+            assert!(read_profile("delete-profile").skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_a_command_prunes_it_from_profiles_and_their_projects() {
+        with_temp_home(|_| {
+            core::save_user_command("delete-command", "# A command\n").expect("save command");
+            save_profile("delete-profile", |p| {
+                p.user_commands = vec!["delete-command".to_string()]
+            });
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.profiles = vec!["delete-profile".to_string()];
+            });
+            reconcile_projects_referencing_profile("delete-profile");
+            assert_eq!(read_back("project-a").user_commands, vec!["delete-command"]);
+
+            super::super::user_commands::delete_user_command("delete-command".to_string())
+                .expect("delete");
+
+            assert!(read_back("project-a").user_commands.is_empty());
+            assert!(read_profile("delete-profile").user_commands.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_a_subagent_prunes_it_from_profiles_and_their_projects() {
+        with_temp_home(|_| {
+            core::save_subagent(
+                "delete-agent",
+                "Delete Agent",
+                "---\nname: delete-agent\ndescription: An agent\n---\nBody\n",
+            )
+            .expect("save agent");
+            save_profile("delete-profile", |p| {
+                p.user_agents = vec!["delete-agent".to_string()]
+            });
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.profiles = vec!["delete-profile".to_string()];
+            });
+            reconcile_projects_referencing_profile("delete-profile");
+            assert_eq!(read_back("project-a").user_agents, vec!["delete-agent"]);
+
+            super::super::subagents::delete_subagent("delete-agent".to_string())
+                .expect("delete");
+
+            assert!(read_back("project-a").user_agents.is_empty());
+            assert!(read_profile("delete-profile").user_agents.is_empty());
         });
     }
 }

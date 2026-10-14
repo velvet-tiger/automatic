@@ -45,14 +45,21 @@ pub fn delete_subagent(machine_name: String) -> Result<(), String> {
     }
 
     core::delete_subagent(&machine_name)?;
-    // Projects are not pruned for sub-agents (sync skips a missing one), but
-    // profiles must stop listing it or the next reconcile would re-add it.
+    prune_subagent_references(&machine_name);
+    Ok(())
+}
+
+/// Take a deleted sub-agent out of every profile, and bring the projects
+/// that use those profiles back in step. Run after the sub-agent is deleted.
+///
+/// Projects are not pruned for sub-agents (sync skips a missing one), but
+/// profiles must stop listing it or the next reconcile would re-add it.
+pub(crate) fn prune_subagent_references(machine_name: &str) {
     for profile in
-        core::prune_asset_from_profiles(core::ProfileResourceKind::UserAgent, &machine_name)
+        core::prune_asset_from_profiles(core::ProfileResourceKind::UserAgent, machine_name)
     {
         reconcile_projects_referencing_profile(&profile);
     }
-    Ok(())
 }
 
 /// Return all projects that reference a sub-agent. For project-local sub-agents
