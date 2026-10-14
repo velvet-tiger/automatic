@@ -248,29 +248,16 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
         return Err("Invalid rule machine name".into());
     }
 
-    // Prevent deletion of mandatory rules.
-    if is_mandatory_rule(machine_name) {
-        return Err(format!(
-            "Cannot delete rule '{}' — it is required by Automatic",
-            machine_name
-        ));
-    }
+    // Mandatory and plugin-provided rules.
+    super::deletion_guards::ensure_deletable(
+        super::deletion_guards::LibraryAssetKind::Rule,
+        machine_name,
+    )?;
 
     let dir = get_rules_dir()?;
     let path = dir.join(format!("{}.json", machine_name));
 
     if path.exists() {
-        // Prevent deletion of plugin-provided rules.
-        if let Ok(raw) = fs::read_to_string(&path) {
-            if let Ok(rule) = serde_json::from_str::<Rule>(&raw) {
-                if rule.plugin_id.is_some() {
-                    return Err(format!(
-                        "Cannot delete rule '{}' — it is provided by a plugin",
-                        machine_name
-                    ));
-                }
-            }
-        }
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
 

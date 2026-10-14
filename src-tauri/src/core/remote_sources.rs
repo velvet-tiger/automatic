@@ -8,7 +8,9 @@ use super::asset_security::{
     enforce_text_asset, resolve_path_within_root, should_scan_text_file,
     validate_relative_asset_path, AssetKind,
 };
+use super::deletion_guards::LibraryAssetKind;
 use super::paths::{get_automatic_dir, is_valid_name};
+use super::recently_added::remove_recently_added;
 use super::types::{SkillsJson, SkillsJsonAuthor, SkillsJsonRepository, SkillsJsonSkill};
 
 // ── Manifest Types (parsed from automatic.json) ─────────────────────────────
@@ -215,6 +217,9 @@ pub struct InstallResult {
     pub skipped: Vec<String>,
     /// Non-fatal warnings.
     pub warnings: Vec<String>,
+    /// Manifest paths of the collections that failed to install.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_collections: Vec<String>,
 }
 
 /// Result of updating a source.
@@ -230,6 +235,12 @@ pub struct UpdateResult {
     /// keeps its provenance and stays listed on the source, so a later
     /// update or removal tries again.
     pub failed: Vec<RemovalFailure>,
+    /// Resources dropped from the manifest and left in place, as
+    /// `type:name`, because someone else owns them or another registered
+    /// source also lists them.
+    pub kept: Vec<String>,
+    /// Problems that did not stop the update, including the reinstall's.
+    pub warnings: Vec<String>,
     /// Previous version.
     pub old_version: String,
     /// New version.
@@ -246,9 +257,12 @@ pub struct RemoveResult {
     /// Resources and collections that could not be removed. Each keeps its
     /// provenance.
     pub failed: Vec<RemovalFailure>,
-    /// Resources and collections left in place because another registered
-    /// source also provides them.
+    /// Resources and collections left in place because someone else owns
+    /// them or another registered source also lists them.
     pub kept: Vec<String>,
+    /// Problems that did not stop a removal, such as an OAuth secret the
+    /// store would not delete.
+    pub warnings: Vec<String>,
 }
 
 /// A resource or collection that could not be removed, and why.
@@ -422,8 +436,30 @@ pub fn get_source(repo: &str) -> Result<Option<RemoteSource>, String> {
     Ok(sources.into_iter().find(|s| s.repo == repo))
 }
 
+// Test support: write faults for this thread. The test harness runs each
+// test on its own thread, so a fault never reaches another test.
+#[cfg(test)]
+thread_local! {
+    /// How many more writes of sources.json succeed, or `None` for no limit.
+    static SOURCES_WRITES_LEFT: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+    /// Whether writes of source-provenance.json fail.
+    static PROVENANCE_WRITES_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Save the sources registry.
 fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
+    #[cfg(test)]
+    if SOURCES_WRITES_LEFT.with(|left| match left.get() {
+        Some(0) => true,
+        Some(n) => {
+            left.set(Some(n - 1));
+            false
+        }
+        None => false,
+    }) {
+        return Err("Failed to write sources.json: test fault".to_string());
+    }
     let path = sources_registry_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -466,6 +502,10 @@ pub fn read_provenance() -> Result<HashMap<String, String>, String> {
 
 /// Save the provenance map.
 fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
+    #[cfg(test)]
+    if PROVENANCE_WRITES_FAIL.with(|fail| fail.get()) {
+        return Err("Failed to write source-provenance.json: test fault".to_string());
+    }
     let path = provenance_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -504,14 +544,6 @@ pub fn remove_provenance(resource_type: &str, name: &str) -> Result<(), String> 
     let mut prov = read_provenance()?;
     let key = format!("{}:{}", resource_type, name);
     prov.remove(&key);
-    save_provenance(&prov)
-}
-
-/// Remove every provenance entry `source_repo` owns, except the keys in
-/// `keep`.
-fn release_provenance(source_repo: &str, keep: &HashSet<String>) -> Result<(), String> {
-    let mut prov = read_provenance()?;
-    prov.retain(|key, owner| owner != source_repo || keep.contains(key));
     save_provenance(&prov)
 }
 
@@ -556,6 +588,32 @@ fn provenance_type(resource_type: &str) -> Option<&'static str> {
         "agents" | "agent" => Some("agent"),
         _ => None,
     }
+}
+
+/// The plural type a source lists resources under, for a provenance type.
+/// An unknown type is returned as it is.
+fn listing_type(provenance_type: &str) -> &str {
+    match provenance_type {
+        "skill" => "skills",
+        "mcp_server" => "mcp_servers",
+        "rule" => "rules",
+        "template" => "templates",
+        "command" => "commands",
+        "agent" => "agents",
+        other => other,
+    }
+}
+
+/// The library asset kind of a type a source lists resources under.
+fn asset_kind(resource_type: &str) -> Option<LibraryAssetKind> {
+    Some(match provenance_type(resource_type)? {
+        "skill" => LibraryAssetKind::Skill,
+        "mcp_server" => LibraryAssetKind::McpServer,
+        "rule" => LibraryAssetKind::Rule,
+        "template" => LibraryAssetKind::Template,
+        "command" => LibraryAssetKind::Command,
+        _ => LibraryAssetKind::Subagent,
+    })
 }
 
 /// The provenance key of a resource a source lists under `resource_type`.
@@ -1005,6 +1063,7 @@ pub fn install_source(
 
     // Install collections
     let mut collection_slugs = Vec::new();
+    let mut failed_collections = Vec::new();
     for coll_ref in &manifest.collections {
         match install_collection(&base_dir, coll_ref) {
             Ok(slug) => {
@@ -1015,6 +1074,7 @@ pub fn install_source(
                     "Failed to install collection '{}': {}",
                     coll_ref.path, e
                 ));
+                failed_collections.push(coll_ref.path.clone());
             }
         }
     }
@@ -1040,15 +1100,27 @@ pub fn install_source(
         installed,
         skipped,
         warnings,
+        failed_collections,
     })
 }
 
 /// Remove a source and every resource and collection it installed.
 ///
-/// A resource that cannot be removed is reported in `failed` and keeps its
-/// provenance, so it still shows which source it came from. A resource or
-/// collection that another registered source also lists is left in place
-/// and reported in `kept`. The source is unregistered and its clone deleted
+/// A resource is removed only while this source owns its provenance, and
+/// only when the library holds an entry with exactly its name. Otherwise it
+/// is left in place and reported:
+///
+/// - `kept`: the user or another source owns it, or another registered
+///   source also lists it. In that last case its provenance moves to that
+///   source.
+/// - `failed`: the name is refused, the asset is protected, only a name that
+///   differs in case exists, or the delete failed. It keeps its provenance,
+///   so a later removal can try again.
+///
+/// Names this source owns in provenance but no longer lists, as older
+/// versions could leave them, follow the same rules. A problem that does not
+/// stop a removal, such as an OAuth secret the store would not delete, is
+/// reported in `warnings`. The source is unregistered and its clone deleted
 /// either way, so a source can always be removed.
 ///
 /// Callers are responsible for removing the removed names from projects,
@@ -1058,32 +1130,29 @@ pub fn remove_source(repo: &str) -> Result<RemoveResult, String> {
     let others = other_sources(repo)?;
 
     let mut result = RemoveResult::default();
-    let mut unreleased = HashSet::new();
-    for (resource_type, name) in listed_resources(&source.resources) {
+    for (resource_type, name) in resources_of(repo, &source.resources)? {
         let key = format!("{}:{}", resource_type, name);
-        if let Some(other) = other_provider(&others, resource_type, name) {
-            hand_over_provenance(resource_type, name, repo, &other.repo)?;
-            result.kept.push(key);
-            continue;
-        }
-        match remove_installed_resource(resource_type, name) {
-            Ok(()) => result.removed.push(key),
-            Err(error) => {
-                unreleased.insert(provenance_key(resource_type, name));
-                result.failed.push(RemovalFailure {
-                    resource: key,
-                    error,
-                });
+        match remove_owned_resource(repo, &others, &resource_type, &name) {
+            ResourceOutcome::Removed(warnings) => {
+                result.removed.push(key);
+                result.warnings.extend(warnings);
             }
+            ResourceOutcome::Kept => result.kept.push(key),
+            ResourceOutcome::Failed(error) => result.failed.push(RemovalFailure {
+                resource: key,
+                error,
+            }),
         }
     }
 
     let collections = remove_collections(&source.collection_slugs, &others);
-    result.removed.extend(collections.removed.iter().map(|s| collection_key(s)));
-    result.kept.extend(collections.kept.iter().map(|s| collection_key(s)));
+    result
+        .removed
+        .extend(collections.removed.iter().map(|slug| collection_key(slug)));
+    result
+        .kept
+        .extend(collections.kept.iter().map(|slug| collection_key(slug)));
     result.failed.extend(collections.failed);
-
-    release_provenance(repo, &unreleased)?;
 
     // Remove the clone directory. An entry written by an older version can
     // hold a slug that is refused now. It names no folder this code will
@@ -1125,6 +1194,39 @@ fn listed_resources(resources: &HashMap<String, Vec<String>>) -> Vec<(&str, &str
         .collect()
 }
 
+/// Each `(type, name)` a removal of `repo` looks at: what the source lists,
+/// then each name it owns in provenance but does not list. Types are the
+/// plural keys a source lists resources under.
+fn resources_of(
+    repo: &str,
+    listed: &HashMap<String, Vec<String>>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut found: Vec<(String, String)> = listed_resources(listed)
+        .into_iter()
+        .map(|(resource_type, name)| (resource_type.to_string(), name.to_string()))
+        .collect();
+    let mut seen: HashSet<String> = found
+        .iter()
+        .map(|(resource_type, name)| provenance_key(resource_type, name))
+        .collect();
+
+    let mut unlisted: Vec<(String, String)> = read_provenance()?
+        .into_iter()
+        .filter(|(_, owner)| owner == repo)
+        .filter_map(|(key, _)| {
+            let (kind, name) = key.split_once(':')?;
+            Some((listing_type(kind).to_string(), name.to_string()))
+        })
+        .collect();
+    unlisted.sort();
+    for (resource_type, name) in unlisted {
+        if seen.insert(provenance_key(&resource_type, &name)) {
+            found.push((resource_type, name));
+        }
+    }
+    Ok(found)
+}
+
 /// The first of `sources` that also lists the resource. Its files are that
 /// source's too, so they must stay.
 fn other_provider<'a>(
@@ -1138,6 +1240,60 @@ fn other_provider<'a>(
             provenance_type(listed_type) == Some(wanted) && names.iter().any(|n| n == name)
         })
     })
+}
+
+/// What a removal did with one resource.
+#[derive(Debug, PartialEq)]
+enum ResourceOutcome {
+    /// Removed, with each problem that did not stop it.
+    Removed(Vec<String>),
+    /// Left in place, because someone else owns it.
+    Kept,
+    /// Left in place, for this reason.
+    Failed(String),
+}
+
+/// Remove one resource `repo` installed, following the rules of
+/// [`remove_source`]. Every failure is an outcome, so one resource never
+/// stops the rest.
+fn remove_owned_resource(
+    repo: &str,
+    others: &[RemoteSource],
+    resource_type: &str,
+    name: &str,
+) -> ResourceOutcome {
+    if let Err(error) = ensure_resource_name("resource", name) {
+        return ResourceOutcome::Failed(error);
+    }
+    let Some(kind) = provenance_type(resource_type) else {
+        return ResourceOutcome::Failed(format!("Unknown resource type: {}", resource_type));
+    };
+    match get_provenance(kind, name) {
+        Ok(Some(owner)) if owner == repo => {}
+        Ok(_) => return ResourceOutcome::Kept,
+        Err(error) => return ResourceOutcome::Failed(error),
+    }
+    if let Some(other) = other_provider(others, resource_type, name) {
+        return match hand_over_provenance(resource_type, name, repo, &other.repo) {
+            Ok(()) => ResourceOutcome::Kept,
+            Err(error) => ResourceOutcome::Failed(format!(
+                "Left in place for {}, but its provenance could not be moved: {}",
+                other.repo, error
+            )),
+        };
+    }
+    match remove_installed_resource(resource_type, name) {
+        Ok(mut warnings) => {
+            if let Err(error) = release_provenance_of(repo, resource_type, name) {
+                warnings.push(format!(
+                    "Removed {}:{}, but its provenance could not be cleared: {}",
+                    resource_type, name, error
+                ));
+            }
+            ResourceOutcome::Removed(warnings)
+        }
+        Err(error) => ResourceOutcome::Failed(error),
+    }
 }
 
 fn collection_key(slug: &str) -> String {
@@ -1155,9 +1311,11 @@ struct CollectionRemoval {
 /// Remove each of `slugs` from the Discover collections, except a slug that
 /// one of `others` also lists.
 ///
-/// Installing a collection replaces any entry with the same slug. When that
-/// was a bundled collection, the bundled entry is put back. Every other
-/// entry is left as it is. A slug that is already gone counts as removed.
+/// Installing a collection replaces any entry with the same slug. When the
+/// source's entry replaced a bundled collection, the bundled entry is put
+/// back in its place. A bundled collection the user deleted stays deleted.
+/// Every other entry is left as it is. A slug that is already gone counts as
+/// removed.
 fn remove_collections(slugs: &[String], others: &[RemoteSource]) -> CollectionRemoval {
     let mut outcome = CollectionRemoval::default();
     let mut own = Vec::new();
@@ -1194,18 +1352,17 @@ fn rewrite_collections_without(slugs: &[String]) -> Result<(), String> {
     let mut entries = super::discover_data::read_collection_entries()?;
     let mut changed = false;
     for slug in slugs {
-        let position = entries
+        let Some(position) = entries
             .iter()
-            .position(|entry| slug_of(entry) == Some(slug.as_str()));
-        let before = entries.len();
+            .position(|entry| slug_of(entry) == Some(slug.as_str()))
+        else {
+            continue;
+        };
         entries.retain(|entry| slug_of(entry) != Some(slug.as_str()));
-        changed |= entries.len() != before;
         if let Some(seed) = super::discover_data::seed_collection(slug)? {
-            // In the replaced entry's place, so the Discover order holds.
-            let at = position.unwrap_or(entries.len()).min(entries.len());
-            entries.insert(at, seed);
-            changed = true;
+            entries.insert(position.min(entries.len()), seed);
         }
+        changed = true;
     }
     // Writing an unchanged list could create the file, and the first-run
     // seeding skips a file that exists.
@@ -1243,11 +1400,15 @@ fn reinstall_source(repo: &str, existing: &RemoteSource) -> Result<UpdateResult,
 
     let removals = remove_dropped_resources(repo, existing, &manifest, &result)?;
 
+    let mut warnings = result.warnings;
+    warnings.extend(removals.warnings);
     Ok(UpdateResult {
         added: HashMap::new(), // Simplified: install_source handles adds
         updated: result.installed,
         removed: removals.removed,
         failed: removals.failed,
+        kept: removals.kept,
+        warnings,
         old_version: existing.version.clone(),
         new_version: manifest.version,
     })
@@ -1260,85 +1421,149 @@ struct UpdateRemovals {
     /// under `collection`.
     removed: HashMap<String, Vec<String>>,
     failed: Vec<RemovalFailure>,
+    /// `type:name` of each dropped resource left in place.
+    kept: Vec<String>,
+    warnings: Vec<String>,
 }
 
 /// Remove what an update dropped. `old` is the source's entry from before
 /// the reinstall, `manifest` the new manifest with its skills resolved, and
-/// `install` what the reinstall did.
+/// `install` what the reinstall did. Removal follows the rules of
+/// [`remove_source`].
 ///
-/// A resource is dropped when the new manifest no longer names it. One the
-/// manifest still names stays, even when the reinstall skipped it, for
-/// example because the scanner blocked its new version. A collection is
-/// dropped when the reinstall did not register its slug again. Removal
-/// follows the rules of [`remove_source`].
-///
-/// The reinstall rewrote the source's entry with only what it installed.
-/// The entry is written again here, so it also lists each skipped resource
-/// and each failed removal, and a later update or removal deals with them.
+/// The reinstall rewrote the source's entry with only what it installed. The
+/// entry is first written again with every name from before and after, so a
+/// failure part way through leaves nothing unlisted. At the end it lists what
+/// was installed, what the manifest still names, and each failed removal.
 fn remove_dropped_resources(
     repo: &str,
     old: &RemoteSource,
     manifest: &AutomaticManifest,
     install: &InstallResult,
 ) -> Result<UpdateRemovals, String> {
-    let others = other_sources(repo)?;
-    let named = select_all(manifest);
-    let mut removals = UpdateRemovals::default();
-    let mut listed = install.installed.clone();
+    let registered =
+        get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
+    let mut entry = registered.clone();
+    entry.resources = install.installed.clone();
+    for (resource_type, name) in listed_resources(&old.resources) {
+        list_once(&mut entry.resources, resource_type, name);
+    }
+    for slug in &old.collection_slugs {
+        if !entry.collection_slugs.contains(slug) {
+            entry.collection_slugs.push(slug.clone());
+        }
+    }
+    upsert_source(entry.clone())?;
 
+    let others = other_sources(repo)?;
+    let mut removals = UpdateRemovals::default();
+    entry.resources = remove_dropped_names(repo, old, manifest, install, &others, &mut removals);
+    entry.collection_slugs = remove_dropped_collections(
+        old,
+        &registered.collection_slugs,
+        install,
+        &others,
+        &mut removals,
+    );
+    upsert_source(entry)?;
+
+    Ok(removals)
+}
+
+/// Remove each resource `old` lists that `manifest` no longer names. A name
+/// the manifest still names stays, even when the reinstall skipped it, for
+/// example because the scanner blocked its new version.
+///
+/// Returns what the source lists afterwards: what the reinstall installed,
+/// each name the manifest still names, and each failed removal.
+fn remove_dropped_names(
+    repo: &str,
+    old: &RemoteSource,
+    manifest: &AutomaticManifest,
+    install: &InstallResult,
+    others: &[RemoteSource],
+    removals: &mut UpdateRemovals,
+) -> HashMap<String, Vec<String>> {
+    let named = select_all(manifest);
+    let mut listed = install.installed.clone();
     for (resource_type, name) in listed_resources(&old.resources) {
         if names_of_type(&named, resource_type).iter().any(|n| n == name) {
             list_once(&mut listed, resource_type, name);
             continue;
         }
-        if let Some(other) = other_provider(&others, resource_type, name) {
-            hand_over_provenance(resource_type, name, repo, &other.repo)?;
-            continue;
-        }
-        match remove_installed_resource(resource_type, name) {
-            Ok(()) => {
-                release_provenance_of(repo, resource_type, name)?;
+        let key = format!("{}:{}", resource_type, name);
+        match remove_owned_resource(repo, others, resource_type, name) {
+            ResourceOutcome::Removed(warnings) => {
                 removals
                     .removed
                     .entry(resource_type.to_string())
                     .or_default()
                     .push(name.to_string());
+                removals.warnings.extend(warnings);
             }
-            Err(error) => {
+            ResourceOutcome::Kept => removals.kept.push(key),
+            ResourceOutcome::Failed(error) => {
                 list_once(&mut listed, resource_type, name);
                 removals.failed.push(RemovalFailure {
-                    resource: format!("{}:{}", resource_type, name),
+                    resource: key,
                     error,
                 });
             }
         }
     }
+    listed
+}
 
-    let mut current =
-        get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
+/// Remove each collection `old` lists that the reinstall did not register
+/// again. `registered` holds the slugs it did register. Returns the slugs the
+/// source lists afterwards.
+///
+/// The slug of a collection that failed to install is not known without its
+/// file. When any collection failed, every old slug stays listed and nothing
+/// is removed, so a collection still in the manifest is not lost.
+fn remove_dropped_collections(
+    old: &RemoteSource,
+    registered: &[String],
+    install: &InstallResult,
+    others: &[RemoteSource],
+    removals: &mut UpdateRemovals,
+) -> Vec<String> {
+    let mut slugs = registered.to_vec();
     let dropped: Vec<String> = old
         .collection_slugs
         .iter()
-        .filter(|slug| !current.collection_slugs.contains(slug))
+        .filter(|slug| !registered.contains(slug))
         .cloned()
         .collect();
-    let collections = remove_collections(&dropped, &others);
-    if !collections.removed.is_empty() {
+    if dropped.is_empty() {
+        return slugs;
+    }
+    if !install.failed_collections.is_empty() {
+        removals.warnings.push(format!(
+            "Kept the collections {} because a collection failed to install: {}",
+            dropped.join(", "),
+            install.failed_collections.join(", ")
+        ));
+        slugs.extend(dropped);
+        return slugs;
+    }
+
+    let outcome = remove_collections(&dropped, others);
+    if !outcome.removed.is_empty() {
         removals
             .removed
-            .insert("collection".to_string(), collections.removed);
+            .insert("collection".to_string(), outcome.removed);
     }
-    for failure in &collections.failed {
+    removals
+        .kept
+        .extend(outcome.kept.iter().map(|slug| collection_key(slug)));
+    for failure in &outcome.failed {
         if let Some(slug) = failure.resource.strip_prefix("collection:") {
-            current.collection_slugs.push(slug.to_string());
+            slugs.push(slug.to_string());
         }
     }
-    removals.failed.extend(collections.failed);
-
-    current.resources = listed;
-    upsert_source(current)?;
-
-    Ok(removals)
+    removals.failed.extend(outcome.failed);
+    slugs
 }
 
 /// The names `selected` holds for a type a source lists resources under.
@@ -1711,64 +1936,124 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
 }
 
 /// Remove an installed resource by type and name, from the library folder
-/// its install function writes to. A resource that is already gone counts as
-/// removed, so a removal can run again.
+/// its install function writes to. Returns each problem that did not stop
+/// the removal.
 ///
 /// The name is read back from `sources.json`, so it is checked again here:
 /// a name that is not a plain file or folder name would point the delete
-/// outside the library. A built-in or mandatory name is refused too. A
-/// source can have written over one, but its removal would also take the
-/// name out of every project.
-fn remove_installed_resource(resource_type: &str, name: &str) -> Result<(), String> {
+/// outside the library. A name its delete command refuses is refused too,
+/// see [`super::deletion_guards::ensure_deletable`].
+///
+/// The library entry must have exactly this name. On a case-insensitive
+/// filesystem a path that differs in case reaches another asset, so an
+/// entry that only matches in another case is refused and left in place. A
+/// resource that is already gone counts as removed, so a removal can run
+/// again.
+fn remove_installed_resource(resource_type: &str, name: &str) -> Result<Vec<String>, String> {
     ensure_resource_name("resource", name)?;
-    match resource_type {
-        "skills" | "skill" => {
-            if super::mcp_servers::is_builtin_skill(name) {
-                return Err(format!("Cannot remove built-in skill '{}'", name));
+    let kind = asset_kind(resource_type)
+        .ok_or_else(|| format!("Unknown resource type: {}", resource_type))?;
+    super::deletion_guards::ensure_deletable(kind, name)?;
+
+    let mut warnings = Vec::new();
+    match kind {
+        LibraryAssetKind::Skill => {
+            let dir = super::paths::get_library_skills_dir()?;
+            if has_exact_entry(&dir, name)? {
+                match fs::remove_dir_all(dir.join(name)) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("Failed to remove skill: {}", e)),
+                }
             }
-            let path = super::paths::get_library_skills_dir()?.join(name);
-            match fs::remove_dir_all(&path) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(format!("Failed to remove skill: {}", e)),
+            // The tidying `core::delete_skill` does. That function also
+            // deletes from external skill folders, so it is not called.
+            if let Err(e) = super::skill_store::remove_skill_source(name) {
+                warnings.push(format!("Could not clear the source record of skill '{}': {}", name, e));
+            }
+            if let Err(e) = super::skills::remove_skill_collection(name) {
+                warnings.push(format!("Could not clear the collection of skill '{}': {}", name, e));
+            }
+            remove_recently_added("skills", name);
+        }
+        LibraryAssetKind::McpServer => {
+            // Checked first, so a server that only matches in another case
+            // keeps its secrets too.
+            let dir = super::mcp_servers::get_mcp_servers_dir()?;
+            if has_exact_entry(&dir, &format!("{}.json", name))? {
+                let secret_problems = super::mcp_servers::delete_mcp_server_config_reporting(name)
+                    .map_err(|e| format!("Failed to remove MCP server: {}", e))?;
+                warnings.extend(secret_problems);
+            } else {
+                remove_recently_added("mcp_servers", name);
             }
         }
-        "mcp_servers" | "mcp_server" => {
-            if super::mcp_servers::is_builtin_mcp_server(name) {
-                return Err(format!("Cannot remove built-in MCP server '{}'", name));
-            }
-            // Deletes the server's OAuth secrets too. A secret the store
-            // will not delete is logged and does not stop the removal.
-            super::mcp_servers::delete_mcp_server_config(name)
-                .map_err(|e| format!("Failed to remove MCP server: {}", e))
+        LibraryAssetKind::Rule => {
+            remove_exact_file(&super::rules::get_rules_dir()?, &format!("{}.json", name), "rule")?;
+            remove_recently_added("rules", name);
         }
-        "rules" | "rule" => {
-            if super::rules::is_mandatory_rule(name) {
-                return Err(format!("Cannot remove rule '{}': Automatic requires it", name));
+        LibraryAssetKind::Template => {
+            let dir = super::templates::get_templates_dir()?;
+            if has_exact_entry(&dir, &format!("{}.json", name))? {
+                super::templates::delete_template(name)
+                    .map_err(|e| format!("Failed to remove template: {}", e))?;
+            } else {
+                remove_recently_added("templates", name);
             }
-            remove_file_if_present(
-                &super::rules::get_rules_dir()?.join(format!("{}.json", name)),
-                "rule",
-            )
         }
-        "templates" | "template" => remove_file_if_present(
-            &super::templates::get_templates_dir()?.join(format!("{}.json", name)),
-            "template",
-        ),
-        "commands" | "command" => remove_file_if_present(
-            &super::paths::get_commands_dir()?.join(format!("{}.md", name)),
-            "command",
-        ),
-        "agents" | "agent" => remove_file_if_present(
-            &super::subagents::get_subagents_dir()?.join(format!("{}.md", name)),
-            "agent",
-        ),
-        _ => Err(format!("Unknown resource type: {}", resource_type)),
+        LibraryAssetKind::Command => {
+            remove_exact_file(&super::paths::get_commands_dir()?, &format!("{}.md", name), "command")?;
+            remove_recently_added("commands", name);
+        }
+        LibraryAssetKind::Subagent => {
+            remove_exact_file(
+                &super::subagents::get_subagents_dir()?,
+                &format!("{}.md", name),
+                "agent",
+            )?;
+            remove_recently_added("subagents", name);
+        }
+    }
+    Ok(warnings)
+}
+
+/// Whether `dir` holds an entry named exactly `file_name`, compared byte
+/// for byte. An entry that differs only in case is an error that names it.
+/// A missing `dir` holds nothing.
+fn has_exact_entry(dir: &Path, file_name: &str) -> Result<bool, String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("Failed to read {}: {}", dir.display(), e)),
+    };
+    let wanted = file_name.to_lowercase();
+    let mut case_variant = None;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?;
+        let entry_name = entry.file_name();
+        if entry_name == std::ffi::OsStr::new(file_name) {
+            return Ok(true);
+        }
+        if entry_name.to_string_lossy().to_lowercase() == wanted {
+            case_variant = Some(entry_name.to_string_lossy().into_owned());
+        }
+    }
+    match case_variant {
+        Some(other) => Err(format!(
+            "Left '{}' in place: the library holds '{}', which differs only in case",
+            other, file_name
+        )),
+        None => Ok(false),
     }
 }
 
-fn remove_file_if_present(path: &Path, what: &str) -> Result<(), String> {
-    match fs::remove_file(path) {
+/// Delete the file `file_name` in `dir` if an entry with exactly that name
+/// exists. See [`has_exact_entry`].
+fn remove_exact_file(dir: &Path, file_name: &str, what: &str) -> Result<(), String> {
+    if !has_exact_entry(dir, file_name)? {
+        return Ok(());
+    }
+    match fs::remove_file(dir.join(file_name)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("Failed to remove {}: {}", what, e)),
@@ -3235,38 +3520,29 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_resource_that_cannot_be_deleted_is_reported_and_keeps_its_provenance() {
-        use std::os::unix::fs::PermissionsExt;
-
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-locked");
             install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            let rules_dir = crate::core::rules::get_rules_dir().expect("rules dir");
-            fs::set_permissions(&rules_dir, fs::Permissions::from_mode(0o555)).expect("lock");
-            // Root can write to a read-only folder, so the fault cannot be
-            // made there.
-            let probe = rules_dir.join("probe");
-            let can_still_write = fs::write(&probe, "").is_ok();
-            let _ = fs::remove_file(&probe);
+            // A folder where the rule's file should be. Deleting it as a
+            // file fails on every platform and for every user, root too.
+            let rule_path = library_path("rules", &names.rule);
+            fs::remove_file(&rule_path).expect("delete the rule file");
+            fs::create_dir_all(rule_path.join("inside")).expect("create a folder in its place");
 
-            let result = remove_source(REPO);
-            fs::set_permissions(&rules_dir, fs::Permissions::from_mode(0o755)).expect("unlock");
-            if can_still_write {
-                eprintln!("skipped: running as a user who can write to a read-only folder");
-                return;
-            }
+            let result = remove_source(REPO).expect("remove");
 
-            let result = result.expect("remove");
             assert_eq!(
                 failed_resources(&result.failed),
                 vec![format!("rules:{}", names.rule)]
             );
-            assert!(library_path("rules", &names.rule).exists());
+            assert!(rule_path.join("inside").exists());
             assert_eq!(provenance_of(REPO), vec![format!("rule:{}", names.rule)]);
-            assert_eq!(result.removed.len(), 6, "{:?}", result.removed);
+            let mut others = names.keys();
+            others.retain(|key| key != &format!("rules:{}", names.rule));
+            assert_eq!(sorted(result.removed.clone()), others);
             assert_eq!(get_source(REPO), Ok(None));
         });
     }
@@ -3553,6 +3829,549 @@ mod tests {
                 get_provenance("skill", &names.skill),
                 Ok(Some(REPO.to_string()))
             );
+        });
+    }
+
+    // ── round 1: guards, ownership, partial failure ─────────────────────────
+
+    /// Put a library entry for `name` where `resource_type` is stored, with
+    /// `content` as its file, or as SKILL.md for a skill.
+    fn plant(resource_type: &str, name: &str, content: &str) -> PathBuf {
+        let path = library_path(resource_type, name);
+        if resource_type == "skills" {
+            fs::create_dir_all(&path).expect("create skill dir");
+            fs::write(path.join("SKILL.md"), content).expect("write skill");
+        } else {
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(&path, content).expect("write resource");
+        }
+        path
+    }
+
+    /// Register `REPO` as the owner of one resource an older version
+    /// installed, with its library entry in place, then remove the source.
+    fn remove_one(resource_type: &str, name: &str, content: &str) -> (RemoveResult, PathBuf) {
+        let path = plant(resource_type, name, content);
+        register(REPO, &[(resource_type, &[name])], &[]);
+        record_provenance(provenance_type(resource_type).unwrap(), name, REPO).unwrap();
+        (remove_source(REPO).expect("remove"), path)
+    }
+
+    /// Check that a removal refused `name` and left it and its provenance.
+    fn assert_refused(resource_type: &str, name: &str, content: &str) {
+        let (result, path) = remove_one(resource_type, name, content);
+        let key = format!("{}:{}", resource_type, name);
+        assert_eq!(failed_resources(&result.failed), vec![key.clone()], "{:?}", result);
+        assert!(
+            result.failed[0].error.starts_with("Cannot delete"),
+            "{:?}",
+            result.failed[0]
+        );
+        assert_eq!(result.removed, Vec::<String>::new());
+        assert!(path.exists(), "{} should survive", path.display());
+        assert_eq!(
+            get_provenance(provenance_type(resource_type).unwrap(), name),
+            Ok(Some(REPO.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_source_cannot_remove_the_built_in_skill() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert_refused("skills", "automatic", "# Built in\n");
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_a_bundled_skill() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let name = "source-remove-bundled-skill";
+            crate::core::skill_store::record_skill_source(name, "automatic", name, "bundled")
+                .expect("record bundled");
+            assert_refused("skills", name, "# Bundled\n");
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_a_skill_a_plugin_provides() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
+            fs::write(
+                get_automatic_dir().unwrap().join("app_plugins.json"),
+                r#"{"plugins":{"common-docs":true}}"#,
+            )
+            .expect("enable the plugin");
+            assert_refused("skills", "common-docs-scaffold", "# Plugin\n");
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_the_built_in_mcp_server() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert_refused("mcp_servers", "automatic", r#"{"command":"automatic"}"#);
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_a_mandatory_rule() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert_refused(
+                "rules",
+                crate::core::rules::MANDATORY_RULE,
+                r#"{"name":"Service","content":"x"}"#,
+            );
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_a_rule_a_plugin_provides() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert_refused(
+                "rules",
+                "source-remove-plugin-rule",
+                r#"{"name":"Plugin rule","content":"x","plugin_id":"build"}"#,
+            );
+        });
+    }
+
+    #[test]
+    fn a_source_cannot_remove_a_codex_agent() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert_refused("agents", "codex-source-remove-openai", "# Codex\n");
+        });
+    }
+
+    #[test]
+    fn removing_a_source_clears_the_registries_its_delete_commands_clear() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-tidy");
+            install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            crate::core::skill_store::record_skill_source(&names.skill, REPO, &names.skill, "remote")
+                .expect("record source");
+            crate::core::skills::set_skill_collection(&names.skill, "Fixtures").expect("collection");
+            let recent = [
+                ("skills", &names.skill),
+                ("mcp_servers", &names.mcp_server),
+                ("rules", &names.rule),
+                ("templates", &names.template),
+                ("commands", &names.command),
+                ("subagents", &names.agent),
+            ];
+            for (kind, name) in recent {
+                crate::core::recently_added::record_recently_added(kind, name);
+            }
+
+            remove_source(REPO).expect("remove");
+
+            let sources = crate::core::skill_store::read_skill_sources().expect("read sources");
+            assert!(!sources.contains_key(&names.skill));
+            let collections = crate::core::skills::read_skill_collections().expect("read");
+            assert!(!collections.contains_key(&names.skill));
+            for (kind, name) in recent {
+                assert!(
+                    !crate::core::recently_added::get_recently_added_ids(kind).contains(name),
+                    "{kind} {name} is still recently added"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_resource_the_source_does_not_own_is_kept() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            // The user's own rule, with no provenance, and one another
+            // source owns, both listed on this source.
+            let own = plant("rules", "source-remove-users-rule", r#"{"name":"x","content":"x"}"#);
+            let theirs = plant("rules", "source-remove-theirs", r#"{"name":"x","content":"x"}"#);
+            record_provenance("rule", "source-remove-theirs", OTHER_REPO).unwrap();
+            register(
+                REPO,
+                &[("rules", &["source-remove-users-rule", "source-remove-theirs"])],
+                &[],
+            );
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert_eq!(
+                sorted(result.kept.clone()),
+                vec![
+                    "rules:source-remove-theirs".to_string(),
+                    "rules:source-remove-users-rule".to_string()
+                ]
+            );
+            assert_eq!(result.removed, Vec::<String>::new());
+            assert!(own.exists() && theirs.exists());
+            assert_eq!(
+                get_provenance("rule", "source-remove-theirs"),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+            assert_eq!(get_provenance("rule", "source-remove-users-rule"), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_is_never_deleted() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            // The user's server. The source lists `GitHub`. On a
+            // case-insensitive filesystem both names reach this file.
+            crate::core::save_mcp_server_config("source-remove-github", r#"{"command":"npx"}"#)
+                .expect("save user server");
+            let users = library_path("mcp_servers", "source-remove-github");
+            register(REPO, &[("mcp_servers", &["source-remove-GitHub"])], &[]);
+            record_provenance("mcp_server", "source-remove-GitHub", REPO).unwrap();
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert_eq!(
+                failed_resources(&result.failed),
+                vec!["mcp_servers:source-remove-GitHub".to_string()]
+            );
+            assert!(result.failed[0].error.contains("differs only in case"), "{:?}", result);
+            assert_eq!(result.removed, Vec::<String>::new());
+            assert!(users.exists(), "the user's server must survive");
+            assert_eq!(
+                get_provenance("mcp_server", "source-remove-GitHub"),
+                Ok(Some(REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn a_name_the_source_owns_but_no_longer_lists_is_removed() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            // An older version dropped the name from the entry and kept its
+            // provenance.
+            let path = plant("rules", "source-remove-unlisted", r#"{"name":"x","content":"x"}"#);
+            record_provenance("rule", "source-remove-unlisted", REPO).unwrap();
+            record_provenance("command", "source-remove-gone-command", REPO).unwrap();
+            register(REPO, &[], &[]);
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert_eq!(
+                sorted(result.removed.clone()),
+                vec![
+                    "commands:source-remove-gone-command".to_string(),
+                    "rules:source-remove-unlisted".to_string()
+                ]
+            );
+            assert!(!path.exists());
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_provenance_write_that_fails_does_not_stop_a_removal() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-provfault");
+            install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+
+            let result = remove_source(REPO);
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+
+            let result = result.expect("remove");
+            assert_eq!(sorted(result.removed.clone()), names.keys());
+            assert_eq!(result.failed, Vec::new());
+            assert_eq!(result.warnings.len(), 6, "{:?}", result.warnings);
+            assert!(result.warnings.iter().all(|w| w.contains("provenance")));
+            for (kind, path) in names.library_paths() {
+                assert!(!path.exists(), "{kind} should be gone");
+            }
+            assert_eq!(get_source(REPO), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_failed_oauth_secret_delete_is_reported_as_a_warning() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-warn");
+            let config = serde_json::json!({ "type": "http", "url": REMOTE_URL }).to_string();
+            install_every_kind(REPO, &names, &config);
+            let server = names.mcp_server.as_str();
+            crate::proxy::store_oauth_token(server, REMOTE_URL, "access-token").unwrap();
+            let entry = crate::proxy::oauth_token_entry(server, REMOTE_URL);
+            crate::core::secret_store::set_test_fault(
+                &entry,
+                Some(crate::core::secret_store::TestFault::DeleteRefused),
+            );
+
+            let result = remove_source(REPO);
+            crate::core::secret_store::set_test_fault(&entry, None);
+
+            let result = result.expect("remove");
+            assert!(result.removed.contains(&format!("mcp_servers:{server}")));
+            assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+            assert!(
+                result.warnings[0].contains("OAuth token") && result.warnings[0].contains(server),
+                "{}",
+                result.warnings[0]
+            );
+        });
+    }
+
+    // ── round 1: collections ────────────────────────────────────────────────
+
+    fn collections_file() -> PathBuf {
+        get_automatic_dir()
+            .expect("dir")
+            .join("discover")
+            .join("collections.json")
+    }
+
+    fn write_collections(entries: &[serde_json::Value]) {
+        fs::create_dir_all(collections_file().parent().unwrap()).unwrap();
+        fs::write(collections_file(), serde_json::to_string(entries).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn removing_a_collection_that_is_not_there_does_not_create_the_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            register(REPO, &[], &["source-remove-absent", "automatic-skills"]);
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert_eq!(result.failed, Vec::new());
+            assert!(!collections_file().exists(), "the first-run seeding must still run");
+        });
+    }
+
+    #[test]
+    fn a_bundled_collection_is_put_back_where_the_source_entry_was() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let seed = crate::core::discover_data::seed_collection("automatic-skills")
+                .unwrap()
+                .expect("seed");
+            write_collections(&[
+                serde_json::json!({ "slug": "source-remove-first" }),
+                serde_json::json!({ "slug": "automatic-skills", "name": "From the source" }),
+                serde_json::json!({ "slug": "source-remove-last" }),
+            ]);
+            register(REPO, &[], &["automatic-skills"]);
+
+            remove_source(REPO).expect("remove");
+
+            assert_eq!(
+                collections(),
+                vec![
+                    serde_json::json!({ "slug": "source-remove-first" }),
+                    seed,
+                    serde_json::json!({ "slug": "source-remove-last" }),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn a_bundled_collection_the_user_deleted_stays_deleted() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            write_collections(&[serde_json::json!({ "slug": "source-remove-user" })]);
+            register(REPO, &[], &["automatic-skills"]);
+
+            remove_source(REPO).expect("remove");
+
+            assert_eq!(collection_slugs(), vec!["source-remove-user".to_string()]);
+        });
+    }
+
+    // ── round 1: updates ────────────────────────────────────────────────────
+
+    #[test]
+    fn an_update_keeps_a_dropped_resource_another_source_lists() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-update-shared");
+            let first = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            let second = AutomaticManifest {
+                rules: Vec::new(),
+                ..first.clone()
+            };
+            install_source(REPO, &first, None, None).expect("first install");
+            let old = get_source(REPO).expect("read").expect("registered");
+            register(OTHER_REPO, &[("rules", &[names.rule.as_str()])], &[]);
+            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+
+            let removals =
+                remove_dropped_resources(REPO, &old, &second, &reinstall).expect("removals");
+
+            assert_eq!(removals.removed, HashMap::new());
+            assert_eq!(removals.kept, vec![format!("rules:{}", names.rule)]);
+            assert!(library_path("rules", &names.rule).exists());
+            assert_eq!(
+                get_provenance("rule", &names.rule),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.resources.get("rules"), None);
+        });
+    }
+
+    #[test]
+    fn a_collection_an_update_could_not_remove_stays_listed() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-update-collfail");
+            let first = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            let second = AutomaticManifest {
+                collections: Vec::new(),
+                ..first.clone()
+            };
+            install_source(REPO, &first, None, None).expect("first install");
+            let old = get_source(REPO).expect("read").expect("registered");
+            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            // A collections file that cannot be read back.
+            fs::write(collections_file(), "not json").unwrap();
+
+            let removals =
+                remove_dropped_resources(REPO, &old, &second, &reinstall).expect("removals");
+
+            assert_eq!(
+                failed_resources(&removals.failed),
+                vec![collection_key(&names.collection)]
+            );
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.collection_slugs, vec![names.collection.clone()]);
+            assert_eq!(fs::read_to_string(collections_file()).unwrap(), "not json");
+        });
+    }
+
+    #[test]
+    fn an_update_keeps_old_collections_when_a_collection_failed_to_install() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-update-collinstall");
+            let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            install_source(REPO, &manifest, None, None).expect("first install");
+            let old = get_source(REPO).expect("read").expect("registered");
+            // The new version of the collection file has no slug.
+            let clone = source_clone_path(REPO).expect("clone path");
+            fs::write(clone.join("collection.json"), r#"{"name":"No slug"}"#).unwrap();
+            let reinstall = install_source(REPO, &manifest, None, None).expect("reinstall");
+            assert_eq!(reinstall.failed_collections, vec!["collection.json".to_string()]);
+
+            let removals =
+                remove_dropped_resources(REPO, &old, &manifest, &reinstall).expect("removals");
+
+            assert_eq!(removals.removed.get("collection"), None);
+            assert_eq!(removals.failed, Vec::new());
+            assert!(
+                removals.warnings.iter().any(|w| w.contains(&names.collection)),
+                "{:?}",
+                removals.warnings
+            );
+            assert!(collection_slugs().contains(&names.collection));
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.collection_slugs, vec![names.collection.clone()]);
+        });
+    }
+
+    #[test]
+    fn an_update_that_stops_part_way_leaves_every_name_listed() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-update-stop");
+            let first = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            let second = AutomaticManifest {
+                rules: Vec::new(),
+                collections: Vec::new(),
+                ..first.clone()
+            };
+            install_source(REPO, &first, None, None).expect("first install");
+            let old = get_source(REPO).expect("read").expect("registered");
+            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            // The first write, of every name, succeeds. The last one fails.
+            SOURCES_WRITES_LEFT.with(|left| left.set(Some(1)));
+
+            let outcome = remove_dropped_resources(REPO, &old, &second, &reinstall);
+            SOURCES_WRITES_LEFT.with(|left| left.set(None));
+
+            assert!(outcome.is_err());
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.resources.get("rules"), Some(&vec![names.rule.clone()]));
+            assert_eq!(entry.collection_slugs, vec![names.collection.clone()]);
+            assert_eq!(
+                entry.resources.get("skills"),
+                Some(&vec![names.skill.clone()])
+            );
+        });
+    }
+
+    #[test]
+    fn an_update_reports_a_failed_provenance_write_and_carries_on() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-update-provfault");
+            let first = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            let second = AutomaticManifest {
+                rules: Vec::new(),
+                commands: Vec::new(),
+                ..first.clone()
+            };
+            install_source(REPO, &first, None, None).expect("first install");
+            let old = get_source(REPO).expect("read").expect("registered");
+            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+
+            let removals = remove_dropped_resources(REPO, &old, &second, &reinstall);
+            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+
+            let removals = removals.expect("removals");
+            assert_eq!(removals.removed.get("rules"), Some(&vec![names.rule.clone()]));
+            assert_eq!(
+                removals.removed.get("commands"),
+                Some(&vec![names.command.clone()])
+            );
+            assert_eq!(removals.warnings.len(), 2, "{:?}", removals.warnings);
+            assert!(!library_path("rules", &names.rule).exists());
+            assert!(!library_path("commands", &names.command).exists());
+        });
+    }
+
+    // ── round 1: provenance helpers ─────────────────────────────────────────
+
+    #[test]
+    fn provenance_another_source_owns_is_not_released_or_handed_over() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("rule", "source-remove-prov", OTHER_REPO).unwrap();
+
+            release_provenance_of(REPO, "rules", "source-remove-prov").unwrap();
+            assert_eq!(
+                get_provenance("rule", "source-remove-prov"),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+
+            hand_over_provenance("rules", "source-remove-prov", REPO, "source-remove/third")
+                .unwrap();
+            assert_eq!(
+                get_provenance("rule", "source-remove-prov"),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+
+            // The owner's own calls do change it.
+            hand_over_provenance("rules", "source-remove-prov", OTHER_REPO, REPO).unwrap();
+            assert_eq!(
+                get_provenance("rule", "source-remove-prov"),
+                Ok(Some(REPO.to_string()))
+            );
+            release_provenance_of(REPO, "rules", "source-remove-prov").unwrap();
+            assert_eq!(get_provenance("rule", "source-remove-prov"), Ok(None));
         });
     }
 }

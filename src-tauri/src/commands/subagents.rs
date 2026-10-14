@@ -39,11 +39,7 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
 
 #[tauri::command]
 pub fn delete_subagent(machine_name: String) -> Result<(), String> {
-    // Codex agents cannot be deleted.
-    if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
-        return Err("Cannot delete Codex OpenAI agents.".into());
-    }
-
+    core::ensure_deletable(core::LibraryAssetKind::Subagent, &machine_name)?;
     core::delete_subagent(&machine_name)?;
     prune_subagent_references(&machine_name);
     Ok(())

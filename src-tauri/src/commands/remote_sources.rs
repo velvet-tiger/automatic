@@ -53,7 +53,16 @@ pub fn install_remote_source(
 /// prunes it.
 #[tauri::command]
 pub fn update_remote_source(repo: String) -> Result<String, String> {
-    let result = remote_sources::update_source(&repo)?;
+    update_remote_source_with(&repo, remote_sources::update_source)
+}
+
+/// [`update_remote_source`] with the update step passed in, so a test can
+/// run the rest without git.
+fn update_remote_source_with(
+    repo: &str,
+    update: impl FnOnce(&str) -> Result<remote_sources::UpdateResult, String>,
+) -> Result<String, String> {
+    let result = update(repo)?;
     prune_update_removals(&result);
     serde_json::to_string(&result).map_err(|e| format!("Failed to serialize update result: {}", e))
 }
@@ -286,6 +295,38 @@ mod tests {
     }
 
     #[test]
+    fn the_update_command_prunes_what_the_update_removed() {
+        with_temp_home(|_| {
+            core::save_rule(RULE, "Rule", "Body.\n").expect("save rule");
+            let (_keep, _dir) = make_project("source-remove-project", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec![RULE.to_string()]);
+            });
+            let mut removed = std::collections::HashMap::new();
+            removed.insert("rules".to_string(), vec![RULE.to_string()]);
+            let update = |repo: &str| {
+                assert_eq!(repo, REPO);
+                Ok(remote_sources::UpdateResult {
+                    added: Default::default(),
+                    updated: Default::default(),
+                    removed,
+                    failed: Vec::new(),
+                    kept: Vec::new(),
+                    warnings: Vec::new(),
+                    old_version: "1.0.0".to_string(),
+                    new_version: "2.0.0".to_string(),
+                })
+            };
+
+            let raw = update_remote_source_with(REPO, update).expect("update");
+
+            let result: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(result["removed"]["rules"], serde_json::json!([RULE]));
+            assert!(read_back("source-remove-project").file_rules.is_empty());
+        });
+    }
+
+    #[test]
     fn the_resources_an_update_removed_are_pruned_from_projects() {
         with_temp_home(|_| {
             core::save_rule(RULE, "Rule", "Body.\n").expect("save rule");
@@ -305,6 +346,8 @@ mod tests {
                 updated: Default::default(),
                 removed,
                 failed: Vec::new(),
+                kept: Vec::new(),
+                warnings: Vec::new(),
                 old_version: "1.0.0".to_string(),
                 new_version: "2.0.0".to_string(),
             });

@@ -62,9 +62,7 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
 
 #[tauri::command]
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
-    if core::is_builtin_mcp_server(name) {
-        return Err(format!("Cannot delete built-in MCP server '{}'", name));
-    }
+    core::ensure_deletable(core::LibraryAssetKind::McpServer, name)?;
     core::delete_mcp_server_config(name)?;
     prune_mcp_server_references(name);
     Ok(())

@@ -527,20 +527,26 @@ pub(crate) fn blank_ciphertext_like_env_values(config_json: &str) -> String {
 /// Callers are responsible for removing the name from projects, profiles and
 /// global selections.
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
+    delete_mcp_server_config_reporting(name).map(|_| ())
+}
+
+/// Like [`delete_mcp_server_config`], and return a description of each
+/// OAuth secret the store would not delete, for a caller that reports them.
+pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
     record_legacy_oauth_urls()?;
     let dir = get_mcp_servers_dir()?;
     let path = dir.join(format!("{}.json", name));
-    match stored_server_url(&path)? {
-        StoredUrl::Known(Some(url)) => crate::proxy::forget_oauth_secrets(name, &url),
-        StoredUrl::Known(None) => {}
+    let secret_problems = match stored_server_url(&path)? {
+        StoredUrl::Known(Some(url)) => crate::proxy::forget_oauth_secrets_reporting(name, &url),
+        StoredUrl::Known(None) => Vec::new(),
         // The server may have had a URL once, under an older version.
         StoredUrl::NotStored | StoredUrl::Unknown => {
-            crate::proxy::forget_legacy_oauth_secrets(name)
+            crate::proxy::forget_legacy_oauth_secrets_reporting(name)
         }
-    }
+    };
 
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -548,7 +554,7 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
 
     remove_recently_added("mcp_servers", name);
 
-    Ok(())
+    Ok(secret_problems)
 }
 
 /// Rename a local MCP server config on disk. Callers are responsible for

@@ -440,16 +440,19 @@ pub(crate) fn remove_secret(entry: &str) -> Removal {
 /// would stop a delete, rename or save wherever the store cannot be reached,
 /// which on Linux with no Secret Service is always.
 fn discard_secret(entry: &str, what: &str, server_name: &str) -> bool {
-    match remove_secret(entry).problem() {
-        None => true,
-        Some(problem) => {
-            eprintln!(
-                "warning: could not delete {} of MCP server '{}': {}",
-                what, server_name, problem
-            );
-            false
-        }
-    }
+    discard_secret_reporting(entry, what, server_name).is_none()
+}
+
+/// Like [`discard_secret`], and return a description of the failure, for a
+/// caller that reports it to the user.
+fn discard_secret_reporting(entry: &str, what: &str, server_name: &str) -> Option<String> {
+    let problem = remove_secret(entry).problem()?;
+    let message = format!(
+        "could not delete {} of MCP server '{}': {}",
+        what, server_name, problem
+    );
+    eprintln!("warning: {}", message);
+    Some(message)
 }
 
 /// Delete the OAuth secrets a server holds for `url`, and any that an older
@@ -460,20 +463,50 @@ fn discard_secret(entry: &str, what: &str, server_name: &str) -> bool {
 /// go too. They were issued for a URL the server no longer has, so nothing
 /// will use them.
 pub fn forget_oauth_secrets(server_name: &str, url: &str) {
+    forget_oauth_secrets_reporting(server_name, url);
+}
+
+/// Like [`forget_oauth_secrets`], and return a description of each secret
+/// the store would not delete.
+pub fn forget_oauth_secrets_reporting(server_name: &str, url: &str) -> Vec<String> {
+    let mut problems = Vec::new();
     if let Ok(entries) = oauth_entries(server_name, url) {
-        discard_secret(&entries.credentials, "the OAuth credentials", server_name);
-        let gone = discard_secret(&entries.token, "the OAuth token", server_name);
-        remember_discarded_token(&entries.token, gone);
+        problems.extend(discard_secret_reporting(
+            &entries.credentials,
+            "the OAuth credentials",
+            server_name,
+        ));
+        let token_problem =
+            discard_secret_reporting(&entries.token, "the OAuth token", server_name);
+        remember_discarded_token(&entries.token, token_problem.is_none());
+        problems.extend(token_problem);
     }
-    forget_legacy_oauth_secrets(server_name);
+    problems.extend(forget_legacy_oauth_secrets_reporting(server_name));
+    problems
 }
 
 /// Delete the OAuth secrets an older version stored under a server's name
 /// alone. Failures are logged.
 pub fn forget_legacy_oauth_secrets(server_name: &str) {
+    forget_legacy_oauth_secrets_reporting(server_name);
+}
+
+/// Like [`forget_legacy_oauth_secrets`], and return a description of each
+/// secret the store would not delete.
+pub fn forget_legacy_oauth_secrets_reporting(server_name: &str) -> Vec<String> {
     let legacy = legacy_oauth_entries(server_name);
-    discard_secret(&legacy.credentials, "the old OAuth credentials", server_name);
-    discard_secret(&legacy.token, "the old OAuth token", server_name);
+    let mut problems = Vec::new();
+    problems.extend(discard_secret_reporting(
+        &legacy.credentials,
+        "the old OAuth credentials",
+        server_name,
+    ));
+    problems.extend(discard_secret_reporting(
+        &legacy.token,
+        "the old OAuth token",
+        server_name,
+    ));
+    problems
 }
 
 /// Delete the OAuth secrets an older version stored under a server's name
