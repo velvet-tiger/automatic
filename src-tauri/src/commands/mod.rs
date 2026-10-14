@@ -1,5 +1,6 @@
 mod account;
 mod activity;
+mod agent_package;
 mod agents;
 mod ai;
 mod ai_generate;
@@ -42,6 +43,7 @@ pub use crate::plugins::dev_servers::commands::*;
 pub use crate::plugins::maildev::commands::*;
 pub use account::*;
 pub use activity::*;
+pub use agent_package::*;
 pub use agents::*;
 pub use ai::*;
 pub use ai_generate::*;

@@ -1,4 +1,5 @@
 pub mod agents;
+mod agent_package;
 pub mod ai;
 pub mod ai_generate;
 mod app_plugins;
@@ -62,6 +63,7 @@ pub mod tools;
 mod types;
 mod whats_new;
 
+pub use agent_package::*;
 pub use app_plugins::*;
 pub use asset_security::*;
 pub use author::*;

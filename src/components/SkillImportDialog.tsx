@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { X, Download, Github, Loader2, CheckCircle2, FolderOpen, FileText } from "lucide-react";
+import { X, Download, Github, Loader2, CheckCircle2, FolderOpen, FileText, Package, Server, AlertTriangle } from "lucide-react";
 
 interface ImportedSkill {
   name: string;
@@ -19,6 +19,44 @@ interface ImportedSkillFromRepo {
 interface ImportedSkillSummary {
   name: string;
   wasUpdated: boolean;
+}
+
+type AgentPackageItemKind = "skill" | "mcp_server";
+
+interface AgentPackageSkippedItem {
+  kind: AgentPackageItemKind;
+  name: string;
+  reason: string;
+}
+
+interface AgentPackageImportResult {
+  package_name: string;
+  package_root: string;
+  data_dir: string;
+  imported_skills: string[];
+  imported_mcp_servers: string[];
+  conflicts: AgentPackageSkippedItem[];
+  invalid: AgentPackageSkippedItem[];
+  warnings: string[];
+}
+
+interface AgentPackageSummary {
+  path: string;
+  name: string;
+  version: string | null;
+  description: string | null;
+  skill_count: number;
+  mcp_server_count: number;
+}
+
+interface AgentPackageListError {
+  path: string;
+  error: string;
+}
+
+interface InstalledAgentPackages {
+  packages: AgentPackageSummary[];
+  errors: AgentPackageListError[];
 }
 
 interface SkillImportDialogProps {
@@ -45,28 +83,86 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
   const [status, setStatus] = useState<ImportStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [importedSkills, setImportedSkills] = useState<ImportedSkillSummary[]>([]);
+  const [packageResult, setPackageResult] = useState<AgentPackageImportResult | null>(null);
+  const [installedPackages, setInstalledPackages] = useState<InstalledAgentPackages | null>(null);
+
+  const loadInstalledPackages = useCallback(async () => {
+    try {
+      setInstalledPackages(await invoke<InstalledAgentPackages>("list_installed_agent_packages"));
+    } catch (e: unknown) {
+      setInstalledPackages({ packages: [], errors: [{ path: "~/.agents/plugins", error: String(e) }] });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) void loadInstalledPackages();
+  }, [isOpen, loadInstalledPackages]);
+
+  const resetResults = () => {
+    setStatus("importing");
+    setError(null);
+    setImportedSkills([]);
+    setPackageResult(null);
+  };
+
+  const importAgentPackage = async (path: string) => {
+    resetResults();
+    try {
+      const result = await invoke<AgentPackageImportResult>("import_agent_package", { path });
+      setPackageResult(result);
+      setStatus("success");
+      const firstSkill = result.imported_skills[0];
+      if (firstSkill) onImport(firstSkill);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus("error");
+    }
+  };
+
+  const handleFolderImport = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: true,
+      title: "Select a skill folder or an Agent Plugin package folder",
+    });
+    if (typeof selected !== "string") return;
+    await importLocalPath(selected);
+  };
 
   const handleLocalImport = async () => {
     const selected = await open({
       multiple: false,
       filters: [
-        { name: "Skill Files", extensions: ["skill", "md"] },
+        { name: "Skill Files", extensions: ["skill", "md", "json"] },
         { name: "All Files", extensions: ["*"] },
       ],
-      title: "Select SKILL.md, .skill package, or skill directory",
+      title: "Select SKILL.md, .skill package, or plugin.json",
     });
 
-    if (!selected) return;
+    if (typeof selected !== "string") return;
+    await importLocalPath(selected);
+  };
 
-    setStatus("importing");
-    setError(null);
-    setImportedSkills([]);
+  const importLocalPath = async (path: string) => {
+    // A chosen plugin.json stands for the package folder that holds it.
+    const pluginJsonSuffix = /[\\/]plugin\.json$/;
+    if (pluginJsonSuffix.test(path)) {
+      await importAgentPackage(path.replace(pluginJsonSuffix, ""));
+      return;
+    }
+    const isSkillPackage = path.toLowerCase().endsWith(".skill");
+    // A failed check falls through to the plain skill import, which reports its own error.
+    const isAgentPackage = !isSkillPackage
+      && (await invoke<boolean>("is_agent_package_dir", { path }).catch(() => false));
+    if (isAgentPackage) {
+      await importAgentPackage(path);
+      return;
+    }
+
+    resetResults();
 
     try {
-      const path = typeof selected === "string" ? selected : (selected as unknown as string);
-
-      // Check if it's a .skill package file
-      const isPackage = path.toLowerCase().endsWith(".skill");
+      const isPackage = isSkillPackage;
 
       const rawResult = isPackage
         ? await invoke("import_skill_from_package", { path })
@@ -95,9 +191,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
       return;
     }
 
-    setStatus("importing");
-    setError(null);
-    setImportedSkills([]);
+    resetResults();
 
     try {
       const rawResult = await invoke("import_skill_from_repository", {
@@ -126,6 +220,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
     setStatus("idle");
     setError(null);
     setImportedSkills([]);
+    setPackageResult(null);
     setRepoUrl("");
     setSkillName("");
     onClose();
@@ -136,7 +231,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
-      <div className="relative bg-bg-input border border-border-strong rounded-xl shadow-2xl w-full max-w-lg mx-4">
+      <div className="relative bg-bg-input border border-border-strong rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40">
           <h2 className="text-[15px] font-semibold text-text-base">Import Skill</h2>
@@ -200,6 +295,10 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
                   <span className="text-brand">•</span>
                   <span>A folder to scan for <code className="font-mono text-[11px] bg-bg-sidebar px-1 rounded">SKILL.md</code> files (up to 3 levels deep)</span>
                 </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-brand">•</span>
+                  <span>An Agent Plugin package folder, with <code className="font-mono text-[11px] bg-bg-sidebar px-1 rounded">plugin.json</code> at root. Its skills and MCP servers are added.</span>
+                </li>
               </ul>
 
               <button
@@ -215,10 +314,54 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
                 ) : (
                   <>
                     <Download size={16} />
-                    Select File or Folder
+                    Select File
                   </>
                 )}
               </button>
+              <button
+                onClick={handleFolderImport}
+                disabled={status === "importing"}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-bg-sidebar hover:bg-bg-base border border-border-strong/40 text-text-base rounded-lg text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FolderOpen size={16} />
+                Select Folder
+              </button>
+
+              {installedPackages && (installedPackages.packages.length > 0 || installedPackages.errors.length > 0) && (
+                <div>
+                  <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1.5">
+                    Agent Plugin packages in ~/.agents/plugins
+                  </div>
+                  <ul className="bg-bg-sidebar border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/40">
+                    {installedPackages.packages.map((pkg) => (
+                      <li key={pkg.path} className="flex items-center gap-2 px-3 py-2 text-[12px]">
+                        <Package size={12} className="text-text-muted shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-text-base truncate">
+                            {pkg.name}
+                            {pkg.version ? <span className="text-text-muted"> {pkg.version}</span> : null}
+                          </div>
+                          <div className="text-text-muted truncate">
+                            {pkg.skill_count} skill{pkg.skill_count === 1 ? "" : "s"}, {pkg.mcp_server_count} MCP server{pkg.mcp_server_count === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => void importAgentPackage(pkg.path)}
+                          disabled={status === "importing"}
+                          className="px-2.5 py-1 rounded-md text-[12px] font-medium text-brand hover:bg-brand/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Import
+                        </button>
+                      </li>
+                    ))}
+                    {installedPackages.errors.map((item) => (
+                      <li key={item.path} className="px-3 py-2 text-[12px] text-text-muted">
+                        <span className="font-mono">{item.path.split(/[\\/]/).pop()}</span>: {item.error}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -321,6 +464,10 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
               </div>
             );
           })()}
+
+          {status === "success" && packageResult && (
+            <AgentPackageResultPanel result={packageResult} />
+          )}
         </div>
 
         {/* Footer */}
@@ -333,6 +480,65 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AgentPackageResultPanel({ result }: { result: AgentPackageImportResult }) {
+  const skipped = [...result.conflicts, ...result.invalid];
+  const importedCount = result.imported_skills.length + result.imported_mcp_servers.length;
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+        <div className="flex items-center gap-2 mb-2">
+          <CheckCircle2 size={14} className="text-success" />
+          <span className="text-[12px] font-medium text-success">
+            Imported {importedCount} item{importedCount === 1 ? "" : "s"} from {result.package_name}
+          </span>
+        </div>
+        <ul className="space-y-1">
+          {result.imported_skills.map((name) => (
+            <li key={`skill-${name}`} className="flex items-center gap-2 text-[12px] text-text-muted">
+              <FileText size={12} className="text-success" />
+              <span className="font-mono">{name}</span>
+              <span className="ml-auto text-[10px] uppercase tracking-wider">Skill</span>
+            </li>
+          ))}
+          {result.imported_mcp_servers.map((name) => (
+            <li key={`mcp-${name}`} className="flex items-center gap-2 text-[12px] text-text-muted">
+              <Server size={12} className="text-success" />
+              <span className="font-mono">{name}</span>
+              <span className="ml-auto text-[10px] uppercase tracking-wider">MCP server</span>
+            </li>
+          ))}
+        </ul>
+        {result.imported_mcp_servers.length > 0 && (
+          <p className="mt-2 text-[12px] text-text-muted leading-relaxed">
+            Local MCP servers run from the package folder. Keep it at{" "}
+            <span className="font-mono break-all">{result.package_root}</span>.
+          </p>
+        )}
+      </div>
+
+      {(skipped.length > 0 || result.warnings.length > 0) && (
+        <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={14} className="text-warning" />
+            <span className="text-[12px] font-medium text-warning">Not imported</span>
+          </div>
+          <ul className="space-y-1 text-[12px] text-text-muted">
+            {skipped.map((item) => (
+              <li key={`${item.kind}-${item.name}`}>
+                <span className="font-mono">{item.name}</span>
+                {" "}({item.kind === "skill" ? "skill" : "MCP server"}): {item.reason}
+              </li>
+            ))}
+            {result.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
