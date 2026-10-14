@@ -85,8 +85,8 @@ accepted = ["CC0-1.0"]
 # AND, and the script checks that the crate is listed under both.
 #
 # libdbus is not here. The app links the system's copy, so libdbus-sys
-# builds none of it in. The Linux AppImage carries the system's libdbus, and
-# its notice is in system-libraries.txt.
+# builds none of it in. The Linux AppImage carries the system's libdbus.
+# THIRD_PARTY_NOTICES.md covers the AppImage's system libraries.
 # SQLite (in libsqlite3-sys) and liblzma (in lzma-sys) are public domain.
 # THIRD_PARTY_NOTICES.md names them.
 
@@ -385,137 +385,6 @@ license = "MIT OR Apache-2.0"
 path = "LICENSE_MIT"
 license = "MIT"
 checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
-
-# ── Licence files kept only in the crate's repository ─────────────────────────
-#
-# These crates publish no licence file, or none with a copyright line. Each
-# `git` entry fetches the file from the crate's repository at the commit the
-# crate was published from (recorded in its .cargo_vcs_info.json), and checks
-# it against the checksum. The run needs network access to GitHub.
-
-# tauri-plugin comes from the tauri repository, under its LICENSE_MIT.
-[tauri-plugin.clarify]
-license = "MIT OR Apache-2.0"
-
-[[tauri-plugin.clarify.git]]
-path = "LICENSE_MIT"
-license = "MIT"
-checksum = "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
-
-# The webview2-rs crates (Windows only).
-[webview2-com.clarify]
-license = "MIT"
-
-[[webview2-com.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
-
-[webview2-com-macros.clarify]
-license = "MIT"
-
-[[webview2-com-macros.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
-
-[webview2-com-sys.clarify]
-license = "MIT"
-
-[[webview2-com-sys.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
-
-# The rust-unic crates. Their MIT text has no copyright line, and the
-# repository has none elsewhere.
-[unic-char-property.clarify]
-license = "MIT OR Apache-2.0"
-
-[[unic-char-property.clarify.git]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-
-[unic-char-range.clarify]
-license = "MIT OR Apache-2.0"
-
-[[unic-char-range.clarify.git]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-
-[unic-common.clarify]
-license = "MIT OR Apache-2.0"
-
-[[unic-common.clarify.git]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-
-[unic-ucd-ident.clarify]
-license = "MIT OR Apache-2.0"
-
-[[unic-ucd-ident.clarify.git]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-
-[unic-ucd-version.clarify]
-license = "MIT OR Apache-2.0"
-
-[[unic-ucd-version.clarify.git]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
-
-# A dependency of brotli. The repository holds only the BSD-3-Clause text.
-[alloc-stdlib.clarify]
-license = "BSD-3-Clause"
-
-[[alloc-stdlib.clarify.git]]
-path = "LICENSE"
-license = "BSD-3-Clause"
-checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
-
-# Linux only.
-[dlopen2.clarify]
-license = "MIT"
-
-[[dlopen2.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2"
-
-[dlopen2_derive.clarify]
-license = "MIT"
-
-[[dlopen2_derive.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "39fa265207450e77c62e90c5594a06c085b655d8374c7ced4bf7894b6bd95dd2"
-
-[tiktoken-rs.clarify]
-license = "MIT"
-
-[[tiktoken-rs.clarify.git]]
-path = "LICENSE"
-license = "MIT"
-checksum = "f7c6ddf9d84fd7b8ad5917e4074d4c05e4c1dfb752a28a0058f06bd0f5e2edcc"
-
-# brotli ships its MIT text. Its BSD-3-Clause text is only in the repository.
-[brotli.clarify]
-license = "BSD-3-Clause AND MIT"
-
-[[brotli.clarify.files]]
-path = "LICENSE.MIT"
-license = "MIT"
-checksum = "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94"
-
-[[brotli.clarify.git]]
-path = "LICENSE.BSD-3-Clause"
-license = "BSD-3-Clause"
-checksum = "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
 
 # ── Other licence files cargo-about does not recognise ────────────────────────
 

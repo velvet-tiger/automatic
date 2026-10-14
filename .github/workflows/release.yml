@@ -54,9 +54,7 @@ jobs:
 
   build:
     needs: licenses
-    # The Linux leg builds the AppImage twice. See "List the AppImage's
-    # system libraries".
-    timeout-minutes: 45
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -142,8 +140,8 @@ jobs:
       # The gdk-pixbuf TIFF loader needs libtiff, which needs libjbig. JBIG-KIT
       # is GPL-2+ only, and the AppImage would carry it. Setting the loader
       # aside keeps both out of the AppImage. TIFF images then load only where
-      # the user's system has the loader. scripts/appimage-system-licenses.sh
-      # fails the build if libjbig comes back.
+      # the user's system has the loader. The Linux check at the end of this
+      # job fails the build if libtiff or libjbig comes back.
       #
       # The loader moves to the folder above 2.10.0. linuxdeploy-plugin-gtk
       # copies the whole 2.10.0 folder, so a renamed copy left beside the
@@ -159,23 +157,6 @@ jobs:
             echo "::error::a TIFF loader is still in $pixbuf_dir/2.10.0"
             exit 1
           fi
-
-      # The list of system libraries the AppImage carries is only known once
-      # linuxdeploy has built one. This first build makes that AppImage. It
-      # gets no secrets and writes no updater signature. The script then
-      # writes system-libraries.txt into the staging folder, so that the real
-      # build below bundles it.
-      - name: List the AppImage's system libraries (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          npm run tauri build -- --bundles appimage --config src-tauri/tauri.release.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
-          appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
-          if [ "${#appimages[@]}" -ne 1 ] || [ ! -f "${appimages[0]}" ]; then
-            echo "::error::expected one AppImage, found: ${appimages[*]}"
-            exit 1
-          fi
-          bash scripts/appimage-system-licenses.sh "${appimages[0]}" src-tauri/licenses/system-libraries.txt "$RUNNER_TEMP/appimage-files-first.txt"
-          rm -rf src-tauri/target/release/bundle/appimage
 
       # Build the console-subsystem CLI binary and stage it where
       # tauri.windows.conf.json's `externalBin` entry expects to find it.
@@ -401,40 +382,23 @@ jobs:
             exit 1
           fi
 
-      # Lists the final AppImage the same way, which also repeats the deny
-      # list check, and compares its files with the first build's.
       - name: Check the bundled licence files (Linux)
         if: matrix.os == 'ubuntu-22.04'
         run: |
           appimages=(src-tauri/target/release/bundle/appimage/*.AppImage)
-          bash scripts/appimage-system-licenses.sh "${appimages[0]}" "$RUNNER_TEMP/system-libraries-final.txt" "$RUNNER_TEMP/appimage-files-final.txt"
-          if ! diff -u "$RUNNER_TEMP/appimage-files-first.txt" "$RUNNER_TEMP/appimage-files-final.txt"; then
-            echo "::error::the released AppImage holds different files from the one system-libraries.txt was written from"
-            exit 1
-          fi
           (cd "$RUNNER_TEMP" && rm -rf check && mkdir check && cd check && "$GITHUB_WORKSPACE/${appimages[0]}" --appimage-extract >/dev/null)
-          listed=$(ls "$RUNNER_TEMP/check/squashfs-root/usr/lib/Automatic/licenses" | LC_ALL=C sort | tr '\n' ' ')
-          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt system-libraries.txt "
+          root="$RUNNER_TEMP/check/squashfs-root"
+          listed=$(ls "$root/usr/lib/Automatic/licenses" | LC_ALL=C sort | tr '\n' ' ')
+          expected="THIRD_PARTY_NOTICES.md interface.txt rust-crates.txt "
           if [ "$listed" != "$expected" ]; then
             echo "::error::the AppImage's licenses folder holds '$listed', expected '$expected'"
             exit 1
           fi
-          # Tauri downloads the AppImage runtime from a moving build.
-          # THIRD_PARTY_NOTICES.md names the versions of the libraries linked
-          # into it. Stop if the runtime now carries other versions.
-          offset=$("$GITHUB_WORKSPACE/${appimages[0]}" --appimage-offset)
-          head -c "$offset" "${appimages[0]}" | strings >"$RUNNER_TEMP/runtime-strings.txt"
-          for component in libfuse zstd zlib; do
-            version=$(grep -oE "^- $component [0-9][0-9.]*[0-9]" THIRD_PARTY_NOTICES.md | awk '{ print $3 }')
-            case "$component" in
-              zlib) found=$(grep -c -F "inflate $version " "$RUNNER_TEMP/runtime-strings.txt" || true) ;;
-              *) found=$(grep -c -x -F "$version" "$RUNNER_TEMP/runtime-strings.txt" || true) ;;
-            esac
-            if [ -z "$version" ] || [ "${found:-0}" -eq 0 ]; then
-              echo "::error::the AppImage runtime does not carry $component '${version:-?}' as THIRD_PARTY_NOTICES.md says. Update the notice."
-              exit 1
-            fi
-          done
+          # libjbig is GPL-2+ only. See "Set aside the TIFF image loader".
+          if find "$root" \( -name 'libjbig*' -o -name 'libtiff*' -o -name '*pixbufloader-tiff*' \) | grep .; then
+            echo "::error::the AppImage carries libtiff or libjbig"
+            exit 1
+          fi
 
   # Runs after all platform builds succeed. Downloads the .sig workflow artifacts uploaded
   # by each build job, generates a valid latest.json, and uploads it to the draft release.

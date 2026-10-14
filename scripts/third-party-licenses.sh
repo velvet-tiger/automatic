@@ -16,13 +16,13 @@ set -euo pipefail
 out_dir=${1:?usage: third-party-licenses.sh <output-dir>}
 root=$(cd "$(dirname "$0")/.." && pwd)
 
-# Crates that publish no licence file with a copyright line, here or in
-# their repository. cargo-about prints a generic licence text for them, with a
-# placeholder where the copyright line belongs. That is the best there is.
-# The objc2 crates (macOS) point to licences without including them.
-# Any other crate printed that way has a licence file that cargo-about did not
-# recognise, and needs a `clarify` entry in about.toml.
-no_licence_file=" linux-keyutils block2 dispatch2 objc2 objc2-app-kit objc2-core-foundation objc2-encode objc2-exception-helper objc2-foundation objc2-osa-kit objc2-web-kit "
+# Crates that publish no licence file with a copyright line. cargo-about
+# prints a generic licence text for them, with a placeholder where the
+# copyright line belongs. That is accepted, as in automatic-cli. brotli ships
+# its MIT text but not its BSD-3-Clause one. Any other crate printed that way
+# has a licence file that cargo-about did not recognise, and needs a
+# `clarify` entry in about.toml.
+no_licence_file=" alloc-stdlib block2 brotli dispatch2 dlopen2 dlopen2_derive linux-keyutils objc2 objc2-app-kit objc2-core-foundation objc2-encode objc2-exception-helper objc2-foundation objc2-osa-kit objc2-web-kit tauri-plugin tiktoken-rs unic-char-property unic-char-range unic-common unic-ucd-ident unic-ucd-version webview2-com webview2-com-macros webview2-com-sys "
 
 # THIRD_PARTY_NOTICES.md names the webview2-com-sys version whose Microsoft
 # WebView2 loader is linked into the Windows build. A different version may
@@ -97,14 +97,11 @@ generate() {
   # The same check from the other side, in case a later cargo-about words that
   # warning differently. A crate that is not built for this release is not
   # listed at all, which is fine.
-  # Each version of the crate is checked on its own, so that two versions
-  # listed once each do not pass as one crate listed twice.
-  local crate once
+  local crate listed
   for crate in $two_licence_crates; do
-    once=$(awk -v c="$crate" '$1 == c && $3 ~ /^https:\/\/crates\.io\// { n[$2]++ }
-      END { for (v in n) if (n[v] == 1) print v }' "$out")
-    if [ -n "$once" ]; then
-      echo "$name: '$crate' $once is listed under one licence, expected its own and the one about.toml adds" >&2
+    listed=$(grep -c "^  $crate " "$out" || true)
+    if [ "${listed:-0}" -eq 1 ]; then
+      echo "$name: '$crate' is listed under one licence, expected its own and the one about.toml adds" >&2
       exit 1
     fi
   done

@@ -19,7 +19,6 @@ interface ThirdPartyLicences {
 const TAB_LABELS: Record<string, string> = {
   "rust-crates.txt": "App components",
   "interface.txt": "Interface",
-  "system-libraries.txt": "System libraries",
   "THIRD_PARTY_NOTICES.md": "Other notices",
 };
 
