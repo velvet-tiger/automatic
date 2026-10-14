@@ -604,27 +604,29 @@ fn provenance_type(resource_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Drop each provenance record `repo` owns for a name this install did not
-/// install, the new manifest does not name, and the source's previous entry
-/// does not list. Returns the key of each record dropped.
+/// Drop each provenance record `repo` owns for a name this install neither
+/// installed nor attempted, and the source's previous entry does not list.
+/// Returns the key of each record dropped.
 ///
 /// Such a record is stale. It is left when a clear fails after a removal,
 /// and nothing the repo provides stands behind it. Left in place, a later
 /// removal of the repo would treat a name the user created since as the
-/// repo's, and delete it. A name the manifest still names keeps its record
-/// even when this install skipped it, for example because the scanner
-/// blocked it: the file from an earlier install is still the repo's.
+/// repo's, and delete it. A name this install attempted and skipped keeps
+/// its record, for example one the scanner blocked: the file from an
+/// earlier install is still the repo's. A name the manifest has but the
+/// user did not select does not, as nothing in this install stands behind
+/// it either.
 fn drop_stale_provenance(
     repo: &str,
     installed: &HashMap<String, Vec<String>>,
-    named: &HashSet<String>,
+    attempted: &HashSet<String>,
     previous: Option<&RemoteSource>,
 ) -> Result<Vec<String>, String> {
     let mut current: HashSet<String> = listed_resources(installed)
         .into_iter()
         .map(|(resource_type, name)| provenance_key(resource_type, name))
         .collect();
-    current.extend(named.iter().cloned());
+    current.extend(attempted.iter().cloned());
     if let Some(previous) = previous {
         current.extend(
             listed_resources(&previous.resources)
@@ -645,30 +647,6 @@ fn drop_stale_provenance(
     save_provenance(&prov)?;
     dropped.sort();
     Ok(dropped)
-}
-
-/// The provenance key of every resource `manifest` names, with the skills a
-/// `skill.json` lists resolved from `base_dir`.
-fn manifest_keys(base_dir: &Path, manifest: &AutomaticManifest) -> Result<HashSet<String>, String> {
-    let mut named = select_all(manifest);
-    if let Some(ref skills) = manifest.skills {
-        named.skills = resolve_skills(base_dir, skills)?
-            .into_iter()
-            .map(|skill| skill.name)
-            .collect();
-    }
-    let lists: [(&str, &[String]); 6] = [
-        ("skill", &named.skills),
-        ("mcp_server", &named.mcp_servers),
-        ("rule", &named.rules),
-        ("template", &named.templates),
-        ("command", &named.commands),
-        ("agent", &named.agents),
-    ];
-    Ok(lists
-        .iter()
-        .flat_map(|(kind, names)| names.iter().map(move |name| format!("{}:{}", kind, name)))
-        .collect())
 }
 
 /// The names `repo` owns among the `type:name` keys an install skipped, by
@@ -1177,9 +1155,9 @@ pub fn install_source(
         }
     }
 
-    let stale = manifest_keys(&base_dir, manifest)
-        .and_then(|named| drop_stale_provenance(repo, &installed, &named, previous.as_ref()));
-    match stale {
+    // Skipped keys are already `type:name` provenance keys.
+    let attempted: HashSet<String> = skipped.iter().cloned().collect();
+    match drop_stale_provenance(repo, &installed, &attempted, previous.as_ref()) {
         Ok(dropped) => {
             for key in dropped {
                 let (kind, name) = key.split_once(':').unwrap_or((key.as_str(), ""));
@@ -4778,7 +4756,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reinstall_keeps_the_record_of_a_skill_a_skill_json_names() {
+    fn a_reinstall_keeps_the_record_of_a_selected_skill_json_skill_it_skipped() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-keep-sj");
@@ -4800,16 +4778,65 @@ mod tests {
                 skill_json: Some("skill.json".to_string()),
                 entries: Vec::new(),
             });
-            // Nothing selected, so only the manifest names keep the record.
-            let result = install_source(REPO, &manifest, Some(SelectedResources::default()), None)
-                .expect("reinstall");
+            // The new version of the skill is blocked by the scanner.
+            fs::write(
+                clone.join("skills").join(&names.skill).join("SKILL.md"),
+                BLOCKED_RULE,
+            )
+            .expect("write blocked skill");
+            let selected = SelectedResources {
+                skills: vec![names.skill.clone()],
+                ..Default::default()
+            };
 
+            let result = install_source(REPO, &manifest, Some(selected), None).expect("reinstall");
+
+            assert_eq!(result.skipped, vec![format!("skill:{}", names.skill)]);
             assert!(
                 !result.warnings.iter().any(|w| w.contains(&format!("skills:{}", names.skill))),
                 "{:?}",
                 result.warnings
             );
             assert_eq!(get_provenance("skill", &names.skill), Ok(Some(REPO.to_string())));
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert_eq!(entry.resources.get("skills"), Some(&vec![names.skill.clone()]));
+        });
+    }
+
+    #[test]
+    fn a_stale_record_for_a_name_the_user_did_not_select_is_dropped() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("source-remove-unselected");
+            let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            // A stale record, as a failed clear leaves it, and the user's own
+            // rule with that name.
+            record_provenance("rule", &names.rule, REPO).unwrap();
+            crate::core::save_rule(&names.rule, "Mine", "My own rule.\n").expect("save rule");
+            // The manifest names the rule, but the user installs only the skill.
+            let selected = SelectedResources {
+                skills: vec![names.skill.clone()],
+                ..Default::default()
+            };
+
+            let result = install_source(REPO, &manifest, Some(selected), None).expect("install");
+
+            let warning = format!(
+                "Cleared the old provenance record of rules:{}: this source no longer installs or lists it",
+                names.rule
+            );
+            assert!(result.warnings.contains(&warning), "{:?}", result.warnings);
+            assert_eq!(get_provenance("rule", &names.rule), Ok(None));
+
+            let removed = remove_source(REPO).expect("remove");
+
+            assert!(
+                !removed.removed.contains(&format!("rules:{}", names.rule)),
+                "{:?}",
+                removed
+            );
+            let raw = fs::read_to_string(library_path("rules", &names.rule)).expect("read");
+            assert!(raw.contains("My own rule."), "{}", raw);
         });
     }
 }
