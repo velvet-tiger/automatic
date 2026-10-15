@@ -61,30 +61,40 @@ pub(crate) fn pointer_file_is_read_only(path: &Path) -> bool {
         .is_some_and(|value| pointer_is_read_only(&value))
 }
 
-/// `path` with every part that exists on disk resolved, so a symlinked or
-/// `/private`-prefixed form of a folder compares equal to the plain one,
-/// even when the folder itself does not exist yet. `.` and `..` are resolved
-/// first, so a path that climbs out of a missing folder cannot hide where it
-/// lands.
+/// Where `path` really points, so a symlinked or `/private`-prefixed form of
+/// a folder compares equal to the plain one, even when the folder does not
+/// exist yet.
+///
+/// The longest prefix that exists is resolved by the OS, which follows each
+/// symlink before applying the `..` after it, as a real write would. Only
+/// the rest, which does not exist and so holds no symlinks, has its `.` and
+/// `..` resolved as text. Resolving `..` as text first would let
+/// `<elsewhere>/link/..` hide that `link` points into a read-only project.
 pub(crate) fn normalised(path: &str) -> PathBuf {
-    let mut lexical = PathBuf::new();
-    for component in Path::new(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                lexical.pop();
-            }
-            other => lexical.push(other),
-        }
-    }
-    let path = lexical.as_path();
+    let path = Path::new(path);
     for ancestor in path.ancestors() {
         if let Ok(resolved) = ancestor.canonicalize() {
             let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
-            return resolved.join(rest);
+            return without_dot_segments(&resolved.join(rest));
         }
     }
-    path.to_path_buf()
+    without_dot_segments(path)
+}
+
+/// `path` with `.` dropped and each `..` removing the part before it, as
+/// text. Only safe on parts of a path that hold no symlinks.
+fn without_dot_segments(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The name of the read-only project whose folder is `directory` or contains
@@ -540,6 +550,30 @@ mod tests {
             let err = crate::commands::save_doc_note(&inner.local_key, "note", "text")
                 .expect_err("a nested project's direct writes are refused");
             assert!(err.contains("inside project 'repo'"), "{}", err);
+        });
+    }
+
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_followed_by_parent_dir_is_resolved_like_the_os_does() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let (key, dir) = keyed_project(home.path(), "repo");
+            set_project_read_only(&key, true).expect("on");
+            let inside = dir.join("pkg").join("api");
+            fs::create_dir_all(&inside).expect("mkdir");
+            let other = home.path().join("other");
+            fs::create_dir_all(&other).expect("mkdir other");
+            std::os::unix::fs::symlink(&inside, other.join("link")).expect("symlink");
+
+            // The OS follows `link` first, so `link/..` is `<repo>/pkg`.
+            let sneaky = other.join("link").join("..").join("new");
+            assert!(
+                is_directory_read_only(&sneaky.display().to_string()).unwrap(),
+                "{} lands inside the read-only project",
+                sneaky.display()
+            );
         });
     }
 
