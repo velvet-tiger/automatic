@@ -46,9 +46,6 @@ pub fn read_bundled_template(name: &str) -> Result<String, String> {
 #[tauri::command]
 pub async fn import_bundled_template(name: String) -> Result<(), String> {
     core::import_bundled_template(&name).await?;
-    if let Err(e) = core::mark_template_imported() {
-        eprintln!("[automatic] Failed to mark template_imported flag: {}", e);
-    }
     Ok(())
 }
 

@@ -195,6 +195,51 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Store a config for a server that must be new, and refuse to replace any
+/// existing file.
+///
+/// The file is opened with `create_new`, so a server written between the
+/// caller's name check and this write is never overwritten. On a
+/// case-insensitive file system, a case variant of an existing name fails
+/// here too. Otherwise this stores the config as [`save_mcp_server_config`]
+/// does: env values are encrypted and stale OAuth secrets are tidied.
+pub(crate) fn create_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    if !is_valid_name(name) {
+        return Err("Invalid server name".into());
+    }
+    let mut config: serde_json::Value =
+        serde_json::from_str(data).map_err(|e| format!("Invalid JSON: {}", e))?;
+    if let Some(env) = config.get_mut("env") {
+        env_crypto::encrypt_env_values(env)?;
+    }
+    let serialized = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    let dir = get_mcp_servers_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", name));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => {
+                format!("MCP server '{}' already exists in the library", name)
+            }
+            _ => format!("Failed to create MCP server '{}': {}", name, e),
+        })?;
+    // The file was created empty here, so nothing of another server's is
+    // tidied away. Any failure removes the file this call created.
+    let written = tidy_oauth_secrets_on_url_change(name, &config)
+        .and_then(|()| file.write_all(serialized.as_bytes()).map_err(|e| e.to_string()));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&path);
+        return Err(format!("Failed to write MCP server '{}': {}", name, e));
+    }
+    record_recently_added("mcp_servers", name);
+    Ok(())
+}
+
 /// Delete the OAuth secrets the server `name` stops using when `config` is
 /// written as its registry file. Call this before the write.
 ///

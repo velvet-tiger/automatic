@@ -37,6 +37,7 @@ import {
   FolderPlus,
   Search,
   Folder,
+  Compass,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -114,11 +115,14 @@ export default function Templates({
   initialTemplate,
   onCreateProjectFromTemplate,
   onNavigateToProject,
+  onBrowseDiscover,
 }: {
   initialTemplate?: string | null;
   onCreateProjectFromTemplate?: (templateName: string) => void;
   /** Opens a project by local_key. */
   onNavigateToProject?: (projectKey: string) => void;
+  /** Opens Discover Templates. Shown in the empty state so new users find ready-made templates. */
+  onBrowseDiscover?: () => void;
 }) {
   const [templates, setTemplates] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -741,14 +745,25 @@ export default function Templates({
             <h2 className="text-[15px] font-medium text-text-base mb-2">No templates yet</h2>
             <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
               Project Templates capture agents, skills, MCP servers, and project files
-              that can be applied to new or existing projects.
+              that can be applied to new or existing projects. Create your own or browse
+              ready-made templates in Discover.
             </p>
-            <button
-              onClick={startCreate}
-              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
-            >
-              <Plus size={14} /> New Template
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={startCreate}
+                className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Plus size={14} /> New Template
+              </button>
+              {onBrowseDiscover && (
+                <button
+                  onClick={onBrowseDiscover}
+                  className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
+                >
+                  <Compass size={14} /> Browse templates
+                </button>
+              )}
+            </div>
           </>
         }
         noMatchState={

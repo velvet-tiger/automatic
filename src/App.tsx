@@ -6,7 +6,6 @@ import { applyTheme, Theme, THEMES } from "./lib/theme";
 import { ProfileProvider } from "./contexts/ProfileContext";
 import { useCurrentUser } from "./contexts/ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./lib/analytics";
-import GettingStarted from "./pages/GettingStarted";
 
 import Skills from "./pages/workspace/Skills";
 import SkillStore from "./pages/discover/SkillStore";
@@ -48,16 +47,16 @@ import MaildevOverview from "./plugins/maildev/MaildevOverview";
 import { usePlugin } from "./plugins/usePlugin";
 import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, BookMarked, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
 import { flag } from "./lib/flags";
+import { migrateSavedSection, migrateSavedTab } from "./lib/savedNavigation";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
 // ── Section / Tab mapping ────────────────────────────────────────────────────
 
-type Section = "start" | "workspace" | "library" | "discover" | "tools";
+type Section = "workspace" | "library" | "discover" | "tools";
 
 const SECTION_TABS: Record<Section, string[]> = {
-  start: ["getting-started"],
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "profiles", "contexts", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
@@ -65,15 +64,18 @@ const SECTION_TABS: Record<Section, string[]> = {
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
-  start: "getting-started",
   workspace: "projects",
   library: "library-home",
   discover: "discover-home",
   tools: "tools-home",
 };
 
+const SECTIONS = Object.keys(SECTION_TABS) as Section[];
+
+/** Every tab id the content area renders: the section tabs plus the two that sit outside any section. */
+const KNOWN_TABS: ReadonlySet<string> = new Set([...Object.values(SECTION_TABS).flat(), "settings", "sync"]);
+
 const SECTION_LABELS: Record<Section, string> = {
-  start: "Start",
   workspace: "Workspace",
   library: "Library",
   discover: "Discover",
@@ -84,7 +86,7 @@ function sectionForTab(tabId: string): Section {
   for (const [section, tabs] of Object.entries(SECTION_TABS)) {
     if (tabs.includes(tabId)) return section as Section;
   }
-  return "start";
+  return "workspace";
 }
 
 // ── Small helper components ──────────────────────────────────────────────────
@@ -150,27 +152,19 @@ function App() {
       localStorage.removeItem("nexus.activeTab");
     }
     const saved = localStorage.getItem("automatic.activeTab") || legacy;
-    // Migrate from removed tabs
-    if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
-    if (saved === "support") return "settings";
-    return saved || "getting-started";
+    return migrateSavedTab(saved, KNOWN_TABS);
   });
 
   const [activeSection, setActiveSection] = useState<Section>(() => {
     if (activeTab === "settings") {
       // When settings is active, restore last real section for the sidebar
-      const rawSaved = localStorage.getItem("automatic.activeSection");
-      // Migrate legacy section ids: "marketplace" -> "discover", "community" -> "discover".
-      const normalised = rawSaved === "marketplace" || rawSaved === "community" ? "discover" : rawSaved;
-      const saved = normalised as Section | null;
-      return saved && SECTION_TABS[saved] ? saved : "workspace";
+      return migrateSavedSection(localStorage.getItem("automatic.activeSection"), SECTIONS);
     }
     return sectionForTab(activeTab);
   });
 
   // ── Per-section sidebar collapsed state ────────────────────────────────────
   const SIDEBAR_COLLAPSED_DEFAULTS: Record<Section, boolean> = {
-    start: false,
     workspace: false,
     library: false,
     discover: false,
@@ -183,8 +177,8 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, boolean>;
         // Merge with defaults so new sections get their default value.
-        // The legacy "community" key is intentionally dropped via destructure.
-        const { community: _community, ...rest } = parsed;
+        // The legacy "community" and "start" keys are intentionally dropped via destructure.
+        const { community: _community, start: _start, ...rest } = parsed;
         return { ...SIDEBAR_COLLAPSED_DEFAULTS, ...rest } as Record<Section, boolean>;
       }
     } catch { /* ignore parse errors */ }
@@ -192,7 +186,7 @@ function App() {
     const legacy = localStorage.getItem("automatic.sidebarCollapsed");
     if (legacy !== null) {
       const val = legacy === "true";
-      return { start: val, workspace: val, library: val, discover: val, tools: val };
+      return { workspace: val, library: val, discover: val, tools: val };
     }
     return { ...SIDEBAR_COLLAPSED_DEFAULTS };
   });
@@ -306,7 +300,7 @@ function App() {
     if (answers.createdProjectName) {
       navigateToProject(answers.createdProjectName);
     } else {
-      setActiveTab("getting-started");
+      setActiveTabWithSection("projects");
     }
   };
 
@@ -505,7 +499,7 @@ function App() {
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
-            {(["start", "workspace", "library", "discover", "tools"] as const).map((section) => {
+            {(["workspace", "library", "discover", "tools"] as const).map((section) => {
               const isActive = activeSection === section && activeTab !== "settings" && activeTab !== "sync";
               return (
                 <button
@@ -590,13 +584,6 @@ function App() {
 
         {/* Section-specific navigation */}
         <nav className="flex-1 min-h-0 flex flex-col overflow-y-auto py-3 px-3 custom-scrollbar">
-
-          {/* ── Start sidebar ─────────────────────────────────────────── */}
-          {activeSection === "start" && (
-            <ul className="space-y-0.5">
-              <NavItem id="getting-started" icon={Sparkles} label="Getting Started" />
-            </ul>
-          )}
 
           {/* ── Workspace sidebar ──────────────────────────────────────── */}
           {activeSection === "workspace" && (
@@ -734,11 +721,6 @@ function App() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {activeTab === "getting-started" && (
-            <div className="flex-1 h-full">
-              <GettingStarted onNavigate={setActiveTabWithSection} />
-            </div>
-          )}
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects
@@ -782,6 +764,7 @@ function App() {
                 initialTemplate={pendingTemplate}
                 onCreateProjectFromTemplate={navigateToCreateWithTemplate}
                 onNavigateToProject={navigateToProject}
+                onBrowseDiscover={() => setActiveTabWithSection("discover-templates")}
               />
             </div>
           )}
@@ -858,6 +841,7 @@ function App() {
                 onInitialSkillConsumed={() => setPendingSkill(null)}
                 onNavigateToProject={navigateToProject}
                 onNavigateToTemplate={navigateToTemplate}
+                onBrowseDiscover={() => setActiveTabWithSection("skill-store")}
               />
             </div>
           )}
@@ -948,6 +932,7 @@ function App() {
               <McpServers
                 initialServer={pendingMcpServer}
                 onInitialServerConsumed={() => setPendingMcpServer(null)}
+                onBrowseDiscover={() => setActiveTabWithSection("discover-mcp")}
               />
             </div>
           )}
