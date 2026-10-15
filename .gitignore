@@ -65,3 +65,4 @@ Thumbs.db
 !/src-tauri/src/plugins/build/
 !/src/plugins/build/
 
+/tsconfig.node.tsbuildinfo

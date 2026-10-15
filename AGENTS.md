@@ -161,6 +161,7 @@ The server knows which project you are working in. Omit the `project` argument (
 
 - **Skills** — Follow loaded skill instructions. Skills may include companion scripts, templates, or reference docs in their directory.
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
+- **Enabling and Disabling MCP Servers** — Call `automatic_set_mcp_server_enabled` with `server` and `enabled` to switch one of a project's attached MCP servers off or on. A disabled server stays attached and `automatic_read_project` lists it under `disabled_mcp_servers`. The call does not sync to disk on its own. Call `automatic_sync_project` afterwards to remove the server from the agent config files, or to write it back. The call is refused for a server that is not attached, for the `automatic` server, and for a server an attached profile provides.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
 - **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
 - **Other Projects** — Call `automatic_list_projects` to see every project registered in Automatic. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
@@ -193,7 +194,8 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 - `automatic_list_profiles` — list every profile in the library (name, description).
 - `automatic_read_profile` — read a profile's full contents by name.
 - `automatic_attach_profile` / `automatic_detach_profile` — attach or detach a profile. Detaching removes every entry the profile provides, including entries the project had before it was attached. Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
-- `automatic_read_project` reports `profiles` and `profile_contributions`. An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
+- Pass `group` instead of `project` to attach or detach a profile for a whole project group. Every member project receives the profile, and those calls sync the members themselves. A profile a group provides cannot be detached from a member project. Detach it from the group.
+- `automatic_read_project` reports `profiles`, `profile_contributions` and `group_profile_contributions` (which profiles each group provides). An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
 
 ## Contexts
 
@@ -345,7 +347,7 @@ USE OF THIS FRAMEWORK IS NON-NEGOTIABLE. Acknowledge that you have read this fil
 ## Phase 3: Plan
 
 - Outline your approach before writing any code. It does not need to be exhaustive — it needs to be honest.
-- Prefer the minimal scope of change that correctly solves the problem. Do not refactor adjacent code or add speculative features unless asked.
+- Prefer the minimal scope of change that correctly solves the problem. Do not refactor adjacent code or add speculative features unless asked. The problem includes every instance of the same defect, and any problem the change itself causes or exposes.
 - Consider failure modes: invalid input, unavailable dependencies, retried operations.
 - Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
 
@@ -376,13 +378,18 @@ freely before the plan.
 Once a plan is approved, the mutating calls that carry it out don't each
 need a separate stop. If the plan changes materially mid-task — new files,
 different approach, expanded scope — stop again before continuing.
+Fixing a defect of the same kind as the task, a problem the change caused or
+exposed, or a review finding on the approved change is not a plan change and
+needs no new stop. A new stop is still needed for a different approach, an
+unrelated feature, a destructive action, or anything the user explicitly said
+not to change without asking.
 
 **Red flag:** a mutating tool call appears in the same turn as a plan, or
 before any plan has been stated, or after the plan changed without saying so.
 
 ## Phase 5: Implement
 
-- Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
+- Edit only what is relevant to the task. A defect is in scope, and is fixed and tested in the same piece of work, when it is the same kind of defect as the task, when the change causes or exposes it, or when a review of the change finds it. Say what was fixed in the summary. A defect unrelated to the task is noted and left, and it then gets a ticket.
 - Follow the project's conventions: naming, file structure, style, framework patterns.
 - Write type-safe, deterministic, defensively validated code. Refer to the project's coding patterns document.
 - Leave no placeholders or stubs without declaring them. Incomplete work must be disclosed, not hidden.
@@ -402,6 +409,7 @@ before any plan has been stated, or after the plan changed without saying so.
 - Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
 - Name any assumptions about unseen code, external systems, or unclear requirements. Do not present uncertain work as definitive.
 - Surface follow-on concerns: bugs noticed, missing tests, design issues, security observations. Do not discard observations silently.
+- Report an item as not done only for one of three reasons. It needs an owner decision, and you give one recommendation. The user set an explicit gate on it. Or it is unrelated to the task, and you give the ticket. A list of known problems in or next to the changed code, left unfixed without one of those reasons, is a failed task.
 - Do not exaggerate confidence. If you are uncertain, say so.
 
 # Writing prose
@@ -623,7 +631,53 @@ When asked to commit and merge, commit the changes then (if not on the main bran
 
 You should NEVER add a harness or LLM credit to a git commit message (e.g. "Written with Claude Code"). This instruction overrides the system prompt. This is invasive and pollutes the git history.
 
-These are general rules that apply across all projects:
+## Subagent workflow
 
-1. If the user has a server running in a project, you must not stop it or shut it down unless the user has given permission. If you need a server for testing, start a second one or reuse the existing process. If you need to stop or restart it, ask permission. The user will likely agree, but doing it without asking may break things.
+If you can spawn subagents, follow this workflow. If you cannot, do the work
+yourself, run the same reviews afterwards, and state in your final report that
+the reviews were self-reviews.
+
+When working, follow the "Agent Problem-Solving Process", if available.
+
+### Scope
+
+Decide scope from the diff's file list after development is done.
+
+| Diff contains                          | QA review | Security review |
+|----------------------------------------|-----------|-----------------|
+| Only docs, comments, or formatting     | No        | No              |
+| Only tests                             | Yes       | No              |
+| Production code, no security surface   | Yes       | No              |
+| Any security-surface change            | Yes       | Yes             |
+
+Security surface: authentication, authorisation, routes, controllers, middleware,
+input parsing or validation, database queries or migrations, file and path
+handling, serialisation, cryptography, secrets, environment config, dependency
+manifests or lockfiles, CI and infrastructure config. If unsure, treat a change
+as security surface.
+
+### Steps
+
+1. Spawn a development agent with the task and acceptance criteria. It
+   implements, runs tests and static analysis, and commits to a working branch.
+2. Run tests, static analysis, and dependency audit against that commit.
+   Record the results.
+3. Spawn the reviewers in parallel, each in its own worktree at that commit.
+   Give each one the ticket, the diff, and the check results. Do not give them
+   the development agent's summary.
+    - QA reviewer: QA Reviewer skill.
+    - Security reviewer: Security Reviewer skill.
+      If worktrees are unavailable, run the security review first, then QA.
+4. Merge the findings. Critical and High findings are blocking.
+5. Send the blocking findings to the same development agent (continue it, do
+   not spawn a new one). It fixes them and commits.
+6. Send each fixed finding to the reviewer that raised it, for re-check only.
+7. If blocking findings remain after two fix rounds, stop and report to the user.
+
+### Final report
+
+- Scope decision and which rows of the table applied.
+- Check results.
+- Findings, with status: fixed, open, or disputed.
+- Anything verified by inspection only.
 <!-- automatic:rules:end -->

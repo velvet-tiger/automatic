@@ -30,7 +30,7 @@
       "thinking-effort",
       "automatic-code",
       "local-git-rules",
-      "local-general"
+      "automatic-workflow"
     ]
   },
   "id": "4afb60f2-72af-4cac-9a12-20f001816a51",
@@ -40,7 +40,8 @@
   "mcp_servers": [
     "automatic",
     "sentry",
-    "linear-vt"
+    "linear-vt",
+    "github"
   ],
   "name": "automatic-app",
   "profile_contributions": {
@@ -51,6 +52,9 @@
         "cursor",
         "opencode"
       ],
+      "mcp_servers": [
+        "github"
+      ],
       "rules": [
         "automatic-service",
         "automatic-process",
@@ -59,7 +63,7 @@
         "automatic-prose",
         "local-git-rules",
         "thinking-effort",
-        "local-general"
+        "automatic-workflow"
       ]
     }
   },
