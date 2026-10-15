@@ -61,40 +61,64 @@ pub(crate) fn pointer_file_is_read_only(path: &Path) -> bool {
         .is_some_and(|value| pointer_is_read_only(&value))
 }
 
-/// Where `path` really points, so a symlinked or `/private`-prefixed form of
-/// a folder compares equal to the plain one, even when the folder does not
-/// exist yet.
+/// Symlinks [`normalised`] follows in one call before it stops resolving,
+/// matching the usual operating-system limit. The count covers the whole
+/// call, not one chain, so a link whose target names itself several times
+/// cannot fan out into exponential work.
+const MAX_SYMLINK_HOPS: usize = 40;
+
+/// Where `path` lands on disk, so a symlinked or `/private`-prefixed form
+/// of a folder compares equal to the plain one, even when the folder itself
+/// does not exist yet.
 ///
-/// The longest prefix that exists is resolved by the OS, which follows each
-/// symlink before applying the `..` after it, as a real write would. Only
-/// the rest, which does not exist and so holds no symlinks, has its `.` and
-/// `..` resolved as text. Resolving `..` as text first would let
-/// `<elsewhere>/link/..` hide that `link` points into a read-only project.
+/// Resolves one component at a time. Each part that exists is resolved
+/// before the next `..` applies, because a `..` after a symlink climbs out
+/// of the link's target, not out of the folder holding the link. A `..`
+/// after a missing part only drops that part, since a missing part cannot
+/// be a link. A dangling symlink is followed to its target, so a write that
+/// would create the target is still seen.
 pub(crate) fn normalised(path: &str) -> PathBuf {
-    let path = Path::new(path);
-    for ancestor in path.ancestors() {
-        if let Ok(resolved) = ancestor.canonicalize() {
-            let rest = path.strip_prefix(ancestor).unwrap_or(Path::new(""));
-            return without_dot_segments(&resolved.join(rest));
-        }
-    }
-    without_dot_segments(path)
+    let mut hops = 0;
+    normalise_from(PathBuf::new(), Path::new(path), &mut hops)
 }
 
-/// `path` with `.` dropped and each `..` removing the part before it, as
-/// text. Only safe on parts of a path that hold no symlinks.
-fn without_dot_segments(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
+fn normalise_from(mut resolved: PathBuf, path: &Path, hops: &mut usize) -> PathBuf {
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                out.pop();
+                resolved.pop();
             }
-            other => out.push(other),
+            Component::Normal(part) => {
+                resolved.push(part);
+                resolved = resolve_existing(resolved, hops);
+            }
+            other => resolved.push(other),
         }
     }
-    out
+    resolved
+}
+
+/// `path` with its last part resolved when it exists or is a dangling
+/// symlink. Everything before the last part is already resolved. `hops`
+/// counts the links followed so far in this call.
+fn resolve_existing(path: PathBuf, hops: &mut usize) -> PathBuf {
+    if let Ok(real) = path.canonicalize() {
+        return real;
+    }
+    if *hops >= MAX_SYMLINK_HOPS {
+        return path;
+    }
+    match std::fs::read_link(&path) {
+        // A target is relative to the folder holding the link.
+        Ok(target) => {
+            *hops += 1;
+            let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            normalise_from(parent, &target, hops)
+        }
+        // Missing, or not a link: nothing on disk to resolve.
+        Err(_) => path,
+    }
 }
 
 /// The name of the read-only project whose folder is `directory` or contains
@@ -577,4 +601,70 @@ mod tests {
         });
     }
 
+    /// A `..` after a symlink climbs out of the link's target. Checking the
+    /// path as written would put each of these outside the read-only
+    /// project, while a write through it lands inside.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_symlink_is_checked_where_it_lands() {
+        use std::os::unix::fs::symlink;
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let (key, dir) = keyed_project(home.path(), "repo");
+            set_project_read_only(&key, true).expect("on");
+            let outside = home.path().join("outside");
+            fs::create_dir_all(dir.join("deep")).expect("mkdir deep");
+            fs::create_dir_all(&outside).expect("mkdir outside");
+            symlink(dir.join("deep"), outside.join("link")).expect("link");
+            symlink(dir.join("new"), outside.join("dangling")).expect("dangling link");
+            let read_only = |path: std::path::PathBuf| {
+                is_directory_read_only(&path.display().to_string()).unwrap()
+            };
+
+            // `outside/link/..` is `repo`, not `outside`.
+            assert!(read_only(outside.join("link").join("..").join("x")));
+            // The same link reached after climbing out of a missing folder.
+            assert!(read_only(
+                outside.join("missing").join("..").join("link").join("..").join("x")
+            ));
+            // A dangling link whose target would be created inside the project.
+            assert!(read_only(outside.join("dangling").join("x")));
+            assert!(!dir.join("new").exists());
+
+            // The plain folder outside the project stays writable.
+            assert!(!read_only(outside.join("x")));
+            assert!(!read_only(outside.join("missing").join("..").join("x")));
+        });
+    }
+
+    /// A symlink cycle stops resolving instead of looping.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_cycle_does_not_hang() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().expect("tempdir");
+        symlink(dir.path().join("b"), dir.path().join("a")).expect("a");
+        symlink(dir.path().join("a"), dir.path().join("b")).expect("b");
+        let path = dir.path().join("a").join("x");
+        let _ = normalised(&path.display().to_string());
+    }
+
+    /// A dangling link whose target names itself several times would branch
+    /// at every hop if the limit counted depth: each `x/../..` climbs back
+    /// out to the folder holding `l`, so every `l` follows the link again.
+    /// The limit counts every link followed, so this returns at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_self_referencing_dangling_link_does_not_fan_out() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().expect("tempdir");
+        symlink("l/x/../../l/x/../../l/x/../../l", dir.path().join("l")).expect("l");
+        let started = std::time::Instant::now();
+        let _ = normalised(&dir.path().join("l").join("x").display().to_string());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "resolving took {:?}",
+            started.elapsed()
+        );
+    }
 }
