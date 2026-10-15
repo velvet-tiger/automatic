@@ -60,8 +60,11 @@ const STATE_FIELDS: &[&str] = &[
     "resolved_commands",
 ];
 
-/// Runtime flags that neither file stores.
-const TRANSIENT_FIELDS: &[&str] = &["directory_missing"];
+/// Fields that neither file stores: runtime flags (including the computed
+/// `read_only_owner`), and `local_read_only`,
+/// which lives only in the registry pointer so that turning it on writes
+/// nothing into the folder.
+const TRANSIENT_FIELDS: &[&str] = &["directory_missing", "local_read_only", "read_only_owner"];
 
 fn is_state_field(key: &str) -> bool {
     STATE_FIELDS.contains(&key)

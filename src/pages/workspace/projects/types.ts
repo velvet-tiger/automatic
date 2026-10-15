@@ -114,6 +114,22 @@ export interface Project {
    *   to .automatic/silent/, leaving the rest of the project tree untouched.
    */
   mode?: 'normal' | 'silent';
+  /**
+   * Committed hint: a checkout that adds this project from its existing
+   * files starts in read-only mode. Does not make this machine read-only.
+   */
+  read_only?: boolean;
+  /**
+   * Whether this machine treats the project as read-only: Automatic reads it
+   * but never writes into its folder. Stored only on this machine. Change it
+   * with the `set_project_read_only` command; saving the project keeps it.
+   */
+  local_read_only?: boolean;
+  /**
+   * Computed by backend at read-time: the read-only project whose folder
+   * holds this one's. Such a project is read-only too. Never saved.
+   */
+  read_only_owner?: string;
   /** Computed by backend at read-time: true when directory is set but no longer exists on disk. */
   directory_missing?: boolean;
 }
@@ -337,6 +353,8 @@ export interface ProjectSummary {
   name: string;
   /** Empty for a project with no folder yet. */
   directory: string;
+  /** Whether this machine treats the project as read-only. */
+  read_only?: boolean;
 }
 
 export interface ActivityEntry {

@@ -3246,6 +3246,7 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             directory: format!("/work/{}", project.name),
+            read_only: false,
         }
     }
 

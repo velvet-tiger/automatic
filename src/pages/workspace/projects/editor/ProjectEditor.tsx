@@ -6,7 +6,7 @@ import { useTaskLog } from "../../../../contexts/TaskLogContext";
 import Features from "../../../../plugins/build/Features";
 import ServersPanel from "../../../../plugins/dev-servers/ServersPanel";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
 import { useProjectNavLayout } from "../../../../lib/projectNavLayout";
 import {
@@ -117,6 +117,7 @@ import {
   Link as LinkIcon,
   ExternalLink,
   EyeOff,
+  Lock,
 } from "lucide-react";
 
 /** Last path segment of a typed or picked directory. Accepts `/` and `\`
@@ -464,7 +465,35 @@ export function ProjectEditor({
   const projectFileBusy = useRef(false);
   projectFileBusy.current = projectFileDirty || projectFileEditing;
 
+  // A read-only project is shown but never saved. An edit to it is undone
+  // by reloading the stored project, and the header label says why.
+  // Read-only on its own, or because its folder sits inside a read-only
+  // project (`read_only_owner`).
+  const readOnly =
+    !isCreating && (project?.local_read_only === true || Boolean(project?.read_only_owner));
+  const [readOnlyNotice, setReadOnlyNotice] = useState(false);
+  useEffect(() => {
+    if (!readOnlyNotice) return;
+    const timer = window.setTimeout(() => setReadOnlyNotice(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [readOnlyNotice]);
+
+  // Edit paths that set `dirty` directly, or save on their own, bypass
+  // `markDirty`. Any of them that leaves a read-only project dirty is undone
+  // here the same way.
+  useEffect(() => {
+    if (!readOnly || !dirty || !selectedKey) return;
+    setReadOnlyNotice(true);
+    void reloadProject(selectedKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly, dirty, selectedKey]);
+
   const markDirty = (v: boolean) => {
+    if (v && readOnly) {
+      setReadOnlyNotice(true);
+      if (selectedKey) void reloadProject(selectedKey);
+      return;
+    }
     setDirty(v);
     if (v) {
       editSeq.current += 1;
@@ -939,6 +968,7 @@ export function ProjectEditor({
   // save waits for that editor to commit.
   useEffect(() => {
     if (autosaveTick === 0 || !dirty || isCreating || !selectedKey || !project) return;
+    if (readOnly) return;
     if (
       customRuleEditingIdx !== null ||
       customAgentEditingIdx !== null ||
@@ -1763,6 +1793,12 @@ export function ProjectEditor({
 
   const handleSaveProjectFile = async () => {
     if (!selectedKey || !activeProjectFile || !project) return;
+    if (readOnly) {
+      // A read-only project's files are never written: drop the edit.
+      setReadOnlyNotice(true);
+      await loadProjectFileContent(selectedKey, activeProjectFile);
+      return;
+    }
     setProjectFileSaving(true);
     try {
       // Flush the in-memory project config (including file_rules) to disk first,
@@ -1886,11 +1922,16 @@ export function ProjectEditor({
       const detectedMcp: string[] = parsed.mcp_servers || [];
 
       // New items found by autodetect that aren't yet in the stored config.
-      const newAgents = detectedAgents.filter((a) => !storedAgents.includes(a));
-      const newSkills = detectedSkills.filter((s) => !storedSkills.includes(s));
+      // A read-only project is shown exactly as stored: merging would make
+      // it dirty, and it cannot be saved.
+      const mergeDetected = stored.local_read_only !== true && typeof stored.read_only_owner !== "string";
+      const newAgents = mergeDetected ? detectedAgents.filter((a) => !storedAgents.includes(a)) : [];
+      const newSkills = mergeDetected ? detectedSkills.filter((s) => !storedSkills.includes(s)) : [];
       const storedCustomSkillNames = new Set(storedCustomSkills.map((s) => s.name));
-      const newCustomSkills = detectedCustomSkills.filter((s) => !storedCustomSkillNames.has(s.name));
-      const newMcp = detectedMcp.filter((m) => !storedMcp.includes(m));
+      const newCustomSkills = mergeDetected
+        ? detectedCustomSkills.filter((s) => !storedCustomSkillNames.has(s.name))
+        : [];
+      const newMcp = mergeDetected ? detectedMcp.filter((m) => !storedMcp.includes(m)) : [];
 
       const detectedDiffers =
         newAgents.length > 0 ||
@@ -1929,6 +1970,9 @@ export function ProjectEditor({
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         manage_gitignore: stored.manage_gitignore === true,
+        read_only: stored.read_only === true,
+        local_read_only: stored.local_read_only === true,
+        read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
       };
 
@@ -1980,6 +2024,21 @@ export function ProjectEditor({
   // Reload project state from disk and refresh all dependent UI.
   // Always re-affirms selectedKey so that any async state race between
   // isCreating=false and the reload completing cannot drop back to the overview.
+  // Read-only mode changes outside the normal save: it is stored on this
+  // machine only, and a read-only project is never saved.
+  const handleReadOnlyChange = async (next: boolean) => {
+    if (!selectedKey) return;
+    try {
+      await invoke("set_project_read_only", { name: selectedKey, readOnly: next });
+    } catch (err: unknown) {
+      setError(`Could not change read-only mode: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Reload either way: turning it off can succeed and still report that
+    // the folder's files could not be updated.
+    await reloadProject(selectedKey);
+    window.dispatchEvent(new CustomEvent("project-updated", { detail: { local_key: selectedKey } }));
+  };
+
   const reloadProject = async (projectKey: string) => {
     try {
       const raw: string = await invoke("read_project", { name: projectKey });
@@ -2014,6 +2073,9 @@ export function ProjectEditor({
         instructions_index_mode: parsed.instructions_index_mode || false,
         mode: parsed.mode === 'silent' ? 'silent' : 'normal',
         manage_gitignore: parsed.manage_gitignore === true,
+        read_only: parsed.read_only === true,
+        local_read_only: parsed.local_read_only === true,
+        read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
       };
       setSelectedKey(projectKey);
@@ -2438,7 +2500,7 @@ export function ProjectEditor({
     setOrphanError(null);
     try {
       // Opened by its key: another project may share the name.
-      const imported = await invoke<{ name: string; local_key: string }>("import_existing_project", {
+      const imported = await invoke<{ name: string; local_key: string; read_only: boolean }>("import_existing_project", {
         directory: orphanDialog.directory,
       });
       const importedName = imported.name;
@@ -2453,6 +2515,12 @@ export function ProjectEditor({
       // Refresh the WorkspaceSidebar's cached project list so the newly imported
       // project appears and can be highlighted (same pattern as create + rename).
       window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName, local_key: importedKey } }));
+      if (imported.read_only) {
+        await message(
+          `"${importedName}" was added in read-only mode, as its settings ask. Automatic reads its settings but will not change any of its files.\n\nYou can turn this off in Configuration > Settings.`,
+          { title: "Added as read only", kind: "info" },
+        );
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setOrphanError(msg);
@@ -2566,6 +2634,14 @@ export function ProjectEditor({
       return true;
     } catch (err: any) {
       console.error("Autosave failed:", err);
+      if (readOnly && selectedKey) {
+        // The save was refused because the project is read only. Show the
+        // stored project again rather than an edit that was not kept.
+        setSyncStatus(null);
+        setReadOnlyNotice(true);
+        void reloadProject(selectedKey);
+        return false;
+      }
       setSyncStatus(`Save failed: ${err}`);
       return false;
     } finally {
@@ -2962,7 +3038,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Rebuild button */}
-                {!isCreating && selectedKey && (
+                {!isCreating && !readOnly && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={handleRebuild}
@@ -2977,7 +3053,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Apply Template button */}
-                {!isCreating && selectedKey && (
+                {!isCreating && !readOnly && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={() => {
@@ -2995,7 +3071,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Attach Profile button */}
-                {!isCreating && selectedKey && (
+                {!isCreating && !readOnly && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={() => {
@@ -3065,8 +3141,28 @@ export function ProjectEditor({
                     </span>
                   </span>
                 )}
+                {/* Read-only projects cannot be synced or saved: a quiet label replaces both. */}
+                {readOnly && (
+                  <span
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-bg-input text-text-muted rounded text-[12px] font-medium"
+                    title={
+                      project.read_only_owner
+                        ? `This folder is inside "${project.read_only_owner}", which is read only. Automatic does not change its files.`
+                        : "Automatic reads this project but does not change its files. Turn this off in Configuration > Settings."
+                    }
+                  >
+                    <Lock size={12} /> Read only
+                    {readOnlyNotice && (
+                      <span className="font-normal text-text-muted/80">
+                        {project.read_only_owner
+                          ? `· turn off read only on "${project.read_only_owner}" to make changes`
+                          : "· turn off in Settings to make changes"}
+                      </span>
+                    )}
+                  </span>
+                )}
                 {/* Sync / in-sync indicator — shown when project has directory + agents configured */}
-                {!dirty && project.directory && project.agents.length > 0 && (
+                {!readOnly && !dirty && project.directory && project.agents.length > 0 && (
                   syncStatus === "syncing" ? (
                     <button
                       disabled
@@ -3102,7 +3198,7 @@ export function ProjectEditor({
                     </button>
                   )
                 )}
-                {dirty && (
+                {dirty && !readOnly && (
                   <button
                     onClick={handleSave}
                     disabled={(isCreating && !newName.trim()) || syncStatus === "syncing"}
@@ -3376,13 +3472,21 @@ export function ProjectEditor({
             {/* ── Drift warning banner ─────────────────────────────── */}
             {/* Drift describes real on-disk state independent of any in-memory edits,
                 so the banner stays visible even when the project is `dirty`. */}
+            {/* A read-only project still shows drift, as information: the
+                folder's agent files differ from its settings, which can mean
+                committed files Automatic does not manage. It cannot be synced. */}
             {driftReport?.drifted && !isCreating && project.directory && project.agents.length > 0 && (
               <div className="border-b border-warning/25 bg-warning/10">
                 <div className="flex items-center justify-between px-6 py-2 text-warning">
                   <div className="flex items-center gap-2 text-[12px]">
                     <AlertCircle size={13} />
-                    <span>Configuration has drifted — agent config files no longer match Automatic settings.</span>
+                    <span>
+                      {readOnly
+                        ? "Agent config files in this folder differ from its Automatic settings. Read-only mode leaves them as they are."
+                        : "Configuration has drifted — agent config files no longer match Automatic settings."}
+                    </span>
                   </div>
+                  {!readOnly && (
                   <button
                     onClick={handleSync}
                     disabled={syncStatus === "syncing"}
@@ -3390,6 +3494,7 @@ export function ProjectEditor({
                   >
                     {syncStatus === "syncing" ? "Syncing…" : "Sync now"}
                   </button>
+                  )}
                 </div>
                 {/* Detail: which agents/files have drifted — click any file to view the diff */}
                 <div className="px-6 pb-3 space-y-1.5">
@@ -4348,7 +4453,13 @@ export function ProjectEditor({
 
                 {/* ── Settings tab ─────────────────────────────────────── */}
                 {projectTab === "settings" && (
-                  <SettingsPanel project={project} setProject={setProject} setDirty={markDirty} />
+                  <SettingsPanel
+                    project={project}
+                    setProject={setProject}
+                    setDirty={markDirty}
+                    onReadOnlyChange={handleReadOnlyChange}
+                    hasUnsavedChanges={dirty || projectFileDirty}
+                  />
                 )}
 
               </div>

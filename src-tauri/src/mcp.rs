@@ -3837,6 +3837,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             directory: dir.into(),
+            read_only: false,
         };
         let this = summary("api", ID_A, "aaaaaaaa-0000-4000-8000-000000000001", "/w/api");
         let index = crate::core::ProjectKeyIndex::new(vec![

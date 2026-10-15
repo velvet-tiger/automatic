@@ -943,6 +943,10 @@ pub fn ensure_automatic_in_global_mcp() -> Result<Vec<String>, String> {
         for name in project_idents {
             if let Ok(raw) = super::read_project(&name) {
                 if let Ok(mut project) = serde_json::from_str::<super::Project>(&raw) {
+                    // Nothing may be written into a read-only project.
+                    if project.is_read_only_here() {
+                        continue;
+                    }
                     let mut changed = false;
 
                     if !project

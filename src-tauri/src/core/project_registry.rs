@@ -58,6 +58,18 @@ impl RegistryEntry {
         self.string_field("local_key")
     }
 
+    /// Whether this machine treats the entry's project as read-only. An
+    /// entry that could not be parsed reports `false`; callers that write
+    /// re-read it through [`super::ensure_project_writable`].
+    pub fn local_read_only(&self) -> bool {
+        self.contents
+            .as_ref()
+            .ok()
+            .and_then(|v| v.get("local_read_only"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
     /// The `id` cached in the entry's file, if any.
     pub fn cached_id(&self) -> Option<&str> {
         self.string_field("id")
@@ -80,6 +92,7 @@ impl RegistryEntry {
             id: self.cached_id().unwrap_or_default().to_string(),
             name: self.name.clone(),
             directory: self.directory().ok().flatten().unwrap_or_default(),
+            read_only: self.local_read_only(),
         }
     }
 
@@ -97,6 +110,51 @@ impl RegistryEntry {
             .filter(|s| !s.is_empty())
             .map(str::to_string))
     }
+}
+
+/// Write a registry file so a concurrent reader sees the old content or the
+/// new content, never a partly written file. The GUI and every `mcp-serve`
+/// process read and write the registry at the same time, and a reader that
+/// caught a half-written file would report the entry as unparseable. The
+/// content goes to a temporary file in the same directory, which `fs::rename`
+/// then moves over `path` in one step. The temporary name does not end in
+/// `.json`, so a registry scan never lists it.
+pub(crate) fn write_registry_file(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = path.with_file_name(format!(
+        ".{}.{}.{}.tmp",
+        file_name,
+        std::process::id(),
+        sequence
+    ));
+    // `create_new` refuses an existing path, so a file or symlink already at
+    // the temporary name is never written through.
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()
+        });
+    if let Err(e) = written {
+        // Remove only a file this call created. An existing path at the
+        // temporary name is not ours to delete.
+        if e.kind() != ErrorKind::AlreadyExists {
+            let _ = fs::remove_file(&temp);
+        }
+        return Err(format!("Failed to write {}: {}", temp.display(), e));
+    }
+    fs::rename(&temp, path).map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        format!("Failed to replace {}: {}", path.display(), e)
+    })
 }
 
 /// Whether two project names are the same name. Ignores case.

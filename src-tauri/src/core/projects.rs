@@ -135,6 +135,11 @@ pub struct ProjectSummary {
     pub name: String,
     /// Empty for a project with no folder yet.
     pub directory: String,
+    /// Whether this machine treats the project as read-only (see
+    /// `read_only.rs`): its registry pointer says so, or its folder sits
+    /// inside a read-only project.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Every registered project with its keys, sorted by name.
@@ -155,7 +160,18 @@ pub(crate) fn get_project_summaries_in(
 ) -> Result<Vec<ProjectSummary>, String> {
     // `scan_registry_in` sorts by name, then path.
     let entries = scan_registry_in(projects_dir)?;
-    Ok(entries.iter().map(project_summary).collect())
+    let mut summaries: Vec<ProjectSummary> = entries.iter().map(project_summary).collect();
+    // A project inside a read-only project's folder is read-only too.
+    let owners: Vec<std::path::PathBuf> = summaries
+        .iter()
+        .filter(|s| s.read_only && !s.directory.is_empty())
+        .map(|s| normalised(&s.directory))
+        .collect();
+    for summary in summaries.iter_mut().filter(|s| !s.read_only && !s.directory.is_empty()) {
+        let dir = normalised(&summary.directory);
+        summary.read_only = owners.iter().any(|owner| dir.starts_with(owner));
+    }
+    Ok(summaries)
 }
 
 pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
@@ -168,6 +184,7 @@ pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
                 id: String::new(),
                 name: entry.name.clone(),
                 directory: String::new(),
+                read_only: false,
             };
         }
     };
@@ -195,6 +212,7 @@ pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
         id: keys.id,
         name: entry.name.clone(),
         directory,
+        read_only: entry.local_read_only(),
     }
 }
 
@@ -230,11 +248,12 @@ pub fn read_project(name: &str) -> Result<String, String> {
 /// no folder or a missing one, since writing would recreate the folder.
 ///
 /// The committed `name` is left as the folder has it, so a refresh never
-/// renames a project a teammate renamed upstream.
+/// renames a project a teammate renamed upstream. A read-only project is
+/// skipped.
 pub fn refresh_project_files(name: &str) -> Result<(), String> {
     let resolved = resolve_project(name)?;
     let project = resolved.project;
-    if project.directory.is_empty() || project.directory_missing {
+    if project.directory.is_empty() || project.directory_missing || project_is_read_only(&project)? {
         return Ok(());
     }
     write_project_files(&project)
@@ -285,6 +304,8 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
         },
     };
     let registry_keys = ProjectKeys::of(&registry_project);
+    // Per-machine state that only the pointer stores (see `read_only.rs`).
+    let local_read_only = registry_project.local_read_only;
 
     // If directory is set, read the full project from the project directory.
     // A malformed file there is an error rather than a fallback to registry
@@ -302,6 +323,17 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     let resolved = resolve_stored_keys(&ProjectKeys::of(&project), Some(&registry_keys));
     project.id = resolved.id;
     project.local_key = resolved.local_key;
+    project.local_read_only = local_read_only;
+    // A folder inside a read-only project is read-only too. A failed check
+    // is logged and left to the writers, which re-check strictly.
+    project.read_only_owner = if local_read_only {
+        None
+    } else {
+        read_only_owner_for_display(&project.directory).unwrap_or_else(|e| {
+            eprintln!("read_project: could not check '{}' for a read-only owner: {}", name, e);
+            None
+        })
+    };
 
     // Mark the project if its directory no longer exists on disk.
     if !project.directory.is_empty() && !std::path::Path::new(&project.directory).exists() {
@@ -747,7 +779,7 @@ fn directories_equivalent(a: &str, b: &str) -> bool {
 /// The registry entry of the project that owns `directory`, if any. A
 /// registry entry that cannot be parsed is an error, as it may own the
 /// directory.
-fn find_entry_by_directory(directory: &str) -> Result<Option<RegistryEntry>, String> {
+pub(crate) fn find_entry_by_directory(directory: &str) -> Result<Option<RegistryEntry>, String> {
     if directory.is_empty() {
         return Ok(None);
     }
@@ -784,6 +816,8 @@ pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), Stri
     if directory.is_empty() {
         return Ok(());
     }
+
+    ensure_directory_writable(directory)?;
 
     if let Some(existing) = find_project_by_directory(directory)? {
         return Err(format!(
@@ -861,6 +895,9 @@ pub struct ImportedProject {
     /// The new checkout's key. Address the project by it: the name may be
     /// shared with another project.
     pub local_key: String,
+    /// Whether the project was added in read-only mode, because its
+    /// committed config sets the `read_only` hint.
+    pub read_only: bool,
 }
 
 /// Adopt an on-disk project config as a new registry entry. Reads the
@@ -906,9 +943,11 @@ pub fn import_existing_project(directory: &str) -> Result<ImportedProject, Strin
     // committed `id` means the repo already has an identity, which is kept.
     let name = name.to_string();
     let committed_id = Some(project.id.clone());
+    // The committed `read_only` hint decides this checkout's starting mode.
     let mut pointer = Project {
         name: name.clone(),
         directory: directory.to_string(),
+        local_read_only: project.read_only,
         ..Default::default()
     };
     assign_new_project_keys(&mut pointer, committed_id);
@@ -918,6 +957,7 @@ pub fn import_existing_project(directory: &str) -> Result<ImportedProject, Strin
     Ok(ImportedProject {
         name,
         local_key: pointer.local_key,
+        read_only: pointer.local_read_only,
     })
 }
 
@@ -928,6 +968,7 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
     if directory.is_empty() {
         return Err("A project directory is required.".into());
     }
+    ensure_directory_writable(directory)?;
 
     remove_project_files(directory)?;
 
@@ -953,8 +994,10 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
-    // directory_missing is a transient runtime flag — never persist it.
+    // directory_missing and read_only_owner are computed at read time —
+    // never persist them.
     project.directory_missing = false;
+    project.read_only_owner = None;
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
@@ -977,6 +1020,18 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
                 ));
             }
         }
+    }
+    // Read-only mode is changed only by `set_project_read_only`. A save keeps
+    // the stored value, so stale or edited data cannot turn it off, and a
+    // read-only project with a folder is never saved.
+    project.local_read_only = existing.as_ref().is_some_and(|e| e.local_read_only());
+    if !project.directory.is_empty() {
+        if project.local_read_only {
+            let shown = existing.as_ref().map_or(name, |e| e.name.as_str());
+            return Err(read_only_error(shown));
+        }
+        // A folder inside a read-only project belongs to that repository.
+        ensure_directory_writable(&project.directory)?;
     }
     let registry_name = match &existing {
         Some(entry) => entry.name.clone(),
@@ -1021,6 +1076,12 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     };
 
     if !project.directory.is_empty() {
+        // Read-only mode may have been turned on, by another process, since
+        // the pointer was read above. Check the file again right before the
+        // folder is written.
+        if pointer_file_is_read_only(&registry_path) {
+            return Err(read_only_error(&registry_name));
+        }
         // The committed config keeps the incoming name. The pointer's name is
         // the registry name, which is what makes the project findable.
         write_project_files(&project)?;
@@ -1034,7 +1095,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         // name must be the registry name.
         project.name = registry_name;
         let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
-        fs::write(&registry_path, &pretty).map_err(|e| e.to_string())?;
+        write_registry_file(&registry_path, &pretty)?;
     }
 
     Ok(())
@@ -1093,10 +1154,13 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     project.updated_at = chrono::Utc::now().to_rfc3339();
 
     if !project.directory.is_empty() {
-        if has_project_files(&project.directory)
-            || PathBuf::from(&project.directory)
-                .join(".automatic")
-                .exists()
+        // A read-only project is renamed on this machine only: the registry
+        // name changes and the committed name stays as the folder has it.
+        if !project_is_read_only(&project)?
+            && (has_project_files(&project.directory)
+                || PathBuf::from(&project.directory)
+                    .join(".automatic")
+                    .exists())
         {
             write_project_files(&project)?;
         }
@@ -1104,7 +1168,7 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     } else {
         // No directory: the registry file holds the full config.
         let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
-        fs::write(&entry.path, &pretty).map_err(|e| e.to_string())?;
+        write_registry_file(&entry.path, &pretty)?;
     }
 
     // `fs::rename` also handles a case-only rename on a case-insensitive
@@ -1173,7 +1237,10 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     if let Some(registry_path) = entry.as_ref().map(|e| &e.path) {
         if let Ok(raw) = fs::read_to_string(registry_path) {
             if let Ok(project) = serde_json::from_str::<Project>(&raw) {
-                if !project.directory.is_empty() {
+                // A read-only project's files belong to its repository, so
+                // removing it from Automatic leaves them in place.
+                // An error counts as read-only, so a failed check keeps the files.
+                if !project.directory.is_empty() && !project_is_read_only(&project).unwrap_or(true) {
                     // Best-effort: the registry entry is what makes the
                     // project exist, so a leftover file must not block delete.
                     if let Err(e) = remove_project_files(&project.directory) {
@@ -3454,18 +3521,21 @@ mod tests {
                         id: String::new(),
                         name: "alpha".into(),
                         directory: String::new(),
+                        read_only: false,
                     },
                     ProjectSummary {
                         local_key: String::new(),
                         id: String::new(),
                         name: "broken".into(),
                         directory: String::new(),
+                        read_only: false,
                     },
                     ProjectSummary {
                         local_key: keyed.local_key.clone(),
                         id: keyed.id.clone(),
                         name: "zeta".into(),
                         directory: dir.to_str().unwrap().to_string(),
+                        read_only: false,
                     },
                 ]
             );
@@ -3477,6 +3547,7 @@ mod tests {
                     "id": keyed.id,
                     "name": "zeta",
                     "directory": dir.to_str().unwrap(),
+                    "read_only": false,
                 })
             );
         });

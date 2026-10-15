@@ -370,6 +370,16 @@ fn scrub_tools_from_projects(tool_names: &[String]) {
             .and_then(|d| d.as_str())
             .filter(|d| !d.is_empty())
             .map(|d| d.to_string());
+        // A read-only project's folder, or one inside it, is never edited,
+        // and its pointer holds no config to edit. A failed check counts as
+        // read-only.
+        if let Some(ref dir) = project_dir {
+            if super::pointer_is_read_only(&value)
+                || super::is_directory_read_only(dir).unwrap_or(true)
+            {
+                continue;
+            }
+        }
 
         if let Some(ref dir) = project_dir {
             if let Some(config_path) = super::project_config_source_path(dir) {
@@ -386,7 +396,7 @@ fn scrub_tools_from_projects(tool_names: &[String]) {
 
         if remove_tools_from_value(&mut value, tool_names) {
             if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                let _ = fs::write(&registry_path, pretty);
+                let _ = super::write_registry_file(&registry_path, &pretty);
             }
         }
     }

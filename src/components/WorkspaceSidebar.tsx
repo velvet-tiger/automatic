@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, LayoutGrid, Lock, Plus, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
 import { resolveGroupDrop, UNGROUPED_DROP_TARGET } from "../lib/groupDrop";
 import {
@@ -141,10 +141,12 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     window.addEventListener("groups-updated", handler);
     window.addEventListener("project-removed", handler);
     window.addEventListener("project-added", handler);
+    window.addEventListener("project-updated", handler);
     return () => {
       window.removeEventListener("groups-updated", handler);
       window.removeEventListener("project-removed", handler);
       window.removeEventListener("project-added", handler);
+      window.removeEventListener("project-updated", handler);
     };
   }, [loadData]);
 
@@ -337,6 +339,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   const renderProjectRow = (projectKey: string, sourceGroup: string | null) => {
     const isActive = activeTab === "projects" && projectKey === activeProjectKey;
     const label = labelForKey(projectKey);
+    const readOnly = summaries.some((s) => projectKeyOf(s) === projectKey && s.read_only === true);
     return (
       <div key={projectKey} className="group/project relative">
         <button
@@ -352,6 +355,13 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
           }}
         >
           <ProjectNameLabel label={label} />
+          {readOnly && (
+            <Lock
+              size={10}
+              className="ml-1.5 inline -mt-0.5 text-text-muted/60"
+              aria-label="Read only"
+            />
+          )}
         </button>
         <button
           type="button"

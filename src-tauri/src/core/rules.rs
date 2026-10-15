@@ -545,6 +545,16 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
             .and_then(|d| d.as_str())
             .filter(|d| !d.is_empty())
             .map(|d| d.to_string());
+        // A read-only project's folder, or one inside it, is never edited,
+        // and its pointer holds no config to edit. A failed check counts as
+        // read-only.
+        if let Some(ref dir) = project_dir {
+            if super::pointer_is_read_only(&value)
+                || super::is_directory_read_only(dir).unwrap_or(true)
+            {
+                continue;
+            }
+        }
 
         // If there is a project directory, the authoritative config lives there.
         // We update that file; the registry entry is just a pointer and doesn't
@@ -580,7 +590,7 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
         let deduped = dedupe_file_rules(&mut value);
         if renamed || deduped {
             if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                let _ = fs::write(&registry_path, pretty);
+                let _ = super::write_registry_file(&registry_path, &pretty);
             }
         }
     }
@@ -667,6 +677,16 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
             .and_then(|d| d.as_str())
             .filter(|d| !d.is_empty())
             .map(|d| d.to_string());
+        // A read-only project's folder, or one inside it, is never edited,
+        // and its pointer holds no config to edit. A failed check counts as
+        // read-only.
+        if let Some(ref dir) = project_dir {
+            if super::pointer_is_read_only(&value)
+                || super::is_directory_read_only(dir).unwrap_or(true)
+            {
+                continue;
+            }
+        }
 
         // With a project directory the authoritative config lives there; the
         // registry entry is just a pointer.
@@ -698,7 +718,7 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
         }
         if changed {
             if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                let _ = fs::write(&registry_path, pretty);
+                let _ = super::write_registry_file(&registry_path, &pretty);
             }
         }
     }

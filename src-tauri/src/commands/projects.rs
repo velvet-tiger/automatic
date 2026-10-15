@@ -408,6 +408,34 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
     core::inspect_project_directory(directory)
 }
 
+/// Turn read-only mode on or off for a project on this machine. Edits only
+/// the registry pointer, never the project folder, so it works while the
+/// project is read-only.
+///
+/// Turning it off catches up on what was skipped while it was on: the
+/// folder's files are refreshed (keys and enrichment), and group profiles
+/// and plugin-owned resources are reconciled. Renames and removals of
+/// library items made in the meantime are not replayed; the project keeps
+/// the names its committed config uses. Agent files are not synced here, so
+/// any drift shows and the user syncs when ready.
+#[tauri::command]
+pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> {
+    core::set_project_read_only(name, read_only)?;
+    if read_only {
+        return Ok(());
+    }
+    let ident = core::canonical_project_ident(name)?;
+    core::refresh_project_files(&ident).map_err(|e| {
+        format!(
+            "Read-only mode is off, but the project's files could not be updated: {}",
+            e
+        )
+    })?;
+    reconcile_group_profiles_for_projects(std::slice::from_ref(&ident));
+    reconcile_plugin_resources_in_projects();
+    Ok(())
+}
+
 /// Adopt an existing on-disk project config (`.automatic.json`, or a legacy
 /// `.automatic/project.json`) as a registered project. Returns the adopted
 /// project's `{name, local_key}`: open it by the key, since another project
@@ -416,7 +444,8 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 pub fn import_existing_project(directory: &str) -> Result<core::ImportedProject, String> {
     let imported = core::import_existing_project(directory)?;
     // Write the new checkout's keys into the folder now, as a save would.
-    // The import itself only writes the registry pointer.
+    // The import itself only writes the registry pointer. The refresh skips
+    // a project added in read-only mode.
     if let Err(e) = core::refresh_project_files(&imported.local_key) {
         eprintln!(
             "[automatic] could not write keys into imported project '{}': {}",
@@ -473,7 +502,12 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     let raw = core::read_project(ident)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    if project.id.is_empty() && !project.directory.is_empty() && !project.agents.is_empty() {
+    // A read-only project is renamed on this machine only; nothing is synced.
+    if project.id.is_empty()
+        && !project.directory.is_empty()
+        && !project.agents.is_empty()
+        && !project.is_read_only_here()
+    {
         let written = sync::sync_project(&project);
         if let Ok(ref files) = written {
             if !files.is_empty() {
@@ -579,6 +613,7 @@ pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
 /// directory if it does not exist.
 #[tauri::command]
 pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -593,6 +628,7 @@ pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn sync_project(name: &str) -> Result<String, String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -616,6 +652,7 @@ pub fn sync_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn rebuild_project(name: &str) -> Result<String, String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -731,6 +768,7 @@ pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Resu
 /// [`crate::agent::RemovalEntry`] describing what changed.
 #[tauri::command]
 pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
@@ -781,6 +819,7 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
@@ -820,6 +859,7 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -909,6 +949,7 @@ fn strip_instructions_header(content: &str) -> String {
 /// Favours the on-disk file over Automatic's stored copy.
 #[tauri::command]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
@@ -1036,6 +1077,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 /// re-sync so agent copies/symlinks match.
 #[tauri::command]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
@@ -1198,8 +1240,37 @@ where
     }
 }
 
+/// Refuse a command that writes into a project's folder when the project
+/// is read-only on this machine, or its folder sits inside a read-only
+/// project. `name` is the project's identifier.
+pub(crate) fn ensure_writable(name: &str) -> Result<(), String> {
+    if core::is_project_read_only(name)? {
+        let shown = core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
+        return Err(core::read_only_error(&shown));
+    }
+    if let Some(directory) = core::project_directory(name)? {
+        core::ensure_directory_writable(&directory)?;
+    }
+    Ok(())
+}
+
+/// [`with_each_project_mut`] for updates: skips projects that are read-only
+/// on this machine, since nothing may be written into their folders. Use
+/// [`with_each_project_mut`] to look at every project, read-only or not.
+pub(crate) fn with_each_writable_project_mut<F>(mut f: F)
+where
+    F: FnMut(&str, &mut core::Project),
+{
+    with_each_project_mut(|project_name, project| {
+        if project.is_read_only_here() {
+            return;
+        }
+        f(project_name, project);
+    });
+}
+
 pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core::Project) {
-    if project.directory.is_empty() || project.agents.is_empty() {
+    if project.directory.is_empty() || project.agents.is_empty() || project.is_read_only_here() {
         return;
     }
 
@@ -1212,7 +1283,7 @@ pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core:
 }
 
 pub(crate) fn sync_projects_referencing_skill(skill_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if project.skills.iter().any(|skill| skill == skill_name) {
             sync_project_if_configured(project_name, project);
         }
@@ -1220,7 +1291,7 @@ pub(crate) fn sync_projects_referencing_skill(skill_name: &str) {
 }
 
 pub(crate) fn sync_projects_referencing_mcp_server(server_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if project
             .mcp_servers
             .iter()
@@ -1232,7 +1303,7 @@ pub(crate) fn sync_projects_referencing_mcp_server(server_name: &str) {
 }
 
 pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let referenced = project
             .file_rules
             .values()
@@ -1244,7 +1315,7 @@ pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
 }
 
 pub(crate) fn sync_projects_referencing_subagent(machine_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if project.user_agents.iter().any(|name| name == machine_name) {
             sync_project_if_configured(project_name, project);
         }
@@ -1252,7 +1323,7 @@ pub(crate) fn sync_projects_referencing_subagent(machine_name: &str) {
 }
 
 pub(crate) fn sync_projects_referencing_user_command(machine_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if project
             .user_commands
             .iter()
@@ -1264,7 +1335,7 @@ pub(crate) fn sync_projects_referencing_user_command(machine_name: &str) {
 }
 
 pub(crate) fn sync_projects_referencing_hook(machine_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if project.hooks.iter().any(|name| name == machine_name) {
             sync_project_if_configured(project_name, project);
         }
@@ -1297,7 +1368,7 @@ fn persist_swept_project(project_name: &str, project: &mut core::Project, what: 
 /// profile and re-sync the ones that changed. Called after a profile is
 /// saved, and after a library asset it references is pruned or renamed.
 pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let referenced = project.profiles.iter().any(|p| p == profile_name)
             || project.profile_contributions.contains_key(profile_name);
         if !referenced {
@@ -1335,6 +1406,9 @@ pub(crate) fn reconcile_group_profiles_for_projects(project_idents: &[String]) {
                 continue;
             }
         };
+        if project.is_read_only_here() {
+            continue;
+        }
         // Group profiles first: they decide which profiles are attached.
         let groups_changed =
             core::reconcile_group_profiles(&mut project, &core::groups_for_project(ident));
@@ -1352,7 +1426,7 @@ pub(crate) fn reconcile_group_profiles_for_projects(project_idents: &[String]) {
 /// Groups are cleared too, or a group would put the missing profile back.
 pub(crate) fn detach_profile_from_projects(profile_name: &str) {
     core::prune_profile_from_groups(profile_name);
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let before = project.profiles.len();
         project.profiles.retain(|p| p != profile_name);
         let recorded = project.profile_contributions.contains_key(profile_name);
@@ -1374,7 +1448,7 @@ pub(crate) fn rename_profile_in_projects(old_name: &str, new_name: &str) {
         return;
     }
     core::rename_profile_in_groups(old_name, new_name);
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if core::rename_profile_in_project(project, old_name, new_name) {
             persist_swept_project(project_name, project, "profile rename");
         }
@@ -1382,7 +1456,7 @@ pub(crate) fn rename_profile_in_projects(old_name: &str, new_name: &str) {
 }
 
 pub(crate) fn prune_hook_from_projects(machine_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let before = project.hooks.len();
         project.hooks.retain(|name| name != machine_name);
         let stripped =
@@ -1416,7 +1490,7 @@ pub(crate) fn prune_hook_from_projects(machine_name: &str) {
 /// without the user having to press "Sync now". Silent failures are logged
 /// to stderr; this is best-effort.
 pub(crate) fn resync_all_projects() {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         sync_project_if_configured(project_name, project);
     });
 }
@@ -1436,7 +1510,7 @@ pub(crate) fn reconcile_plugin_resources_in_projects() {
         }
     };
 
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         if !core::reconcile_project_plugin_resources(project, &plugins) {
             return;
         }
@@ -1461,7 +1535,7 @@ pub(crate) fn reconcile_plugin_resources_in_projects() {
 }
 
 pub(crate) fn prune_skill_from_projects(skill_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let before = project.skills.len();
         project.skills.retain(|skill| skill != skill_name);
         let stripped =
@@ -1485,7 +1559,7 @@ pub(crate) fn prune_skill_from_projects(skill_name: &str) {
 }
 
 pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let before = project.mcp_servers.len();
         project.mcp_servers.retain(|server| server != server_name);
         project
@@ -1521,7 +1595,7 @@ pub(crate) fn rename_mcp_server_in_projects(old_name: &str, new_name: &str) {
     if old_name == new_name {
         return;
     }
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let mut changed = false;
         for server in project.mcp_servers.iter_mut() {
             if server == old_name {
@@ -1642,7 +1716,7 @@ pub(crate) fn prune_rule_from_templates(rule_name: &str) {
 }
 
 pub(crate) fn prune_rule_from_projects(rule_name: &str) {
-    with_each_project_mut(|project_name, project| {
+    with_each_writable_project_mut(|project_name, project| {
         let mut changed = false;
         for rules in project.file_rules.values_mut() {
             let before = rules.len();
@@ -2822,6 +2896,244 @@ mod identifier_tests {
                 super::super::project_profiles::get_projects_referencing_profile("p").unwrap();
             assert_eq!(profiles[0].name, "site");
             assert_eq!(profiles[0].local_key.as_deref(), Some(key));
+        });
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::propagation_tests::{make_project, with_temp_home};
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::time::SystemTime;
+
+    /// Every path under `dir`, with each file's bytes and modified time.
+    /// Symlinks are recorded by target, not followed. A rewrite with the
+    /// same content still shows as a changed modified time.
+    fn snapshot(dir: &Path) -> BTreeMap<PathBuf, (Vec<u8>, Option<SystemTime>)> {
+        fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, (Vec<u8>, Option<SystemTime>)>) {
+            for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
+                let path = entry.path();
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                let meta = std::fs::symlink_metadata(&path).expect("metadata");
+                if meta.file_type().is_symlink() {
+                    let target = std::fs::read_link(&path).expect("read_link");
+                    out.insert(rel, (target.display().to_string().into_bytes(), None));
+                } else if meta.is_dir() {
+                    out.insert(rel, (Vec::new(), None));
+                    walk(root, &path, out);
+                } else {
+                    let bytes = std::fs::read(&path).expect("read");
+                    out.insert(rel, (bytes, meta.modified().ok()));
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(dir, dir, &mut out);
+        out
+    }
+
+    /// The promise of read-only mode: once it is on, nothing Automatic runs
+    /// changes the project folder. The folder is first synced, then made
+    /// stale, so every path below would write if it were not guarded.
+    #[test]
+    fn read_only_project_folder_is_never_written() {
+        with_temp_home(|_| {
+            core::save_rule("test-rule", "Test Rule", "Rule body.\n").expect("save rule");
+            let (_keep, dir) = make_project("ro", |p| {
+                p.file_rules
+                    .insert("_unified".to_string(), vec!["test-rule".to_string()]);
+            });
+            sync_project("ro").expect("initial sync");
+            core::set_project_read_only("ro", true).expect("turn on read only");
+
+            // Make the folder stale: a sync would put the instruction file
+            // back, and a refresh would re-sort the config.
+            for name in ["CLAUDE.md", "AGENTS.md"] {
+                let _ = std::fs::remove_file(dir.join(name));
+            }
+            let config = dir.join(core::CONFIG_FILE_NAME);
+            std::fs::write(&config, r#"{"name":"ro","agents":["claude"]}"#).expect("write config");
+            let before = snapshot(&dir);
+
+            // Reads and checks.
+            let loaded: core::Project =
+                serde_json::from_str(&core::read_project("ro").expect("read")).expect("parse");
+            assert!(loaded.local_read_only);
+            core::refresh_all_project_files().expect("refresh");
+            let _ = check_project_drift("ro");
+            let _ = check_project_problems("ro");
+
+            // Background fan-outs.
+            core::save_rule("test-rule", "Test Rule", "Changed body.\n").expect("edit rule");
+            sync_projects_referencing_rule("test-rule");
+            resync_all_projects();
+            reconcile_plugin_resources_in_projects();
+            prune_rule_from_projects("test-rule");
+
+            // Direct writes are refused with the read-only error.
+            let refused = |result: Result<(), String>, what: &str| {
+                let err = result.expect_err(what);
+                assert!(err.contains("read only"), "{}: {}", what, err);
+            };
+            refused(sync_project("ro").map(|_| ()), "sync");
+            refused(rebuild_project("ro").map(|_| ()), "rebuild");
+            refused(
+                save_project("ro", &serde_json::to_string(&loaded).unwrap(), None).map(|_| ()),
+                "save",
+            );
+            refused(
+                crate::commands::save_project_file("ro", "CLAUDE.md", "edited"),
+                "instruction file",
+            );
+            refused(crate::commands::save_doc_note("ro", "note", "text"), "doc note");
+
+            assert_eq!(snapshot(&dir), before, "the folder is unchanged");
+
+            // Renaming and removing it leave the folder alone too.
+            core::rename_project("ro", "ro-renamed").expect("rename");
+            core::delete_project("ro-renamed").expect("delete");
+            assert_eq!(snapshot(&dir), before, "rename and delete leave the folder alone");
+        });
+    }
+
+    /// Control for the test above: the same stale folder, left writable, is
+    /// rewritten by the startup refresh and by a resync. Without this, a
+    /// snapshot that never changed could hide a check that sees nothing.
+    #[test]
+    fn the_same_steps_write_to_a_writable_project() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("rw", |_| {});
+            sync_project("rw").expect("initial sync");
+            let config = dir.join(core::CONFIG_FILE_NAME);
+            std::fs::write(&config, r#"{"name":"rw","agents":["claude"]}"#).expect("write config");
+            let _ = std::fs::remove_file(dir.join("CLAUDE.md"));
+            let before = snapshot(&dir);
+
+            core::refresh_all_project_files().expect("refresh");
+            assert_ne!(snapshot(&dir), before, "the refresh rewrites the stale config");
+
+            let before = snapshot(&dir);
+            resync_all_projects();
+            assert_ne!(snapshot(&dir), before, "a resync writes the instruction file back");
+        });
+    }
+
+    /// A project registered inside another project's folder before that
+    /// project became read-only: reads report it as read-only, and the
+    /// commands that delete or write files directly refuse it.
+    #[test]
+    fn a_nested_project_is_read_only_through_its_parent() {
+        with_temp_home(|_| {
+            let (_keep, outer_dir) = make_project("outer", |_| {});
+            let inner_dir = outer_dir.join("api");
+            std::fs::create_dir_all(&inner_dir).expect("mkdir");
+            let inner = core::Project {
+                name: "inner".into(),
+                directory: inner_dir.display().to_string(),
+                agents: vec!["claude".into()],
+                ..Default::default()
+            };
+            core::save_project("inner", &serde_json::to_string(&inner).unwrap()).expect("save inner");
+            sync_project("inner").expect("sync inner");
+            std::fs::create_dir_all(inner_dir.join(".agents/skills/stale")).expect("stale skill");
+
+            core::set_project_read_only("outer", true).expect("outer on");
+            let loaded: core::Project =
+                serde_json::from_str(&core::read_project("inner").unwrap()).unwrap();
+            assert_eq!(loaded.read_only_owner.as_deref(), Some("outer"));
+            assert!(loaded.is_read_only_here());
+            let summary = core::get_project_summaries()
+                .unwrap()
+                .into_iter()
+                .find(|s| s.name == "inner")
+                .unwrap();
+            assert!(summary.read_only, "the summary reports the inherited state");
+
+            let before = snapshot(&inner_dir);
+            let nested_refusal = |result: Result<(), String>, what: &str| {
+                let err = result.expect_err(what);
+                assert!(err.contains("inside project 'outer'"), "{}: {}", what, err);
+            };
+            nested_refusal(
+                remove_agent_from_project("inner", "claude", "remove").map(|_| ()),
+                "remove agent",
+            );
+            nested_refusal(remove_stale_skill("inner", "stale"), "remove stale skill");
+            nested_refusal(crate::commands::save_doc_note("inner", "note", "text"), "doc note");
+            resync_all_projects();
+            core::refresh_all_project_files().expect("refresh");
+            assert_eq!(snapshot(&inner_dir), before, "the nested folder is unchanged");
+        });
+    }
+
+    /// The startup rule migrations skip read-only and nested projects, and
+    /// still reach writable ones.
+    #[test]
+    fn retired_rule_migration_skips_read_only_folders() {
+        with_temp_home(|_| {
+            core::save_rule("gone-rule", "Gone", "Body.\n").expect("save rule");
+            let with_rule = |p: &mut core::Project| {
+                p.file_rules
+                    .insert("_unified".to_string(), vec!["gone-rule".to_string()]);
+            };
+            let (_keep_ro, ro_dir) = make_project("ro", with_rule);
+            let nested_dir = ro_dir.join("sub");
+            std::fs::create_dir_all(&nested_dir).expect("mkdir");
+            let mut nested = core::Project {
+                name: "nested".into(),
+                directory: nested_dir.display().to_string(),
+                ..Default::default()
+            };
+            with_rule(&mut nested);
+            core::save_project("nested", &serde_json::to_string(&nested).unwrap()).expect("save nested");
+            let (_keep_rw, rw_dir) = make_project("rw", with_rule);
+            core::set_project_read_only("ro", true).expect("on");
+
+            let before = snapshot(&ro_dir);
+            core::remove_retired_rules(&["gone-rule".to_string()]).expect("migrate");
+
+            assert_eq!(snapshot(&ro_dir), before, "read-only and nested folders are unchanged");
+            let rw = std::fs::read_to_string(rw_dir.join(core::CONFIG_FILE_NAME)).unwrap();
+            assert!(!rw.contains("gone-rule"), "the writable project is migrated: {}", rw);
+        });
+    }
+
+    #[test]
+    fn a_read_only_project_renames_without_an_error() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("ro", |_| {});
+            core::set_project_read_only("ro", true).expect("on");
+            let before = snapshot(&dir);
+            rename_project("ro", "renamed").expect("rename reports success");
+            assert_eq!(snapshot(&dir), before);
+        });
+    }
+
+    #[test]
+    fn a_project_without_a_folder_cannot_be_made_read_only() {
+        with_temp_home(|_| {
+            let project = core::Project {
+                name: "nowhere".into(),
+                ..Default::default()
+            };
+            core::save_project("nowhere", &serde_json::to_string(&project).unwrap()).expect("save");
+            let err = core::set_project_read_only("nowhere", true).expect_err("refused");
+            assert!(err.contains("has no folder"), "{}", err);
+        });
+    }
+
+    #[test]
+    fn turning_read_only_off_allows_writes_again() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("rw", |_| {});
+            core::set_project_read_only("rw", true).expect("on");
+            assert!(sync_project("rw").is_err());
+
+            set_project_read_only("rw", false).expect("off");
+            sync_project("rw").expect("sync after turning read only off");
+            assert!(dir.join("CLAUDE.md").exists() || dir.join(".claude").exists());
         });
     }
 }

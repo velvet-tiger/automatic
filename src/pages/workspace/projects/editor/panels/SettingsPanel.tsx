@@ -1,15 +1,88 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
-import { Copy, Layers } from "lucide-react";
+import { useState } from "react";
+import { Copy, Layers, Lock } from "lucide-react";
 import type { Project } from "../../types";
 
 interface SettingsPanelProps {
   project: Project;
   setProject: (next: Project) => void;
   setDirty: (v: boolean) => void;
+  /**
+   * Turn read-only mode on or off on this machine. Takes effect at once,
+   * outside the normal save, because a read-only project is never saved.
+   */
+  onReadOnlyChange: (readOnly: boolean) => Promise<void>;
+  /**
+   * The editor holds edits not yet saved. Turning read-only on would drop
+   * them, so it waits until they are saved.
+   */
+  hasUnsavedChanges?: boolean;
 }
 
-export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelProps) {
+interface SwitchProps {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  onToggle: () => void;
+}
+
+/** The Enabled/Disabled switch every setting on this panel uses. */
+function SettingSwitch({ checked, disabled = false, label, onToggle }: SwitchProps) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onToggle}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+        checked ? "bg-brand/10 text-brand" : "bg-bg-sidebar text-text-muted"
+      }`}
+    >
+      <span className="text-[11px] font-medium">{checked ? "Enabled" : "Disabled"}</span>
+      <span
+        className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
+          checked ? "bg-brand" : "bg-border-strong/60"
+        }`}
+      >
+        <span
+          className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-3.5" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
+export function SettingsPanel({
+  project,
+  setProject,
+  setDirty,
+  onReadOnlyChange,
+  hasUnsavedChanges = false,
+}: SettingsPanelProps) {
+  const ownReadOnly = project.local_read_only === true;
+  const inheritedFrom = project.read_only_owner;
+  // Read-only here, on its own or through a read-only parent folder.
+  const readOnly = ownReadOnly || Boolean(inheritedFrom);
+  const hasFolder = Boolean(project.directory);
+  // Turning it on needs a folder and no pending edits; turning it off is
+  // always allowed. An inherited state is changed on the parent project.
+  const toggleDisabled =
+    Boolean(inheritedFrom) || (!ownReadOnly && (!hasFolder || hasUnsavedChanges));
+  const [readOnlyBusy, setReadOnlyBusy] = useState(false);
+
+  const toggleReadOnly = async () => {
+    setReadOnlyBusy(true);
+    try {
+      await onReadOnlyChange(!ownReadOnly);
+    } finally {
+      setReadOnlyBusy(false);
+    }
+  };
+
   return (
     <section className="flex gap-6">
       <div className="flex-1 min-w-0 space-y-4">
@@ -17,6 +90,59 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
         <div className="flex items-center gap-2">
           <Layers size={13} className="text-text-muted" />
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Project Settings</span>
+        </div>
+
+        {/* Read only (this machine) */}
+        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-[13px] font-medium text-text-base">
+                <Lock size={12} className="text-text-muted" />
+                Read only
+              </div>
+              <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                Automatic reads this project&apos;s settings and still serves them to agents, but never
+                changes any file in the project folder. This applies on this computer only.
+                {inheritedFrom && (
+                  <> This folder is inside &ldquo;{inheritedFrom}&rdquo;, which is read only, so this project is too.
+                  Change it on &ldquo;{inheritedFrom}&rdquo;.</>
+                )}
+                {!readOnly && !hasFolder && " Choose a folder for this project first."}
+                {!readOnly && hasFolder && hasUnsavedChanges && " Save your changes first."}
+              </div>
+            </div>
+            <SettingSwitch
+              checked={readOnly}
+              disabled={readOnlyBusy || toggleDisabled}
+              label="Read only on this computer"
+              onToggle={() => void toggleReadOnly()}
+            />
+          </div>
+        </div>
+
+        {/* Read-only hint for new checkouts (committed) */}
+        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-text-base">Read only for new checkouts</div>
+              <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                Saved in{" "}
+                <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic.json</code>. Anyone
+                who adds this project from a copy of the repository starts in read-only mode. It does not
+                make this computer read only.
+                {readOnly && " Turn off read only above to change it."}
+              </div>
+            </div>
+            <SettingSwitch
+              checked={project.read_only === true}
+              disabled={readOnly}
+              label="Read only for new checkouts"
+              onToggle={() => {
+                setProject({ ...project, read_only: !project.read_only, updated_at: new Date().toISOString() });
+                setDirty(true);
+              }}
+            />
+          </div>
         </div>
 
         {/* Sync Mode */}
@@ -32,13 +158,14 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
             </div>
             <div className="flex gap-1.5 flex-shrink-0">
               <button
+                disabled={readOnly}
                 onClick={() => {
                   if (project.mode !== 'normal') {
                     setProject({ ...project, mode: 'normal', updated_at: new Date().toISOString() });
                     setDirty(true);
                   }
                 }}
-                className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors ${
+                className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   (project.mode ?? 'normal') === 'normal'
                     ? 'bg-brand/10 border-brand/30 text-brand'
                     : 'bg-bg-sidebar border-border-strong/30 text-text-muted hover:text-text-base'
@@ -47,13 +174,14 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
                 Normal
               </button>
               <button
+                disabled={readOnly}
                 onClick={() => {
                   if (project.mode !== 'silent') {
                     setProject({ ...project, mode: 'silent', updated_at: new Date().toISOString() });
                     setDirty(true);
                   }
                 }}
-                className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors ${
+                className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   project.mode === 'silent'
                     ? 'bg-brand/10 border-brand/30 text-brand'
                     : 'bg-bg-sidebar border-border-strong/30 text-text-muted hover:text-text-base'
@@ -113,31 +241,15 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
                 config is not committed. Turning this off removes the block on the next sync.
               </div>
             </div>
-            <button
-              role="switch"
-              aria-checked={!!project.manage_gitignore}
-              aria-label="Manage .gitignore for this project"
-              onClick={() => {
+            <SettingSwitch
+              checked={!!project.manage_gitignore}
+              disabled={readOnly}
+              label="Manage .gitignore for this project"
+              onToggle={() => {
                 setProject({ ...project, manage_gitignore: !project.manage_gitignore, updated_at: new Date().toISOString() });
                 setDirty(true);
               }}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors flex-shrink-0 ${
-                project.manage_gitignore ? "bg-brand/10 text-brand" : "bg-bg-sidebar text-text-muted"
-              }`}
-            >
-              <span className="text-[11px] font-medium">{project.manage_gitignore ? "Enabled" : "Disabled"}</span>
-              <span
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
-                  project.manage_gitignore ? "bg-brand" : "bg-border-strong/60"
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
-                    project.manage_gitignore ? "translate-x-3.5" : "translate-x-0.5"
-                  }`}
-                />
-              </span>
-            </button>
+            />
           </div>
         </div>
       </div>
@@ -145,7 +257,12 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
       {/* Help sidebar */}
       <div className="w-52 flex-shrink-0">
         <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[11px] text-text-muted space-y-1.5 sticky top-0">
-          <p className="font-medium text-text-base text-[12px]">Sync Mode</p>
+          <p className="font-medium text-text-base text-[12px]">Read only</p>
+          <p className="leading-relaxed">
+            Use this for a repository someone else set up. Automatic loads its committed settings, and
+            agents can still use the Automatic MCP service, but no file in the folder is changed.
+          </p>
+          <p className="font-medium text-text-base text-[12px] pt-1">Sync Mode</p>
           <p className="leading-relaxed">
             <strong className="text-text-base font-medium">Normal</strong> — the default. Automatic writes
             CLAUDE.md, .agents/, .claude/ and other config files directly into your project directory.

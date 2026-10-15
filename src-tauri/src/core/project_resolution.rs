@@ -450,6 +450,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             directory: directory.into(),
+            read_only: false,
         }
     }
 

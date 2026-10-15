@@ -43,9 +43,26 @@ interface ProjectsOverviewProps {
   filterGroup?: string | null;
 }
 
-function ProjectStatusBadge({ drift, missingDir }: { drift: boolean | undefined; missingDir?: boolean }) {
+/** Read-only on this machine, on its own or through a read-only parent folder. */
+function isReadOnlyHere(project: Project | undefined): boolean {
+  return project?.local_read_only === true || Boolean(project?.read_only_owner);
+}
+
+function ProjectStatusBadge({
+  drift,
+  missingDir,
+  readOnly,
+}: {
+  drift: boolean | undefined;
+  missingDir?: boolean;
+  readOnly?: boolean;
+}) {
   if (missingDir) {
     return <span className="text-[11px] text-danger">Missing folder</span>;
+  }
+  // Read-only projects are never synced or checked for drift.
+  if (readOnly) {
+    return <span className="text-[11px] text-text-muted/45">Read only</span>;
   }
   if (drift === true) {
     return <span className="text-[11px] text-warning">Drifted</span>;
@@ -124,7 +141,11 @@ function ProjectCard({
               className="block text-[13px] font-medium text-text-base leading-snug truncate"
             />
             {isConfigured ? (
-              <ProjectStatusBadge drift={drift} missingDir={isMissingDir} />
+              <ProjectStatusBadge
+                drift={drift}
+                missingDir={isMissingDir}
+                readOnly={isReadOnlyHere(project)}
+              />
             ) : (
               <div className="text-[11px] text-warning/80">No agents configured</div>
             )}
@@ -168,7 +189,10 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
   const total = projects.length;
   const synced = projects.filter((n) => driftByProject[n] === false).length;
   const drifted = projects.filter((n) => driftByProject[n] === true).length;
-  const checking = projects.filter((n) => driftByProject[n] === undefined).length;
+  // Read-only projects are never checked, so they are not "checking" either.
+  const checking = projects.filter(
+    (n) => driftByProject[n] === undefined && !isReadOnlyHere(projectDetails.get(n)),
+  ).length;
 
   let fullyConfigured = 0;
   for (const name of projects) {
@@ -533,6 +557,8 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
                     <span className="text-[11px] text-danger">Missing folder</span>
                   ) : !isConfigured ? (
                     <span className="text-[11px] text-warning/80">No agents</span>
+                  ) : isReadOnlyHere(project) ? (
+                    <span className="text-[11px] text-text-muted/50">Read only</span>
                   ) : drift === true ? (
                     <span className="text-[11px] text-warning">Drifted</span>
                   ) : drift === false ? (

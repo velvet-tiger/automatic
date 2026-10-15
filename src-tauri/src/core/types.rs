@@ -435,6 +435,28 @@ pub struct Project {
     #[serde(default)]
     pub manage_gitignore: bool,
 
+    /// Committed hint: when `true`, a checkout that adds this project from
+    /// its existing files starts in read-only mode. It does not make this
+    /// machine read-only; [`Project::local_read_only`] does that.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_only: bool,
+
+    /// Whether this machine treats the project as read-only: Automatic reads
+    /// its files but never writes into its folder. Stored only in this
+    /// machine's registry pointer (`~/.automatic/projects/`), never in the
+    /// project folder, so it can be on while the folder is untouched. Change
+    /// it with `set_project_read_only`; `save_project` keeps the stored
+    /// value whatever the incoming data says.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local_read_only: bool,
+
+    /// Computed at read-time: the name of the read-only project whose folder
+    /// holds this project's folder, when this project is not read-only
+    /// itself. Such a project is read-only too, because its files belong to
+    /// that repository. Never persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_owner: Option<String>,
+
     /// How Automatic writes synced files for this project.
     /// `Normal` (default) — files go directly into the project directory.
     /// `Silent` — files that would normally live outside `.automatic/` are
@@ -488,6 +510,14 @@ pub struct Project {
 }
 
 impl Project {
+    /// Whether this machine must not write into this project's folder: it
+    /// is read-only itself, or sits inside a read-only project. As of when
+    /// the project was read; writers re-check with
+    /// `ensure_project_writable`.
+    pub fn is_read_only_here(&self) -> bool {
+        self.local_read_only || self.read_only_owner.is_some()
+    }
+
     pub fn enabled_mcp_servers(&self) -> Vec<String> {
         self.mcp_servers
             .iter()

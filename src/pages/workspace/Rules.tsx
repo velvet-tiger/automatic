@@ -43,6 +43,8 @@ interface RuleProjectStatus {
   /** The project's `local_key`, when it is registered and has one. */
   local_key?: string;
   synced: boolean;
+  /** Read-only on this machine: shown, but never updated. */
+  read_only?: boolean;
 }
 
 // Per-project sync state.
@@ -50,7 +52,8 @@ interface RuleProjectStatus {
 // "syncing"    = update in progress.
 // "synced"     = project is up to date with the current rule content (green).
 // "error"      = last sync attempt failed.
-type SyncState = "needs-sync" | "syncing" | "synced" | "error";
+// "read-only"  = project is read-only on this machine and is never updated.
+type SyncState = "needs-sync" | "syncing" | "synced" | "error" | "read-only";
 
 /** Default rules are those shipped with the app — machine names start with "automatic-". */
 const isDefaultRule = (id: string) => id.startsWith("automatic-");
@@ -123,10 +126,12 @@ export default function Rules() {
       const refs = sorted.map(s => ({ key: s.local_key || s.name, name: s.name }));
       setReferencingProjects(refs);
       const initial: Record<string, SyncState> = {};
-      for (const s of sorted) initial[s.local_key || s.name] = s.synced ? "synced" : "needs-sync";
+      for (const s of sorted) {
+        initial[s.local_key || s.name] = s.read_only ? "read-only" : s.synced ? "synced" : "needs-sync";
+      }
       setProjectSyncState(initial);
-      // Aggregate: all synced → "synced", otherwise "needs-sync".
-      const allSynced = sorted.length > 0 && sorted.every(s => s.synced);
+      // Aggregate: all writable projects synced → "synced", otherwise "needs-sync".
+      const allSynced = sorted.length > 0 && sorted.every(s => s.read_only || s.synced);
       setSyncAllState(allSynced ? "synced" : "needs-sync");
     } catch (err: any) {
       // Non-fatal — the usage panel just won't show.
@@ -345,11 +350,14 @@ export default function Rules() {
     if (!selectedId || referencingProjects.length === 0) return;
     setSyncAllState("syncing");
     const initialStates: Record<string, SyncState> = {};
-    for (const p of referencingProjects) initialStates[p.key] = "syncing";
+    for (const p of referencingProjects) {
+      initialStates[p.key] = projectSyncState[p.key] === "read-only" ? "read-only" : "syncing";
+    }
     setProjectSyncState(initialStates);
 
     let hadError = false;
     for (const { key: projectKey, name: projectName } of referencingProjects) {
+      if (initialStates[projectKey] === "read-only") continue;
       try {
         await invoke("sync_rule_to_project", { ruleName: selectedId, projectName: projectKey });
         setProjectSyncState(prev => ({ ...prev, [projectKey]: "synced" }));
@@ -794,11 +802,20 @@ export default function Rules() {
                           <li key={projectKey} className="flex items-center justify-between gap-3 py-1">
                             <div className="flex items-center gap-2 min-w-0">
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                                state === "synced" ? "bg-success" : state === "error" ? "bg-danger" : "bg-warning"
+                                state === "synced"
+                                  ? "bg-success"
+                                  : state === "error"
+                                  ? "bg-danger"
+                                  : state === "read-only"
+                                  ? "bg-text-muted/40"
+                                  : "bg-warning"
                               }`} />
                               <ProjectNameLabel label={label} className="text-[13px] text-text-base truncate" />
                             </div>
-                            {state !== "synced" && (
+                            {state === "read-only" && (
+                              <span className="text-[11px] text-text-muted flex-shrink-0">Read only</span>
+                            )}
+                            {state !== "synced" && state !== "read-only" && (
                               <button
                                 onClick={() => handleSyncProject(projectKey, projectName)}
                                 disabled={state === "syncing"}

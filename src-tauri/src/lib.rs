@@ -278,6 +278,7 @@ pub fn run() {
             save_project,
             inspect_project_directory,
             import_existing_project,
+            set_project_read_only,
             delete_project_config,
             rename_project,
             delete_project,

@@ -56,6 +56,7 @@ pub fn discover_new_agent_mcp_configs(
 /// the save/rename commands skip such a project.
 pub fn sync_project(project: &Project) -> Result<Vec<String>, String> {
     check_project_directory(project)?;
+    crate::core::ensure_project_writable(project)?;
     if project.agents.is_empty() {
         return Ok(Vec::new());
     }
@@ -68,6 +69,7 @@ pub fn sync_project(project: &Project) -> Result<Vec<String>, String> {
 /// registry and syncs it, even when no agent was found.
 pub fn sync_new_project_from_existing_files(project: &Project) -> Result<Vec<String>, String> {
     check_project_directory(project)?;
+    crate::core::ensure_project_writable(project)?;
     autodetect_and_sync(project, AgentAdoption::AdoptDetected)
 }
 
@@ -106,6 +108,7 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
     if !dir.exists() {
         return Err(format!("Directory '{}' does not exist", project.directory));
     }
+    crate::core::ensure_project_writable(project)?;
 
     // Ensure the project config is written to the project directory
     if let Ok(proj_str) = serde_json::to_string_pretty(project) {
@@ -131,6 +134,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
 /// directory without registering an ongoing project. The returned `Vec`
 /// lists the files that were written, in order.
 pub fn sync_to_directory(project: &mut Project) -> Result<Vec<String>, String> {
+    // The folder may belong to a registered read-only project even though
+    // this call has no project record for it.
+    crate::core::ensure_directory_writable(&project.directory)?;
     sync_to_directory_inner(project, false)
 }
 

@@ -692,6 +692,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             directory: String::new(),
+            read_only: false,
         }
     }
 

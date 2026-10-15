@@ -55,6 +55,10 @@ pub struct RuleProjectStatus {
     /// `true` if the on-disk instruction file(s) already contain the current
     /// rule content; `false` if a re-sync is needed.
     pub synced: bool,
+    /// `true` when the project is read-only on this machine, so it cannot
+    /// be updated whatever `synced` says.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// Return all projects that reference `rule_name` together with whether
@@ -117,6 +121,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
             name: project.name.clone(),
             local_key: core::local_key_of(project),
             synced,
+            read_only: project.is_read_only_here(),
         });
     });
     Ok(referencing)
@@ -131,6 +136,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
     let project_name = &crate::core::canonical_project_ident(project_name)?;
+    super::projects::ensure_writable(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;

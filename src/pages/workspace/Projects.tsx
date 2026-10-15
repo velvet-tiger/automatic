@@ -8,7 +8,7 @@
  * ~7k lines of state are only realised while a project is selected or being
  * created.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
@@ -150,6 +150,13 @@ export default function Projects({
     void loadProjects();
   }, []);
 
+  // Read-only projects are never synced, so drift is not checked for them.
+  const readOnlyKeys = useMemo(
+    () => new Set(summaries.filter((s) => s.read_only === true).map(projectKeyOf)),
+    [summaries],
+  );
+  const readOnlyKeyList = [...readOnlyKeys].sort().join("\n");
+
   // ── Background drift check for all projects (for sidebar/overview indicators) ─
   useEffect(() => {
     if (projects.length === 0) return;
@@ -157,6 +164,13 @@ export default function Projects({
     const checkAll = async () => {
       for (const key of projects) {
         if (cancelled) return;
+        if (readOnlyKeys.has(key)) {
+          setDriftByProject((prev) => {
+            const { [key]: _skipped, ...rest } = prev;
+            return rest;
+          });
+          continue;
+        }
         try {
           const raw: string = await invoke("check_project_drift", { name: key });
           const report = JSON.parse(raw) as DriftReport;
@@ -184,7 +198,10 @@ export default function Projects({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [projects]);
+    // `readOnlyKeyList` stands in for `readOnlyKeys`, whose identity changes
+    // on every summaries load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, readOnlyKeyList]);
 
   // ── Window event listeners (cross-app navigation) ────────────────────────
   useEffect(() => {
@@ -207,6 +224,13 @@ export default function Projects({
     };
     window.addEventListener("project-removed", handler);
     return () => window.removeEventListener("project-removed", handler);
+  }, []);
+
+  // Read-only mode and other per-machine state shown in the list.
+  useEffect(() => {
+    const handler = () => { void loadProjects(); };
+    window.addEventListener("project-updated", handler);
+    return () => window.removeEventListener("project-updated", handler);
   }, []);
 
   // resetKey: parent nav click while already on Projects → return to list
@@ -261,7 +285,7 @@ export default function Projects({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSyncAll = async () => {
-    const driftedProjects = projects.filter((n) => driftByProject[n] === true);
+    const driftedProjects = projects.filter((n) => driftByProject[n] === true && !readOnlyKeys.has(n));
     if (driftedProjects.length === 0) return;
     setSyncAllStatus("syncing");
     try {

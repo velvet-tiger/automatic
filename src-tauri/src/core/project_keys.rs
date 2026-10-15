@@ -162,15 +162,27 @@ pub(crate) fn registry_pointer(project: &Project) -> serde_json::Value {
     if !project.local_key.is_empty() {
         map.insert("local_key".into(), project.local_key.clone().into());
     }
+    if project.local_read_only {
+        map.insert("local_read_only".into(), true.into());
+    }
     serde_json::Value::Object(map)
 }
 
 /// Write the registry pointer for `project` to `registry_path`.
+///
+/// Keeps `local_read_only` when the file on disk has it, even if `project`
+/// does not. `project` may have been read before another process turned
+/// read-only mode on, and only `set_project_read_only` may turn it off.
 pub(crate) fn write_registry_pointer(registry_path: &Path, project: &Project) -> Result<(), String> {
-    let pretty = serde_json::to_string_pretty(&registry_pointer(project))
+    let mut pointer = registry_pointer(project);
+    if !project.local_read_only && pointer_file_is_read_only(registry_path) {
+        if let Some(map) = pointer.as_object_mut() {
+            map.insert("local_read_only".into(), true.into());
+        }
+    }
+    let pretty = serde_json::to_string_pretty(&pointer)
         .map_err(|e| format!("Failed to serialize registry entry for '{}': {}", project.name, e))?;
-    fs::write(registry_path, pretty)
-        .map_err(|e| format!("Failed to write {}: {}", registry_path.display(), e))
+    write_registry_file(registry_path, &pretty)
 }
 
 /// Keys cached in the registry entry at `registry_path`, or `None` when
@@ -416,9 +428,10 @@ fn ensure_keys_for_project(path: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
-    if project.directory_missing {
-        // Saving would recreate the folder. Cache the keys in the pointer;
-        // the startup refresh after the folder returns writes them into it.
+    if project.directory_missing || project.is_read_only_here() {
+        // Saving would recreate the folder, or write into a read-only one.
+        // Cache the keys in the pointer; the startup refresh after the
+        // folder returns, or read-only mode is turned off, writes them in.
         write_registry_pointer(&entry.path, &project)?;
     } else {
         let data = serde_json::to_string(&project)
@@ -486,8 +499,7 @@ fn rename_registry_file_to_key(path: &Path) -> Result<bool, String> {
         }
         let pretty = serde_json::to_string_pretty(&value)
             .map_err(|e| format!("Failed to serialize {}: {}", entry.path.display(), e))?;
-        fs::write(&entry.path, pretty)
-            .map_err(|e| format!("Failed to write {}: {}", entry.path.display(), e))?;
+        write_registry_file(&entry.path, &pretty)?;
     }
     fs::rename(&entry.path, &target).map_err(|e| {
         format!(
