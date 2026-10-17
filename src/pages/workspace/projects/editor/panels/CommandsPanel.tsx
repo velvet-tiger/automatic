@@ -5,7 +5,7 @@ import { Check, ChevronRight, Edit2, ExternalLink, Globe, Plus, Terminal, Trash2
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { MarkdownPreview } from "../../../../../components/MarkdownPreview";
 import { TokenPill } from "../../../../../components/TokenPill";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { CustomCommand, ProfileLockMap, Project, UserCommandEntry } from "../../types";
 
 interface CommandsPanelProps {
@@ -390,6 +390,7 @@ export function CommandsPanel(props: CommandsPanelProps) {
                         <X size={12} />
                       </button>
                     )}
+                    {inheritedFrom && <LockedRemoveButton profile={inheritedFrom} />}
                   </div>
 
                   {isExpanded && (

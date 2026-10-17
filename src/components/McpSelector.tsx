@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { InheritedBadge } from "./ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
 import {
   Plus,
   Server,
@@ -477,6 +477,7 @@ export function McpSelector({
                     {showRemoveButtonAlways ? <Trash2 size={12} /> : <X size={12} />}
                   </button>
                 )}
+                {isLocked && <LockedRemoveButton profile={inheritedFrom} />}
               </div>
 
               {/* Inline config card */}

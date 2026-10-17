@@ -1,7 +1,7 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import { Check, Plus, Webhook, X } from "lucide-react";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { AgentInfo, HookEntry, ProfileLockMap, Project } from "../../types";
 
 type ProjectTabId =
@@ -271,6 +271,7 @@ export function HooksPanel({
                         <X size={12} />
                       </button>
                     )}
+                    {inheritedFrom && <LockedRemoveButton profile={inheritedFrom} />}
                   </div>
                 </div>
               );

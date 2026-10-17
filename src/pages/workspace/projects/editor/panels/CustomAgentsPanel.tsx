@@ -4,7 +4,7 @@ import type { RefObject } from "react";
 import { Check, Edit2, Globe, MessagesSquare, Plus, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { CustomAgent, ProfileLockMap, Project, SubagentEntry } from "../../types";
 
 interface CustomAgentsPanelProps {
@@ -336,6 +336,7 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
                       <X size={12} />
                     </button>
                   )}
+                  {inheritedFrom && <LockedRemoveButton profile={inheritedFrom} />}
                 </div>
               );
             })}

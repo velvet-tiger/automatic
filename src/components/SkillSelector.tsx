@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Code, Plus, Trash2, X, ExternalLink, GitFork, ChevronRight } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { TokenPill } from "./TokenPill";
-import { InheritedBadge } from "./ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
 
 interface SkillSelectorProps {
   /** Currently selected skills */
@@ -282,6 +282,7 @@ export function SkillSelector({
                     {showRemoveButtonAlways ? <Trash2 size={12} /> : <X size={12} />}
                   </button>
                 )}
+                {isLocked && <LockedRemoveButton profile={inheritedFrom} />}
               </div>
 
               {/* Expanded preview panel */}

@@ -1,4 +1,4 @@
-import { Layers, Lock } from "lucide-react";
+import { Layers, Lock, Trash2 } from "lucide-react";
 
 /** Pill shown in a drawer header for a built-in item that ships with Automatic. */
 export function BuiltInBadge({ label = "Built-in" }: { label?: string }) {
@@ -28,6 +28,34 @@ export function LockCell({ tooltip }: { tooltip: string }) {
     <span title={tooltip}>
       <Lock size={11} className="text-text-muted/60" />
     </span>
+  );
+}
+
+/**
+ * Disabled remove button for a row that cannot be removed. It takes the place
+ * of the live remove button so locked and unlocked rows keep their columns
+ * aligned. `padding` must match the live button in the same list.
+ */
+export function LockedRemoveButton({
+  profile,
+  padding = "p-1.5",
+}: {
+  profile?: string;
+  padding?: "p-1" | "p-1.5";
+}) {
+  const reason = profile
+    ? `Provided by profile ${profile}. Edit the profile to remove it.`
+    : "This item is required and cannot be removed.";
+  return (
+    <button
+      type="button"
+      disabled
+      className={`${padding} text-text-muted opacity-40 cursor-not-allowed rounded flex-shrink-0`}
+      title={reason}
+      aria-label={reason}
+    >
+      <Trash2 size={12} />
+    </button>
   );
 }
 
