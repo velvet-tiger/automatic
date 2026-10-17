@@ -281,6 +281,8 @@ pub fn run() {
             rebuild_project,
             save_project,
             inspect_project_directory,
+            discover_projects,
+            add_discovered_projects,
             import_existing_project,
             set_project_read_only,
             delete_project_config,
