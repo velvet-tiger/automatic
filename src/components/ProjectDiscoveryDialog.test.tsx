@@ -21,6 +21,7 @@ const report = {
       agents: [{ id: "claude", label: "Claude Code" }],
       has_agents_md: false,
       status: { kind: "Available" },
+      check_error: null,
     },
     {
       directory: "/Users/me/code/beta",
@@ -29,6 +30,7 @@ const report = {
       agents: [],
       has_agents_md: true,
       status: { kind: "Available" },
+      check_error: null,
     },
     {
       directory: "/Users/me/code/old",
@@ -37,6 +39,16 @@ const report = {
       agents: [{ id: "cursor", label: "Cursor" }],
       has_agents_md: false,
       status: { kind: "RegisteredHere", name: "old", local_key: "k-old" },
+      check_error: null,
+    },
+    {
+      directory: "/Users/me/code/stray",
+      name: "stray",
+      relative_path: "code/stray",
+      agents: [],
+      has_agents_md: true,
+      status: { kind: "OrphanConfig", name: "stray" },
+      check_error: null,
     },
   ],
 };
@@ -66,13 +78,15 @@ describe("ProjectDiscoveryDialog", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("discover_projects", expect.anything());
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await screen.findByText("Found 3 projects.");
+    await screen.findByText("Found 4 projects.");
     expect(invokeMock).toHaveBeenCalledWith("discover_projects", { root: "/Users/me" });
 
-    // New projects start ticked; a registered one cannot be ticked.
+    // Nothing starts ticked; registered and orphan folders cannot be ticked.
+    expect(screen.getByLabelText("Add alpha")).not.toBeChecked();
     expect(screen.getByLabelText("Add old")).toBeDisabled();
+    expect(screen.getByLabelText("Add stray")).toBeDisabled();
     expect(screen.getByText("Already added as old")).toBeInTheDocument();
-    await user.click(screen.getByLabelText("Add beta"));
+    await user.click(screen.getByLabelText("Add alpha"));
 
     await user.click(screen.getByRole("button", { name: "Add 1 project" }));
 
@@ -96,10 +110,47 @@ describe("ProjectDiscoveryDialog", () => {
       expect((screen.getByLabelText("Folder to search") as HTMLInputElement).value).toBe("/Users/me"),
     );
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await user.click(await screen.findByRole("button", { name: "Add 1 project" }));
+    await user.click(await screen.findByLabelText("Add alpha"));
+    await user.click(screen.getByRole("button", { name: "Add 1 project" }));
 
     await screen.findByText("Cannot read folder");
     expect(onAdded).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Add alpha")).not.toBeDisabled();
+  });
+
+  it("selects every addable folder with Select all", async () => {
+    const user = userEvent.setup();
+    mockInvoke({ discover_projects: report });
+
+    render(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={() => {}} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Folder to search") as HTMLInputElement).value).toBe("/Users/me"),
+    );
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(await screen.findByLabelText("Select all"));
+
+    expect(screen.getByLabelText("Add alpha")).toBeChecked();
+    expect(screen.getByLabelText("Add beta")).toBeChecked();
+    expect(screen.getByLabelText("Add old")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Add 2 projects" })).toBeEnabled();
+  });
+
+  it("drops a scan that finishes after the dialog closed", async () => {
+    const user = userEvent.setup();
+    let finish: (value: unknown) => void = () => {};
+    mockInvoke({ discover_projects: () => new Promise((resolve) => (finish = resolve)) });
+
+    const { rerender } = render(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={() => {}} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Folder to search") as HTMLInputElement).value).toBe("/Users/me"),
+    );
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    rerender(<ProjectDiscoveryDialog isOpen={false} onClose={() => {}} onAdded={() => {}} />);
+    finish(report);
+    rerender(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={() => {}} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Search" })).toBeEnabled());
+    expect(screen.queryByText(/Found/)).not.toBeInTheDocument();
   });
 });

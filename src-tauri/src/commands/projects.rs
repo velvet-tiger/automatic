@@ -186,18 +186,29 @@ fn add_discovered_folders(
 /// new project's `local_key`.
 fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<String, String> {
     let path = std::path::Path::new(directory);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
+    if !path.is_absolute() {
         return Err(format!("'{}' is not an absolute folder path.", directory));
     }
-    // The scan never follows symlinks, so a symlink here did not come from it.
-    let meta = std::fs::symlink_metadata(path)
+    // The scan reports canonical paths and never follows symlinks. A path
+    // that differs from its canonical form holds a symlink or `..`, so it did
+    // not come from the scan.
+    let canonical = path
+        .canonicalize()
         .map_err(|e| format!("Cannot read folder '{}': {}", directory, e))?;
-    if !meta.is_dir() {
+    if canonical != path {
+        return Err(format!(
+            "'{}' goes through a symlink or '..'. Add it with Add Project instead.",
+            directory
+        ));
+    }
+    if !canonical.is_dir() {
         return Err(format!("'{}' is not a folder.", directory));
+    }
+    // Home holds each agent's global config. Syncing it as a project would
+    // rewrite that config.
+    let home = crate::agent::home_dir().and_then(|h| h.canonicalize().ok());
+    if home.as_deref() == Some(canonical.as_path()) {
+        return Err("Your home folder cannot be added as a project.".to_string());
     }
 
     // The folder may have been added, or gained a config, since the scan.
@@ -233,7 +244,16 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
     if let Some(user) = created_by.filter(|u| !u.is_empty()) {
         stub["created_by"] = serde_json::Value::String(user.to_string());
     }
-    save_project(name, &stub.to_string(), Some(true))
+    // A bulk add would otherwise fire one forced AI call per folder at once.
+    // The normal once-a-day run picks each project up later.
+    save_project_with(name, &stub.to_string(), true, NewProjectRecommendations::Skip)
+}
+
+/// Whether creating a project runs the forced first AI recommendations call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NewProjectRecommendations {
+    Run,
+    Skip,
 }
 
 /// Save a project and sync it. `name` is an identifier (a `local_key`, or a
@@ -242,10 +262,24 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
 /// created: the name may be shared with another project.
 #[tauri::command]
 pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<String, String> {
+    save_project_with(
+        name,
+        data,
+        creating.unwrap_or(false),
+        NewProjectRecommendations::Run,
+    )
+}
+
+/// Body of [`save_project`]. `recommendations` decides whether a new
+/// project gets the forced first AI recommendations call.
+fn save_project_with(
+    name: &str,
+    data: &str,
+    creating: bool,
+    recommendations: NewProjectRecommendations,
+) -> Result<String, String> {
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
-    let creating = creating.unwrap_or(false);
-
     // Add Project wizard: refuse a directory another project owns, then give
     // the new project its identity keys before the first write. The name is
     // not looked up: another project may already use it. From here on the
@@ -479,8 +513,9 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
     // Spawn on the Tauri async runtime so we never block the UI.
     // The throttle check inside ai_generate_project_recommendations_bg ensures
     // this runs at most once per 24 hours automatically; on a brand-new project
-    // (is_new == true) we always run it regardless of the throttle.
-    {
+    // (is_new == true) we always run it regardless of the throttle, unless
+    // the caller asked to skip it (bulk add).
+    if !(is_new && recommendations == NewProjectRecommendations::Skip) {
         let project_name = name.to_string();
         let is_new_project = is_new;
         tauri::async_runtime::spawn(async move {
@@ -2480,7 +2515,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
     fn adding_a_discovered_folder_creates_a_project_with_its_agents() {
         with_temp_home(|_| {
             let parent = tempdir().expect("parent");
-            let project_dir = parent.path().join("my-app");
+            let project_dir = parent.path().canonicalize().expect("canonical").join("my-app");
             std::fs::create_dir_all(&project_dir).expect("mkdir");
             std::fs::write(project_dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
             let dir = project_dir.display().to_string();
@@ -2505,21 +2540,58 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(add_discovered_project("relative/dir", None).is_err());
 
             let parent = tempdir().expect("parent");
-            let dotted = format!("{}/x/../y", parent.path().display());
-            assert!(add_discovered_project(&dotted, None).is_err());
+            let base = parent.path().canonicalize().expect("canonical");
+            std::fs::create_dir_all(base.join("x")).expect("mkdir");
+            std::fs::create_dir_all(base.join("y")).expect("mkdir");
+            let dotted = format!("{}/x/../y", base.display());
+            let err = add_discovered_project(&dotted, None).expect_err("dotted path");
+            assert!(err.contains("symlink or '..'"), "{err}");
 
-            let file = parent.path().join("file.txt");
+            let file = base.join("file.txt");
             std::fs::write(&file, "x").expect("write");
             assert!(add_discovered_project(&file.display().to_string(), None).is_err());
 
             #[cfg(unix)]
             {
-                let target = parent.path().join("real");
+                let target = base.join("real");
                 std::fs::create_dir_all(&target).expect("mkdir");
-                let link = parent.path().join("link");
+                let link = base.join("link");
                 std::os::unix::fs::symlink(&target, &link).expect("symlink");
                 assert!(add_discovered_project(&link.display().to_string(), None).is_err());
+                // A symlink higher up the path is caught too.
+                std::fs::create_dir_all(target.join("inner")).expect("mkdir");
+                let through = link.join("inner");
+                assert!(add_discovered_project(&through.display().to_string(), None).is_err());
             }
+        });
+    }
+
+    #[test]
+    fn adding_a_discovered_folder_refuses_an_orphan_config() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("orphan");
+            std::fs::create_dir_all(dir.join(".automatic")).expect("mkdir");
+            std::fs::write(dir.join(".automatic/project.json"), r#"{"name":"orphan"}"#)
+                .expect("write");
+
+            let err = add_discovered_project(&dir.display().to_string(), None)
+                .expect_err("orphan must be refused");
+            assert!(err.contains("not registered"), "{err}");
+        });
+    }
+
+    #[test]
+    fn adding_a_discovered_folder_refuses_the_home_folder() {
+        with_temp_home(|_| {
+            let home = crate::agent::home_dir().expect("home");
+            std::fs::create_dir_all(&home).expect("mkdir");
+            let home = home.canonicalize().expect("canonical");
+            std::fs::write(home.join("CLAUDE.md"), "# global").expect("write");
+
+            let err = add_discovered_project(&home.display().to_string(), None)
+                .expect_err("home must be refused");
+            assert!(err.contains("home folder"), "{err}");
         });
     }
 
@@ -2527,9 +2599,10 @@ fn detach_profile_from_projects_removes_provided_entries() {
     fn adding_discovered_folders_reports_each_result() {
         with_temp_home(|_| {
             let parent = tempdir().expect("parent");
-            let good = parent.path().join("good");
+            let base = parent.path().canonicalize().expect("canonical");
+            let good = base.join("good");
             std::fs::create_dir_all(&good).expect("mkdir");
-            let missing = parent.path().join("missing");
+            let missing = base.join("missing");
 
             let results = add_discovered_folders(
                 vec![missing.display().to_string(), good.display().to_string()],

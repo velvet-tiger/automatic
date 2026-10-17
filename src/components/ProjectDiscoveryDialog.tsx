@@ -19,7 +19,9 @@ interface DiscoveredProject {
   relative_path: string;
   agents: { id: string; label: string }[];
   has_agents_md: boolean;
-  status: DirectoryStatus;
+  /** Null when the folder could not be checked; `check_error` says why. */
+  status: DirectoryStatus | null;
+  check_error: string | null;
 }
 
 /** Mirrors `core::project_discovery::DiscoveryReport`. */
@@ -45,9 +47,14 @@ export interface AddedProject {
 
 interface ProjectDiscoveryDialogProps {
   isOpen: boolean;
+  /** When set, added projects also join this group. Shown as a note. */
+  groupName?: string | null;
   onClose: () => void;
-  /** Called once after an add, with every project that was created. */
-  onAdded: (added: AddedProject[]) => void;
+  /**
+   * Called once after an add, with every project that was created. Resolves
+   * to a message when a follow-up step (such as joining a group) failed.
+   */
+  onAdded: (added: AddedProject[]) => Promise<string | null> | void;
 }
 
 /**
@@ -55,7 +62,7 @@ interface ProjectDiscoveryDialogProps {
  * The scan starts only when the user asks: scanning a home folder makes
  * macOS ask for access to Desktop, Documents and Downloads.
  */
-export function ProjectDiscoveryDialog({ isOpen, onClose, onAdded }: ProjectDiscoveryDialogProps) {
+export function ProjectDiscoveryDialog({ isOpen, groupName = null, onClose, onAdded }: ProjectDiscoveryDialogProps) {
   const { userId } = useCurrentUser();
   const [root, setRoot] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -84,7 +91,7 @@ export function ProjectDiscoveryDialog({ isOpen, onClose, onAdded }: ProjectDisc
   const addable = useMemo(
     () =>
       (report?.projects ?? []).filter(
-        (p) => p.status.kind === "Available" && !outcomes.get(p.directory)?.local_key,
+        (p) => p.status?.kind === "Available" && !outcomes.get(p.directory)?.local_key,
       ),
     [report, outcomes],
   );
@@ -117,9 +124,9 @@ export function ProjectDiscoveryDialog({ isOpen, onClose, onAdded }: ProjectDisc
       const result = await invoke<DiscoveryReport>("discover_projects", { root: folder });
       if (seq !== scanSeq.current) return;
       setReport(result);
-      setSelected(
-        new Set(result.projects.filter((p) => p.status.kind === "Available").map((p) => p.directory)),
-      );
+      // Nothing starts ticked. Adding a folder writes agent config into it
+      // and imports its MCP servers, so the user picks each one.
+      setSelected(new Set());
     } catch (err) {
       if (seq === scanSeq.current) setError(`The scan failed: ${String(err)}`);
     } finally {
@@ -162,7 +169,10 @@ export function ProjectDiscoveryDialog({ isOpen, onClose, onAdded }: ProjectDisc
         .filter((r): r is AddedDiscoveredProject & { local_key: string } => r.local_key !== null)
         .map((r) => ({ name: byDirectory.get(r.directory) ?? r.directory, localKey: r.local_key }));
       setSelected(new Set());
-      if (added.length > 0) onAdded(added);
+      if (added.length > 0) {
+        const problem = await onAdded(added);
+        if (problem) setError(problem);
+      }
     } catch (err) {
       setError(`Adding projects failed: ${String(err)}`);
     } finally {
@@ -200,8 +210,14 @@ export function ProjectDiscoveryDialog({ isOpen, onClose, onAdded }: ProjectDisc
             Choose a folder to search. Automatic looks for folders that hold agent files, such as{" "}
             <code className="font-mono text-[11px] bg-bg-sidebar px-1 rounded">CLAUDE.md</code> or{" "}
             <code className="font-mono text-[11px] bg-bg-sidebar px-1 rounded">AGENTS.md</code>. Nothing is
-            changed until you add projects.
+            changed until you add projects. Adding a project writes Automatic's files into its folder and
+            imports the MCP servers it already uses.
           </p>
+          {groupName && (
+            <p className="text-[12px] text-text-muted">
+              New projects will also join the group <span className="text-text-base">{groupName}</span>.
+            </p>
+          )}
 
           <div className="flex items-center gap-2">
             <input
@@ -333,7 +349,7 @@ interface DiscoveredRowProps {
 
 function DiscoveredRow({ project, checked, onToggle, disabled, outcome }: DiscoveredRowProps) {
   const added = Boolean(outcome?.local_key);
-  const available = project.status.kind === "Available" && !added;
+  const available = project.status?.kind === "Available" && !added;
   return (
     <li className="flex items-start gap-3 px-3 py-2 border-b border-border-strong/20 last:border-b-0">
       <input
@@ -380,10 +396,13 @@ function RowStatus({ project, outcome }: { project: DiscoveredProject; outcome: 
   if (outcome?.error) {
     return <p className="text-[11px] text-danger mt-0.5">{outcome.error}</p>;
   }
-  if (project.status.kind === "RegisteredHere") {
+  if (project.check_error) {
+    return <p className="text-[11px] text-danger mt-0.5">Could not check this folder: {project.check_error}</p>;
+  }
+  if (project.status?.kind === "RegisteredHere") {
     return <p className="text-[11px] text-text-muted mt-0.5">Already added as {project.status.name}</p>;
   }
-  if (project.status.kind === "OrphanConfig") {
+  if (project.status?.kind === "OrphanConfig") {
     return (
       <p className="text-[11px] text-text-muted mt-0.5">
         Has an Automatic config that is not registered. Use Add Project to import it.

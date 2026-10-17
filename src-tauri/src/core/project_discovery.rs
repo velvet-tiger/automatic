@@ -8,6 +8,7 @@
 //! The walk only reads. Adding the chosen folders goes through the normal
 //! project-creation path in `commands::projects`.
 
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -42,8 +43,16 @@ const SKIPPED_DIR_NAMES: &[&str] = &[
 /// Folders directly under the user's home that are never descended into.
 /// `Library` holds app data, and the media folders trigger macOS privacy
 /// prompts (Photos, Music) without ever holding code.
-const SKIPPED_HOME_DIR_NAMES: &[&str] =
-    &["Library", "Applications", "Pictures", "Music", "Movies"];
+/// `AppData` is the Windows equivalent of `Library`; it is hidden by a file
+/// attribute, not a leading dot, so the dot rule misses it.
+const SKIPPED_HOME_DIR_NAMES: &[&str] = &[
+    "Library",
+    "Applications",
+    "Pictures",
+    "Music",
+    "Movies",
+    "AppData",
+];
 
 /// Limits for one scan.
 #[derive(Debug, Clone, Copy)]
@@ -80,7 +89,8 @@ pub struct Candidate {
 #[derive(Debug, Default)]
 pub struct WalkResult {
     pub candidates: Vec<Candidate>,
-    /// Folders opened.
+    /// Folders checked for project files. Each one counts once, whether or
+    /// not the walk then opens it.
     pub visited: usize,
     /// Folders that could not be listed (permissions, races).
     pub unreadable: usize,
@@ -99,7 +109,10 @@ pub struct DiscoveredProject {
     pub relative_path: String,
     pub agents: Vec<DetectedAgent>,
     pub has_agents_md: bool,
-    pub status: DirectoryStatus,
+    /// The folder's registry status. `None` when it could not be checked;
+    /// `check_error` then says why, and the folder cannot be added.
+    pub status: Option<DirectoryStatus>,
+    pub check_error: Option<String>,
 }
 
 /// The result of `discover_projects`.
@@ -134,10 +147,15 @@ fn detect_candidate(dir: &Path, agents: &[&'static dyn Agent]) -> Option<Candida
     })
 }
 
-/// Whether the walk may descend into a child folder named `name`. `parent_is_home`
-/// adds the home-only skip list.
-fn should_descend(name: &str, parent_is_home: bool) -> bool {
+/// Whether the walk may enter a child folder named `name` inside `parent`.
+/// `parent_is_home` adds the home-only skip list.
+fn should_descend(name: &str, parent: &Path, parent_is_home: bool) -> bool {
     if name.starts_with('.') || SKIPPED_DIR_NAMES.contains(&name) {
+        return false;
+    }
+    // Go's module cache (`~/go/pkg/mod`) holds a copy of every dependency,
+    // many of which ship their own CLAUDE.md or AGENTS.md.
+    if name == "mod" && parent.file_name().is_some_and(|p| p == "pkg") {
         return false;
     }
     !(parent_is_home && SKIPPED_HOME_DIR_NAMES.contains(&name))
@@ -162,24 +180,21 @@ pub fn walk_for_projects(
     limits: DiscoveryLimits,
 ) -> WalkResult {
     let mut result = WalkResult::default();
+    // Callers pass canonical paths, so plain equality is enough here.
     let is_home = |p: &Path| home.is_some_and(|h| h == p);
 
+    result.visited = 1;
     if !is_home(root) {
         if let Some(candidate) = detect_candidate(root, agents) {
             result.candidates.push(candidate);
         }
     }
 
-    // Depth-first with an explicit stack: deep trees cannot overflow the
-    // thread stack.
-    let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
-    while let Some((dir, depth)) = stack.pop() {
-        if result.visited >= limits.max_visited {
-            result.truncated = true;
-            break;
-        }
-        result.visited += 1;
-
+    // Breadth-first: every shallow folder is checked before any deep one.
+    // When the visit cap cuts the walk short, it drops the deep tail of the
+    // tree, not whole top-level folders such as `~/code`.
+    let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::from([(root.to_path_buf(), 0)]);
+    'walk: while let Some((dir, depth)) = queue.pop_front() {
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => {
@@ -206,15 +221,22 @@ pub fn walk_for_projects(
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if !should_descend(name, parent_is_home) {
+            if !should_descend(name, &dir, parent_is_home) {
                 continue;
             }
             children.push(entry.path());
         }
-        // Sorted in reverse so the stack pops them in name order.
-        children.sort_unstable_by(|a, b| b.cmp(a));
+        children.sort_unstable();
 
         for child in children {
+            // Every child costs a round of marker checks, so each one counts
+            // against the budget. A folder with 100k subfolders cannot run
+            // past the cap in a single step.
+            if result.visited >= limits.max_visited {
+                result.truncated = true;
+                break 'walk;
+            }
+            result.visited += 1;
             if !is_home(&child) {
                 if let Some(candidate) = detect_candidate(&child, agents) {
                     result.candidates.push(candidate);
@@ -222,7 +244,7 @@ pub fn walk_for_projects(
                 }
             }
             if child_depth < limits.max_depth {
-                stack.push((child, child_depth));
+                queue.push_back((child, child_depth));
             }
         }
     }
@@ -236,18 +258,25 @@ pub fn walk_for_projects(
 /// Scan `root` for agent projects and report each one with its registry
 /// status. Reads only.
 pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<DiscoveryReport, String> {
-    let root_path = PathBuf::from(root.trim());
-    if !root_path.is_absolute() {
+    let given = PathBuf::from(root.trim());
+    if !given.is_absolute() {
         return Err(format!(
             "The folder to scan must be an absolute path (got '{}').",
             root
         ));
     }
-    if !root_path.is_dir() {
-        return Err(format!("Folder '{}' does not exist.", root_path.display()));
+    if !given.is_dir() {
+        return Err(format!("Folder '{}' does not exist.", given.display()));
     }
+    // Canonical paths make the home check reliable when the folder was
+    // reached through a symlink (macOS aliases, `/home` -> `/var/home`).
+    // Every path the walk builds is then canonical too, because it joins
+    // real names and never follows a link. The add command relies on that.
+    let root_path = given
+        .canonicalize()
+        .map_err(|e| format!("Cannot open folder '{}': {}", given.display(), e))?;
 
-    let home = crate::agent::home_dir();
+    let home = crate::agent::home_dir().and_then(|h| h.canonicalize().ok());
     let agents = crate::agent::all();
     let walk = walk_for_projects(&root_path, home.as_deref(), &agents, limits);
 
@@ -257,8 +286,11 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
             // A non-UTF-8 path cannot be stored in a project; skip it.
             continue;
         };
-        let status = super::inspect_project_directory(&directory)
-            .map_err(|e| format!("Failed to check '{}': {}", directory, e))?;
+        // One unreadable registry entry must not sink the whole scan.
+        let (status, check_error) = match super::inspect_project_directory(&directory) {
+            Ok(status) => (Some(status), None),
+            Err(e) => (None, Some(e)),
+        };
         let name = candidate
             .directory
             .file_name()
@@ -279,6 +311,7 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
             agents: candidate.agents,
             has_agents_md: candidate.has_agents_md,
             status,
+            check_error,
         });
     }
 
@@ -398,6 +431,55 @@ mod tests {
     }
 
     #[test]
+    fn skips_the_go_module_cache() {
+        let root = tempdir().expect("tempdir");
+        touch(&root.path().join("go/pkg/mod/github.com/o/r@v1/AGENTS.md"));
+        touch(&root.path().join("go/src/app/AGENTS.md"));
+
+        let result = walk_for_projects(root.path(), None, &agents(), DiscoveryLimits::default());
+
+        assert_eq!(found(&result, root.path()), vec!["go/src/app"]);
+    }
+
+    /// A deep folder that sorts first must not use up the cap before a
+    /// shallow project in a later folder is checked.
+    #[test]
+    fn the_cap_drops_deep_folders_before_shallow_ones() {
+        let root = tempdir().expect("tempdir");
+        for i in 0..30 {
+            fs::create_dir_all(root.path().join(format!("Downloads/a/b{i:02}/c"))).expect("mkdir");
+        }
+        touch(&root.path().join("code/app/CLAUDE.md"));
+
+        let limits = DiscoveryLimits {
+            max_visited: 10,
+            ..DiscoveryLimits::default()
+        };
+        let result = walk_for_projects(root.path(), None, &agents(), limits);
+
+        assert!(result.truncated);
+        assert_eq!(found(&result, root.path()), vec!["code/app"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn counts_unreadable_folders_and_carries_on() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempdir().expect("tempdir");
+        let locked = root.path().join("locked");
+        fs::create_dir_all(locked.join("inner")).expect("mkdir");
+        touch(&root.path().join("open/app/CLAUDE.md"));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+
+        let result = walk_for_projects(root.path(), None, &agents(), DiscoveryLimits::default());
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+
+        assert_eq!(result.unreadable, 1);
+        assert_eq!(found(&result, root.path()), vec!["open/app"]);
+    }
+
+    #[test]
     fn respects_the_depth_limit() {
         let root = tempdir().expect("tempdir");
         touch(&root.path().join("a/b/c/CLAUDE.md"));
@@ -429,6 +511,23 @@ mod tests {
         assert_eq!(result.visited, 3);
     }
 
+    #[test]
+    fn a_wide_folder_counts_every_child_against_the_cap() {
+        let root = tempdir().expect("tempdir");
+        for i in 0..20 {
+            fs::create_dir_all(root.path().join(format!("d{i:02}"))).expect("mkdir");
+        }
+
+        let limits = DiscoveryLimits {
+            max_visited: 5,
+            ..DiscoveryLimits::default()
+        };
+        let result = walk_for_projects(root.path(), None, &agents(), limits);
+
+        assert!(result.truncated);
+        assert_eq!(result.visited, 5);
+    }
+
     #[cfg(unix)]
     #[test]
     fn does_not_follow_symlinks() {
@@ -451,9 +550,12 @@ mod tests {
         let home = tempdir().expect("home");
         with_test_home(home.path().to_path_buf(), || {
             let root = tempdir().expect("root");
-            let registered = root.path().join("registered");
+            let root_path = root.path().canonicalize().expect("canonical root");
+            let registered = root_path.join("registered");
             touch(&registered.join("CLAUDE.md"));
-            touch(&root.path().join("fresh/CLAUDE.md"));
+            touch(&root_path.join("fresh/CLAUDE.md"));
+            touch(&root_path.join("orphan/CLAUDE.md"));
+            touch(&root_path.join("orphan/.automatic/project.json"));
             let project = crate::core::Project {
                 name: "registered".to_string(),
                 directory: registered.to_str().unwrap().to_string(),
@@ -466,13 +568,39 @@ mod tests {
                 .expect("discover");
 
             let by_name = |n: &str| report.projects.iter().find(|p| p.name == n).expect(n);
-            assert!(matches!(by_name("fresh").status, DirectoryStatus::Available));
+            assert!(matches!(by_name("fresh").status, Some(DirectoryStatus::Available)));
             assert!(matches!(
                 by_name("registered").status,
-                DirectoryStatus::RegisteredHere { .. }
+                Some(DirectoryStatus::RegisteredHere { .. })
+            ));
+            assert!(matches!(
+                by_name("orphan").status,
+                Some(DirectoryStatus::OrphanConfig { .. })
             ));
             assert_eq!(by_name("fresh").relative_path, "fresh");
         });
+    }
+
+    /// A root reached through a symlink is reported by its real path, so a
+    /// home folder reached that way is still recognised as home.
+    #[cfg(unix)]
+    #[test]
+    fn discover_reports_canonical_paths_for_a_symlinked_root() {
+        let real = tempdir().expect("real");
+        touch(&real.path().join("app/CLAUDE.md"));
+        let links = tempdir().expect("links");
+        let link = links.path().join("alias");
+        std::os::unix::fs::symlink(real.path(), &link).expect("symlink");
+
+        let report = discover_projects(link.to_str().unwrap(), DiscoveryLimits::default())
+            .expect("discover");
+
+        let canonical = real.path().canonicalize().expect("canonical");
+        assert_eq!(report.root, canonical.display().to_string());
+        assert_eq!(
+            report.projects[0].directory,
+            canonical.join("app").display().to_string()
+        );
     }
 
     #[test]

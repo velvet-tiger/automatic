@@ -47,6 +47,27 @@ interface ProjectsProps {
 const LAST_PROJECT_KEY = SELECTED_PROJECT_STORAGE_KEY;
 const PROJECT_ORDER_KEY = PROJECT_ORDER_STORAGE_KEY;
 
+/**
+ * Add several projects to a group in one write, then sync each member once.
+ * Every member's peer list changes when the group does. Throws when the
+ * group cannot be read or saved.
+ */
+async function addProjectsToGroup(groupName: string, projectKeys: string[]): Promise<void> {
+  const raw: string = await invoke("read_group", { name: groupName });
+  const group = JSON.parse(raw) as { projects: string[]; updated_at?: string };
+  const fresh = projectKeys.filter((k) => !group.projects.includes(k));
+  if (fresh.length === 0) return;
+  group.projects.push(...fresh);
+  group.updated_at = new Date().toISOString();
+  await invoke("save_group", { name: groupName, data: JSON.stringify(group) });
+  for (const name of group.projects) {
+    invoke("sync_project", { name }).catch((e: unknown) => {
+      console.warn(`Group sync: could not sync project '${name}':`, e);
+    });
+  }
+  window.dispatchEvent(new CustomEvent("groups-updated"));
+}
+
 export default function Projects({
   resetKey,
   initialProject = null,
@@ -312,13 +333,25 @@ export default function Projects({
 
   const [showDiscovery, setShowDiscovery] = useState(false);
 
-  const handleDiscoveredAdded = async (added: AddedProject[]) => {
+  // "__ungrouped__" is the Other Projects view, not a group.
+  const activeGroup = filterGroup && filterGroup !== "__ungrouped__" ? filterGroup : null;
+
+  const handleDiscoveredAdded = async (added: AddedProject[]): Promise<string | null> => {
     for (const p of added) trackProjectCreated(p.name);
-    await loadProjects();
-    // The WorkspaceSidebar keeps its own project list and refreshes on this event.
-    for (const p of added) {
-      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: p.name, local_key: p.localKey } }));
+    let problem: string | null = null;
+    if (activeGroup) {
+      try {
+        await addProjectsToGroup(activeGroup, added.map((p) => p.localKey));
+      } catch (err: unknown) {
+        problem = `The projects were added, but could not join the group ${activeGroup}: ${String(err)}`;
+      }
     }
+    await loadProjects();
+    // The WorkspaceSidebar keeps its own project list and reloads on this
+    // event. One event covers the whole batch; the listener reloads everything.
+    const last = added[added.length - 1];
+    window.dispatchEvent(new CustomEvent("project-added", { detail: { name: last.name, local_key: last.localKey } }));
+    return problem;
   };
 
   const handleBackToOverview = () => {
@@ -353,8 +386,9 @@ export default function Projects({
         />
         <ProjectDiscoveryDialog
           isOpen={showDiscovery}
+          groupName={activeGroup}
           onClose={() => setShowDiscovery(false)}
-          onAdded={(added) => void handleDiscoveredAdded(added)}
+          onAdded={handleDiscoveredAdded}
         />
       </div>
     );
