@@ -79,6 +79,8 @@ export default function Projects({
   const [isCreating, setIsCreating] = useState(false);
   /** Resolved templates seeded into the wizard via initialCreateWithTemplate. */
   const [createFromTemplates, setCreateFromTemplates] = useState<ProjectTemplate[] | null>(null);
+  /** The group the user was viewing when they clicked Add Project, so the wizard can start with it. */
+  const [createInGroup, setCreateInGroup] = useState<string | null>(null);
 
   // Report the currently open project up to the parent (drives sidebar highlighting).
   useEffect(() => {
@@ -207,6 +209,7 @@ export default function Projects({
   useEffect(() => {
     const handler = () => {
       setCreateFromTemplates(null);
+      setCreateInGroup(null);
       setSelectedKey(null);
       setIsCreating(true);
     };
@@ -270,6 +273,7 @@ export default function Projects({
         const tmpl = JSON.parse(raw) as ProjectTemplate;
         if (cancelled) return;
         setCreateFromTemplates([tmpl]);
+        setCreateInGroup(null);
         setSelectedKey(null);
         setIsCreating(true);
         onInitialCreateWithTemplateConsumed?.();
@@ -309,6 +313,7 @@ export default function Projects({
     setSelectedKey(null);
     setIsCreating(false);
     setCreateFromTemplates(null);
+    setCreateInGroup(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
   };
 
@@ -325,6 +330,8 @@ export default function Projects({
           onSelect={(key) => setSelectedKey(key)}
           onCreate={() => {
             setCreateFromTemplates(null);
+            // "__ungrouped__" is the Other Projects view, not a group.
+            setCreateInGroup(filterGroup && filterGroup !== "__ungrouped__" ? filterGroup : null);
             setIsCreating(true);
           }}
           onSyncAll={handleSyncAll}
@@ -350,6 +357,7 @@ export default function Projects({
       onInitialProjectTabConsumed={onInitialProjectTabConsumed}
       createFromTemplates={createFromTemplates}
       onCreateFromTemplatesConsumed={() => setCreateFromTemplates(null)}
+      createInGroup={createInGroup}
       onNavigateToSkill={onNavigateToSkill}
       onNavigateToMcpServer={onNavigateToMcpServer}
       onNavigateToSkillStore={onNavigateToSkillStore}

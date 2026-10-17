@@ -96,6 +96,18 @@ import { CommandsPanel } from "./panels/CommandsPanel";
 import { HooksPanel } from "./panels/HooksPanel";
 import { CustomAgentsPanel } from "./panels/CustomAgentsPanel";
 import { ProjectFilePanel } from "./panels/ProjectFilePanel";
+import {
+  WizardGroupStep,
+  WizardProfileStep,
+  WizardToolsStep,
+  WizardSettingsStep,
+  WizardNav,
+  continueLabel,
+  WIZARD_STEPS,
+  WIZARD_STEP_LABELS,
+  profilesProvidedByGroups,
+  type WizardStepNumber,
+} from "./NewProjectWizardSteps";
 
 import {
   Plus,
@@ -205,6 +217,8 @@ interface ProjectEditorProps {
   onInitialProjectTabConsumed?: () => void;
   createFromTemplates?: ProjectTemplate[] | null;
   onCreateFromTemplatesConsumed?: () => void;
+  /** The group the user was viewing when they clicked Add Project. The wizard starts with it selected. */
+  createInGroup?: string | null;
   onNavigateToSkill?: (skillName: string) => void;
   onNavigateToMcpServer?: (serverName: string) => void;
   onNavigateToSkillStore?: (skillId: string) => void;
@@ -230,6 +244,7 @@ export function ProjectEditor({
   onInitialProjectTabConsumed,
   createFromTemplates = null,
   onCreateFromTemplatesConsumed,
+  createInGroup = null,
   onNavigateToSkill,
   onNavigateToMcpServer,
   onNavigateToSkillStore,
@@ -253,7 +268,17 @@ export function ProjectEditor({
   // loading failed; nothing depends on it for correctness.
   const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
   // Wizard state (used while isCreating === true)
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  // 1 Directory, 2 Agents, 3 Group, 4 Profile, 5 Templates, 6 Tools, 7 Settings.
+  const [wizardStep, setWizardStep] = useState<WizardStepNumber>(1);
+  // Groups and profiles need a saved project, so the wizard only records the
+  // choices here and applies them after the final save.
+  const [wizardGroups, setWizardGroups] = useState<string[]>([]);
+  const [wizardGroupsLoading, setWizardGroupsLoading] = useState(false);
+  const [wizardProfiles, setWizardProfiles] = useState<string[]>([]);
+  /** Profiles each selected group lists, keyed by group name. The backend gives them to the project once it joins. */
+  const [wizardGroupProfiles, setWizardGroupProfiles] = useState<Record<string, string[]>>({});
+  /** Tools found in the project directory, shown with a "Detected" badge. */
+  const [wizardDetectedTools, setWizardDetectedTools] = useState<string[]>([]);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
   const [wizardDefaultAgents, setWizardDefaultAgents] = useState<string[]>([]);
@@ -308,6 +333,77 @@ export function ProjectEditor({
     if (!isCreating || wizardStep !== 1 || nameEdited) return;
     setNewName(folderBasename(wizardDirectory));
   }, [isCreating, wizardStep, nameEdited, wizardDirectory]);
+
+  // Fill the optional wizard steps when they are shown. The profile list is
+  // already kept current by the loader further down.
+  useEffect(() => {
+    if (!isCreating) return;
+    let cancelled = false;
+    if (wizardStep === 3) {
+      setWizardGroupsLoading(true);
+      invoke<string[]>("list_groups")
+        .then((names) => {
+          if (cancelled) return;
+          setAllGroups([...names].sort((a, b) => a.localeCompare(b)));
+          // A prefilled group may have been deleted since the page was drawn.
+          setWizardGroups((prev) => prev.filter((g) => names.includes(g)));
+        })
+        .catch((err: unknown) => {
+          console.error("Failed to load groups for the wizard:", err);
+          if (!cancelled) setError(`Failed to load groups: ${err}`);
+        })
+        .finally(() => {
+          if (!cancelled) setWizardGroupsLoading(false);
+        });
+    } else if (wizardStep === 6) {
+      loadToolEntries();
+      invoke<string[]>("autodetect_tools_for_project", { projectDir: wizardDirectory })
+        .then((names) => {
+          if (!cancelled) setWizardDetectedTools(names);
+        })
+        .catch((err: unknown) => {
+          // Detection only adds a badge, so the step still works without it.
+          console.warn("Tool detection failed:", err);
+          if (!cancelled) setWizardDetectedTools([]);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreating, wizardStep, wizardDirectory]);
+
+  // Read the profiles of each newly selected group, so the Profile step can
+  // show what the groups will provide. A group that cannot be read is dropped
+  // from the selection and named in the error, since the save would fail on it.
+  useEffect(() => {
+    if (!isCreating) return;
+    const missing = wizardGroups.filter((g) => !(g in wizardGroupProfiles));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const loaded: Record<string, string[]> = {};
+      const unreadable: string[] = [];
+      for (const group of missing) {
+        try {
+          const raw: string = await invoke("read_group", { name: group });
+          const parsed = JSON.parse(raw) as { profiles?: string[] };
+          loaded[group] = parsed.profiles ?? [];
+        } catch (err: unknown) {
+          console.error(`Could not read group "${group}":`, err);
+          unreadable.push(group);
+        }
+      }
+      if (cancelled) return;
+      setWizardGroupProfiles((prev) => ({ ...prev, ...loaded }));
+      if (unreadable.length > 0) {
+        setWizardGroups((prev) => prev.filter((g) => !unreadable.includes(g)));
+        setError(`Could not read group${unreadable.length > 1 ? "s" : ""}: ${unreadable.join(", ")}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreating, wizardGroups, wizardGroupProfiles]);
 
   const wizardTrimmedName = newName.trim();
   const wizardNameFormatProblem = projectNameFormatProblem(wizardTrimmedName);
@@ -899,7 +995,10 @@ export function ProjectEditor({
   // The router flips isCreating; the editor seeds the wizard.
   useEffect(() => {
     if (isCreating) {
-      void startCreate(createFromTemplates && createFromTemplates.length > 0 ? { fromTemplates: createFromTemplates } : undefined);
+      void startCreate({
+        ...(createFromTemplates && createFromTemplates.length > 0 ? { fromTemplates: createFromTemplates } : {}),
+        ...(createInGroup ? { inGroup: createInGroup } : {}),
+      });
       onCreateFromTemplatesConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1366,22 +1465,27 @@ export function ProjectEditor({
   /** Add this project to a group, save the group, then re-sync ALL projects
    *  in the group so every project's peer list is updated. Groups list
    *  members by local_key. */
+  const addProjectToGroup = async (groupName: string, projectKey: string): Promise<boolean> => {
+    const raw: string = await invoke("read_group", { name: groupName });
+    const g = JSON.parse(raw);
+    if (g.projects.includes(projectKey)) return false;
+    g.projects.push(projectKey);
+    g.updated_at = new Date().toISOString();
+    await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+    // Sync ALL projects in the group - each one's peer list changes.
+    for (const name of g.projects) {
+      invoke("sync_project", { name }).catch((e: unknown) => {
+        console.warn(`Group sync: could not sync project '${name}':`, e);
+      });
+    }
+    window.dispatchEvent(new CustomEvent("groups-updated"));
+    return true;
+  };
+
   const handleAddToGroup = async (groupName: string, projectKey: string) => {
     try {
-      const raw: string = await invoke("read_group", { name: groupName });
-      const g = JSON.parse(raw);
-      if (!g.projects.includes(projectKey)) {
-        g.projects.push(projectKey);
-        g.updated_at = new Date().toISOString();
-        await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+      if (await addProjectToGroup(groupName, projectKey)) {
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
-        // Sync ALL projects in the group - each one's peer list changes.
-        for (const name of g.projects) {
-          invoke("sync_project", { name }).catch((e: unknown) => {
-            console.warn(`Group sync: could not sync project '${name}':`, e);
-          });
-        }
-        window.dispatchEvent(new CustomEvent("groups-updated"));
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
@@ -2111,6 +2215,33 @@ export function ProjectEditor({
     }
   };
 
+  /**
+   * Link a project the wizard just created to the groups and profiles chosen
+   * in steps 3 and 4. Both need a saved project, so this runs after the final
+   * save. A failure leaves the project in place and is reported by name,
+   * and the remaining links are still attempted.
+   */
+  const applyWizardLinks = async (projectKey: string, groups: string[], profiles: string[]) => {
+    const failures: string[] = [];
+    for (const group of groups) {
+      try {
+        await addProjectToGroup(group, projectKey);
+      } catch (err: unknown) {
+        failures.push(`group "${group}": ${err}`);
+      }
+    }
+    for (const profile of profiles) {
+      try {
+        await invoke("attach_profile_to_project", { projectName: projectKey, profileName: profile });
+      } catch (err: unknown) {
+        failures.push(`profile "${profile}": ${err}`);
+      }
+    }
+    if (failures.length > 0) {
+      setError(`The project was created, but some choices could not be applied. ${failures.join("; ")}`);
+    }
+  };
+
   const handleSave = async () => {
     if (!project) return;
     const folderName = project.directory
@@ -2203,6 +2334,7 @@ export function ProjectEditor({
         // Clear the stub reference so the unmount cleanup does not delete the
         // project we just successfully saved.
         wizardStubKey.current = null;
+        resetWizardChoices();
         setIsCreating(false);
         setProjectTab("summary");
         setProjectGroup("summary");
@@ -2272,6 +2404,12 @@ export function ProjectEditor({
         }
       }
 
+      if (isCreating) {
+        // The backend gives group-provided profiles to the project when it joins the group.
+        const fromGroups = profilesProvidedByGroups(wizardGroups, wizardGroupProfiles);
+        await applyWizardLinks(name, wizardGroups, wizardProfiles.filter((p) => !(p in fromGroups)));
+      }
+
       // Reload UI state from disk (picks up autodetected changes)
       await reloadProject(name);
 
@@ -2304,7 +2442,7 @@ export function ProjectEditor({
     }
   };
 
-  const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[] }) => {
+  const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[]; inGroup?: string }) => {
     setSelectedKey(null);
     clearSelectedProject();
     if (!opts?.fromTemplates?.length) setWizardSourceTemplates([]);
@@ -2380,9 +2518,19 @@ export function ProjectEditor({
     setSelectedProjectTemplates(templates.map((t) => t.name));
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
+    resetWizardChoices();
+    if (opts?.inGroup) setWizardGroups([opts.inGroup]);
     setWizardDiscoveredAgents([]);
     setWizardDiscovering(false);
     wizardStubKey.current = null;
+  };
+
+  /** Forget the group and profile picks and the detected tools of an earlier wizard run. */
+  const resetWizardChoices = () => {
+    setWizardGroups([]);
+    setWizardProfiles([]);
+    setWizardGroupProfiles({});
+    setWizardDetectedTools([]);
   };
 
   /**
@@ -2414,6 +2562,7 @@ export function ProjectEditor({
   const cancelCreate = async () => {
     const stub = wizardStubKey.current;
     wizardStubKey.current = null;
+    resetWizardChoices();
     setIsCreating(false);
     setProject(null);
     setDirty(false);
@@ -3558,7 +3707,7 @@ export function ProjectEditor({
               </div>
             )}
 
-            {/* ── New project wizard (3 steps) ─────────────────────── */}
+            {/* ── New project wizard (7 steps) ─────────────────────── */}
             {isCreating && (
               <div className="flex-1 flex flex-col items-center justify-center p-8">
                 <div className="w-full max-w-md relative">
@@ -3584,9 +3733,9 @@ export function ProjectEditor({
 
                   {/* Step indicator */}
                   <div className="flex items-center justify-center gap-2 mb-8">
-                    {([1, 2, 3] as const).map((s) => (
+                    {WIZARD_STEPS.map((s) => (
                       <div key={s} className="flex items-center gap-2">
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
+                        <div title={WIZARD_STEP_LABELS[s]} className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
                           wizardStep === s
                             ? "bg-brand text-white"
                             : wizardStep > s
@@ -3595,8 +3744,8 @@ export function ProjectEditor({
                         }`}>
                           {wizardStep > s ? <Check size={11} /> : s}
                         </div>
-                        {s < 3 && (
-                          <div className={`w-8 h-px ${wizardStep > s ? "bg-brand/50" : "bg-surface"}`} />
+                        {s < WIZARD_STEPS.length && (
+                          <div className={`w-4 h-px ${wizardStep > s ? "bg-brand/50" : "bg-surface"}`} />
                         )}
                       </div>
                     ))}
@@ -3859,8 +4008,32 @@ export function ProjectEditor({
                     </>
                   )}
 
-                  {/* ── Step 3: Templates ─────────────────────────────── */}
+                  {/* ── Step 3: Group ─────────────────────────────────── */}
                   {wizardStep === 3 && (
+                    <WizardGroupStep
+                      groups={allGroups}
+                      loading={wizardGroupsLoading}
+                      selected={wizardGroups}
+                      onChange={setWizardGroups}
+                      onBack={() => setWizardStep(2)}
+                      onNext={() => setWizardStep(4)}
+                    />
+                  )}
+
+                  {/* ── Step 4: Profile ───────────────────────────────── */}
+                  {wizardStep === 4 && (
+                    <WizardProfileStep
+                      profiles={availableProfileData}
+                      providedByGroup={profilesProvidedByGroups(wizardGroups, wizardGroupProfiles)}
+                      selected={wizardProfiles}
+                      onChange={setWizardProfiles}
+                      onBack={() => setWizardStep(3)}
+                      onNext={() => setWizardStep(5)}
+                    />
+                  )}
+
+                  {/* ── Step 5: Templates ─────────────────────────────── */}
+                  {wizardStep === 5 && (
                     <>
                       <div className="mb-6 text-center">
                         <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
@@ -3931,21 +4104,39 @@ export function ProjectEditor({
                         </button>
                       )}
 
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setWizardStep(2)}
-                          className="flex-1 px-4 py-2.5 bg-bg-sidebar hover:bg-surface text-text-muted hover:text-text-base text-[13px] font-medium rounded transition-colors"
-                        >
-                          Back
-                        </button>
-                        <button
-                          onClick={handleSave}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-                        >
-                          <Check size={13} /> Create Project
-                        </button>
-                      </div>
+                      <WizardNav
+                        onBack={() => setWizardStep(4)}
+                        onNext={() => setWizardStep(6)}
+                        nextLabel={continueLabel(selectedProjectTemplates.length)}
+                      />
                     </>
+                  )}
+
+                  {/* ── Step 6: Tools ─────────────────────────────────── */}
+                  {wizardStep === 6 && (
+                    <WizardToolsStep
+                      entries={toolEntries}
+                      loading={toolEntriesLoading}
+                      detected={wizardDetectedTools}
+                      selected={project.tools ?? []}
+                      onChange={(tools) => setProject({ ...project, tools })}
+                      onBack={() => setWizardStep(5)}
+                      onNext={() => setWizardStep(7)}
+                    />
+                  )}
+
+                  {/* ── Step 7: Settings ──────────────────────────────── */}
+                  {wizardStep === 7 && (
+                    <WizardSettingsStep
+                      settings={{
+                        mode: project.mode,
+                        manage_gitignore: project.manage_gitignore,
+                        read_only: project.read_only,
+                      }}
+                      onChange={(patch) => setProject({ ...project, ...patch })}
+                      onBack={() => setWizardStep(6)}
+                      onCreate={handleSave}
+                    />
                   )}
 
                 </div>
