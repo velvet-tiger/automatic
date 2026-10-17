@@ -141,13 +141,19 @@ pub struct AddedDiscoveredProject {
     pub directory: String,
     /// The new project's `local_key`, when it was added.
     pub local_key: Option<String>,
+    /// The project's name. An imported config keeps its own name, which may
+    /// differ from the folder name.
+    pub name: Option<String>,
+    /// True when an imported config asked for read-only mode.
+    pub read_only: bool,
     pub error: Option<String>,
 }
 
-/// Add each folder in `directories` as a new project named after the folder.
-/// Each one goes through the Add Project wizard's create path, which adopts
-/// the agents found on disk and runs the first sync. One failure does not
-/// stop the rest; each folder reports its own result.
+/// Add each folder in `directories` as a project. A new folder goes through
+/// the Add Project wizard's create path, which names it after the folder,
+/// adopts the agents found on disk and runs the first sync. A folder with an
+/// unregistered Automatic config is imported and keeps that config. One
+/// failure does not stop the rest; each folder reports its own result.
 #[tauri::command]
 pub async fn add_discovered_projects(
     directories: Vec<String>,
@@ -168,23 +174,31 @@ fn add_discovered_folders(
     directories
         .into_iter()
         .map(|directory| match add_discovered_project(&directory, created_by) {
-            Ok(local_key) => AddedDiscoveredProject {
+            Ok(added) => AddedDiscoveredProject {
                 directory,
-                local_key: Some(local_key),
+                local_key: Some(added.local_key),
+                name: Some(added.name),
+                read_only: added.read_only,
                 error: None,
             },
             Err(e) => AddedDiscoveredProject {
                 directory,
                 local_key: None,
+                name: None,
+                read_only: false,
                 error: Some(e),
             },
         })
         .collect()
 }
 
-/// Validate one discovered folder and create a project for it. Returns the
-/// new project's `local_key`.
-fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<String, String> {
+/// Validate one discovered folder and add it as a project. A folder with an
+/// unregistered Automatic config is imported, keeping that config, as the
+/// wizard's Import choice does. Any other folder gets a new project.
+fn add_discovered_project(
+    directory: &str,
+    created_by: Option<&str>,
+) -> Result<core::ImportedProject, String> {
     let path = std::path::Path::new(directory);
     if !path.is_absolute() {
         return Err(format!("'{}' is not an absolute folder path.", directory));
@@ -218,11 +232,7 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
             return Err(format!("Already added as project '{}'.", name));
         }
         core::DirectoryStatus::OrphanConfig { .. } => {
-            return Err(
-                "This folder has an Automatic config that is not registered. Add it with \
-                 Add Project to choose how to import it."
-                    .to_string(),
-            );
+            return import_existing_project(directory);
         }
     }
 
@@ -247,7 +257,13 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
     // A bulk add would otherwise fire one forced AI call per folder at once.
     // Each project gets its recommendations on its next save instead, under
     // the normal once-a-day throttle.
-    save_project_with(name, &stub.to_string(), true, NewProjectRecommendations::Skip)
+    let local_key =
+        save_project_with(name, &stub.to_string(), true, NewProjectRecommendations::Skip)?;
+    Ok(core::ImportedProject {
+        name: name.to_string(),
+        local_key,
+        read_only: false,
+    })
 }
 
 /// Whether creating a project runs the forced first AI recommendations call.
@@ -2521,9 +2537,11 @@ fn detach_profile_from_projects_removes_provided_entries() {
             std::fs::write(project_dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
             let dir = project_dir.display().to_string();
 
-            let key = add_discovered_project(&dir, Some("user_1")).expect("add");
+            let added = add_discovered_project(&dir, Some("user_1")).expect("add");
+            assert_eq!(added.name, "my-app");
+            assert!(!added.read_only);
 
-            let saved = read_back(&key);
+            let saved = read_back(&added.local_key);
             assert_eq!(saved.name, "my-app");
             assert_eq!(saved.directory, dir);
             assert_eq!(saved.agents, vec!["claude".to_string()]);
@@ -2567,18 +2585,56 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    /// A folder with an unregistered Automatic config is imported, so it
+    /// keeps the name and id its committed config carries.
     #[test]
-    fn adding_a_discovered_folder_refuses_an_orphan_config() {
+    fn adding_a_discovered_folder_imports_an_existing_config() {
         with_temp_home(|_| {
             let parent = tempdir().expect("parent");
-            let dir = parent.path().canonicalize().expect("canonical").join("orphan");
-            std::fs::create_dir_all(dir.join(".automatic")).expect("mkdir");
-            std::fs::write(dir.join(".automatic/project.json"), r#"{"name":"orphan"}"#)
-                .expect("write");
+            let dir = parent.path().canonicalize().expect("canonical").join("folder-name");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(
+                dir.join(".automatic.json"),
+                r#"{"name":"ambient","id":"proj-ambient-1","agents":["claude"]}"#,
+            )
+            .expect("write config");
+            let dir_str = dir.display().to_string();
+            assert!(matches!(
+                core::inspect_project_directory(&dir_str).expect("inspect"),
+                core::DirectoryStatus::OrphanConfig { .. }
+            ));
 
-            let err = add_discovered_project(&dir.display().to_string(), None)
-                .expect_err("orphan must be refused");
-            assert!(err.contains("not registered"), "{err}");
+            let added = add_discovered_project(&dir_str, None).expect("import");
+
+            assert_eq!(added.name, "ambient");
+            assert!(!added.read_only);
+            let saved = read_back(&added.local_key);
+            assert_eq!(saved.name, "ambient");
+            assert_eq!(saved.id, "proj-ambient-1");
+            assert_eq!(saved.directory, dir_str);
+            assert!(matches!(
+                core::inspect_project_directory(&dir_str).expect("inspect"),
+                core::DirectoryStatus::RegisteredHere { .. }
+            ));
+        });
+    }
+
+    /// A committed `read_only` hint is honoured on import, as in the wizard.
+    #[test]
+    fn adding_a_discovered_folder_imports_a_read_only_config_as_read_only() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("locked");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(
+                dir.join(".automatic.json"),
+                r#"{"name":"locked","id":"proj-locked-1","read_only":true}"#,
+            )
+            .expect("write config");
+
+            let added = add_discovered_project(&dir.display().to_string(), None).expect("import");
+
+            assert!(added.read_only);
         });
     }
 
