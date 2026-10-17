@@ -129,6 +129,8 @@ describe("ProjectDiscoveryDialog", () => {
     await screen.findByText("Cannot read folder");
     expect(onAdded).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Add alpha")).not.toBeDisabled();
+    // A failed folder stays ticked so the user can retry.
+    expect(screen.getByLabelText("Add alpha")).toBeChecked();
   });
 
   it("selects every addable folder with Select all", async () => {
@@ -186,5 +188,32 @@ describe("ProjectDiscoveryDialog", () => {
     await screen.findByText("Could not check this folder: registry entry is unreadable");
     expect(screen.getByLabelText("Add alpha")).toBeDisabled();
     expect(screen.queryByLabelText("Select all")).not.toBeInTheDocument();
+  });
+
+  it("stays locked while onAdded runs and shows the problem it reports", async () => {
+    const user = userEvent.setup();
+    mockInvoke({
+      discover_projects: { ...report, projects: [report.projects[0]] },
+      add_discovered_projects: [
+        { directory: "/Users/me/code/alpha", local_key: "k-alpha", name: "alpha", read_only: false, error: null },
+      ],
+    });
+    let release: (value: string | null) => void = () => {};
+    const onAdded = vi.fn(() => new Promise<string | null>((resolve) => (release = resolve)));
+
+    render(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={onAdded} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Folder to search") as HTMLInputElement).value).toBe("/Users/me"),
+    );
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(await screen.findByLabelText("Add alpha"));
+    await user.click(screen.getByRole("button", { name: "Add 1 project" }));
+
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+
+    release("Could not join the group");
+    expect(await screen.findByText("Could not join the group")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
   });
 });

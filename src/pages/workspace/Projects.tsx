@@ -14,7 +14,8 @@ import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
 import type { Project, ProjectTemplate, DriftReport, ProjectSummary } from "./projects/types";
 import { trackProjectCreated, trackProjectSynced } from "../../lib/analytics";
-import { ProjectDiscoveryDialog, type AddedProject } from "../../components/ProjectDiscoveryDialog";
+import { ProjectDiscoveryDialog } from "../../components/ProjectDiscoveryDialog";
+import { announceAddedProjects, type AddedProject } from "../../components/ProjectDiscovery";
 import { loadProjectSummaries, projectKeyOf, resolveProjectKey } from "../../lib/projectIdentity";
 import { PROJECT_ORDER_STORAGE_KEY, SELECTED_PROJECT_STORAGE_KEY } from "../../lib/projectStorageMigration";
 
@@ -346,11 +347,8 @@ export default function Projects({
         problem = `The projects were added, but could not join the group ${activeGroup}: ${String(err)}`;
       }
     }
-    await loadProjects();
-    // The WorkspaceSidebar keeps its own project list and reloads on this
-    // event. One event covers the whole batch; the listener reloads everything.
-    const last = added[added.length - 1];
-    window.dispatchEvent(new CustomEvent("project-added", { detail: { name: last.name, local_key: last.localKey } }));
+    // The project-updated event this sends reloads the list.
+    announceAddedProjects(added);
     return problem;
   };
 
