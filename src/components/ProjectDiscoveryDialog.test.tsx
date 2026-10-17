@@ -66,7 +66,13 @@ describe("ProjectDiscoveryDialog", () => {
       add_discovered_projects: (args: InvokeArgs) => {
         const directories = (args?.directories as string[]) ?? [];
         added.push({ directories });
-        return directories.map((directory) => ({ directory, local_key: `key-${directory}`, error: null }));
+        return directories.map((directory) => ({
+          directory,
+          local_key: `key-${directory}`,
+          name: directory.endsWith("stray") ? "stray-config" : directory.split("/").pop(),
+          read_only: directory.endsWith("stray"),
+          error: null,
+        }));
       },
     });
     const onAdded = vi.fn();
@@ -81,18 +87,25 @@ describe("ProjectDiscoveryDialog", () => {
     await screen.findByText("Found 4 projects.");
     expect(invokeMock).toHaveBeenCalledWith("discover_projects", { root: "/Users/me" });
 
-    // Nothing starts ticked; registered and orphan folders cannot be ticked.
+    // Nothing starts ticked. A registered folder cannot be ticked; a folder
+    // with an unregistered config can, and is noted as an import.
     expect(screen.getByLabelText("Add alpha")).not.toBeChecked();
     expect(screen.getByLabelText("Add old")).toBeDisabled();
-    expect(screen.getByLabelText("Add stray")).toBeDisabled();
+    expect(screen.getByLabelText("Add stray")).toBeEnabled();
     expect(screen.getByText("Already added as old")).toBeInTheDocument();
+    expect(screen.getByText(/It will be imported as/)).toHaveTextContent("It will be imported as stray.");
     await user.click(screen.getByLabelText("Add alpha"));
+    await user.click(screen.getByLabelText("Add stray"));
 
-    await user.click(screen.getByRole("button", { name: "Add 1 project" }));
+    await user.click(screen.getByRole("button", { name: "Add 2 projects" }));
 
-    await screen.findByText("Added");
-    expect(added).toEqual([{ directories: ["/Users/me/code/alpha"] }]);
-    expect(onAdded).toHaveBeenCalledWith([{ name: "alpha", localKey: "key-/Users/me/code/alpha" }]);
+    await screen.findByText("Added as read only");
+    expect(screen.getByText("Added")).toBeInTheDocument();
+    expect(added).toEqual([{ directories: ["/Users/me/code/alpha", "/Users/me/code/stray"] }]);
+    expect(onAdded).toHaveBeenCalledWith([
+      { name: "alpha", localKey: "key-/Users/me/code/alpha" },
+      { name: "stray-config", localKey: "key-/Users/me/code/stray" },
+    ]);
   });
 
   it("shows a per-folder error and keeps the folder addable", async () => {
@@ -100,7 +113,7 @@ describe("ProjectDiscoveryDialog", () => {
     mockInvoke({
       discover_projects: { ...report, projects: [report.projects[0]] },
       add_discovered_projects: [
-        { directory: "/Users/me/code/alpha", local_key: null, error: "Cannot read folder" },
+        { directory: "/Users/me/code/alpha", local_key: null, name: null, read_only: false, error: "Cannot read folder" },
       ],
     });
     const onAdded = vi.fn();
@@ -131,8 +144,9 @@ describe("ProjectDiscoveryDialog", () => {
 
     expect(screen.getByLabelText("Add alpha")).toBeChecked();
     expect(screen.getByLabelText("Add beta")).toBeChecked();
+    expect(screen.getByLabelText("Add stray")).toBeChecked();
     expect(screen.getByLabelText("Add old")).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Add 2 projects" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add 3 projects" })).toBeEnabled();
   });
 
   it("drops a scan that finishes after the dialog closed", async () => {

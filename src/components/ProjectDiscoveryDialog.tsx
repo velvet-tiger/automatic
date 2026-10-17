@@ -37,7 +37,15 @@ interface DiscoveryReport {
 interface AddedDiscoveredProject {
   directory: string;
   local_key: string | null;
+  /** The project's name; an imported config keeps its own. */
+  name: string | null;
+  read_only: boolean;
   error: string | null;
+}
+
+/** New folders and folders with an unregistered config can both be added. */
+function isAddable(project: DiscoveredProject): boolean {
+  return project.status?.kind === "Available" || project.status?.kind === "OrphanConfig";
 }
 
 export interface AddedProject {
@@ -91,7 +99,7 @@ export function ProjectDiscoveryDialog({ isOpen, groupName = null, onClose, onAd
   const addable = useMemo(
     () =>
       (report?.projects ?? []).filter(
-        (p) => p.status?.kind === "Available" && !outcomes.get(p.directory)?.local_key,
+        (p) => isAddable(p) && !outcomes.get(p.directory)?.local_key,
       ),
     [report, outcomes],
   );
@@ -167,7 +175,7 @@ export function ProjectDiscoveryDialog({ isOpen, groupName = null, onClose, onAd
       const byDirectory = new Map(selectedAddable.map((p) => [p.directory, p.name]));
       const added = results
         .filter((r): r is AddedDiscoveredProject & { local_key: string } => r.local_key !== null)
-        .map((r) => ({ name: byDirectory.get(r.directory) ?? r.directory, localKey: r.local_key }));
+        .map((r) => ({ name: r.name ?? byDirectory.get(r.directory) ?? r.directory, localKey: r.local_key }));
       setSelected(new Set());
       if (added.length > 0) {
         const problem = await onAdded(added);
@@ -349,7 +357,7 @@ interface DiscoveredRowProps {
 
 function DiscoveredRow({ project, checked, onToggle, disabled, outcome }: DiscoveredRowProps) {
   const added = Boolean(outcome?.local_key);
-  const available = project.status?.kind === "Available" && !added;
+  const available = isAddable(project) && !added;
   return (
     <li className="flex items-start gap-3 px-3 py-2 border-b border-border-strong/20 last:border-b-0">
       <input
@@ -389,7 +397,7 @@ function RowStatus({ project, outcome }: { project: DiscoveredProject; outcome: 
   if (outcome?.local_key) {
     return (
       <p className="flex items-center gap-1 text-[11px] text-success mt-0.5">
-        <CheckCircle2 size={11} /> Added
+        <CheckCircle2 size={11} /> {outcome.read_only ? "Added as read only" : "Added"}
       </p>
     );
   }
@@ -405,7 +413,8 @@ function RowStatus({ project, outcome }: { project: DiscoveredProject; outcome: 
   if (project.status?.kind === "OrphanConfig") {
     return (
       <p className="text-[11px] text-text-muted mt-0.5">
-        Has an Automatic config that is not registered. Use Add Project to import it.
+        Has an existing Automatic config. It will be imported as{" "}
+        <span className="text-text-base">{project.status.name}</span>.
       </p>
     );
   }
