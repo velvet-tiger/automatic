@@ -1,6 +1,7 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import { invoke } from "@tauri-apps/api/core";
+import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { Check, ChevronRight, Edit2, ExternalLink, Globe, Plus, Terminal, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { MarkdownPreview } from "../../../../../components/MarkdownPreview";
@@ -239,7 +240,7 @@ export function CommandsPanel(props: CommandsPanelProps) {
               <Plus size={12} /> Add from Library
             </button>
             {userCommandAdding && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
@@ -304,7 +305,7 @@ export function CommandsPanel(props: CommandsPanelProps) {
                       ))
                   )}
                 </div>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         </div>

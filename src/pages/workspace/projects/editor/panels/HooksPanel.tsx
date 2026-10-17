@@ -1,6 +1,7 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import { Check, Plus, Webhook, X } from "lucide-react";
+import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { InheritedBadge } from "../../../../../components/ProtectionBadge";
 import type { AgentInfo, HookEntry, ProfileLockMap, Project } from "../../types";
 
@@ -122,7 +123,7 @@ export function HooksPanel({
               <Plus size={12} /> Add from Library
             </button>
             {hookAdding && (
-              <div className="absolute right-0 top-full mt-1 w-80 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-80 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
@@ -210,7 +211,7 @@ export function HooksPanel({
                     </>
                   )}
                 </div>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         </div>
