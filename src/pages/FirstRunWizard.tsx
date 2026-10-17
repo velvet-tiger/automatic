@@ -814,10 +814,9 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
       return;
     }
     if (step === PROJECTS_STEP && discovery.selectedAddable.length > 0) {
-      const result = await discovery.addSelected();
       // No analytics here: the user has not yet chosen whether to share
       // usage data (Preferences is the last step).
-      if (result) announceAddedProjects(result.added);
+      const result = await discovery.addSelected(announceAddedProjects);
       // Stay so the user can see what failed, then retry or untick it.
       if (!result || result.failedCount > 0) return;
     }
@@ -908,9 +907,11 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base">
-      {/* Drag region — covers the full-screen overlay so the window remains draggable during setup */}
-      <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-bg-base">
+      {/* Drag region — pinned to the top of the window so it stays put while the overlay scrolls */}
+      <div data-tauri-drag-region className="fixed top-0 inset-x-0 h-11 select-none z-10" />
+      {/* Centred while it fits; scrolls when a long step outgrows a short window. */}
+      <div className="min-h-full flex items-center justify-center">
       <div className="w-full max-w-xl px-6 py-10">
         {/* Logo */}
         <div className="flex items-center gap-2 mb-8">
@@ -1002,7 +1003,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               <button
                 onClick={() => setStep((s) => s - 1)}
                 disabled={discovery.adding}
-                className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Back
               </button>
@@ -1064,6 +1065,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             )}
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

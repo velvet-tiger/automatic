@@ -29,13 +29,9 @@ export function ProjectDiscoveryDialog({ isOpen, groupName = null, onClose, onAd
     onClose();
   };
 
-  const addSelected = async () => {
-    const result = await discovery.addSelected();
-    if (result && result.added.length > 0) {
-      const problem = await onAdded(result.added);
-      if (problem) discovery.setError(problem);
-    }
-  };
+  // onAdded runs inside the add, so the dialog stays locked until any
+  // group join and reload finish and their errors land on an open dialog.
+  const addSelected = () => discovery.addSelected(onAdded);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">

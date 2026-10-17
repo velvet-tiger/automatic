@@ -150,10 +150,14 @@ export function useProjectDiscovery(active: boolean) {
 
   /**
    * Add the ticked folders. Each folder's result is shown on its row.
-   * Returns null when nothing was ticked or the call itself failed (the
+   * `afterAdd` runs with the created projects while the panel is still
+   * locked; a message it returns, or an error it throws, is shown.
+   * Returns null when nothing was ticked or the add call itself failed (the
    * error is then shown).
    */
-  const addSelected = async (): Promise<AddResult | null> => {
+  const addSelected = async (
+    afterAdd?: (added: AddedProject[]) => Promise<string | null | void> | string | null | void,
+  ): Promise<AddResult | null> => {
     if (selectedAddable.length === 0) return null;
     setAdding(true);
     setError(null);
@@ -174,6 +178,14 @@ export function useProjectDiscovery(active: boolean) {
       // Failed folders stay ticked so the user can retry or untick them.
       const failed = new Set(results.filter((r) => r.local_key === null).map((r) => r.directory));
       setSelected(failed);
+      if (afterAdd && added.length > 0) {
+        try {
+          const problem = await afterAdd(added);
+          if (problem) setError(problem);
+        } catch (err) {
+          setError(`The projects were added, but a follow-up step failed: ${String(err)}`);
+        }
+      }
       return { added, failedCount: failed.size };
     } catch (err) {
       setError(`Adding projects failed: ${String(err)}`);

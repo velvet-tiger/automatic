@@ -347,7 +347,7 @@ export default function Projects({
         problem = `The projects were added, but could not join the group ${activeGroup}: ${String(err)}`;
       }
     }
-    await loadProjects();
+    // The project-updated event this sends reloads the list.
     announceAddedProjects(added);
     return problem;
   };

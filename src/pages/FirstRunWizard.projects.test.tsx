@@ -97,7 +97,7 @@ describe("FirstRunWizard projects step", () => {
 
     await user.click(screen.getByRole("button", { name: /Add 1 project and continue/ }));
 
-    await screen.findByText("Stay in touch");
+    await screen.findByText("Stay in the loop");
     expect(calls).toEqual([["/Users/me/code/alpha"]]);
     expect(events).toEqual(["project-added", "project-updated"]);
 
@@ -138,7 +138,7 @@ describe("FirstRunWizard projects step", () => {
     await openProjectsStep(user);
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
-    await screen.findByText("Stay in touch");
+    await screen.findByText("Stay in the loop");
     expect(invokeMock).not.toHaveBeenCalledWith("discover_projects", expect.anything());
     expect(invokeMock).not.toHaveBeenCalledWith("add_discovered_projects", expect.anything());
   });
@@ -152,7 +152,81 @@ describe("FirstRunWizard projects step", () => {
     await screen.findByText("Found 2 projects.");
     await user.click(screen.getByRole("button", { name: /^Continue/ }));
 
-    await screen.findByText("Stay in touch");
+    await screen.findByText("Stay in the loop");
     expect(invokeMock).not.toHaveBeenCalledWith("add_discovered_projects", expect.anything());
+  });
+
+  it("stays on the step when the add call itself fails", async () => {
+    const user = userEvent.setup();
+    mockInvoke({
+      ...baseRoutes,
+      add_discovered_projects: () => {
+        throw new Error("backend unavailable");
+      },
+    });
+
+    await openProjectsStep(user);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(await screen.findByLabelText("Add alpha"));
+    await user.click(screen.getByRole("button", { name: /Add 1 project and continue/ }));
+
+    expect(await screen.findByText(/Adding projects failed: .*backend unavailable/)).toBeInTheDocument();
+    expect(screen.getByText("Add the projects you already have")).toBeInTheDocument();
+  });
+
+  it("announces a partial add once, stays, and retries only the failed folder", async () => {
+    const user = userEvent.setup();
+    const calls: string[][] = [];
+    let attempt = 0;
+    mockInvoke({
+      ...baseRoutes,
+      add_discovered_projects: (args: InvokeArgs) => {
+        const directories = (args?.directories as string[]) ?? [];
+        calls.push(directories);
+        attempt += 1;
+        return directories.map((directory) =>
+          attempt === 1 && directory.endsWith("beta")
+            ? { directory, local_key: null, name: null, read_only: false, error: "Disk full" }
+            : { directory, local_key: `key-${directory}`, name: directory.split("/").pop(), read_only: false, error: null },
+        );
+      },
+    });
+    const events: string[] = [];
+    const record = (e: Event) => events.push(e.type);
+    window.addEventListener("project-added", record);
+
+    await openProjectsStep(user);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(await screen.findByLabelText("Select all"));
+    await user.click(screen.getByRole("button", { name: /Add 2 projects and continue/ }));
+
+    expect(await screen.findByText("Disk full")).toBeInTheDocument();
+    expect(screen.getByText("Add the projects you already have")).toBeInTheDocument();
+    expect(events).toEqual(["project-added"]);
+
+    await user.click(screen.getByRole("button", { name: /Add 1 project and continue/ }));
+    await screen.findByText("Stay in the loop");
+    expect(calls).toEqual([
+      ["/Users/me/code/alpha", "/Users/me/code/beta"],
+      ["/Users/me/code/beta"],
+    ]);
+    window.removeEventListener("project-added", record);
+  });
+
+  it("ignores a scan that finishes after the step was skipped", async () => {
+    const user = userEvent.setup();
+    let finish: (value: unknown) => void = () => {};
+    mockInvoke({ ...baseRoutes, discover_projects: () => new Promise((resolve) => (finish = resolve)) });
+
+    await openProjectsStep(user);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    await screen.findByText("Stay in the loop");
+    finish(report);
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    await screen.findByText("Add the projects you already have");
+    expect(screen.queryByText(/Found/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search" })).toBeEnabled();
   });
 });
