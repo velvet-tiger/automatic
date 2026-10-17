@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "../lib/analytics";
-import { applyTheme, type Theme } from "../lib/theme";
+import { setStoredTheme, type Theme } from "../lib/theme";
 import { ChevronRight, Check } from "lucide-react";
 
 import graphLogo from "../../logos/graph_5.svg";
@@ -938,8 +938,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               onToggleTheme={() => {
                 // Toggle off -> always fall back to dark (default manual theme)
                 const next: Theme = answers.theme === "system" ? "dark" : "system";
-                localStorage.setItem("automatic.theme", next);
-                applyTheme(next);
+                setStoredTheme(next);
                 setAnswers((a) => ({ ...a, theme: next }));
               }}
             />

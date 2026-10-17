@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { applyTheme, Theme, THEMES } from "./lib/theme";
+import { applyTheme, getStoredTheme } from "./lib/theme";
+import { SidebarThemeSwitcher } from "./components/SidebarThemeSwitcher";
 import { ProfileProvider } from "./contexts/ProfileContext";
 import { useCurrentUser } from "./contexts/ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./lib/analytics";
@@ -45,7 +46,7 @@ import Featured from "./pages/community/Featured";
 import DevServersOverview from "./plugins/dev-servers/DevServersOverview";
 import MaildevOverview from "./plugins/maildev/MaildevOverview";
 import { usePlugin } from "./plugins/usePlugin";
-import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, BookMarked, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
+import { ClipboardList, Code, Server, ServerCog, LayoutTemplate, Bot, Layers, BookMarked, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
 import { flag } from "./lib/flags";
 import { migrateSavedSection, migrateSavedTab } from "./lib/savedNavigation";
 import CloudSync from "./pages/CloudSync";
@@ -260,17 +261,14 @@ function App() {
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
 
   // ── Theme Init ───────────────────────────────────────────────────────────
-  const [activeTheme, setActiveTheme] = useState<Theme>(
-    () => (localStorage.getItem("automatic.theme") as Theme | null) ?? "system"
-  );
   useEffect(() => {
-    applyTheme(activeTheme);
+    applyTheme(getStoredTheme());
   }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = () => {
-      if ((localStorage.getItem("automatic.theme") ?? "system") === "system") {
+      if (getStoredTheme() === "system") {
         applyTheme("system");
       }
     };
@@ -657,52 +655,7 @@ function App() {
 
         </nav>
 
-        {/* Sidebar footer — dev theme switcher (dev builds only) */}
-        {import.meta.env.DEV && (() => {
-          const [open, setOpen] = useState(false);
-          const current = THEMES.find((t) => t.id === activeTheme) ?? THEMES[0]!;
-          return (
-            <div className="px-3 pt-3 pb-1 relative">
-              <button
-                onClick={() => setOpen((o) => !o)}
-                className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                  style={{ backgroundColor: current.colors.primary }}
-                />
-                <span className="flex-1 text-left">{current.name}</span>
-                <ChevronDown size={12} className={`transition-transform ${open ? "rotate-180" : ""}`} />
-              </button>
-              {open && (
-                <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md overflow-hidden bg-bg-input border border-border-strong/40">
-                  {THEMES.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => {
-                        setActiveTheme(t.id);
-                        applyTheme(t.id);
-                        localStorage.setItem("automatic.theme", t.id);
-                        setOpen(false);
-                      }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] transition-colors ${
-                        t.id === activeTheme
-                          ? "text-text-base bg-bg-sidebar"
-                          : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
-                      }`}
-                    >
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: t.colors.primary }}
-                      />
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        <SidebarThemeSwitcher />
         {/* Sidebar footer — branding */}
         <div className="px-3 py-3 border-t border-border-strong/60">
           <div className="flex items-center gap-2 px-3 py-1.5 text-[14px] font-semibold text-text-base">
