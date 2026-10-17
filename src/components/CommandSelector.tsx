@@ -1,7 +1,7 @@
 // Extracted from Templates.tsx so the Templates and Profiles pages share one picker.
 
 import { useState } from "react";
-import { InheritedBadge } from "./ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
 import { Plus, Search, Terminal, Trash2, X } from "lucide-react";
 import type { UserCommandEntry } from "../pages/workspace/projects/types";
 
@@ -93,6 +93,7 @@ export function CommandSelector({
                     <Trash2 size={12} />
                   </button>
                 )}
+                {isLocked && <LockedRemoveButton profile={inheritedFrom} padding="p-1" />}
               </div>
             </div>
           );

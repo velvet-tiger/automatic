@@ -2,7 +2,7 @@
 
 import { Check, Plus, Webhook, X } from "lucide-react";
 import { DropdownMenu } from "../../../../../components/DropdownMenu";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { AgentInfo, HookEntry, ProfileLockMap, Project } from "../../types";
 
 type ProjectTabId =
@@ -272,6 +272,7 @@ export function HooksPanel({
                         <X size={12} />
                       </button>
                     )}
+                    {inheritedFrom && <LockedRemoveButton profile={inheritedFrom} />}
                   </div>
                 </div>
               );

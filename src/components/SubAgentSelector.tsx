@@ -1,7 +1,7 @@
 // Extracted from Templates.tsx so the Templates and Profiles pages share one picker.
 
 import { useState } from "react";
-import { InheritedBadge } from "./ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
 import { Bot, Plus, Search, Trash2, X } from "lucide-react";
 
 /** Picker for workspace sub-agents (library machine names). */
@@ -89,6 +89,7 @@ export function SubAgentSelector({
                     <Trash2 size={12} />
                   </button>
                 )}
+                {isLocked && <LockedRemoveButton profile={inheritedFrom} padding="p-1" />}
               </div>
             </div>
           );

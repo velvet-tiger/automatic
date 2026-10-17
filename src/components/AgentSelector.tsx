@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Bot, ChevronDown, Plus, Search, Trash2, X } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
-import { InheritedBadge } from "./ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
 
 export interface AgentCapabilities {
   skills: boolean;
@@ -233,6 +233,7 @@ export function AgentSelector({
                     <Trash2 size={12} />
                   </button>
                 )}
+                {isLocked && <LockedRemoveButton profile={inheritedFrom} padding="p-1" />}
               </div>
 
               {/* Collapsed settings panel */}

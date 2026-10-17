@@ -4,7 +4,7 @@ import { AlertTriangle, Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from 
 import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { CustomRule, ProfileLockMap, Project } from "../../types";
 
 interface RulesPanelProps {
@@ -383,6 +383,7 @@ export function RulesPanel({
                     <X size={12} />
                   </button>
                   )}
+                  {isRuleLocked(ruleId) && <LockedRemoveButton profile={profileLocks.rules[ruleId]} />}
                 </div>
               );
             })}
