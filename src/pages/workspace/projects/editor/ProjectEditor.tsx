@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
@@ -3104,7 +3105,7 @@ export function ProjectEditor({
                       </span>
                     )}
                     {openInDropdownOpen && (
-                      <div className="absolute right-0 top-full mt-1 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
+                      <DropdownMenu className="absolute right-0 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
                         {installedEditors.filter((e) => e.installed).map((editor) => (
                           <button
                             key={editor.id}
@@ -3123,7 +3124,7 @@ export function ProjectEditor({
                           <Copy size={13} />
                           Copy path
                         </button>
-                      </div>
+                      </DropdownMenu>
                     )}
                   </div>
                 )}

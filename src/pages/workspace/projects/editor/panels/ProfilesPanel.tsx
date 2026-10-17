@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, Layers, Plus, Search, X } from "lucide-react";
 import type { ProfileContribution, Project } from "../../types";
@@ -128,7 +129,7 @@ export function ProfilesPanel({
               <Plus size={12} /> Attach from Library
             </button>
             {adding && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40 flex items-center gap-2">
                   <Search size={12} className="text-text-muted shrink-0" />
                   <input
@@ -166,7 +167,7 @@ export function ProfilesPanel({
                     ))
                   )}
                 </div>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         </div>

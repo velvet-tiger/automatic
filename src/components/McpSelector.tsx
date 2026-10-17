@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DropdownMenu } from "./DropdownMenu";
 import { invoke } from "@tauri-apps/api/core";
 import { InheritedBadge } from "./ProtectionBadge";
 import {
@@ -365,7 +366,7 @@ export function McpSelector({
               <Plus size={12} /> Add from Library
             </button>
             {adding && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
@@ -400,7 +401,7 @@ export function McpSelector({
                     ))
                   )}
                 </div>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         )}

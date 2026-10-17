@@ -1,6 +1,7 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import type { RefObject } from "react";
+import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { Check, Edit2, Globe, MessagesSquare, Plus, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
@@ -229,7 +230,7 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
               <Plus size={12} /> Add from Library
             </button>
             {userAgentAdding && (
-              <div className="absolute right-0 top-full mt-1 w-64 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-64 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
@@ -294,7 +295,7 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
                       ))
                   )}
                 </div>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         </div>
