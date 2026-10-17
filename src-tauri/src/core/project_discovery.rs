@@ -125,6 +125,34 @@ pub struct DiscoveryReport {
     pub truncated: bool,
 }
 
+/// `path` made canonical, in the spelling users and the rest of the app use.
+///
+/// On Windows `canonicalize` returns a verbatim path (`\\?\C:\code`). Stored
+/// as a project directory, that would not match paths other code compares
+/// as strings. A plain drive path loses the prefix; a verbatim UNC path
+/// (`\\?\UNC\...`) is kept as it is.
+pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    Ok(strip_verbatim_drive_prefix(canonical))
+}
+
+fn strip_verbatim_drive_prefix(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_str().and_then(verbatim_drive_rest) {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
+}
+
+/// The plain drive path inside a verbatim one (`\\?\C:\x` -> `C:\x`), or
+/// `None` for any other spelling, verbatim UNC paths included.
+fn verbatim_drive_rest(text: &str) -> Option<&str> {
+    let rest = text.strip_prefix(r"\\?\")?;
+    (rest.as_bytes().get(1) == Some(&b':')).then_some(rest)
+}
+
 /// The agents whose project markers are present in `dir`, and whether it
 /// holds an `AGENTS.md`. `None` when nothing matches.
 fn detect_candidate(dir: &Path, agents: &[&'static dyn Agent]) -> Option<Candidate> {
@@ -272,11 +300,10 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
     // reached through a symlink (macOS aliases, `/home` -> `/var/home`).
     // Every path the walk builds is then canonical too, because it joins
     // real names and never follows a link. The add command relies on that.
-    let root_path = given
-        .canonicalize()
+    let root_path = canonical_path(&given)
         .map_err(|e| format!("Cannot open folder '{}': {}", given.display(), e))?;
 
-    let home = crate::agent::home_dir().and_then(|h| h.canonicalize().ok());
+    let home = crate::agent::home_dir().and_then(|h| canonical_path(&h).ok());
     let agents = crate::agent::all();
     let walk = walk_for_projects(&root_path, home.as_deref(), &agents, limits);
 
@@ -362,9 +389,19 @@ mod tests {
 
         let result = walk_for_projects(root.path(), None, &agents(), DiscoveryLimits::default());
 
-        assert_eq!(found(&result, root.path()), vec!["alpha", "gamma", "work/beta"]);
+        assert_eq!(
+            found(&result, root.path()),
+            vec!["alpha", "gamma", "work/beta"]
+        );
         let alpha = &result.candidates[0];
-        assert_eq!(alpha.agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["claude"]);
+        assert_eq!(
+            alpha
+                .agents
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["claude"]
+        );
         assert!(!alpha.has_agents_md);
         let gamma = &result.candidates[1];
         assert!(gamma.agents.is_empty());
@@ -540,7 +577,11 @@ mod tests {
 
         let result = walk_for_projects(root.path(), None, &agents(), DiscoveryLimits::default());
 
-        assert!(result.candidates.is_empty(), "{:?}", found(&result, root.path()));
+        assert!(
+            result.candidates.is_empty(),
+            "{:?}",
+            found(&result, root.path())
+        );
     }
 
     #[test]
@@ -564,11 +605,15 @@ mod tests {
             crate::core::save_project("registered", &serde_json::to_string(&project).unwrap())
                 .expect("save");
 
-            let report = discover_projects(root.path().to_str().unwrap(), DiscoveryLimits::default())
-                .expect("discover");
+            let report =
+                discover_projects(root.path().to_str().unwrap(), DiscoveryLimits::default())
+                    .expect("discover");
 
             let by_name = |n: &str| report.projects.iter().find(|p| p.name == n).expect(n);
-            assert!(matches!(by_name("fresh").status, Some(DirectoryStatus::Available)));
+            assert!(matches!(
+                by_name("fresh").status,
+                Some(DirectoryStatus::Available)
+            ));
             assert!(matches!(
                 by_name("registered").status,
                 Some(DirectoryStatus::RegisteredHere { .. })
@@ -601,6 +646,17 @@ mod tests {
             report.projects[0].directory,
             canonical.join("app").display().to_string()
         );
+    }
+
+    #[test]
+    fn verbatim_drive_paths_lose_their_prefix_and_unc_paths_do_not() {
+        assert_eq!(
+            verbatim_drive_rest(r"\\?\C:\code\app"),
+            Some(r"C:\code\app")
+        );
+        assert_eq!(verbatim_drive_rest(r"\\?\UNC\server\share"), None);
+        assert_eq!(verbatim_drive_rest(r"C:\code"), None);
+        assert_eq!(verbatim_drive_rest("/Users/me"), None);
     }
 
     #[test]

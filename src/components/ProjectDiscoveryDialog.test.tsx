@@ -153,4 +153,24 @@ describe("ProjectDiscoveryDialog", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Search" })).toBeEnabled());
     expect(screen.queryByText(/Found/)).not.toBeInTheDocument();
   });
+
+  it("shows a folder that could not be checked and does not let it be ticked", async () => {
+    const user = userEvent.setup();
+    mockInvoke({
+      discover_projects: {
+        ...report,
+        projects: [{ ...report.projects[0], status: null, check_error: "registry entry is unreadable" }],
+      },
+    });
+
+    render(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={() => {}} />);
+    await waitFor(() =>
+      expect((screen.getByLabelText("Folder to search") as HTMLInputElement).value).toBe("/Users/me"),
+    );
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    await screen.findByText("Could not check this folder: registry entry is unreadable");
+    expect(screen.getByLabelText("Add alpha")).toBeDisabled();
+    expect(screen.queryByLabelText("Select all")).not.toBeInTheDocument();
+  });
 });

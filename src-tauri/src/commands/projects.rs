@@ -192,8 +192,7 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
     // The scan reports canonical paths and never follows symlinks. A path
     // that differs from its canonical form holds a symlink or `..`, so it did
     // not come from the scan.
-    let canonical = path
-        .canonicalize()
+    let canonical = core::project_discovery::canonical_path(path)
         .map_err(|e| format!("Cannot read folder '{}': {}", directory, e))?;
     if canonical != path {
         return Err(format!(
@@ -206,7 +205,8 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
     }
     // Home holds each agent's global config. Syncing it as a project would
     // rewrite that config.
-    let home = crate::agent::home_dir().and_then(|h| h.canonicalize().ok());
+    let home =
+        crate::agent::home_dir().and_then(|h| core::project_discovery::canonical_path(&h).ok());
     if home.as_deref() == Some(canonical.as_path()) {
         return Err("Your home folder cannot be added as a project.".to_string());
     }
@@ -245,7 +245,8 @@ fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<S
         stub["created_by"] = serde_json::Value::String(user.to_string());
     }
     // A bulk add would otherwise fire one forced AI call per folder at once.
-    // The normal once-a-day run picks each project up later.
+    // Each project gets its recommendations on its next save instead, under
+    // the normal once-a-day throttle.
     save_project_with(name, &stub.to_string(), true, NewProjectRecommendations::Skip)
 }
 
