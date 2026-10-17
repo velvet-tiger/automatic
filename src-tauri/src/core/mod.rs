@@ -38,6 +38,7 @@ mod paths;
 mod plugins;
 mod profile;
 mod project_files;
+pub mod project_discovery;
 mod project_keys;
 mod project_layout;
 mod project_profiles;

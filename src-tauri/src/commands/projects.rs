@@ -119,6 +119,123 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
 }
 
+/// Scan `root` for folders that look like agent projects. Runs off the main
+/// thread: a scan of a home folder can open tens of thousands of folders.
+#[tauri::command]
+pub async fn discover_projects(
+    root: String,
+) -> Result<core::project_discovery::DiscoveryReport, String> {
+    tokio::task::spawn_blocking(move || {
+        core::project_discovery::discover_projects(
+            &root,
+            core::project_discovery::DiscoveryLimits::default(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Project scan failed: {}", e))?
+}
+
+/// The outcome of adding one folder in [`add_discovered_projects`].
+#[derive(Debug, Serialize)]
+pub struct AddedDiscoveredProject {
+    pub directory: String,
+    /// The new project's `local_key`, when it was added.
+    pub local_key: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Add each folder in `directories` as a new project named after the folder.
+/// Each one goes through the Add Project wizard's create path, which adopts
+/// the agents found on disk and runs the first sync. One failure does not
+/// stop the rest; each folder reports its own result.
+#[tauri::command]
+pub async fn add_discovered_projects(
+    directories: Vec<String>,
+    created_by: Option<String>,
+) -> Result<Vec<AddedDiscoveredProject>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(add_discovered_folders(directories, created_by.as_deref()))
+    })
+    .await
+    .map_err(|e| format!("Adding projects failed: {}", e))?
+}
+
+/// Synchronous body of [`add_discovered_projects`].
+fn add_discovered_folders(
+    directories: Vec<String>,
+    created_by: Option<&str>,
+) -> Vec<AddedDiscoveredProject> {
+    directories
+        .into_iter()
+        .map(|directory| match add_discovered_project(&directory, created_by) {
+            Ok(local_key) => AddedDiscoveredProject {
+                directory,
+                local_key: Some(local_key),
+                error: None,
+            },
+            Err(e) => AddedDiscoveredProject {
+                directory,
+                local_key: None,
+                error: Some(e),
+            },
+        })
+        .collect()
+}
+
+/// Validate one discovered folder and create a project for it. Returns the
+/// new project's `local_key`.
+fn add_discovered_project(directory: &str, created_by: Option<&str>) -> Result<String, String> {
+    let path = std::path::Path::new(directory);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("'{}' is not an absolute folder path.", directory));
+    }
+    // The scan never follows symlinks, so a symlink here did not come from it.
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Cannot read folder '{}': {}", directory, e))?;
+    if !meta.is_dir() {
+        return Err(format!("'{}' is not a folder.", directory));
+    }
+
+    // The folder may have been added, or gained a config, since the scan.
+    match core::inspect_project_directory(directory)? {
+        core::DirectoryStatus::Available => {}
+        core::DirectoryStatus::RegisteredHere { name, .. } => {
+            return Err(format!("Already added as project '{}'.", name));
+        }
+        core::DirectoryStatus::OrphanConfig { .. } => {
+            return Err(
+                "This folder has an Automatic config that is not registered. Add it with \
+                 Add Project to choose how to import it."
+                    .to_string(),
+            );
+        }
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| core::is_valid_name(s))
+        .ok_or_else(|| format!("Cannot name a project after '{}'.", directory))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    // Built as JSON so serde fills every other field with its default, the
+    // same as the wizard's stub.
+    let mut stub = serde_json::json!({
+        "name": name,
+        "directory": directory,
+        "created_at": now,
+        "updated_at": now,
+    });
+    if let Some(user) = created_by.filter(|u| !u.is_empty()) {
+        stub["created_by"] = serde_json::Value::String(user.to_string());
+    }
+    save_project(name, &stub.to_string(), Some(true))
+}
+
 /// Save a project and sync it. `name` is an identifier (a `local_key`, or a
 /// name). Returns the saved project's `local_key` (its name while it has no
 /// key), which the Add Project wizard uses to address the project it just
@@ -2353,6 +2470,75 @@ fn detach_profile_from_projects_removes_provided_entries() {
             )
             .expect("parse");
             assert_eq!(detected.agents, vec!["claude".to_string()]);
+        });
+    }
+
+    /// A folder added from the Find projects dialog goes through the same
+    /// create path as the wizard: it is named after the folder and adopts
+    /// the agents found on disk.
+    #[test]
+    fn adding_a_discovered_folder_creates_a_project_with_its_agents() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let project_dir = parent.path().join("my-app");
+            std::fs::create_dir_all(&project_dir).expect("mkdir");
+            std::fs::write(project_dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
+            let dir = project_dir.display().to_string();
+
+            let key = add_discovered_project(&dir, Some("user_1")).expect("add");
+
+            let saved = read_back(&key);
+            assert_eq!(saved.name, "my-app");
+            assert_eq!(saved.directory, dir);
+            assert_eq!(saved.agents, vec!["claude".to_string()]);
+            assert_eq!(saved.created_by.as_deref(), Some("user_1"));
+            assert_eq!(saved.instruction_mode, "per-agent");
+
+            let err = add_discovered_project(&dir, None).expect_err("second add");
+            assert!(err.contains("Already added as project 'my-app'"), "{err}");
+        });
+    }
+
+    #[test]
+    fn adding_a_discovered_folder_rejects_bad_paths() {
+        with_temp_home(|_| {
+            assert!(add_discovered_project("relative/dir", None).is_err());
+
+            let parent = tempdir().expect("parent");
+            let dotted = format!("{}/x/../y", parent.path().display());
+            assert!(add_discovered_project(&dotted, None).is_err());
+
+            let file = parent.path().join("file.txt");
+            std::fs::write(&file, "x").expect("write");
+            assert!(add_discovered_project(&file.display().to_string(), None).is_err());
+
+            #[cfg(unix)]
+            {
+                let target = parent.path().join("real");
+                std::fs::create_dir_all(&target).expect("mkdir");
+                let link = parent.path().join("link");
+                std::os::unix::fs::symlink(&target, &link).expect("symlink");
+                assert!(add_discovered_project(&link.display().to_string(), None).is_err());
+            }
+        });
+    }
+
+    #[test]
+    fn adding_discovered_folders_reports_each_result() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let good = parent.path().join("good");
+            std::fs::create_dir_all(&good).expect("mkdir");
+            let missing = parent.path().join("missing");
+
+            let results = add_discovered_folders(
+                vec![missing.display().to_string(), good.display().to_string()],
+                None,
+            );
+
+            assert_eq!(results.len(), 2);
+            assert!(results[0].error.is_some() && results[0].local_key.is_none());
+            assert!(results[1].error.is_none() && results[1].local_key.is_some());
         });
     }
 

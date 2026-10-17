@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import {
-  AlertCircle, ChevronDown, FolderOpen, Layers, LayoutGrid, Plus, RefreshCw, Search, Table2,
+  AlertCircle, ChevronDown, FolderOpen, FolderSearch, Layers, LayoutGrid, Plus, RefreshCw, Search, Table2,
 } from "lucide-react";
 import { relativeTime } from "../helpers";
 import type { Project, ProjectSummary } from "../types";
@@ -37,6 +37,8 @@ interface ProjectsOverviewProps {
   driftByProject: Record<string, boolean>;
   onSelect: (projectKey: string) => void;
   onCreate: () => void;
+  /** Opens the Find projects dialog. */
+  onFindProjects?: () => void;
   onSyncAll?: () => void;
   syncAllStatus?: "idle" | "syncing";
   /** When set, only show projects belonging to this group. */
@@ -283,7 +285,7 @@ function GroupSectionHeader({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ProjectsOverview({ projects, summaries, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
+export function ProjectsOverview({ projects, summaries, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onFindProjects, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
   const nameByKey = new Map(summaries.map((s) => [projectKeyOf(s), s.name] as const));
   const displayName = (key: string): string => nameByKey.get(key) ?? key;
   const labels = useMemo(() => projectLabels(summaries), [summaries]);
@@ -671,6 +673,14 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
               {syncAllStatus === "syncing" ? "Syncing…" : "Sync all"}
             </button>
           )}
+          {onFindProjects && (
+            <button
+              onClick={onFindProjects}
+              className="flex h-7 items-center gap-1.5 rounded-md border border-border-strong/50 bg-transparent px-3 text-[12px] font-medium text-text-muted transition-colors hover:bg-bg-input hover:text-text-base"
+            >
+              <FolderSearch size={12} /> Find Projects
+            </button>
+          )}
           <button
             onClick={onCreate}
             className="flex h-7 items-center gap-1.5 rounded bg-brand px-3 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-brand-hover"
@@ -707,6 +717,14 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
             >
               Create Project
             </button>
+            {onFindProjects && (
+              <button
+                onClick={onFindProjects}
+                className="mt-3 text-[12px] text-text-muted hover:text-text-base underline-offset-2 hover:underline"
+              >
+                Or find existing projects in a folder
+              </button>
+            )}
           </div>
         ) : groupingActive ? (
           !groupsReady ? null : filteredSections.length === 0 ? (

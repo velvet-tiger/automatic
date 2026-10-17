@@ -13,7 +13,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
 import type { Project, ProjectTemplate, DriftReport, ProjectSummary } from "./projects/types";
-import { trackProjectSynced } from "../../lib/analytics";
+import { trackProjectCreated, trackProjectSynced } from "../../lib/analytics";
+import { ProjectDiscoveryDialog, type AddedProject } from "../../components/ProjectDiscoveryDialog";
 import { loadProjectSummaries, projectKeyOf, resolveProjectKey } from "../../lib/projectIdentity";
 import { PROJECT_ORDER_STORAGE_KEY, SELECTED_PROJECT_STORAGE_KEY } from "../../lib/projectStorageMigration";
 
@@ -309,6 +310,17 @@ export default function Projects({
     }
   };
 
+  const [showDiscovery, setShowDiscovery] = useState(false);
+
+  const handleDiscoveredAdded = async (added: AddedProject[]) => {
+    for (const p of added) trackProjectCreated(p.name);
+    await loadProjects();
+    // The WorkspaceSidebar keeps its own project list and refreshes on this event.
+    for (const p of added) {
+      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: p.name, local_key: p.localKey } }));
+    }
+  };
+
   const handleBackToOverview = () => {
     setSelectedKey(null);
     setIsCreating(false);
@@ -334,9 +346,15 @@ export default function Projects({
             setCreateInGroup(filterGroup && filterGroup !== "__ungrouped__" ? filterGroup : null);
             setIsCreating(true);
           }}
+          onFindProjects={() => setShowDiscovery(true)}
           onSyncAll={handleSyncAll}
           syncAllStatus={syncAllStatus}
           filterGroup={filterGroup}
+        />
+        <ProjectDiscoveryDialog
+          isOpen={showDiscovery}
+          onClose={() => setShowDiscovery(false)}
+          onAdded={(added) => void handleDiscoveredAdded(added)}
         />
       </div>
     );
