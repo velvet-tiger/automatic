@@ -3712,14 +3712,17 @@ export function ProjectEditor({
               <div className="flex-1 flex flex-col items-center justify-center p-8">
                 <div className="w-full max-w-md relative">
 
-                  {/* Cancel wizard button */}
-                  <button
-                    onClick={cancelCreate}
-                    className="absolute -top-2 right-0 flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
-                    title="Cancel project creation"
-                  >
-                    <X size={13} /> Cancel
-                  </button>
+                  {/* Cancel wizard button. On its own row: the seven-step
+                      indicator is nearly as wide as the wizard and would sit under it. */}
+                  <div className="flex justify-end mb-4">
+                    <button
+                      onClick={cancelCreate}
+                      className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                      title="Cancel project creation"
+                    >
+                      <X size={13} /> Cancel
+                    </button>
+                  </div>
 
                   {/* Template source badge */}
                   {wizardSourceTemplates.length > 0 && (
@@ -3732,9 +3735,9 @@ export function ProjectEditor({
                   )}
 
                   {/* Step indicator */}
-                  <div className="flex items-center justify-center gap-2 mb-8">
+                  <div className="flex items-center justify-center gap-1.5 mb-2">
                     {WIZARD_STEPS.map((s) => (
-                      <div key={s} className="flex items-center gap-2">
+                      <div key={s} className="flex items-center gap-1.5">
                         <div title={WIZARD_STEP_LABELS[s]} className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
                           wizardStep === s
                             ? "bg-brand text-white"
@@ -3750,6 +3753,9 @@ export function ProjectEditor({
                       </div>
                     ))}
                   </div>
+                  <p className="text-center text-[11px] text-text-muted mb-8">
+                    Step {wizardStep} of {WIZARD_STEPS.length}: {WIZARD_STEP_LABELS[wizardStep]}
+                  </p>
 
                   {/* ── Step 1: Directory ──────────────────────────────── */}
                   {wizardStep === 1 && (
