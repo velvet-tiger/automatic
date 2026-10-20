@@ -100,7 +100,7 @@ The JSON Schema is at [`docs/schemas/automatic.schema.json`](schemas/automatic.s
 | `repository` | No | Object with `type` (`"git"`) and `url`. |
 | `homepage` | No | Documentation or landing page URL. |
 | `keywords` | No | Array of search/filter terms. |
-| `pinning` | No | Version pinning configuration (see below). |
+| `pinning` | No | Ignored by the installer. Kept for manifests that set it (see below). |
 | `collections` | No | Array of collection file references (see below). |
 | `skills` | No | Skills section (see below). |
 | `mcp_servers` | No | Array of MCP server resource entries. |
@@ -114,7 +114,7 @@ Every resource section is optional. A source can provide just skills, just rules
 
 ## Pinning
 
-Controls how Automatic tracks the git ref for this source.
+**Automatic ignores the manifest's `pinning` field.** A repository cannot choose the ref it is tracked at. The pin is the ref the user fetched.
 
 ```json
 "pinning": {
@@ -129,9 +129,9 @@ Controls how Automatic tracks the git ref for this source.
 | `tag` | Pins to a git tag. An update clones the tag again. |
 | `commit` | Pins to a specific SHA. An update clones the commit again. |
 
-When `pinning` is omitted, defaults to `{ "strategy": "branch", "ref": "main" }`.
+The install reads the pin from the clone: a commit when the user fetched one by its SHA (even if a tag names it too), else the branch the clone is on, else a tag that names its commit, else the commit. A fetch with no ref clones branch `main`. A `ref` of 40 hex characters is fetched as a commit; any other `ref` is passed to `git clone --branch`.
 
-The pin Automatic stores for an installed source is the ref the user fetched, not this field. The install reads it from the clone: the branch it is on, else a tag that names its commit, else the commit. A fetch with no ref clones branch `main`. A `ref` of 40 hex characters is fetched as a commit; any other `ref` is passed to `git clone --branch`.
+Every ref is checked before git sees it. A commit must be 7 to 40 hex digits. A branch or tag must follow the `git check-ref-format` rules and may not start with `-`, so it can never be read as a git option. Refs are passed after `--end-of-options` or `--`. An update refuses a stored pin that fails the check, as older versions could store one taken from the manifest.
 
 ## Skills
 
@@ -413,7 +413,9 @@ On update, the manifest is re-parsed with its `skill_json` resolved. Then:
 - **Reinstalled**: each resource the source installed before, still owns, and the new manifest still lists.
 - **Not installed**: a resource the new manifest adds, or one the user did not select. These are returned in `new_available`. An install with a selection adds them.
 - **Left alone**: a resource the user has since saved as their own, or another source took over.
-- **Kept on failure**: a resource whose reinstall fails keeps its installed copy and its provenance. The failure is a warning.
+- **Kept on failure**: a resource whose reinstall fails keeps its installed copy and its provenance. The failure is a warning. A skill is copied into a hidden staging folder in `skills/` first, and the installed folder is swapped only once the copy is complete.
+- **Env values kept**: when an MCP server the source owns is reinstalled, each env value the user filled in is kept for every key the new config declares.
+- **Collections**: the collections the source installed before are reinstalled. New ones are listed in `new_available`.
 - **Removed**: a resource the manifest no longer lists, and only while this source still owns it.
 
 ## Conflict Resolution
@@ -425,12 +427,23 @@ When a selected resource matches an existing library entry:
 1. **Same source owns it, same name** — replaced (this is an update).
 2. **Different source owns it** — a conflict the user may confirm.
 3. **No provenance record (user-created)** — a "local" conflict the user may confirm.
-4. **Built-in, bundled, plugin-owned, required or Codex entry** — blocked. It can never be replaced.
+4. **Built-in, bundled, plugin-owned, required or Codex entry** — blocked. It can never be replaced. Bundled includes the default rules and the bundled sub-agents.
 5. **Name differs only in letter case or form** — blocked. The write would land in the other entry's file.
+6. **A skill in another skill folder** (`~/.agents/skills`, `~/.claude/skills`, or an agent's own folder) — a "local" conflict the user may confirm, as the library copy would shadow it. Removing the source later deletes only the library copy. Projects, profiles and the skill's own records keep the name, because it still resolves to the user's skill.
 
-An install with any unconfirmed conflict installs nothing and returns the conflicts. The install dialog calls `check_source_conflicts` after the fetch. A resource with a conflict starts unselected, and selecting it confirms the replacement. Every write that is not a confirmed or owned replacement is create-only, so it fails rather than replace a file.
+Collections follow the same rules, keyed `collection:{slug}`. A bundled collection is blocked. A collection in Discover that no source lists is local. A collections file that does not parse fails the collection rather than being overwritten.
 
-Saving a resource through the editor (skills, MCP servers, rules, templates, sub-agents, commands) clears the source's provenance for that name. The user owns it from then on.
+An install with any unconfirmed conflict installs nothing and returns the conflicts. The install dialog calls `check_source_conflicts` after the fetch. A resource with a conflict starts unselected. Selecting it confirms the replacement; a group's "select all" never does. Every write that is not a confirmed or owned replacement is create-only, so it fails rather than replace a file. A replacement never writes through a symlink.
+
+Provenance for an install is written once at the end, then the source is registered. If either write fails, the entries the install created are deleted again. Entries it replaced keep the new content and their old ownership, and the error names them.
+
+### User writes
+
+Every user save, import and delete clears the source's provenance for that name: the editors (skills, MCP servers, rules, templates, sub-agents, commands), the MCP rule tools, skill imports from skills.sh, a repository, a local folder, a package or an agent package, and every delete command. The user owns the name from then on, and a resource made later under it is not the source's. If the write fails, the provenance is put back.
+
+One exception: an MCP server save that changes only env values keeps the source's ownership, so filling in an API key does not take the server over.
+
+A source's own install and a cloud pull do not clear provenance. Provenance lives in `~/.automatic/source-provenance.json` on each machine and is not synced. An edit or delete on one machine therefore does not release the source's claim on another machine. There, an update of the source can still replace a version the user pulled from the cloud, and a removal can delete it.
 
 ## Tauri Commands
 
