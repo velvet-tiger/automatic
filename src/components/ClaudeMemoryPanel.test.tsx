@@ -16,9 +16,9 @@ function storeCalls(): InvokeArgs[] {
     .map(([, args]) => args as InvokeArgs);
 }
 
-function renderPanel(storedMemories: Record<string, { value: string }> = {}) {
+function renderPanel(storedMemories: Record<string, { value: string }> | undefined = {}) {
   const onPromoted = vi.fn();
-  render(
+  const view = render(
     <ClaudeMemoryPanel
       projectKey="local-key-1"
       projectDirectory="/Users/me/code/app"
@@ -26,7 +26,7 @@ function renderPanel(storedMemories: Record<string, { value: string }> = {}) {
       onPromoted={onPromoted}
     />,
   );
-  return { onPromoted };
+  return { onPromoted, view };
 }
 
 /** The row header for a Claude memory file, found by its file name. */
@@ -46,8 +46,21 @@ describe("promotionStatus", () => {
     expect(promotionStatus({ k: { value: "body" } }, "k", "  body\n")).toBe("promoted");
   });
 
-  it("is changed when the stored value differs", () => {
-    expect(promotionStatus({ k: { value: "old" } }, "k", "new")).toBe("changed");
+  it("is differs when the stored value is not the file content", () => {
+    expect(promotionStatus({ k: { value: "old" } }, "k", "new")).toBe("differs");
+  });
+
+  it("follows a recorded promotion over the suggested key", () => {
+    const stored = { edited: { value: "user edit" }, k: { value: "other" } };
+    const promotion = { key: "edited", content: "file body" };
+    expect(promotionStatus(stored, "k", "file body", promotion)).toBe("promoted");
+    expect(promotionStatus(stored, "k", "file body v2", promotion)).toBe("changed");
+    expect(promotionStatus({}, "k", "file body", promotion)).toBe("none");
+  });
+
+  it("ignores inherited properties", () => {
+    expect(promotionStatus({}, "constructor", "x")).toBe("none");
+    expect(promotionStatus({}, "__proto__", "x")).toBe("none");
   });
 });
 
@@ -82,6 +95,7 @@ describe("ClaudeMemoryPanel", () => {
 
     const status = await screen.findByRole("status");
     expect(status.textContent).toContain("claude-memory/gotcha");
+    expect(status.textContent).toContain("Agent Memory");
   });
 
   it("marks a file that is already in Automatic memory", async () => {
@@ -91,11 +105,56 @@ describe("ClaudeMemoryPanel", () => {
     expect(within(row).getByText("Promoted")).toBeTruthy();
   });
 
-  it("marks a file that changed since it was promoted", async () => {
+  it("marks a file whose suggested key holds another value", async () => {
     renderPanel({ "claude-memory/gotcha": { value: "An older version." } });
 
     const row = await fileRow("gotcha.md");
-    expect(within(row).getByText("Changed since promoted")).toBeTruthy();
+    expect(within(row).getByText("Differs from Automatic memory")).toBeTruthy();
+  });
+
+  it("marks nothing while memories are not known for the project", async () => {
+    const user = userEvent.setup();
+    renderPanel(undefined);
+
+    const row = await fileRow("MEMORY.md");
+    expect(within(row).queryByText("Promoted")).toBeNull();
+    await user.click(within(row).getByRole("button", { name: /promote/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/already exists/i)).toBeNull();
+  });
+
+  it("shows the file as promoted after the user edits the key and value", async () => {
+    const user = userEvent.setup();
+    const { view } = renderPanel();
+
+    const row = await fileRow("gotcha.md");
+    await user.click(within(row).getByRole("button", { name: /promote/i }));
+    const dialog = await screen.findByRole("dialog");
+    const [keyInput, valueInput] = [
+      within(dialog).getByRole("textbox", { name: /key/i }),
+      within(dialog).getByRole("textbox", { name: /value/i }),
+    ];
+    await user.clear(keyInput);
+    await user.type(keyInput, "gotchas/thing");
+    await user.clear(valueInput);
+    await user.type(valueInput, "Edited summary");
+    await user.click(within(dialog).getByRole("button", { name: "Promote" }));
+    await waitFor(() => expect(storeCalls()).toHaveLength(1));
+    expect(storeCalls()[0]).toMatchObject({ key: "gotchas/thing", value: "Edited summary" });
+
+    // The parent reloads Automatic's memories and passes them back in.
+    view.rerender(
+      <ClaudeMemoryPanel
+        projectKey="local-key-1"
+        projectDirectory="/Users/me/code/app"
+        storedMemories={{ "gotchas/thing": { value: "Edited summary" } }}
+        onPromoted={vi.fn()}
+      />,
+    );
+
+    const rowAfter = await fileRow("gotcha.md");
+    expect(within(rowAfter).getByText("Promoted")).toBeTruthy();
+    expect(within(rowAfter).queryByText(/Differs|Changed/)).toBeNull();
   });
 
   it("warns before replacing an existing memory", async () => {

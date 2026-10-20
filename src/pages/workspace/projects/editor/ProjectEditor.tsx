@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
+import type { MemoryRecord } from "../../../../components/MemoryBrowser";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
@@ -769,9 +770,13 @@ export function ProjectEditor({
     }
   }
 
-  // Memory state
-  const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
+  // Memory state. The loaded entries carry the project they were loaded
+  // for, because loads can finish after the user has switched projects.
+  // Panels see them only while that project is selected.
+  const [loadedMemories, setLoadedMemories] = useState<{ projectKey: string; entries: MemoryRecord } | null>(null);
   const [loadingMemories, setLoadingMemories] = useState(false);
+  const selectedMemories: MemoryRecord | null =
+    loadedMemories !== null && loadedMemories.projectKey === selectedKey ? loadedMemories.entries : null;
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -1535,11 +1540,13 @@ export function ProjectEditor({
   const loadMemories = async (projectKey: string) => {
     try {
       setLoadingMemories(true);
-      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectKey });
-      setMemories(data);
+      const data: MemoryRecord = await invoke("get_project_memories", { project: projectKey });
+      setLoadedMemories({ projectKey, entries: data });
     } catch (err: unknown) {
-      // Surface the failure: a silent catch here left the memory list stale
-      // after a promotion, which looked like the promotion did nothing.
+      // A failed load drops what was loaded for this project, so no panel
+      // shows entries the store may no longer hold. The error is shown
+      // because a stale list makes saves look like they did nothing.
+      setLoadedMemories((prev) => (prev?.projectKey === projectKey ? null : prev));
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to load memories:", err);
       setError(`Failed to load memories: ${msg}`);
@@ -4517,7 +4524,7 @@ export function ProjectEditor({
                   <SummaryPanel
                     project={project}
                     isCreating={isCreating}
-                    memories={memories}
+                    memories={selectedMemories ?? {}}
                     projectFiles={projectFiles}
                     linkDocEntries={linkDocEntries}
                     recsDisplayCount={recsDisplayCount}
@@ -4676,7 +4683,7 @@ export function ProjectEditor({
                   <MemoryPanel
                     projectKey={selectedKey}
                     project={project}
-                    memories={memories}
+                    memories={selectedMemories}
                     loadingMemories={loadingMemories}
                     reloadMemories={loadMemories}
                     onError={setError}
