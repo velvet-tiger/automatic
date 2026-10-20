@@ -45,6 +45,7 @@ import type {
   UnifiedCandidate,
   RebuildPreview,
   DriftReport,
+  ProjectDriftState,
   ProjectProblemsReport,
   ProjectFileInfo,
   ProjectTemplate,
@@ -56,6 +57,9 @@ import type {
 import {
   parseInvokeResult,
   agentIdToLabel,
+  checkErrorText,
+  checkFailureNotices,
+  driftChecked,
   emptyProject,
   isHttpDocPath,
   isManagedDocNotePath,
@@ -205,7 +209,7 @@ interface ProjectEditorProps {
   reloadProjects: () => Promise<void>;
   /** Keyed by local_key. */
   setProjectDetailsMap: React.Dispatch<React.SetStateAction<Map<string, Project>>>;
-  setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, ProjectDriftState>>>;
   onBack: () => void;
   /**
    * Cached project from the router's overview map, used as the initial value
@@ -466,11 +470,13 @@ export function ProjectEditor({
   // Why the last drift check could not run, when it could not. Shown as a
   // banner, because a check that fails silently leaves "In Sync" on screen.
   const [driftCheckError, setDriftCheckError] = useState<string | null>(null);
-  const driftCheckInFlight = useRef(false);
 
   // Project problems state (e.g. MCP user-scope conflicts)
   // null = unknown/not yet checked, ProjectProblemsReport = result of last check
   const [problemsReport, setProblemsReport] = useState<ProjectProblemsReport | null>(null);
+  // Why the last problems check could not run, when it could not. A failed
+  // check must not leave an older report, or no banner at all, on screen.
+  const [problemsCheckError, setProblemsCheckError] = useState<string | null>(null);
 
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
@@ -1009,6 +1015,7 @@ export function ProjectEditor({
   useEffect(() => {
     setDriftReport(null);
     setProblemsReport(null);
+    setProblemsCheckError(null);
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
     setGlobalRuleSearch("");
@@ -1091,9 +1098,7 @@ export function ProjectEditor({
       .then(async (ok) => {
         if (!ok || selectedKeyRef.current !== name) return;
         if (synced) {
-          setDriftReport({ drifted: false, agents: [] });
-          setDriftByProject((prev) => ({ ...prev, [name]: false }));
-          setDriftCheckError(null);
+          markSynced(name);
           refreshProblemsReport(name);
           // Rules and instruction settings change the generated files. Leave
           // them alone while the user has an instruction file open for edit.
@@ -1123,14 +1128,21 @@ export function ProjectEditor({
   useEffect(() => {
     // A failure belongs to the project it was seen on.
     setDriftCheckError(null);
+    setProblemsCheckError(null);
     const name = selectedKey;
     if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
       return;
     }
 
+    // Owned by this run of the effect. A check still running for the project
+    // the user just left must not hold back the first check of the new one.
+    // `cancelled` drops the reply of a run that is no longer current, so an
+    // older reply cannot overwrite a newer one when the effect re-runs.
+    let inFlight = false;
+    let cancelled = false;
     const runCheck = async () => {
-      if (driftCheckInFlight.current) return;
-      driftCheckInFlight.current = true;
+      if (inFlight) return;
+      inFlight = true;
       try {
         // Settled separately so a failing drift check cannot leave a stale
         // problems banner on screen, and the reverse.
@@ -1138,73 +1150,162 @@ export function ProjectEditor({
           invoke<string>("check_project_drift", { name }),
           invoke<string>("check_project_problems", { name }),
         ]);
-        if (problemsResult.status === "fulfilled") {
-          setProblemsReport(JSON.parse(problemsResult.value) as ProjectProblemsReport);
-        } else {
-          console.error(`check_project_problems failed for ${name}:`, problemsResult.reason);
-        }
-        if (driftResult.status === "rejected") {
-          console.error(`check_project_drift failed for ${name}:`, driftResult.reason);
-          // The last report may be out of date, so it goes. The project then
-          // shows as not yet checked, never as in sync.
-          setDriftCheckError(String(driftResult.reason));
-          setDriftReport(null);
-          setDriftByProject((prev) => {
-            const { [name]: _stale, ...rest } = prev;
-            return rest;
-          });
-          return;
-        }
-        const report = JSON.parse(driftResult.value) as DriftReport;
-        setDriftCheckError(null);
-        setDriftReport(report);
-        setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
-
-        // If there are instruction file conflicts, surface the first one so the
-        // user can resolve it.  Only show one at a time to avoid overwhelming the UI.
-        const conflicts = report.instruction_conflicts ?? [];
-        if (conflicts.length > 0) {
-          setInstructionConflict((prev) => {
-            // Don't replace an already-open conflict dialog.
-            if (prev !== null) return prev;
-            return conflicts[0]!;
-          });
-        }
-
-        // Same for project-scoped custom asset conflicts. Prefer leaving an
-        // open instruction conflict alone; custom conflicts wait their turn.
-        const customConflicts = report.custom_conflicts ?? [];
-        if (customConflicts.length > 0) {
-          setCustomAssetConflict((prev) => {
-            if (prev !== null) return prev;
-            if (conflicts.length > 0) return prev;
-            return customConflicts[0]!;
-          });
-        }
-      } catch (err) {
-        console.error(`Drift/problems check failed for ${name}:`, err);
+        if (cancelled) return;
+        applyProblemsResult(name, problemsResult);
+        const report = applyDriftResult(name, driftResult);
+        // The conflict dialogs belong to the open project only.
+        if (report === null || selectedKeyRef.current !== name) return;
+        surfaceConflicts(report);
       } finally {
-        driftCheckInFlight.current = false;
+        inFlight = false;
       }
     };
 
     // Run immediately on mount / project change, then every 15 seconds
     runCheck();
     const interval = setInterval(runCheck, 15_000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [selectedKey, project?.directory, project?.agents.length, isCreating]);
+
+  /**
+   * Record one settled problems check. A reply that cannot be parsed is a
+   * failed problems check, never a failed drift check.
+   */
+  const applyProblemsResult = (name: string, result: PromiseSettledResult<string>) => {
+    if (result.status === "rejected") {
+      applyProblemsCheckFailure(name, result.reason);
+      return;
+    }
+    let report: ProjectProblemsReport;
+    try {
+      report = JSON.parse(result.value) as ProjectProblemsReport;
+    } catch (err) {
+      applyProblemsCheckFailure(name, err);
+      return;
+    }
+    applyProblemsReport(name, report);
+  };
+
+  /**
+   * Record one settled drift check. Returns the report, or null when the
+   * check failed or its reply could not be parsed.
+   */
+  const applyDriftResult = (name: string, result: PromiseSettledResult<string>): DriftReport | null => {
+    if (result.status === "rejected") {
+      applyDriftCheckFailure(name, result.reason);
+      return null;
+    }
+    let report: DriftReport;
+    try {
+      report = JSON.parse(result.value) as DriftReport;
+    } catch (err) {
+      applyDriftCheckFailure(name, err);
+      return null;
+    }
+    applyDriftReport(name, report);
+    return report;
+  };
+
+  /**
+   * Open the first instruction file conflict, or else the first custom asset
+   * conflict, unless a conflict dialog is already open. One at a time keeps
+   * the UI calm.
+   */
+  const surfaceConflicts = (report: DriftReport) => {
+    const conflicts = report.instruction_conflicts ?? [];
+    if (conflicts.length > 0) {
+      setInstructionConflict((prev) => prev ?? conflicts[0]!);
+    }
+    const customConflicts = report.custom_conflicts ?? [];
+    if (customConflicts.length > 0) {
+      setCustomAssetConflict((prev) => {
+        if (prev !== null) return prev;
+        if (conflicts.length > 0) return prev;
+        return customConflicts[0]!;
+      });
+    }
+  };
+
+  /**
+   * Record a drift check that ran. The list card is keyed by project, so it
+   * is always updated. The page state is only updated while that project is
+   * still the open one, so a late reply cannot land on another project.
+   */
+  const applyDriftReport = (name: string, report: DriftReport) => {
+    setDriftByProject((prev) => ({ ...prev, [name]: driftChecked(report.drifted) }));
+    if (selectedKeyRef.current !== name) return;
+    setDriftCheckError(null);
+    setDriftReport(report);
+  };
+
+  /**
+   * Record a drift check that could not run. The last report may be out of
+   * date, so it goes, and the project shows the failure instead of "In Sync".
+   */
+  const applyDriftCheckFailure = (name: string, err: unknown) => {
+    const error = checkErrorText(err);
+    setDriftByProject((prev) => ({ ...prev, [name]: { status: "failed", error } }));
+    if (selectedKeyRef.current !== name) return;
+    setDriftCheckError(error);
+    setDriftReport(null);
+  };
+
+  /** Record that the project's files were just written, so nothing has drifted. */
+  const markSynced = (name: string) => {
+    setDriftByProject((prev) => ({ ...prev, [name]: driftChecked(false) }));
+    // While creating, no project is selected yet and the page is the new one.
+    if (selectedKeyRef.current !== null && selectedKeyRef.current !== name) return;
+    setDriftReport({ drifted: false, agents: [] });
+    setDriftCheckError(null);
+  };
+
+  /**
+   * Run the drift check again after an action that changes the files, and
+   * record the outcome. Returns the report, or null when the check failed.
+   */
+  const recheckDrift = async (name: string): Promise<DriftReport | null> => {
+    let report: DriftReport;
+    try {
+      const raw = await invoke<string>("check_project_drift", { name });
+      report = JSON.parse(raw) as DriftReport;
+    } catch (err) {
+      applyDriftCheckFailure(name, err);
+      return null;
+    }
+    applyDriftReport(name, report);
+    return report;
+  };
+
+  const applyProblemsReport = (name: string, report: ProjectProblemsReport) => {
+    if (selectedKeyRef.current !== name) return;
+    setProblemsCheckError(null);
+    setProblemsReport(report);
+  };
+
+  /** The old report may be out of date, so it goes and the failure shows. */
+  const applyProblemsCheckFailure = (name: string, err: unknown) => {
+    if (selectedKeyRef.current !== name) return;
+    setProblemsCheckError(checkErrorText(err));
+    setProblemsReport(null);
+  };
 
   // Re-fetch just the problems report for the given project name, so
   // mutations that change what would appear in the banner (adding, removing,
   // or toggling MCP servers) update the UI immediately rather than waiting
   // for the next 15-second polling tick.
   const refreshProblemsReport = async (name: string) => {
+    let report: ProjectProblemsReport;
     try {
       const raw = await invoke<string>("check_project_problems", { name });
-      setProblemsReport(JSON.parse(raw) as ProjectProblemsReport);
+      report = JSON.parse(raw) as ProjectProblemsReport;
     } catch (err) {
-      console.error(`check_project_problems failed for ${name}:`, err);
+      applyProblemsCheckFailure(name, err);
+      return;
     }
+    applyProblemsReport(name, report);
   };
 
   // Clean up any in-progress wizard stub when the component unmounts (e.g. user
@@ -2356,9 +2457,7 @@ export function ProjectEditor({
         ? "Saved & synced"
         : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
-        setDriftReport({ drifted: false, agents: [] });
-        setDriftByProject((prev) => ({ ...prev, [name]: false }));
-        setDriftCheckError(null);
+        markSynced(name);
       }
 
       // Write any pending unified instruction content from one or more template applies.
@@ -2968,12 +3067,10 @@ export function ProjectEditor({
         setProjectFileContent(adoptedContent);
         setProjectFileDirty(false);
       }
-      // Re-run drift check: conflict should now be gone.
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
+      // Re-run drift check: conflict should now be gone. A failure shows on
+      // the page; it does not mean the adopt failed.
+      await recheckDrift(name);
     } catch (err: any) {
       setError(`Failed to adopt instruction file: ${err}`);
     } finally {
@@ -2992,12 +3089,10 @@ export function ProjectEditor({
         setProjectFileContent("");
         setProjectFileDirty(false);
       }
-      // Re-run drift check.
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
+      // Re-run drift check. A failure shows on the page; it does not mean
+      // the overwrite failed.
+      await recheckDrift(name);
     } catch (err: any) {
       setError(`Failed to overwrite instruction file: ${err}`);
     } finally {
@@ -3013,13 +3108,9 @@ export function ProjectEditor({
       await invoke("adopt_custom_asset", { name, kind, assetName });
       const projRaw: string = await invoke("read_project", { name });
       setProject(JSON.parse(projRaw));
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
-      const remaining = report.custom_conflicts ?? [];
-      setCustomAssetConflict(remaining[0] ?? null);
+      const report = await recheckDrift(name);
+      setCustomAssetConflict(report?.custom_conflicts?.[0] ?? null);
     } catch (err: unknown) {
       setError(`Failed to adopt custom ${kind}: ${err}`);
       setCustomAssetConflict(null);
@@ -3034,13 +3125,9 @@ export function ProjectEditor({
       await invoke("overwrite_custom_asset", { name, kind, assetName });
       const projRaw: string = await invoke("read_project", { name });
       setProject(JSON.parse(projRaw));
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
-      const remaining = report.custom_conflicts ?? [];
-      setCustomAssetConflict(remaining[0] ?? null);
+      const report = await recheckDrift(name);
+      setCustomAssetConflict(report?.custom_conflicts?.[0] ?? null);
     } catch (err: unknown) {
       setError(`Failed to overwrite custom ${kind}: ${err}`);
       setCustomAssetConflict(null);
@@ -3051,17 +3138,15 @@ export function ProjectEditor({
   const handleDriftResolved = async () => {
     const name = selectedKey;
     if (!name) return;
+    // A failed check shows on the page through recheckDrift.
+    await recheckDrift(name);
+    notifyProjectUpdated();
+    // Re-read the project to pick up config changes (e.g. adopted skill).
     try {
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
-      notifyProjectUpdated();
-      // Re-read the project to pick up config changes (e.g. adopted skill).
       const projRaw: string = await invoke("read_project", { name });
-      setProject(JSON.parse(projRaw));
-    } catch {
-      // Silently ignore — next periodic check will catch up.
+      if (selectedKeyRef.current === name) setProject(JSON.parse(projRaw));
+    } catch (err: unknown) {
+      setError(`Could not reload the project: ${checkErrorText(err)}`);
     }
   };
 
@@ -3082,9 +3167,7 @@ export function ProjectEditor({
       const files: string[] = JSON.parse(result);
       trackProjectSynced(isCreating ? name : project.name);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
-      setDriftReport({ drifted: false, agents: [] });
-      setDriftByProject((prev) => ({ ...prev, [name]: false }));
-      setDriftCheckError(null);
+      markSynced(name);
       notifyProjectUpdated();
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
@@ -3119,9 +3202,7 @@ export function ProjectEditor({
       await invoke("rebuild_project", { name });
       await reloadProject(name);
       setDirty(false);
-      setDriftReport({ drifted: false, agents: [] });
-      setDriftByProject((prev) => ({ ...prev, [name]: false }));
-      setDriftCheckError(null);
+      markSynced(name);
       notifyProjectUpdated();
       setRebuildPreview(null);
       setSyncStatus("Rebuilt project state");
@@ -3336,6 +3417,14 @@ export function ProjectEditor({
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
+                    </button>
+                  ) : driftCheckError !== null ? (
+                    <button
+                      onClick={handleSync}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-danger/10 text-danger rounded text-[12px] font-medium transition-colors"
+                      title="Could not check for changes. Click to sync."
+                    >
+                      <AlertCircle size={12} /> Check failed
                     </button>
                   ) : (
                     /* driftReport === null: not yet checked */
@@ -3553,16 +3642,20 @@ export function ProjectEditor({
               </div>
             )}
 
-            {/* ── Drift check failure ──────────────────────────────── */}
-            {driftCheckError && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-danger/25 bg-danger/10">
-                <div className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
-                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                  <span>
-                    <span className="font-medium">Could not check this project for changes.</span>{" "}
-                    {driftCheckError}
-                  </span>
-                </div>
+            {/* ── Drift or problems check failure ──────────────────── */}
+            {/* Not gated on `dirty`: the user can still edit and save, but
+                must be able to see that the checks are not running. */}
+            {(driftCheckError !== null || problemsCheckError !== null) && !isCreating && project.directory && project.agents.length > 0 && (
+              <div role="alert" className="border-b border-danger/25 bg-danger/10">
+                {checkFailureNotices(driftCheckError, problemsCheckError).map((notice) => (
+                  <div key={notice.title} className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
+                    <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                    <span>
+                      <span className="font-medium">{notice.title}</span>{" "}
+                      {notice.error}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -4457,8 +4550,7 @@ export function ProjectEditor({
                     setDirty={markDirty}
                     setSyncStatus={setSyncStatus}
                     setError={setError}
-                    setDriftReport={setDriftReport}
-                    setDriftByProject={setDriftByProject}
+                    markSynced={markSynced}
                     customSkillEditingIdx={customSkillEditingIdx}
                     setCustomSkillEditingIdx={setCustomSkillEditingIdx}
                     customSkillEditName={customSkillEditName}
