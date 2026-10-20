@@ -6296,6 +6296,29 @@ mod tests {
     }
 
     #[test]
+    fn an_update_records_the_tag_an_older_install_stored_as_a_branch() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            git(&origin, &["tag", "v1.0"]);
+            commit_rule(&origin, "# Two\n");
+            let mut source = fetch_and_install(Some(pin_for_ref("v1.0")));
+            // What an older version stored for the same install. The
+            // update's reinstall stores the ref the clone has checked out.
+            source.pin = PinningConfig::default();
+            upsert_source(source).expect("store the old pin");
+
+            update_source(PIN_REPO).expect("update");
+
+            assert!(installed_rule().contains("# One"), "{}", installed_rule());
+            let source = get_source(PIN_REPO).expect("read").expect("registered");
+            assert_eq!(source.pin.strategy, "tag");
+            assert_eq!(source.pin.git_ref, "v1.0");
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
     fn an_install_from_a_branch_records_it_and_an_update_follows_it() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
