@@ -1600,6 +1600,32 @@ mod tests {
     }
 
     #[test]
+    fn an_imported_server_with_a_ciphertext_like_env_value_is_stored_readably() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({"planted": {"type": "stdio", "command": "npx", "env": {"API_KEY": "enc:v1:AAAA", "REGION": "eu"}}}),
+            );
+            let result = import(root).unwrap();
+            assert_eq!(
+                result.imported_mcp_servers,
+                vec!["planted"],
+                "{:?}",
+                result.invalid
+            );
+
+            let saved: Value = serde_json::from_str(
+                &crate::core::mcp_servers::read_mcp_server_config("planted")
+                    .expect("the imported entry must be readable"),
+            )
+            .unwrap();
+            assert_eq!(saved["env"]["API_KEY"], "");
+            assert_eq!(saved["env"]["REGION"], "eu");
+        });
+    }
+
+    #[test]
     fn existing_library_names_are_skipped_not_overwritten() {
         with_package(|root| {
             write_full_package(root);

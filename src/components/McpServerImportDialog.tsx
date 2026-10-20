@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirmMcpConfigSave } from "../lib/mcpConfigValidation";
 import { X, ClipboardPaste, Loader2, CheckCircle2, AlertTriangle, FileText, ChevronDown } from "lucide-react";
 import { trackMcpServerCreated } from "../lib/analytics";
+import { blankEncryptedPrefixEnvValues } from "../lib/encryptedEnvValues";
 
 /**
  * Names of MCP servers that are managed by Automatic itself and must not be
@@ -36,6 +37,8 @@ interface ParsedEntry {
   action: ConflictAction;
   /** When action === "rename", the new name the user has typed. */
   renameTo: string;
+  /** Env keys whose pasted value started with the encryption prefix and was cleared. */
+  clearedEnvKeys: string[];
 }
 
 interface ParseResult {
@@ -147,9 +150,9 @@ function parseSnippet(text: string): ParseResult {
 
   // Shape 3: single bare config (no name).
   if (looksLikeBareConfig(top)) {
-    const config = cleanServerConfig(top);
+    const { config, clearedKeys } = blankEncryptedPrefixEnvValues(cleanServerConfig(top));
     return {
-      entries: [{ originalName: "", config, action: "skip", renameTo: "" }],
+      entries: [{ originalName: "", config, action: "skip", renameTo: "", clearedEnvKeys: clearedKeys }],
       requiresName: true,
       error: null,
     };
@@ -170,14 +173,19 @@ function buildEntriesFromMap(map: Record<string, unknown>): ParseResult {
         config: {},
         action: "skip",
         renameTo: "",
+        clearedEnvKeys: [],
       });
       continue;
     }
+    const { config, clearedKeys } = blankEncryptedPrefixEnvValues(
+      cleanServerConfig(value as Record<string, unknown>),
+    );
     entries.push({
       originalName: name,
-      config: cleanServerConfig(value as Record<string, unknown>),
+      config,
       action: "skip",
       renameTo: "",
+      clearedEnvKeys: clearedKeys,
     });
   }
   if (entries.length === 0) {
@@ -479,6 +487,13 @@ export default function McpServerImportDialog({
                           )}
                           {row.error && (
                             <p className="mt-1 text-[11px] text-danger">{row.error}</p>
+                          )}
+                          {entry.clearedEnvKeys.length > 0 && (
+                            <p className="mt-1 text-[11px] text-warning">
+                              Cleared {entry.clearedEnvKeys.join(", ")}. A pasted value that starts
+                              with enc:v1: is not a value Automatic can decrypt. Empty values are
+                              read from your shell environment. Enter the real values after import.
+                            </p>
                           )}
                         </div>
 
