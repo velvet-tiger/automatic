@@ -3127,7 +3127,12 @@ fn install_template(
 /// When the source already owns the entry, the user's own env values are
 /// kept: for each env key the new config declares, a non-empty value the
 /// stored entry holds wins over the source's. The user fills in API keys
-/// there, and an update must not wipe them.
+/// there, and an update must not wipe them. That merge happens only when
+/// nothing else about the server changed. When the source changes how the
+/// server runs (its command, args, URL, headers or any other field) and the
+/// user has filled in an env value, the stored entry is left as it is and
+/// the install fails with a warning, so the user's secret never goes to a
+/// command or endpoint they have not reviewed.
 fn install_mcp_server(
     source_dir: &Path,
     server: &ManifestResource,
@@ -3180,9 +3185,14 @@ fn mcp_server_path(name: &str) -> Result<PathBuf, String> {
     Ok(super::mcp_servers::get_mcp_servers_dir()?.join(format!("{}.json", name)))
 }
 
-/// `incoming` with each env value it declares replaced by the stored
-/// entry's non-empty value for the same key. Keys only the stored entry has
-/// are dropped, as the source no longer declares them.
+/// The config an owned reinstall writes for `name`: `incoming`, with each
+/// env value it declares replaced by the stored entry's non-empty value for
+/// the same key. Keys only the stored entry has are dropped, as the source
+/// no longer declares them.
+///
+/// Fails, so nothing is written, when the stored entry holds a non-empty env
+/// value and any field other than `env` differs. Automatic's own marker
+/// fields, which start with `_`, are not compared.
 fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
     let Some(stored) = super::mcp_servers::read_mcp_server_config_if_present(name)? else {
         return Ok(incoming.to_string());
@@ -3191,18 +3201,45 @@ fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to parse the stored MCP server '{}': {}", name, e))?;
     let mut config: serde_json::Value = serde_json::from_str(incoming)
         .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", name, e))?;
-    let (Some(local), Some(env)) = (
-        stored.get("env").and_then(|e| e.as_object()),
-        config.get_mut("env").and_then(|e| e.as_object_mut()),
-    ) else {
+    let filled: serde_json::Map<String, serde_json::Value> = stored
+        .get("env")
+        .and_then(|e| e.as_object())
+        .map(|env| {
+            env.iter()
+                .filter(|(_, v)| v.as_str() != Some("") && !v.is_null())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if filled.is_empty() {
         return Ok(incoming.to_string());
-    };
-    for (key, value) in env.iter_mut() {
-        if let Some(local_value) = local.get(key).filter(|v| v.as_str() != Some("")) {
-            *value = local_value.clone();
+    }
+    if without_env(&stored) != without_env(&config) {
+        return Err(format!(
+            "the source changed how MCP server '{}' runs, and it holds env values you filled in. \
+             It was left as it was so those values are not sent to a command or endpoint you \
+             have not reviewed. Review the new config and install the server again",
+            name
+        ));
+    }
+    if let Some(env) = config.get_mut("env").and_then(|e| e.as_object_mut()) {
+        for (key, value) in env.iter_mut() {
+            if let Some(local_value) = filled.get(key) {
+                *value = local_value.clone();
+            }
         }
     }
     serde_json::to_string(&config).map_err(|e| e.to_string())
+}
+
+/// A server config without `env` and without Automatic's marker fields.
+fn without_env(config: &serde_json::Value) -> serde_json::Value {
+    let mut config = config.clone();
+    if let Some(object) = config.as_object_mut() {
+        object.remove("env");
+        object.retain(|key, _| !key.starts_with('_'));
+    }
+    config
 }
 
 /// Install a command: copy .md file to commands dir. See
@@ -7528,7 +7565,7 @@ mod tests {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("vel385-coll-bad");
-            let manifest = write_every_kind(REPO, &names, MCP);
+            write_every_kind(REPO, &names, MCP);
             let path = get_automatic_dir()
                 .unwrap()
                 .join("discover")
@@ -7591,42 +7628,106 @@ mod tests {
         });
     }
 
+    /// Install a server with an empty `API_KEY`, fill it in through a user
+    /// save, then publish `next` as the source's new version and reinstall.
+    fn reinstall_server_after_filling_in(
+        prefix: &str,
+        key: &str,
+        next: &str,
+    ) -> (KindNames, InstallResult) {
+        // With no key filled in, every env value is empty.
+        let region = if key.is_empty() { "" } else { "eu" };
+        let names = KindNames::new(prefix);
+        let shipped = format!(
+            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"","REGION":"{}"}}}}"#,
+            region
+        );
+        let manifest = write_every_kind(REPO, &names, &shipped);
+        install_source(REPO, &manifest, None, None, &[]).expect("install");
+        let filled = format!(
+            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"{}","REGION":"{}"}}}}"#,
+            key, region
+        );
+        crate::core::user_writes::save_mcp_server(&names.mcp_server, &filled).expect("save env");
+        assert_eq!(
+            get_provenance("mcp_server", &names.mcp_server),
+            Ok(Some(REPO.to_string())),
+            "an env-only edit keeps the source's ownership"
+        );
+        fs::write(source_clone_path(REPO).unwrap().join("server.json"), next)
+            .expect("write server");
+        let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
+        (names, result)
+    }
+
+    fn stored_server(name: &str) -> serde_json::Value {
+        serde_json::from_str(&crate::core::read_mcp_server_config(name).expect("read")).unwrap()
+    }
+
     #[test]
-    fn an_update_keeps_the_env_values_the_user_filled_in() {
+    fn an_env_only_update_keeps_the_env_values_the_user_filled_in() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            let names = KindNames::new("vel385-env");
-            let server = r#"{"command":"npx","env":{"API_KEY":"","REGION":"eu"}}"#;
-            let manifest = write_every_kind(REPO, &names, server);
-            install_source(REPO, &manifest, None, None, &[]).expect("install");
-
-            // The user fills in the key; only env values change.
-            crate::core::user_writes::save_mcp_server(
-                &names.mcp_server,
-                r#"{"command":"npx","env":{"API_KEY":"sk-mine","REGION":"eu"}}"#,
-            )
-            .expect("save env");
-            assert_eq!(
-                get_provenance("mcp_server", &names.mcp_server),
-                Ok(Some(REPO.to_string())),
-                "an env-only edit keeps the source's ownership"
+            let (names, result) = reinstall_server_after_filling_in(
+                "vel385-env",
+                "sk-mine",
+                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"","REGION":"us","NEW":"1"}}"#,
             );
 
-            // The new version changes the args and the region default.
-            fs::write(
-                source_clone_path(REPO).unwrap().join("server.json"),
-                r#"{"command":"npx","args":["-y"],"env":{"API_KEY":"","REGION":"us"}}"#,
-            )
-            .expect("write server");
-            install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
-
-            let stored: serde_json::Value = serde_json::from_str(
-                &crate::core::read_mcp_server_config(&names.mcp_server).expect("read"),
-            )
-            .unwrap();
+            assert!(result.skipped.is_empty(), "{:?}", result.warnings);
+            let stored = stored_server(&names.mcp_server);
             assert_eq!(stored["env"]["API_KEY"], "sk-mine");
             assert_eq!(stored["env"]["REGION"], "eu");
-            assert_eq!(stored["args"], serde_json::json!(["-y"]));
+            assert_eq!(stored["env"]["NEW"], "1");
+        });
+    }
+
+    #[test]
+    fn a_url_change_never_carries_a_filled_in_key_to_the_new_endpoint() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let (names, result) = reinstall_server_after_filling_in(
+                "vel385-env-url",
+                "sk-mine",
+                r#"{"type":"http","url":"https://evil.example/mcp","env":{"API_KEY":"","REGION":"eu"}}"#,
+            );
+
+            assert_eq!(
+                result.skipped,
+                vec![format!("mcp_server:{}", names.mcp_server)]
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains(&names.mcp_server)
+                    && w.contains("changed how")
+                    && w.contains("install the server again")),
+                "{:?}",
+                result.warnings
+            );
+            let stored = stored_server(&names.mcp_server);
+            assert_eq!(stored["url"], "https://a.example/mcp");
+            assert_eq!(stored["env"]["API_KEY"], "sk-mine");
+            assert_eq!(
+                get_provenance("mcp_server", &names.mcp_server),
+                Ok(Some(REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn a_url_change_replaces_a_server_whose_env_is_empty() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let (names, result) = reinstall_server_after_filling_in(
+                "vel385-env-empty",
+                "",
+                r#"{"type":"http","url":"https://b.example/mcp","env":{"API_KEY":"","REGION":"eu"}}"#,
+            );
+
+            assert!(result.skipped.is_empty(), "{:?}", result.warnings);
+            assert_eq!(
+                stored_server(&names.mcp_server)["url"],
+                "https://b.example/mcp"
+            );
         });
     }
 

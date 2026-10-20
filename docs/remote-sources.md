@@ -414,7 +414,7 @@ On update, the manifest is re-parsed with its `skill_json` resolved. Then:
 - **Not installed**: a resource the new manifest adds, or one the user did not select. These are returned in `new_available`. An install with a selection adds them.
 - **Left alone**: a resource the user has since saved as their own, or another source took over.
 - **Kept on failure**: a resource whose reinstall fails keeps its installed copy and its provenance. The failure is a warning. A skill is copied into a hidden staging folder in `skills/` first, and the installed folder is swapped only once the copy is complete.
-- **Env values kept**: when an MCP server the source owns is reinstalled, each env value the user filled in is kept for every key the new config declares.
+- **Env values kept**: when an MCP server the source owns is reinstalled and nothing but its env changed, each env value the user filled in is kept for every key the new config declares. If the source changed any other field (command, args, URL, headers) and the stored server has a non-empty env value, the server is left as it was and the update warns that the source changed how it runs. The user reviews the new config and installs it again, so a filled-in secret never goes to an endpoint they have not seen. A server whose env values are all empty is replaced.
 - **Collections**: the collections the source installed before are reinstalled. New ones are listed in `new_available`.
 - **Removed**: a resource the manifest no longer lists, and only while this source still owns it.
 
