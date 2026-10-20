@@ -830,6 +830,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       setDirty(false);
       setIsCreating(false);
       setError(null);
+      setRenameWarnings([]);
       resetInlineState();
     } catch (err: any) {
       setError(`Failed to read server: ${err}`);
@@ -842,6 +843,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const closeDrawer = () => {
     setSelectedName(null);
+    setRenameWarnings([]);
     setConfig(null);
     setDirty(false);
     setIsCreating(false);
@@ -862,6 +864,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
     if (saveBlockedByErrors) return;
+    let renamed = false;
     try {
       // Rename first when the user changed the name of an existing server.
       // The backend rewrites project + template references and re-syncs, so
@@ -871,6 +874,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
           oldName: selectedName,
           newName: name,
         });
+        renamed = true;
         setRenameWarnings(warnings);
         // The server now lives under the new name, even if the save below
         // fails, so the editor must not keep pointing at the old one.
@@ -902,6 +906,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       }
       setError(null);
     } catch (err: any) {
+      // A rename that worked must still show in the sidebar when the save
+      // after it fails. The list loads first because a successful load
+      // clears the error, and the save error must stay visible.
+      if (renamed) await loadServers();
       setError(`Failed to save server: ${err}`);
     }
   };
@@ -1194,7 +1202,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3 shrink-0">
           <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
           <div className="flex-1 whitespace-pre-wrap">{renameWarnings.join("\n")}</div>
-          <button onClick={() => setRenameWarnings([])}>
+          <button type="button" aria-label="Dismiss" onClick={() => setRenameWarnings([])}>
             <X size={14} />
           </button>
         </div>

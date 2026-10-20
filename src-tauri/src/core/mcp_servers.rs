@@ -610,11 +610,11 @@ pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, Str
 /// under `new_name`. If `old_name == new_name` this is a no-op.
 ///
 /// Any provenance entry recorded against `old_name` is moved to `new_name` so
-/// the GitHub author badge continues to show. A provenance file that cannot
-/// be read refuses the rename before anything moves. A provenance write that
-/// fails after the move does not fail the rename, because the file has moved
-/// and the caller still has references to rewrite. It is returned as a
-/// warning naming both servers.
+/// the GitHub author badge continues to show. The provenance moves first, so
+/// a provenance file that cannot be read or written refuses the rename
+/// before the server file moves. If the file then fails to move, the
+/// provenance is moved back. Returns warnings about non-fatal problems,
+/// which is empty today.
 ///
 /// The server's OAuth secrets are filed under its name and URL, so they move
 /// to `new_name` once the file has. Left behind, the renamed server would
@@ -643,20 +643,28 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
         return Err(format!("MCP server '{}' already exists", new_name));
     }
 
-    // Read ownership strictly before anything moves. A damaged provenance
-    // file would otherwise lose the server's source on rename, so the rename
-    // is refused and nothing on disk changes.
-    let source = super::remote_sources::get_provenance("mcp_server", old_name).map_err(|e| {
-        format!(
-            "MCP server '{}' was not renamed, because its source ownership could not be read: {}",
-            old_name, e
-        )
-    })?;
-
     record_legacy_oauth_urls()?;
     let url = stored_server_url(&old_path)?;
 
-    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+    // Move ownership before the file, so a provenance problem refuses the
+    // rename with nothing moved. Moving it afterwards could leave the source
+    // claiming a name that no longer exists.
+    let moved_provenance = super::remote_sources::move_provenance("mcp_server", old_name, new_name)
+        .map_err(|e| {
+            format!(
+                "MCP server '{}' was not renamed, because its source ownership could not be moved: {}",
+                old_name, e
+            )
+        })?;
+
+    if let Err(rename_error) = fs::rename(&old_path, &new_path) {
+        return Err(undo_provenance_move(
+            old_name,
+            new_name,
+            moved_provenance,
+            rename_error,
+        ));
+    }
 
     if let StoredUrl::Known(Some(url)) = url {
         crate::proxy::move_oauth_secrets(old_name, new_name, &url);
@@ -664,17 +672,35 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
 
     remove_recently_added("mcp_servers", old_name);
 
-    let mut warnings = Vec::new();
-    if source.is_some() {
-        if let Err(e) = super::remote_sources::move_provenance("mcp_server", old_name, new_name) {
-            warnings.push(format!(
-                "MCP server '{}' was renamed to '{}', but its source ownership could not be moved: {}",
-                old_name, new_name, e
-            ));
-        }
-    }
+    // Nothing after the move is fatal or reported today. The list stays so
+    // the command and RPC result keep one shape if a non-fatal case returns.
+    Ok(Vec::new())
+}
 
-    Ok(warnings)
+/// Put a server's provenance back under `old_name` after its file failed to
+/// move, and build the error for the failed rename. The error names the
+/// undo failure too, when there is one, because the source then claims a
+/// name whose file is still under the old one.
+fn undo_provenance_move(
+    old_name: &str,
+    new_name: &str,
+    moved_provenance: bool,
+    rename_error: std::io::Error,
+) -> String {
+    let rename_failed = format!(
+        "MCP server '{}' could not be renamed to '{}': {}",
+        old_name, new_name, rename_error
+    );
+    if !moved_provenance {
+        return rename_failed;
+    }
+    match super::remote_sources::move_provenance("mcp_server", new_name, old_name) {
+        Ok(_) => rename_failed,
+        Err(undo_error) => format!(
+            "{}. Its source ownership was moved to '{}' and could not be moved back: {}",
+            rename_failed, new_name, undo_error
+        ),
+    }
 }
 
 /// Reported availability of a configured MCP server, shown as a status
@@ -1920,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_warns_when_a_provenance_move_fails() {
+    fn rename_is_refused_when_provenance_cannot_be_written() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             save_mcp_server_config("moving-old", r#"{"type":"stdio","command":"npx"}"#)
@@ -1936,23 +1962,64 @@ mod tests {
             let result = rename_mcp_server_config("moving-old", "moving-new");
             super::super::remote_sources::fail_provenance_writes(false);
 
-            let warnings = result.expect("the rename itself succeeds");
-            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            let err = result.expect_err("refused");
             assert!(
-                warnings[0].contains("'moving-old' was renamed to 'moving-new'")
-                    && warnings[0].contains("source ownership could not be moved"),
-                "unexpected warnings: {warnings:?}"
+                err.contains("'moving-old' was not renamed")
+                    && err.contains("source ownership could not be moved"),
+                "unexpected error: {err}"
             );
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            assert!(dir.join("moving-old.json").exists());
+            assert!(!dir.join("moving-new.json").exists());
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "moving-old"),
+                Ok(Some("octocat/mcp-collection".to_string()))
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "moving-new"),
+                Ok(None)
+            );
+        });
+    }
+
+    /// A folder the test user cannot write to makes `fs::rename` fail while
+    /// the provenance file, one level up, stays writable.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_file_move_puts_the_provenance_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("stuck-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "stuck-old",
+                "octocat/mcp-collection",
+            )
+            .expect("record provenance");
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            let writable = fs::metadata(&dir).expect("stat dir").permissions();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("lock dir");
+
+            let result = rename_mcp_server_config("stuck-old", "stuck-new");
+            fs::set_permissions(&dir, writable).expect("unlock dir");
+
+            let err = result.expect_err("the file move fails");
             assert!(
-                super::super::remote_sources::get_provenance("mcp_server", "moving-new")
-                    .expect("read provenance")
-                    .is_none(),
-                "a failed move must not record the new name"
+                err.contains("could not be renamed to 'stuck-new'")
+                    && !err.contains("could not be moved back"),
+                "unexpected error: {err}"
             );
-            assert!(get_mcp_servers_dir()
-                .expect("servers dir")
-                .join("moving-new.json")
-                .exists());
+            assert!(dir.join("stuck-old.json").exists());
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stuck-old"),
+                Ok(Some("octocat/mcp-collection".to_string()))
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stuck-new"),
+                Ok(None)
+            );
         });
     }
 

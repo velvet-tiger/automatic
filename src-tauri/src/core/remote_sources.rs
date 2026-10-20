@@ -648,14 +648,20 @@ fn hand_over_provenance(
 
 /// Move the provenance of a renamed resource from `old_name` to `new_name`
 /// in one write, so a failure cannot leave both names owned by the source.
-/// Does nothing when `old_name` has no provenance.
-pub fn move_provenance(resource_type: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+/// Returns whether anything moved: `false`, with no write, when `old_name`
+/// has no provenance.
+pub fn move_provenance(
+    resource_type: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<bool, String> {
     let mut prov = read_provenance()?;
     let Some(source) = prov.remove(&provenance_key(resource_type, old_name)) else {
-        return Ok(());
+        return Ok(false);
     };
     prov.insert(provenance_key(resource_type, new_name), source);
-    save_provenance(&prov)
+    save_provenance(&prov)?;
+    Ok(true)
 }
 
 /// The singular type provenance is keyed by, for a type a source lists
@@ -4435,7 +4441,7 @@ mod tests {
             record_provenance("mcp_server", "before", REPO).expect("record");
             record_provenance("rule", "other", REPO).expect("record other");
 
-            move_provenance("mcp_server", "before", "after").expect("move");
+            assert!(move_provenance("mcp_server", "before", "after").expect("move"));
 
             let prov = read_provenance().expect("read provenance");
             assert_eq!(prov.get("mcp_server:before"), None);
@@ -4452,7 +4458,7 @@ mod tests {
             assert_eq!(prov.get("mcp_server:again"), None);
 
             // Nothing recorded: no write and no error.
-            move_provenance("mcp_server", "unowned", "renamed").expect("no-op move");
+            assert!(!move_provenance("mcp_server", "unowned", "renamed").expect("no-op move"));
             assert_eq!(
                 read_provenance().expect("read").get("mcp_server:renamed"),
                 None

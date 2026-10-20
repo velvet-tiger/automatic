@@ -168,9 +168,12 @@ mod tests {
     const NEW: &str = "vel186-cmd-new";
     const PROJECT: &str = "vel186-cmd-project";
     const PROFILE: &str = "vel186-cmd-profile";
+    const MOVED_OLD: &str = "vel186-cmd-moved-old";
+    const MOVED_NEW: &str = "vel186-cmd-moved-new";
+    const MOVED_PROJECT: &str = "vel186-cmd-moved-project";
 
     #[test]
-    fn a_rename_rewrites_references_when_provenance_cannot_move() {
+    fn a_refused_rename_leaves_every_reference_alone() {
         with_temp_home(|_home| {
             core::save_mcp_server_config(OLD, r#"{"type":"stdio","command":"npx"}"#)
                 .expect("save server");
@@ -192,24 +195,43 @@ mod tests {
             let result = rename_mcp_server_config(OLD, NEW);
             core::remote_sources::fail_provenance_writes(false);
 
-            let warnings = result.expect("the rename succeeds with a warning");
-            assert_eq!(warnings.len(), 1, "{warnings:?}");
-            assert!(
-                warnings[0].contains(&format!("'{OLD}' was renamed to '{NEW}'")),
-                "{warnings:?}"
-            );
-            assert_eq!(read_back(PROJECT).mcp_servers, vec![NEW.to_string()]);
+            let err = result.expect_err("the rename is refused");
+            assert!(err.contains("was not renamed"), "{err}");
+            assert_eq!(read_back(PROJECT).mcp_servers, vec![OLD.to_string()]);
             let profile = core::read_project_profile_parsed(PROFILE).expect("read profile");
-            assert_eq!(profile.mcp_servers, vec![NEW.to_string()]);
-            // The failed write changed nothing, so the source still owns the
-            // old name only.
+            assert_eq!(profile.mcp_servers, vec![OLD.to_string()]);
             assert_eq!(
                 core::remote_sources::get_provenance("mcp_server", OLD),
                 Ok(Some("octocat/servers".to_string()))
             );
+        });
+    }
+
+    #[test]
+    fn a_rename_moves_references_and_provenance_together() {
+        with_temp_home(|_home| {
+            core::save_mcp_server_config(MOVED_OLD, r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save server");
+            core::remote_sources::record_provenance("mcp_server", MOVED_OLD, "octocat/servers")
+                .expect("record provenance");
+            let (_dir, _path) = make_project(MOVED_PROJECT, |p| {
+                p.mcp_servers = vec![MOVED_OLD.to_string()]
+            });
+
+            let warnings = rename_mcp_server_config(MOVED_OLD, MOVED_NEW).expect("rename");
+
+            assert_eq!(warnings, Vec::<String>::new());
             assert_eq!(
-                core::remote_sources::get_provenance("mcp_server", NEW),
+                read_back(MOVED_PROJECT).mcp_servers,
+                vec![MOVED_NEW.to_string()]
+            );
+            assert_eq!(
+                core::remote_sources::get_provenance("mcp_server", MOVED_OLD),
                 Ok(None)
+            );
+            assert_eq!(
+                core::remote_sources::get_provenance("mcp_server", MOVED_NEW),
+                Ok(Some("octocat/servers".to_string()))
             );
         });
     }
