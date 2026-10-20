@@ -56,8 +56,10 @@ serde_json = "1"
 keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "sync-secret-service", "crypto-rust", "windows-native"] }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
-rmcp = { version = "1.6", features = [
-    "server", "transport-io",
+# Explicit features so a change to rmcp's defaults cannot add code to the
+# build. Only the stdio server and its #[tool] macros are needed.
+rmcp = { version = "3.6", default-features = false, features = [
+    "server", "macros", "transport-io",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net", "time"] }
 url = "2"
