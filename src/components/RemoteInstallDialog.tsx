@@ -14,6 +14,16 @@ import {
   Terminal,
   Bot,
 } from "lucide-react";
+import {
+  conflictKey,
+  describeConflict,
+  indexConflicts,
+  initialSelection,
+  isSelectable,
+  overridesFor,
+  withoutConflicts,
+  type SourceConflict,
+} from "../lib/remoteInstallConflicts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +69,8 @@ interface InstallResult {
   installed: Record<string, string[]>;
   skipped: string[];
   warnings: string[];
+  /** Set when nothing was installed because a replacement was not confirmed. */
+  conflicts?: SourceConflict[];
 }
 
 interface RemoteInstallDialogProps {
@@ -144,6 +156,7 @@ export default function RemoteInstallDialog({
   const [selected, setSelected] = useState<Record<string, Set<string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InstallResult | null>(null);
+  const [conflicts, setConflicts] = useState<Map<string, SourceConflict>>(new Map());
 
   // Fetch manifest when dialog opens
   useEffect(() => {
@@ -153,6 +166,7 @@ export default function RemoteInstallDialog({
     setError(null);
     setManifest(null);
     setResult(null);
+    setConflicts(new Map());
 
     (async () => {
       try {
@@ -167,12 +181,15 @@ export default function RemoteInstallDialog({
         const g = buildResourceGroups(m);
         setGroups(g);
 
-        // Select all by default
-        const sel: Record<string, Set<string>> = {};
-        for (const group of g) {
-          sel[group.key] = new Set(group.items.map((i) => i.name));
-        }
-        setSelected(sel);
+        // Resources that would replace an existing library entry start
+        // unselected. Selecting one confirms the replacement.
+        const rawConflicts = await invoke("check_source_conflicts", {
+          repo,
+          dir: directory ?? null,
+        });
+        const found = indexConflicts(parseInvokeResult<SourceConflict[]>(rawConflicts));
+        setConflicts(found);
+        setSelected(initialSelection(g, found));
         setStatus("preview");
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
@@ -181,7 +198,8 @@ export default function RemoteInstallDialog({
     })();
   }, [isOpen, repo, gitRef, directory]);
 
-  const toggleItem = useCallback((groupKey: string, itemName: string) => {
+  const toggleItem = useCallback((groupKey: keyof SelectedResources, itemName: string) => {
+    if (!isSelectable(groupKey, itemName, conflicts)) return;
     setSelected((prev) => {
       const next = { ...prev };
       const set = new Set(prev[groupKey] ?? []);
@@ -193,21 +211,25 @@ export default function RemoteInstallDialog({
       next[groupKey] = set;
       return next;
     });
-  }, []);
+  }, [conflicts]);
 
-  const toggleGroup = useCallback((groupKey: string, items: Array<{ name: string }>) => {
-    setSelected((prev) => {
-      const next = { ...prev };
-      const set = prev[groupKey] ?? new Set<string>();
-      const allSelected = items.every((i) => set.has(i.name));
-      if (allSelected) {
-        next[groupKey] = new Set();
-      } else {
-        next[groupKey] = new Set(items.map((i) => i.name));
-      }
-      return next;
-    });
-  }, []);
+  const toggleGroup = useCallback(
+    (groupKey: keyof SelectedResources, items: Array<{ name: string }>) => {
+      const selectable = items.filter((i) => isSelectable(groupKey, i.name, conflicts));
+      setSelected((prev) => {
+        const next = { ...prev };
+        const set = prev[groupKey] ?? new Set<string>();
+        const allSelected = selectable.every((i) => set.has(i.name));
+        if (allSelected) {
+          next[groupKey] = new Set();
+        } else {
+          next[groupKey] = new Set(selectable.map((i) => i.name));
+        }
+        return next;
+      });
+    },
+    [conflicts],
+  );
 
   const totalSelected = Object.values(selected).reduce((sum, set) => sum + set.size, 0);
 
@@ -229,8 +251,24 @@ export default function RemoteInstallDialog({
         repo,
         selected: JSON.stringify(sel),
         dir: directory ?? null,
+        overrides: overridesFor(selected, conflicts),
       });
       const r = parseInvokeResult<InstallResult>(raw);
+      if (r.conflicts && r.conflicts.length > 0) {
+        // The library changed after the check. Nothing was installed, so
+        // show the new conflicts and let the user choose again.
+        const merged = new Map(conflicts);
+        for (const [key, conflict] of indexConflicts(r.conflicts)) {
+          merged.set(key, conflict);
+        }
+        setConflicts(merged);
+        setSelected(withoutConflicts(selected, indexConflicts(r.conflicts)));
+        setError(
+          "Nothing was installed. Some resources now match entries already in your library. Review them and install again.",
+        );
+        setStatus("preview");
+        return;
+      }
       setResult(r);
       setStatus("success");
       onInstalled();
@@ -247,6 +285,7 @@ export default function RemoteInstallDialog({
     setResult(null);
     setGroups([]);
     setSelected({});
+    setConflicts(new Map());
     onClose();
   };
 
@@ -320,10 +359,23 @@ export default function RemoteInstallDialog({
                   <p className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                     Resources to Install
                   </p>
+                  {conflicts.size > 0 && (
+                    <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex gap-2">
+                      <AlertTriangle size={14} className="text-yellow-400 shrink-0 mt-0.5" />
+                      <p className="text-[12px] text-yellow-300 leading-relaxed">
+                        Some resources have the same name as entries already in your library.
+                        They are not selected. Select one to replace the existing entry.
+                      </p>
+                    </div>
+                  )}
                   {groups.map((group) => {
                     const GroupIcon = group.icon;
                     const groupSet = selected[group.key] ?? new Set<string>();
-                    const allSelected = group.items.every((i) => groupSet.has(i.name));
+                    const selectable = group.items.filter((i) =>
+                      isSelectable(group.key, i.name, conflicts),
+                    );
+                    const allSelected =
+                      selectable.length > 0 && selectable.every((i) => groupSet.has(i.name));
                     return (
                       <div
                         key={group.key}
@@ -348,29 +400,47 @@ export default function RemoteInstallDialog({
                           </span>
                         </button>
                         <div className="divide-y divide-border-strong/20">
-                          {group.items.map((item) => (
-                            <label
-                              key={item.name}
-                              className="flex items-start gap-2.5 px-3 py-2 hover:bg-bg-sidebar/40 cursor-pointer transition-colors"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={groupSet.has(item.name)}
-                                onChange={() => toggleItem(group.key, item.name)}
-                                className="accent-brand mt-0.5"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <span className="text-[12px] font-mono text-text-base">
-                                  {item.name}
-                                </span>
-                                {item.description && (
-                                  <p className="text-[11px] text-text-muted mt-0.5 truncate">
-                                    {item.description}
-                                  </p>
-                                )}
-                              </div>
-                            </label>
-                          ))}
+                          {group.items.map((item) => {
+                            const conflict = conflicts.get(conflictKey(group.key, item.name));
+                            const blocked = conflict?.blocked ?? false;
+                            return (
+                              <label
+                                key={item.name}
+                                className={`flex items-start gap-2.5 px-3 py-2 transition-colors ${
+                                  blocked
+                                    ? "opacity-60 cursor-not-allowed"
+                                    : "hover:bg-bg-sidebar/40 cursor-pointer"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={groupSet.has(item.name)}
+                                  disabled={blocked}
+                                  onChange={() => toggleItem(group.key, item.name)}
+                                  className="accent-brand mt-0.5"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-[12px] font-mono text-text-base">
+                                    {item.name}
+                                  </span>
+                                  {item.description && (
+                                    <p className="text-[11px] text-text-muted mt-0.5 truncate">
+                                      {item.description}
+                                    </p>
+                                  )}
+                                  {conflict && (
+                                    <p
+                                      className={`text-[11px] mt-0.5 ${
+                                        blocked ? "text-red-400" : "text-yellow-300"
+                                      }`}
+                                    >
+                                      {describeConflict(conflict)}
+                                    </p>
+                                  )}
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
                       </div>
                     );
