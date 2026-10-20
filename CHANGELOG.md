@@ -2,6 +2,38 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.36.0] - 2026-10-20
+
+### Added
+
+- Find Projects searches a folder for agent projects and adds them in bulk. A folder that already has an Automatic config can be imported as it is. ([0b421ff](https://github.com/velvet-tiger/automatic/commit/0b421ff), [27a310f](https://github.com/velvet-tiger/automatic/commit/27a310f))
+- First run offers to find and add your existing projects. ([5ff3848](https://github.com/velvet-tiger/automatic/commit/5ff3848))
+- A project can be set to read-only on one machine. Automatic then does not write to its folder. Reads and drift checks no longer write to project folders either. ([d4afa90](https://github.com/velvet-tiger/automatic/commit/d4afa90), [5866f59](https://github.com/velvet-tiger/automatic/commit/5866f59))
+- Skills can be imported from Agent Plugin packages. The import only creates new entries and never overwrites an existing one. ([8da0a0b](https://github.com/velvet-tiger/automatic/commit/8da0a0b))
+- The new-project wizard has steps for the project group, profile, tools and settings. ([196f278](https://github.com/velvet-tiger/automatic/commit/196f278))
+- A profile can be attached to several projects at once. ([21b0708](https://github.com/velvet-tiger/automatic/commit/21b0708))
+- The install dialog for a remote source shows library conflicts and asks you to confirm each one. It also offers collections. ([5b44953](https://github.com/velvet-tiger/automatic/commit/5b44953), [d1f6cdd](https://github.com/velvet-tiger/automatic/commit/d1f6cdd))
+- Every app bundle ships third-party licence notices. ([61bffe2](https://github.com/velvet-tiger/automatic/commit/61bffe2))
+- The sidebar theme switcher is shown in release builds. ([86fa30f](https://github.com/velvet-tiger/automatic/commit/86fa30f))
+
+### Changed
+
+- The Start section is gone. Automatic opens on Projects. ([e2801d3](https://github.com/velvet-tiger/automatic/commit/e2801d3))
+- The bundled library is now v0.2.2. ([f570f83](https://github.com/velvet-tiger/automatic/commit/f570f83))
+- Branch test builds run in a workflow that has no secrets. Release workflow actions are pinned. ([94c6700](https://github.com/velvet-tiger/automatic/commit/94c6700), [ddfe5af](https://github.com/velvet-tiger/automatic/commit/ddfe5af))
+
+### Fixed
+
+- A secret store that cannot be read is no longer treated as "nothing stored". Automatic now reports the failure and tells you when a retry did not reach the store. On Linux, the keyring unlock prompt is bounded and never shown to agents. ([3ecf1a7](https://github.com/velvet-tiger/automatic/commit/3ecf1a7), [3b866f1](https://github.com/velvet-tiger/automatic/commit/3b866f1))
+- Removing a remote source now removes the resources it installed from the library, projects, profiles and global MCP config. It only removes entries the source owns. ([091282f](https://github.com/velvet-tiger/automatic/commit/091282f), [e24a7a2](https://github.com/velvet-tiger/automatic/commit/e24a7a2), [941fd16](https://github.com/velvet-tiger/automatic/commit/941fd16))
+- A remote source can no longer change a filled-in MCP server in a way that redirects a secret. ([39a3659](https://github.com/velvet-tiger/automatic/commit/39a3659), [eb7ab66](https://github.com/velvet-tiger/automatic/commit/eb7ab66))
+- Cloud sync refuses to pull a skill whose name is only dots. ([d2cdb86](https://github.com/velvet-tiger/automatic/commit/d2cdb86))
+- Renaming an MCP server keeps its provenance. A corrupt `source-provenance.json` no longer hides servers. Env values that start with `enc:v1` are blanked or refused by every registry writer. ([d2d272f](https://github.com/velvet-tiger/automatic/commit/d2d272f), [80a4c7f](https://github.com/velvet-tiger/automatic/commit/80a4c7f), [30c71b8](https://github.com/velvet-tiger/automatic/commit/30c71b8))
+- Claude memory promotion finds the right project folder, keeps its state per project, and refuses symlinked or ambiguous folders and corrupt stores. The panel asks you to confirm a promotion. ([c507cce](https://github.com/velvet-tiger/automatic/commit/c507cce), [932c97b](https://github.com/velvet-tiger/automatic/commit/932c97b), [4ba81b7](https://github.com/velvet-tiger/automatic/commit/4ba81b7))
+- A failed drift or problems check now shows as failed instead of being hidden. ([7c53ce5](https://github.com/velvet-tiger/automatic/commit/7c53ce5))
+- Project discovery stores plain drive paths on Windows. ([fb03c4e](https://github.com/velvet-tiger/automatic/commit/fb03c4e))
+- Dropdown menus open upward near the bottom of a scroll area. Locked list rows stay aligned. The wizard's Cancel button no longer overlaps the step indicator. ([f8102c7](https://github.com/velvet-tiger/automatic/commit/f8102c7), [1906707](https://github.com/velvet-tiger/automatic/commit/1906707), [8414ce0](https://github.com/velvet-tiger/automatic/commit/8414ce0))
+
 ## [1.35.1] - 2026-10-14
 
 ### Added
