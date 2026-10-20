@@ -5384,7 +5384,7 @@ mod tests {
         install_source(REPO, first, None, None, &[]).expect("first install");
         let old = get_source(REPO).expect("read").expect("registered");
         let reinstall = install_source(REPO, second, None, None, &[]).expect("reinstall");
-        remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall)
+        remove_dropped_resources(REPO, &old, &resolved(second), &reinstall)
             .expect("remove dropped")
     }
 
@@ -8213,7 +8213,7 @@ mod tests {
             let key = format!("collection:{}", names.collection);
 
             fail_sources_writes_after(Some(0));
-            let result = install_source(REPO, &manifest, Some(selected), None, &[key.clone()]);
+            let result = install_source(REPO, &manifest, Some(selected), None, std::slice::from_ref(&key));
             fail_sources_writes_after(None);
 
             let err = result.expect_err("the install must fail");
