@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-#[cfg(test)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::io::{ErrorKind, Read};
+use std::path::{Path, PathBuf};
+use unicode_normalization::UnicodeNormalization;
 
 /// A single memory entry with metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,19 +39,42 @@ fn get_project_memory_path(project_name: &str) -> Result<PathBuf, String> {
 }
 
 pub fn read_memory_db(project_name: &str) -> Result<MemoryDb, String> {
-    let path = get_project_memory_path(project_name)?;
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let db: MemoryDb = serde_json::from_str(&raw).unwrap_or_default();
-    Ok(db)
+    read_memory_db_at(&get_project_memory_path(project_name)?)
 }
 
 pub fn write_memory_db(project_name: &str, db: &MemoryDb) -> Result<(), String> {
-    let path = get_project_memory_path(project_name)?;
-    let raw = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| e.to_string())
+    write_memory_db_at(&get_project_memory_path(project_name)?, db)
+}
+
+/// Reads the memory store at `path`. A missing or empty file is an empty
+/// store. A file that does not parse is an error, never an empty store:
+/// every write is a read-modify-write, so treating it as empty would let the
+/// next `store_memory` replace all of the project's memories with one entry.
+fn read_memory_db_at(path: &Path) -> Result<MemoryDb, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) => return Err(format!("Failed to read memory store {}: {}", path.display(), e)),
+    };
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+    serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "Memory store {} is not valid JSON ({}). Fix the file or move it \
+             aside. Automatic will not change it until it parses.",
+            path.display(),
+            e
+        )
+    })
+}
+
+/// Writes the memory store at `path` atomically, so a crash or a concurrent
+/// reader never sees a partly written file.
+fn write_memory_db_at(path: &Path, db: &MemoryDb) -> Result<(), String> {
+    let raw = serde_json::to_string_pretty(db)
+        .map_err(|e| format!("Failed to serialise memory store {}: {}", path.display(), e))?;
+    crate::core::write_registry_file(path, &raw)
 }
 
 // ── Path-injectable helpers used by tests ────────────────────────────────────
@@ -59,20 +82,13 @@ pub fn write_memory_db(project_name: &str, db: &MemoryDb) -> Result<(), String> 
 #[cfg(test)]
 /// Read the memory DB from an explicit base directory (used in tests).
 fn read_db_at(base: &Path, project_name: &str) -> Result<MemoryDb, String> {
-    let path = base.join(format!("{}.json", project_name));
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    Ok(serde_json::from_str(&raw).unwrap_or_default())
+    read_memory_db_at(&base.join(format!("{}.json", project_name)))
 }
 
 #[cfg(test)]
 /// Write the memory DB to an explicit base directory (used in tests).
 fn write_db_at(base: &Path, project_name: &str, db: &MemoryDb) -> Result<(), String> {
-    let path = base.join(format!("{}.json", project_name));
-    let raw = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| e.to_string())
+    write_memory_db_at(&base.join(format!("{}.json", project_name)), db)
 }
 
 #[cfg(test)]
@@ -425,23 +441,108 @@ pub struct ClaudeMemoryTopicFile {
     pub content: String,
 }
 
+/// Longest folder name Claude Code writes as-is. A longer encoded path is
+/// cut to this length and given a `-<hash>` suffix.
+const CLAUDE_FOLDER_NAME_MAX: usize = 200;
+
+/// Largest Claude memory file Automatic reads. A longer file is cut at this
+/// size and marked with [`CLAUDE_TRUNCATED_MARKER`].
+const CLAUDE_MEMORY_FILE_MAX_BYTES: usize = 1024 * 1024;
+
+/// Appended to a Claude memory file that was cut at
+/// [`CLAUDE_MEMORY_FILE_MAX_BYTES`], so neither a reader nor a promotion
+/// mistakes the excerpt for the whole file.
+pub const CLAUDE_TRUNCATED_MARKER: &str =
+    "\n\n[Truncated by Automatic: only the first 1 MiB of this file was read.]";
+
 /// Encodes an absolute project path the way Claude Code names its
 /// per-project folder under `~/.claude/projects/`.
 ///
 /// Claude Code replaces every character that is not an ASCII letter or digit
-/// with `-`. That covers `/`, and also `.`, `_` and spaces, so
+/// with `-`, one `-` per UTF-16 code unit. So `/`, `.`, `_` and spaces each
+/// become `-`, and a character outside the Basic Multilingual Plane (an
+/// emoji, for example) becomes `--`. For example,
 /// `/work/_active/app/.claude/worktrees/x` becomes
-/// `-work--active-app--claude-worktrees-x`. Replacing only `/` pointed the
-/// panel at a folder that does not exist for any path holding one of the
-/// other characters (VEL-395).
+/// `-work--active-app--claude-worktrees-x`. The result is pure ASCII.
 pub fn encode_claude_project_dir(project_dir: &str) -> String {
-    project_dir
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+    let mut encoded = String::with_capacity(project_dir.len());
+    for c in project_dir.chars() {
+        if c.is_ascii_alphanumeric() {
+            encoded.push(c);
+        } else {
+            for _ in 0..c.len_utf16() {
+                encoded.push('-');
+            }
+        }
+    }
+    encoded
 }
 
-/// Derives the Claude auto-memory directory path for a given project directory:
+/// The forms of `project_dir` Claude Code may have named its folder after,
+/// most likely first. Claude Code resolves symlinks and normalises to NFC
+/// before encoding, so the canonical path comes first. The path as
+/// registered comes second, for a folder that no longer exists or cannot be
+/// resolved.
+fn claude_project_path_candidates(project_dir: &str) -> Vec<String> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(canonical) = fs::canonicalize(project_dir) {
+        candidates.push(canonical.to_string_lossy().nfc().collect());
+    }
+    let raw: String = project_dir.nfc().collect();
+    if !candidates.contains(&raw) {
+        candidates.push(raw);
+    }
+    candidates
+}
+
+/// The folder under `projects_root` that Claude Code uses for `encoded`, or
+/// `None` when the name is too long and no folder matches. A long name
+/// carries a hash suffix Automatic cannot compute, so it is found the way
+/// the Claude Agent SDK finds it: the first folder (in name order) whose
+/// name is the 200-character prefix followed by `-`.
+fn claude_project_folder(projects_root: &Path, encoded: &str) -> Option<PathBuf> {
+    if encoded.len() <= CLAUDE_FOLDER_NAME_MAX {
+        return Some(projects_root.join(encoded));
+    }
+    // `encoded` is ASCII, so this byte index is a character boundary.
+    let prefix = format!("{}-", &encoded[..CLAUDE_FOLDER_NAME_MAX]);
+    let entries = fs::read_dir(projects_root).ok()?;
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| name.starts_with(&prefix))
+        .collect();
+    names.sort();
+    names.into_iter().next().map(|name| projects_root.join(name))
+}
+
+/// The Claude memory folder for `project_dir` under `projects_root`. Each
+/// candidate path is tried in turn, and the first whose project folder
+/// exists wins. When none exists, the first candidate's expected path is
+/// returned so the UI can show where Claude Code would write.
+fn claude_memory_dir_in(projects_root: &Path, project_dir: &str) -> PathBuf {
+    let mut fallback: Option<PathBuf> = None;
+    for candidate in claude_project_path_candidates(project_dir) {
+        let encoded = encode_claude_project_dir(&candidate);
+        match claude_project_folder(projects_root, &encoded) {
+            Some(folder) if folder.is_dir() => return folder.join("memory"),
+            Some(folder) => {
+                fallback.get_or_insert(folder);
+            }
+            None => {
+                fallback.get_or_insert_with(|| {
+                    projects_root.join(&encoded[..CLAUDE_FOLDER_NAME_MAX])
+                });
+            }
+        }
+    }
+    fallback
+        .unwrap_or_else(|| projects_root.join(encode_claude_project_dir(project_dir)))
+        .join("memory")
+}
+
+/// Derives the Claude auto-memory directory for a project directory:
 /// `~/.claude/projects/<encoded>/memory`, with `<encoded>` from
 /// [`encode_claude_project_dir`].
 ///
@@ -454,13 +555,56 @@ pub fn claude_memory_dir(project_dir: &str) -> Option<PathBuf> {
     if project_dir.is_empty() {
         return None;
     }
-    let home = dirs::home_dir()?;
-    Some(
-        home.join(".claude")
-            .join("projects")
-            .join(encode_claude_project_dir(project_dir))
-            .join("memory"),
-    )
+    let home = crate::core::home_dir().ok()?;
+    let projects_root = home.join(".claude").join("projects");
+    Some(claude_memory_dir_in(&projects_root, project_dir))
+}
+
+/// Reads one Claude memory file, or `None` when it is absent or is not a
+/// regular file. Symlinks are not followed: the folder belongs to another
+/// tool, and a link could point the read (and the MCP tool that returns it)
+/// at any file the user can read. A FIFO or device is skipped because
+/// reading it could block. Content past [`CLAUDE_MEMORY_FILE_MAX_BYTES`] is
+/// dropped and [`CLAUDE_TRUNCATED_MARKER`] is appended.
+fn read_claude_memory_file(path: &Path) -> Result<Option<String>, String> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Failed to inspect {}: {}", path.display(), e)),
+    };
+    if !meta.file_type().is_file() {
+        eprintln!(
+            "[automatic] skipped Claude memory entry {}: not a regular file",
+            path.display()
+        );
+        return Ok(None);
+    }
+    let file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let mut bytes = Vec::new();
+    file.take(CLAUDE_MEMORY_FILE_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let truncated = bytes.len() > CLAUDE_MEMORY_FILE_MAX_BYTES;
+    bytes.truncate(CLAUDE_MEMORY_FILE_MAX_BYTES);
+    let mut text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        // The cut can land inside a multi-byte character. Drop that
+        // incomplete tail. Invalid UTF-8 anywhere else is an error.
+        Err(e) if truncated && e.utf8_error().error_len().is_none() => {
+            let valid = e.utf8_error().valid_up_to();
+            let mut bytes = e.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).map_err(|e| {
+                format!("{} is not valid UTF-8: {}", path.display(), e)
+            })?
+        }
+        Err(e) => return Err(format!("{} is not valid UTF-8: {}", path.display(), e)),
+    };
+    if truncated {
+        text.push_str(CLAUDE_TRUNCATED_MARKER);
+    }
+    Ok(Some(text))
 }
 
 /// Reads Claude's auto-memory content for a project directory.
@@ -469,15 +613,15 @@ pub fn claude_memory_dir(project_dir: &str) -> Option<PathBuf> {
 /// topic files present.  Does not error if the directory does not exist yet —
 /// in that case `memory_md` is `None` and `topic_files` is empty.
 pub fn read_claude_memory(project_dir: &str) -> Result<ClaudeMemoryContent, String> {
-    let memory_dir = match claude_memory_dir(project_dir) {
-        Some(p) => p,
-        None => {
-            return Err(
-                "Cannot derive Claude memory path: project directory is not set".to_string(),
-            )
-        }
-    };
+    let memory_dir = claude_memory_dir(project_dir).ok_or_else(|| {
+        "Cannot derive Claude memory path: project directory is not set".to_string()
+    })?;
+    read_claude_memory_at(&memory_dir)
+}
 
+/// Reads the Claude memory folder at `memory_dir`. See
+/// [`read_claude_memory_file`] for which files are read.
+fn read_claude_memory_at(memory_dir: &Path) -> Result<ClaudeMemoryContent, String> {
     let memory_dir_str = memory_dir.to_string_lossy().to_string();
 
     if !memory_dir.exists() {
@@ -488,46 +632,27 @@ pub fn read_claude_memory(project_dir: &str) -> Result<ClaudeMemoryContent, Stri
         });
     }
 
-    // Read MEMORY.md index
-    let memory_md_path = memory_dir.join("MEMORY.md");
-    let memory_md = if memory_md_path.exists() {
-        Some(
-            fs::read_to_string(&memory_md_path)
-                .map_err(|e| format!("Failed to read MEMORY.md: {}", e))?,
-        )
-    } else {
-        None
-    };
+    let memory_md = read_claude_memory_file(&memory_dir.join("MEMORY.md"))?;
 
-    // Read topic files (all .md files except MEMORY.md itself)
+    // Topic files: every other `.md` entry.
+    let entries = fs::read_dir(memory_dir)
+        .map_err(|e| format!("Failed to list {}: {}", memory_dir.display(), e))?;
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".md") && n != "MEMORY.md")
+        .collect();
+    names.sort();
+
     let mut topic_files: Vec<ClaudeMemoryTopicFile> = Vec::new();
-    if let Ok(entries) = fs::read_dir(&memory_dir) {
-        let mut names: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                let p = e.path();
-                p.is_file()
-                    && p.extension().is_some_and(|ext| ext == "md")
-                    && p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n != "MEMORY.md")
-            })
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect();
-        names.sort();
-
-        for name in names {
-            let path = memory_dir.join(&name);
-            match fs::read_to_string(&path) {
-                Ok(content) => topic_files.push(ClaudeMemoryTopicFile { name, content }),
-                Err(e) => {
-                    // Log and skip unreadable files rather than failing the whole call
-                    eprintln!(
-                        "[automatic] could not read Claude topic file {:?}: {}",
-                        path, e
-                    );
-                }
-            }
+    for name in names {
+        let path = memory_dir.join(&name);
+        match read_claude_memory_file(&path) {
+            Ok(Some(content)) => topic_files.push(ClaudeMemoryTopicFile { name, content }),
+            Ok(None) => {}
+            // One unreadable topic file should not hide the others. The
+            // error is logged so the gap can be diagnosed.
+            Err(e) => eprintln!("[automatic] could not read Claude topic file: {}", e),
         }
     }
 
@@ -721,6 +846,58 @@ mod tests {
         assert_eq!(b["shared-key"].value, "beta");
     }
 
+    // ── Corrupt store ────────────────────────────────────────────────────────
+
+    #[test]
+    fn corrupt_store_reads_as_error_naming_the_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("proj.json");
+        fs::write(&path, "{ not json").unwrap();
+
+        let err = read_db_at(dir.path(), "proj").unwrap_err();
+        assert!(err.contains(&path.display().to_string()), "{}", err);
+        assert!(err.contains("Fix the file or move it"), "{}", err);
+    }
+
+    #[test]
+    fn empty_store_file_reads_as_empty() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("proj.json"), "  \n").unwrap();
+        assert!(read_db_at(dir.path(), "proj").unwrap().is_empty());
+    }
+
+    #[test]
+    fn every_store_call_refuses_a_corrupt_store_and_leaves_it_unchanged() {
+        let home = tempdir().unwrap();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let keys = crate::core::ProjectStoreKeys::unregistered("corrupt-proj");
+            let path = get_project_memory_path(&keys.id).unwrap();
+            let corrupt = "{\"k\": {\"value\": \"v\", \"timestamp\": \"t\"";
+            fs::write(&path, corrupt).unwrap();
+
+            assert!(store_memory(&keys, "new", "value", None).is_err());
+            assert!(get_memory(&keys, "k").is_err());
+            assert!(list_memories(&keys, None).is_err());
+            assert!(search_memories(&keys, "v").is_err());
+            assert!(delete_memory(&keys, "k").is_err());
+            assert!(clear_memories(&keys, None, true).is_err());
+            assert!(get_all_memories(&keys.id).is_err());
+
+            assert_eq!(fs::read_to_string(&path).unwrap(), corrupt);
+        });
+    }
+
+    #[test]
+    fn write_leaves_no_temporary_file() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k", "v", None).unwrap();
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, vec!["proj.json".to_string()]);
+    }
+
     // ── Claude project folder encoding ──────────────────────────────────────
 
     #[test]
@@ -749,8 +926,127 @@ mod tests {
     }
 
     #[test]
-    fn claude_memory_dir_uses_encoded_folder() {
-        let dir = claude_memory_dir("/Users/x/_active/aura").expect("home dir resolves");
-        assert!(dir.ends_with(".claude/projects/-Users-x--active-aura/memory"), "{:?}", dir);
+    fn encode_claude_project_dir_counts_utf16_units() {
+        // é is one UTF-16 unit; 🦀 is two.
+        assert_eq!(encode_claude_project_dir("/a/é/🦀"), "-a-----");
+        assert_eq!(encode_claude_project_dir("/🦀"), "---");
+    }
+
+    #[test]
+    fn claude_memory_dir_uses_encoded_folder_under_home() {
+        let home = tempdir().unwrap();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let dir = claude_memory_dir("/no/such/_active/aura").expect("home resolves");
+            assert_eq!(
+                dir,
+                home.path()
+                    .join(".claude/projects/-no-such--active-aura/memory")
+            );
+        });
+    }
+
+    #[test]
+    fn claude_memory_dir_finds_a_hashed_long_folder() {
+        let home = tempdir().unwrap();
+        let project_dir = format!("/no/such/{}", "a".repeat(250));
+        let encoded = encode_claude_project_dir(&project_dir);
+        let hashed = format!("{}-1x2y3z", &encoded[..200]);
+        let root = home.path().join(".claude/projects");
+        fs::create_dir_all(root.join(&hashed)).unwrap();
+        // A folder that shares the prefix without the `-` separator is not it.
+        fs::create_dir_all(root.join(format!("{}a", &encoded[..200]))).unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            assert_eq!(
+                claude_memory_dir(&project_dir).unwrap(),
+                root.join(&hashed).join("memory")
+            );
+        });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn claude_memory_dir_prefers_the_canonical_path() {
+        let home = tempdir().unwrap();
+        let work = tempdir().unwrap();
+        let real = work.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = work.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let canonical = fs::canonicalize(&real).unwrap();
+        let root = home.path().join(".claude/projects");
+        let folder = root.join(encode_claude_project_dir(&canonical.to_string_lossy()));
+        fs::create_dir_all(&folder).unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            assert_eq!(
+                claude_memory_dir(&link.to_string_lossy()).unwrap(),
+                folder.join("memory")
+            );
+        });
+    }
+
+    #[test]
+    fn claude_project_path_candidates_normalise_to_nfc() {
+        // "e" + combining acute accent (NFD) becomes "é" (NFC).
+        let candidates = claude_project_path_candidates("/no/such/caf\u{65}\u{301}");
+        assert_eq!(candidates, vec!["/no/such/caf\u{e9}".to_string()]);
+    }
+
+    // ── Claude memory reader ────────────────────────────────────────────────
+
+    #[test]
+    #[cfg(unix)]
+    fn claude_reader_skips_symlinks() {
+        let dir = tempdir().unwrap();
+        let outside = dir.path().join("secret.txt");
+        fs::write(&outside, "do not read").unwrap();
+        let memory = dir.path().join("memory");
+        fs::create_dir_all(&memory).unwrap();
+        fs::write(memory.join("real.md"), "kept").unwrap();
+        std::os::unix::fs::symlink(&outside, memory.join("MEMORY.md")).unwrap();
+        std::os::unix::fs::symlink(&outside, memory.join("linked.md")).unwrap();
+
+        let content = read_claude_memory_at(&memory).unwrap();
+        assert!(content.memory_md.is_none());
+        let names: Vec<&str> = content.topic_files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["real.md"]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn claude_reader_skips_a_fifo() {
+        let dir = tempdir().unwrap();
+        let memory = dir.path().join("memory");
+        fs::create_dir_all(&memory).unwrap();
+        let fifo = memory.join("pipe.md");
+        let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(status.success());
+
+        // Without the regular-file check this read would block forever.
+        let content = read_claude_memory_at(&memory).unwrap();
+        assert!(content.topic_files.is_empty());
+    }
+
+    #[test]
+    fn claude_reader_truncates_large_files() {
+        let dir = tempdir().unwrap();
+        let memory = dir.path().join("memory");
+        fs::create_dir_all(&memory).unwrap();
+        // A multi-byte character straddles the cut.
+        let mut big = "a".repeat(CLAUDE_MEMORY_FILE_MAX_BYTES - 1);
+        big.push('é');
+        big.push_str("tail");
+        fs::write(memory.join("big.md"), &big).unwrap();
+        fs::write(memory.join("small.md"), "small").unwrap();
+
+        let content = read_claude_memory_at(&memory).unwrap();
+        let big_read = &content.topic_files[0];
+        assert_eq!(big_read.name, "big.md");
+        assert!(big_read.content.ends_with(CLAUDE_TRUNCATED_MARKER));
+        let body = big_read.content.strip_suffix(CLAUDE_TRUNCATED_MARKER).unwrap();
+        assert_eq!(body, "a".repeat(CLAUDE_MEMORY_FILE_MAX_BYTES - 1));
+        assert_eq!(content.topic_files[1].content, "small");
     }
 }
