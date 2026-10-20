@@ -425,10 +425,25 @@ pub struct ClaudeMemoryTopicFile {
     pub content: String,
 }
 
-/// Derives the Claude auto-memory directory path for a given project directory.
+/// Encodes an absolute project path the way Claude Code names its
+/// per-project folder under `~/.claude/projects/`.
 ///
-/// Claude Code encodes the absolute project path as the directory name by
-/// replacing every `/` with `-` (the leading `/` becomes a leading `-`).
+/// Claude Code replaces every character that is not an ASCII letter or digit
+/// with `-`. That covers `/`, and also `.`, `_` and spaces, so
+/// `/work/_active/app/.claude/worktrees/x` becomes
+/// `-work--active-app--claude-worktrees-x`. Replacing only `/` pointed the
+/// panel at a folder that does not exist for any path holding one of the
+/// other characters (VEL-395).
+pub fn encode_claude_project_dir(project_dir: &str) -> String {
+    project_dir
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+/// Derives the Claude auto-memory directory path for a given project directory:
+/// `~/.claude/projects/<encoded>/memory`, with `<encoded>` from
+/// [`encode_claude_project_dir`].
 ///
 /// For example:
 ///   `/Users/alice/projects/foo` → `~/.claude/projects/-Users-alice-projects-foo/memory`
@@ -440,12 +455,10 @@ pub fn claude_memory_dir(project_dir: &str) -> Option<PathBuf> {
         return None;
     }
     let home = dirs::home_dir()?;
-    // Encode the absolute path: replace every '/' with '-'
-    let encoded = project_dir.replace('/', "-");
     Some(
         home.join(".claude")
             .join("projects")
-            .join(encoded)
+            .join(encode_claude_project_dir(project_dir))
             .join("memory"),
     )
 }
@@ -706,5 +719,38 @@ mod tests {
 
         assert_eq!(a["shared-key"].value, "alpha");
         assert_eq!(b["shared-key"].value, "beta");
+    }
+
+    // ── Claude project folder encoding ──────────────────────────────────────
+
+    #[test]
+    fn encode_claude_project_dir_replaces_slashes() {
+        assert_eq!(
+            encode_claude_project_dir("/Users/alice/projects/foo"),
+            "-Users-alice-projects-foo"
+        );
+    }
+
+    #[test]
+    fn encode_claude_project_dir_replaces_every_non_alphanumeric() {
+        // Folder names taken from a real ~/.claude/projects listing.
+        assert_eq!(
+            encode_claude_project_dir("/Users/x/aurabx/_active/aura"),
+            "-Users-x-aurabx--active-aura"
+        );
+        assert_eq!(
+            encode_claude_project_dir("/Users/x/app/.claude/worktrees/vel-395"),
+            "-Users-x-app--claude-worktrees-vel-395"
+        );
+        assert_eq!(
+            encode_claude_project_dir("/Users/x/My Project/v1.2"),
+            "-Users-x-My-Project-v1-2"
+        );
+    }
+
+    #[test]
+    fn claude_memory_dir_uses_encoded_folder() {
+        let dir = claude_memory_dir("/Users/x/_active/aura").expect("home dir resolves");
+        assert!(dir.ends_with(".claude/projects/-Users-x--active-aura/memory"), "{:?}", dir);
     }
 }
