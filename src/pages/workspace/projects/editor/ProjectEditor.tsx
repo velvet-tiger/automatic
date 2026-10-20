@@ -1136,7 +1136,10 @@ export function ProjectEditor({
 
     // Owned by this run of the effect. A check still running for the project
     // the user just left must not hold back the first check of the new one.
+    // `cancelled` drops the reply of a run that is no longer current, so an
+    // older reply cannot overwrite a newer one when the effect re-runs.
     let inFlight = false;
+    let cancelled = false;
     const runCheck = async () => {
       if (inFlight) return;
       inFlight = true;
@@ -1147,44 +1150,12 @@ export function ProjectEditor({
           invoke<string>("check_project_drift", { name }),
           invoke<string>("check_project_problems", { name }),
         ]);
-        if (problemsResult.status === "fulfilled") {
-          applyProblemsReport(name, JSON.parse(problemsResult.value) as ProjectProblemsReport);
-        } else {
-          applyProblemsCheckFailure(name, problemsResult.reason);
-        }
-        if (driftResult.status === "rejected") {
-          applyDriftCheckFailure(name, driftResult.reason);
-          return;
-        }
-        const report = JSON.parse(driftResult.value) as DriftReport;
-        applyDriftReport(name, report);
+        if (cancelled) return;
+        applyProblemsResult(name, problemsResult);
+        const report = applyDriftResult(name, driftResult);
         // The conflict dialogs belong to the open project only.
-        if (selectedKeyRef.current !== name) return;
-
-        // If there are instruction file conflicts, surface the first one so the
-        // user can resolve it.  Only show one at a time to avoid overwhelming the UI.
-        const conflicts = report.instruction_conflicts ?? [];
-        if (conflicts.length > 0) {
-          setInstructionConflict((prev) => {
-            // Don't replace an already-open conflict dialog.
-            if (prev !== null) return prev;
-            return conflicts[0]!;
-          });
-        }
-
-        // Same for project-scoped custom asset conflicts. Prefer leaving an
-        // open instruction conflict alone; custom conflicts wait their turn.
-        const customConflicts = report.custom_conflicts ?? [];
-        if (customConflicts.length > 0) {
-          setCustomAssetConflict((prev) => {
-            if (prev !== null) return prev;
-            if (conflicts.length > 0) return prev;
-            return customConflicts[0]!;
-          });
-        }
-      } catch (err) {
-        // A reply that cannot be read is a failed check too.
-        applyDriftCheckFailure(name, err);
+        if (report === null || selectedKeyRef.current !== name) return;
+        surfaceConflicts(report);
       } finally {
         inFlight = false;
       }
@@ -1193,8 +1164,70 @@ export function ProjectEditor({
     // Run immediately on mount / project change, then every 15 seconds
     runCheck();
     const interval = setInterval(runCheck, 15_000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [selectedKey, project?.directory, project?.agents.length, isCreating]);
+
+  /**
+   * Record one settled problems check. A reply that cannot be parsed is a
+   * failed problems check, never a failed drift check.
+   */
+  const applyProblemsResult = (name: string, result: PromiseSettledResult<string>) => {
+    if (result.status === "rejected") {
+      applyProblemsCheckFailure(name, result.reason);
+      return;
+    }
+    let report: ProjectProblemsReport;
+    try {
+      report = JSON.parse(result.value) as ProjectProblemsReport;
+    } catch (err) {
+      applyProblemsCheckFailure(name, err);
+      return;
+    }
+    applyProblemsReport(name, report);
+  };
+
+  /**
+   * Record one settled drift check. Returns the report, or null when the
+   * check failed or its reply could not be parsed.
+   */
+  const applyDriftResult = (name: string, result: PromiseSettledResult<string>): DriftReport | null => {
+    if (result.status === "rejected") {
+      applyDriftCheckFailure(name, result.reason);
+      return null;
+    }
+    let report: DriftReport;
+    try {
+      report = JSON.parse(result.value) as DriftReport;
+    } catch (err) {
+      applyDriftCheckFailure(name, err);
+      return null;
+    }
+    applyDriftReport(name, report);
+    return report;
+  };
+
+  /**
+   * Open the first instruction file conflict, or else the first custom asset
+   * conflict, unless a conflict dialog is already open. One at a time keeps
+   * the UI calm.
+   */
+  const surfaceConflicts = (report: DriftReport) => {
+    const conflicts = report.instruction_conflicts ?? [];
+    if (conflicts.length > 0) {
+      setInstructionConflict((prev) => prev ?? conflicts[0]!);
+    }
+    const customConflicts = report.custom_conflicts ?? [];
+    if (customConflicts.length > 0) {
+      setCustomAssetConflict((prev) => {
+        if (prev !== null) return prev;
+        if (conflicts.length > 0) return prev;
+        return customConflicts[0]!;
+      });
+    }
+  };
 
   /**
    * Record a drift check that ran. The list card is keyed by project, so it

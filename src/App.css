@@ -53,6 +53,7 @@
   --color-health-synced: var(--health-synced);
   --color-health-drifted: var(--health-drifted);
   --color-health-checking: var(--health-checking);
+  --color-health-failed: var(--health-failed);
 }
 
 :root {
@@ -62,6 +63,7 @@
   --health-synced: #22c55e;   /* green — matches default --success */
   --health-drifted: #f59e0b;  /* amber — matches default --warning  */
   --health-checking: #3f3f46; /* zinc-700 — neutral track            */
+  --health-failed: #ef4444;   /* red — matches default --danger      */
 
   /* Avatar palette — focus on indigo and violet */
   --avatar-0: var(--brand);
@@ -122,6 +124,7 @@
   --health-synced: #c8c8c8;   /* light grey  — synced   */
   --health-drifted: #777777;  /* mid grey    — drifted  */
   --health-checking: #3a3a3f; /* dark grey   — checking */
+  --health-failed: #ffffff;   /* white       — check failed */
 
   --icon-agent: var(--text-muted);
   --icon-skill: #d4d4d4;
@@ -405,6 +408,7 @@
   --health-synced: #2a2a2a;   /* near-black — synced   */
   --health-drifted: #888888;  /* mid grey   — drifted  */
   --health-checking: #d4d4d4; /* pale grey  — checking */
+  --health-failed: #5a5a5a;   /* dark grey  — check failed */
 
   --icon-agent: var(--text-muted);
   --icon-skill: #3a3a3a;

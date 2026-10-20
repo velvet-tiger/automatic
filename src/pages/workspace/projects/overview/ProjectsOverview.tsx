@@ -250,7 +250,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
             <div className="h-full transition-all" style={{ width: `${driftedPct}%`, background: "var(--health-drifted)" }} />
           )}
           {failedPct > 0 && (
-            <div className="h-full transition-all bg-danger" style={{ width: `${failedPct}%` }} />
+            <div className="h-full transition-all" style={{ width: `${failedPct}%`, background: "var(--health-failed)" }} />
           )}
           {checkingPct > 0 && (
             <div className="h-full transition-all" style={{ width: `${checkingPct}%`, background: "var(--health-checking)" }} />
@@ -277,16 +277,21 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
 function GroupSectionHeader({
   label,
   projects,
+  projectDetails,
   driftByProject,
 }: {
   label: string;
   projects: string[];
+  projectDetails: Map<string, Project>;
   driftByProject: Record<string, ProjectDriftState>;
 }) {
   const total = projects.length;
   const synced = projects.filter((n) => isInSync(driftByProject[n])).length;
   const drifted = projects.filter((n) => isDrifted(driftByProject[n])).length;
-  const failed = projects.filter((n) => isCheckFailed(driftByProject[n])).length;
+  // Read-only projects are never checked, so a leftover failure is not counted.
+  const failed = projects.filter(
+    (n) => isCheckFailed(driftByProject[n]) && !isReadOnlyHere(projectDetails.get(n)),
+  ).length;
   const parts: { key: string; text: string; className?: string }[] = [];
   if (synced > 0) parts.push({ key: "synced", text: `${synced} synced` });
   if (drifted > 0) parts.push({ key: "drifted", text: `${drifted} drifted`, className: "text-health-drifted" });
@@ -771,6 +776,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
                   <GroupSectionHeader
                     label={section.label}
                     projects={section.projects}
+                    projectDetails={projectDetails}
                     driftByProject={driftByProject}
                   />
                   {viewMode === "table"
