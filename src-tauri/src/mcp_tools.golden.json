@@ -1,0 +1,1572 @@
+[
+  {
+    "description": "Link a local folder or file into a local context. Agents read its Markdown and text files where they are; nothing is copied. Only when the user asks. The user's settings decide which folders are allowed (by default, only folders inside registered projects); hidden, credential and system folders are always refused. The user sees it marked as added by an agent. Returns the source id.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "When an agent should look here.",
+          "type": "string"
+        },
+        "name": {
+          "description": "A short name for the linked material, e.g. \"Design notes\".",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path to a folder or file on this machine.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "path",
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_add_context_folder"
+  },
+  {
+    "description": "Link a web page into a local context. It is downloaded when an agent reads it. Only when the user asks. Pages an agent adds may only reach public internet addresses until the user keeps them in the Automatic app. Returns the source id.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "description": "When an agent should look here.",
+          "type": "string"
+        },
+        "name": {
+          "description": "A short name for the page, e.g. \"Public API reference\".",
+          "type": "string"
+        },
+        "ttl_secs": {
+          "default": null,
+          "description": "Seconds a downloaded copy is reused before the next read downloads\nthe page again. `0` downloads on every read. Defaults to 3600.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "An http or https address on the public internet.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "url",
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_add_context_web_page"
+  },
+  {
+    "description": "Append a markdown progress update to a feature. Use this to log decisions, blockers, or progress notes. Updates are append-only and ordered newest-first.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author": {
+          "description": "Agent id or name authoring this update",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "description": "Markdown content of the progress update",
+          "type": "string"
+        },
+        "feature_id": {
+          "description": "The feature UUID to add an update to",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_add_feature_update"
+  },
+  {
+    "description": "Archive a feature, hiding it from the Kanban board and default list views. The feature's state is preserved so it can be restored to its original column when unarchived.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "feature_id": {
+          "description": "The feature UUID to archive",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_archive_feature"
+  },
+  {
+    "description": "Attach a context to a project or to a project group. Give `project`, `group`, or neither for the current project. A group's contexts are added to every member project and recorded as provided by that group. Idempotent. Contexts are read through MCP only, so no sync is needed.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug. Must already exist in the library.",
+          "type": "string"
+        },
+        "group": {
+          "default": null,
+          "description": "Project group name to attach to. Every member project receives the\ncontext. Give `project` or `group`, not both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Project to attach to: a local_key, an id or a name. Give `project`\nor `group`, not both. Give neither to use the current project, the\none this agent is working in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "context"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_attach_context"
+  },
+  {
+    "description": "Attach a hook to a project. The hook's target agent is inferred from its library record. Idempotent. Does not trigger a sync — call automatic_sync_project to write the change to disk.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The hook's machine name. Must already exist in the library.",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_attach_hook"
+  },
+  {
+    "description": "Attach a profile to a project. Every skill, MCP server, provider, agent, sub-agent, command, hook and rule the profile lists is recorded as the profile's contribution, so later edits to the profile keep the project in step. Missing entries are added; entries the project already had are adopted by the profile. Idempotent. Give `project`, `group`, or neither for the current project. Attaching to a project does not trigger a sync — call automatic_sync_project to write the change to disk. Attaching to a group gives the profile to every member project and syncs each one that changed; only the group can remove it again.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group": {
+          "default": null,
+          "description": "Project group name to attach to. Every member project receives the\nprofile. Give `project` or `group`, not both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "The profile name. Must already exist in the library.",
+          "type": "string"
+        },
+        "project": {
+          "default": null,
+          "description": "Project to attach to: a local_key, an id or a name. Give `project`\nor `group`, not both. Give neither to use the current project, the\none this agent is working in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_attach_profile"
+  },
+  {
+    "description": "Attach a rule to a project's instruction file so the rule's content is injected on next sync. Idempotent — attaching an already-attached rule reports success. Does not trigger a sync; call automatic_sync_project afterwards to write changes to disk.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "file": {
+          "description": "Target instruction file key. Use a filename like `\"CLAUDE.md\"` or\n`\"AGENTS.md\"` to attach the rule to a single agent's instruction file.\nUse `\"_project\"` to inject the rule into every agent file. Omit when\nthe project is in unified instruction mode — `\"_unified\"` is used\nautomatically. In per-agent mode the field is required.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_name": {
+          "description": "The rule's machine name. Must already exist in the library.",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_attach_rule"
+  },
+  {
+    "description": "Clears all memories for a project, optionally filtered by pattern. Use with caution!",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "confirm": {
+          "description": "Must be set to true to confirm deletion",
+          "type": "boolean"
+        },
+        "pattern": {
+          "description": "Optional: only delete memories with keys matching this pattern (case-insensitive)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_clear_memories"
+  },
+  {
+    "description": "Create a local context with a name and description, ready for pages. Only when the user asks. Returns the new context's slug. Link folders and web pages with automatic_add_context_folder and automatic_add_context_web_page; cloud sources can only be added by the user in the Automatic app.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "description": {
+          "default": "",
+          "description": "What the context holds and when an agent should read it.",
+          "type": "string"
+        },
+        "name": {
+          "description": "A short name, e.g. \"Coding standards\". The id is derived from it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_create_context"
+  },
+  {
+    "description": "Create a new feature in a project. Defaults to backlog; pass state to create in another column. Returns the created feature including its id, which you will need for subsequent calls.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "Agent id or name to assign this feature to",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_by": {
+          "description": "Identifier for the agent or tool creating this feature",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Markdown description of the work to be done",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort": {
+          "description": "Effort estimate: xs, s, m, l, or xl",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linked_files": {
+          "description": "List of file paths in the project this feature relates to",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "priority": {
+          "description": "Priority: low, medium (default), or high",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "Initial state: backlog (default), todo, in_progress, review, complete, or cancelled",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "List of searchable tags",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Short title for the feature (required)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_create_feature"
+  },
+  {
+    "description": "Create a new hook in the Automatic library. Fails if a hook with the same machine name already exists — use `automatic_update_hook` to modify an existing hook. The handler payload follows the HookHandler shape: `{\"kind\":\"command\",\"command\":\"...\"}` or `{\"kind\":\"script\",\"interpreter\":\"bash\",\"script\":\"...\"}`.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agent": {
+          "description": "Target agent id (e.g. `\"claude\"`, `\"codex\"`).",
+          "type": "string"
+        },
+        "event": {
+          "description": "Lifecycle event name. Accepted values depend on the target agent —\ne.g. Claude Code supports `\"SessionStart\"`, `\"PreToolUse\"`,\n`\"PostToolUse\"`, `\"Stop\"`, etc.; Codex CLI supports a smaller subset.",
+          "type": "string"
+        },
+        "handler": {
+          "description": "The handler that runs when the event fires. Must be one of the\n`HookHandler` variants serialised with a `kind` discriminator:\n`{ \"kind\": \"command\", \"command\": \"echo hi\" }` or\n`{ \"kind\": \"script\", \"interpreter\": \"bash\", \"script\": \"...\" }`."
+        },
+        "machine_name": {
+          "description": "The hook's machine name. Must not already exist.",
+          "type": "string"
+        },
+        "matcher": {
+          "description": "Optional matcher (e.g. tool name regex for `PreToolUse`/`PostToolUse`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Human-readable display name shown in the Automatic UI.",
+          "type": "string"
+        },
+        "timeout_sec": {
+          "description": "Optional timeout in seconds.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name",
+        "name",
+        "agent",
+        "event",
+        "handler"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_create_hook"
+  },
+  {
+    "description": "Create a new rule in the Automatic library. Fails if a rule with the same machine name already exists — use `automatic_update_rule` to modify an existing rule. Machine name must be lowercase letters, digits, and hyphens only, starting with a letter.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "content": {
+          "description": "Markdown content of the rule.",
+          "type": "string"
+        },
+        "machine_name": {
+          "description": "The rule's machine name (lowercase letters, digits, and hyphens; must\nstart with a letter; no consecutive or trailing hyphens). Must not\nalready exist — use `automatic_update_rule` to modify an existing rule.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable display name shown in the Automatic UI.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "machine_name",
+        "name",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_create_rule"
+  },
+  {
+    "description": "Delete a page from a local context. This cannot be undone; only do it when the user asks.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Page path, as listed by automatic_list_context_entries.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_delete_context_page"
+  },
+  {
+    "description": "Permanently delete a feature and all its updates. This cannot be undone.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "feature_id": {
+          "description": "The feature UUID to delete permanently",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_delete_feature"
+  },
+  {
+    "description": "Delete a hook from the Automatic library. Plugin-provided hooks cannot be deleted. Note that this removes the hook from the library but does not detach it from any project — projects referencing the deleted hook will silently skip it on next sync.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The hook's machine name. Plugin-provided hooks cannot be deleted.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_delete_hook"
+  },
+  {
+    "description": "Deletes a specific memory entry by key for a project.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "description": "The memory key to delete",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_delete_memory"
+  },
+  {
+    "description": "Delete a rule from the Automatic library. Mandatory rules (e.g. `automatic-service`) and plugin-provided rules cannot be deleted. Note that this removes the rule from the library but does not detach it from any project — projects referencing the deleted rule will silently skip it on next sync.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The rule's machine name. Mandatory rules (e.g. `automatic-service`)\nand plugin-provided rules cannot be deleted and will return an error.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_delete_rule"
+  },
+  {
+    "description": "Detach a context from a project or from a project group. Give `project`, `group`, or neither for the current project. A context a group provides cannot be detached from a member project; detach it from the group instead. Idempotent.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug. Must already exist in the library.",
+          "type": "string"
+        },
+        "group": {
+          "default": null,
+          "description": "Project group name to attach to. Every member project receives the\ncontext. Give `project` or `group`, not both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Project to attach to: a local_key, an id or a name. Give `project`\nor `group`, not both. Give neither to use the current project, the\none this agent is working in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "context"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_detach_context"
+  },
+  {
+    "description": "Detach a hook from a project. Idempotent. Does not trigger a sync. A hook provided by an attached profile is re-attached on the project's next save; detach the profile with automatic_detach_profile instead.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The hook's machine name.",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_detach_hook"
+  },
+  {
+    "description": "Detach a profile from a project. Removes every entry the profile provides, including entries the project had before it was attached; entries no attached profile lists stay. Idempotent. Give `project`, `group`, or neither for the current project. A profile a group provides cannot be detached from a member project; detach it from the group instead. Detaching from a project does not trigger a sync — call automatic_sync_project to write the change to disk. Detaching from a group removes the profile from every member project no other group provides it to, and syncs each one that changed.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "group": {
+          "default": null,
+          "description": "Project group name to detach from. Member projects lose the profile\nunless another of their groups provides it. Give `project` or\n`group`, not both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "The profile name.",
+          "type": "string"
+        },
+        "project": {
+          "default": null,
+          "description": "Project to detach from: a local_key, an id or a name. Give `project`\nor `group`, not both. Give neither to use the current project, the\none this agent is working in.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_detach_profile"
+  },
+  {
+    "description": "Detach a rule from a project's instruction file. Mandatory rules (e.g. `automatic-service`) cannot be detached. Idempotent — detaching a rule that is not attached reports success. Does not trigger a sync. A rule provided by an attached profile is re-attached on the project's next save; detach the profile with automatic_detach_profile instead.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "file": {
+          "description": "Target instruction file key. Same semantics as `automatic_attach_rule`:\noptional in unified mode, required in per-agent mode.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_name": {
+          "description": "The rule's machine name. Mandatory rules cannot be detached.",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_detach_rule"
+  },
+  {
+    "description": "Retrieve an API key for a given LLM provider stored in Automatic. Only recognised provider IDs are accepted (e.g. anthropic, openai).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "provider": {
+          "description": "The provider name (e.g. \"anthropic\", \"openai\", \"gemini\")",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_get_credential"
+  },
+  {
+    "description": "Get full detail for a specific feature by id, including description and all update history.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "feature_id": {
+          "description": "The feature UUID",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_get_feature"
+  },
+  {
+    "description": "Retrieves a specific memory entry by key for a project.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "description": "The memory key to retrieve",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_get_memory"
+  },
+  {
+    "description": "Return all projects related to the current project, or to `project` when given, via Project Groups, including each peer's name, description, directory, and relative path from this project's directory. Use this to discover sibling projects you can explore or reference.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_get_related_projects"
+  },
+  {
+    "description": "List the readable entries of one source in a context. Returns `entries` (each with `path`, and `title` or `size` when known) and `truncated` when the source holds more than the listing limit. A URL source has one entry, `content`. Call automatic_read_context_entry with a path.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source id, as returned by automatic_read_context.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "source"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_list_context_entries"
+  },
+  {
+    "description": "List contexts: named collections of reference material (documentation pages, local files, URLs, cloud sources) that agents read on demand. Returns `slug`, `display_name`, `description` and `location` (`local` or `cloud`). Lists the contexts attached to the current project, or to `project` when given; each then carries `group` when a project group provides it. Pass `all: true`, or run with no current project, to list every context in the library. Call automatic_read_context next.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "all": {
+          "default": null,
+          "description": "List every context in the library instead of one project's. Ignores\n`project`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "The project whose attached contexts to list, each with the group\nthat provides it (if any). Omit it to use the current project, the\none this agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_list_contexts"
+  },
+  {
+    "description": "List all features for a project. By default returns only active (non-archived) features grouped by state with id, title, priority, effort, and assignee. Optionally filter by state: backlog, todo, in_progress, review, complete, or cancelled. Pass include_archived: true to list archived features instead of active ones.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "include_archived": {
+          "description": "When true, returns only archived features. Defaults to false (active features only).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "Optional state filter: backlog, todo, in_progress, review, complete, or cancelled",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_list_features"
+  },
+  {
+    "description": "List every hook in the Automatic library. Returns an array of objects with `id` (machine name), `name`, `agent`, `event`, and optional `plugin_id`.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_hooks"
+  },
+  {
+    "description": "List all MCP server configurations registered in the Automatic server registry",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_mcp_servers"
+  },
+  {
+    "description": "Lists all stored memories for a project, optionally filtered by a key pattern.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "pattern": {
+          "description": "Optional: filter keys by this substring (case-insensitive)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_list_memories"
+  },
+  {
+    "description": "List every profile in the Automatic library. A profile is a live bundle of library references (skills, MCP servers, providers, agents, sub-agents, commands, hooks, rules) that keeps every attached project in step. Returns an array of objects with `name` and `description`; call automatic_read_profile for contents.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_profiles"
+  },
+  {
+    "description": "List every project registered in Automatic. Each entry has `name`, `local_key` (one checkout on this machine), `id` (the project, shared by every checkout of it), `directory`, and `current`. `current` is true for the project this agent is working in, which tools use when `project` is omitted. When that is a project with several checkouts and none contains the working directory, every checkout is marked. Any of `local_key`, `id` or `name` can be passed as `project`.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_projects"
+  },
+  {
+    "description": "List every rule in the Automatic library. Returns an array of objects with `id` (machine name), `name` (display name), and optional `plugin_id` for plugin-provided rules that cannot be deleted.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_rules"
+  },
+  {
+    "description": "List active Claude Code sessions tracked by the Automatic hooks (session id, working directory, model, started_at)",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_sessions"
+  },
+  {
+    "description": "List all available skill names from the Automatic skill registry",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "automatic_list_skills"
+  },
+  {
+    "description": "Move a page to another folder or rename it. Refuses to overwrite an existing page. Folders left empty are removed. Returns the new path.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "folder": {
+          "default": null,
+          "description": "Destination folder. Omit to stay in the current folder; \"\" for the top level.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Current page path, as listed by automatic_list_context_entries.",
+          "type": "string"
+        },
+        "title": {
+          "default": null,
+          "description": "New title. Omit to keep the current name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "context",
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_move_context_page"
+  },
+  {
+    "description": "Reads Claude Code's auto-memory files for a project (MEMORY.md index and any topic files). Claude Code stores learnings it discovers during sessions in ~/.claude/projects/<encoded-path>/memory/. Use this to inspect what Claude has learned, then call automatic_store_memory to promote important entries into Automatic's structured memory store.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_read_claude_memory"
+  },
+  {
+    "description": "Read a context by slug. Returns its description and `sources`: each has an `id`, a `kind` (`documentation`, `local`, `url`, `cloud`, or a webapp kind for cloud contexts), and a display name and description. Call automatic_list_context_entries with a source id next. Cloud contexts need the user to be signed in.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_context"
+  },
+  {
+    "description": "Read the text of one entry in a context source. Local files are confined to the source's folder, and every entry is capped at 512,000 bytes of UTF-8 text. URL sources are served from cache while fresh; a failed fetch is an error rather than stale content.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The entry path, as returned by automatic_list_context_entries.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source id, as returned by automatic_read_context.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "source",
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_context_entry"
+  },
+  {
+    "description": "Read a hook by machine name. Returns the full hook JSON (`name`, `agent`, `event`, `matcher`, `handler`, `timeout_sec`, optional `plugin_id`).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The hook's machine name (lowercase letters, digits, and hyphens; must\nstart with a letter; no consecutive or trailing hyphens).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_hook"
+  },
+  {
+    "description": "Read a profile by name. Returns the full profile JSON (`name`, `description`, `skills`, `mcp_servers`, `providers`, `agents`, `user_agents`, `user_commands`, `hooks`, `rules`).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "description": "The profile name (lowercase letters, digits, and hyphens).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_profile"
+  },
+  {
+    "description": "Read the full configuration for a project (skills, MCP servers, agents, directory, description). Omit `name` to read the current project. `disabled_mcp_servers` lists the attached MCP servers that are switched off and left out of the agent config files; the field is absent when none are. `profiles` lists the attached profiles and `profile_contributions` records which entries each profile provides, including entries the project had before the profile was attached; those entries are owned by the profile and are re-attached on the next save if removed directly. `contexts` lists attached context slugs and `group_context_contributions` records which of them each project group provides. `group_profile_contributions` records which entries in `profiles` each project group provides; those can only be detached from the group.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "description": "The project to read. Omit it to use the current project, the one this\nagent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_read_project"
+  },
+  {
+    "description": "Read a rule by machine name. Returns the full rule JSON (`name`, `content`, optional `plugin_id`).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "machine_name": {
+          "description": "The rule's machine name (lowercase letters, digits, and hyphens; must\nstart with a letter; no consecutive or trailing hyphens).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_rule"
+  },
+  {
+    "description": "Read the content of a specific skill. Project-local skills (skills that exist only within a project directory, not in the global registry) of the current project, or of `project` when given, are checked first; the global registry is used as a fallback.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "description": "The skill name (directory name in Automatic's managed library at\n~/.automatic/library/skills/, or in an external scan location such as\n~/.agents/skills/ or ~/.claude/skills/)",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project whose project-local skills are searched first, before the\nmanaged library and external scan locations. Omit it to use the\ncurrent project, the one this agent is working in. Accepts a\nlocal_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_read_skill"
+  },
+  {
+    "description": "Register a new project in Automatic. Requires a project name and an absolute path to an existing directory on disk. Optionally provide a description and a list of agent tool ids (e.g. claude, cursor, codex) — when agents are given, their configuration files are synced into the directory immediately. Another project may share the name. Fails when the directory is already registered to another project, or the directory holds an unregistered Automatic config.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agents": {
+          "description": "Optional list of agent tool ids to configure for the project (e.g.\n\"claude\", \"cursor\", \"codex\"). When provided, agent configuration\nfiles are synced into the directory immediately.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Optional short description of the project.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "directory": {
+          "description": "Absolute path to the project's working directory. The directory must\nalready exist on disk.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The name for the new project. Another project may already use it;\nthe new project gets its own local_key.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "directory"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_register_project"
+  },
+  {
+    "description": "Remove a linked folder, file, web page or cloud source from a local context. The material itself is not touched. The context's pages cannot be removed this way. Only when the user asks.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source id, as returned by automatic_read_context.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "context",
+        "source"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_remove_context_source"
+  },
+  {
+    "description": "Searches memory keys and values for a query string (case-insensitive substring match).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "description": "Search query to match against keys and values",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_search_memories"
+  },
+  {
+    "description": "Search the skills.sh registry for community skills matching a query. Returns skill names, install counts, and source repos.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "query": {
+          "description": "Search query (skill name, topic, or keyword)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_search_skills"
+  },
+  {
+    "description": "Change a feature's lifecycle state. Valid states: backlog, todo, in_progress, review, complete, cancelled. The feature is placed at the end of the target state column.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "feature_id": {
+          "description": "The feature UUID",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "New state: backlog, todo, in_progress, review, complete, or cancelled",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feature_id",
+        "state"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_set_feature_state"
+  },
+  {
+    "description": "Enable or disable one MCP server attached to a project. A disabled server stays attached, listed under `disabled_mcp_servers` by automatic_read_project, and is left out of the agent config files. Idempotent: asking for the state the server is already in reports success. Fails when the server is not attached to the project, when asked to disable `automatic`, and when an attached profile provides the server. Does not trigger a sync. Call automatic_sync_project afterwards to remove the server from the agent config files, or to write it back.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "enabled": {
+          "description": "`true` to enable the server, `false` to disable it.",
+          "type": "boolean"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server": {
+          "description": "The MCP server's name, as listed under `mcp_servers` by\n`automatic_read_project`. It must already be attached to the project.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_set_mcp_server_enabled"
+  },
+  {
+    "description": "Stores a memory entry (key-value pair) for a project. AI agents can use this to persist learned information, preferences, or context over time.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "description": "The memory key (identifier)",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Optional: identifier for the agent/tool storing this memory",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "The memory value to store",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_store_memory"
+  },
+  {
+    "description": "Sync a project's MCP server configs to its directory for all configured agent tools. Omit `name` to sync the current project. The project must have a directory path. A project with no agent tools configured syncs nothing; agents are never added by a sync.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "name": {
+          "description": "The project to sync configs for. Omit it to use the current project,\nthe one this agent is working in. Accepts a local_key, an id or a\nname.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "automatic_sync_project"
+  },
+  {
+    "description": "Unarchive a feature, restoring it to its preserved state in the Kanban board and default list views.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "feature_id": {
+          "description": "The feature UUID to unarchive",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_unarchive_feature"
+  },
+  {
+    "description": "Update a feature's metadata fields (title, description, priority, assignee, tags, linked_files, effort). Omit any field to leave it unchanged.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assignee": {
+          "description": "New assignee (omit to leave unchanged, pass null to clear)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "New markdown description (omit to leave unchanged)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effort": {
+          "description": "New effort: xs, s, m, l, or xl (omit to leave unchanged, pass null to clear)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "feature_id": {
+          "description": "The feature UUID",
+          "type": "string"
+        },
+        "linked_files": {
+          "description": "New linked files list (omit to leave unchanged)",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "priority": {
+          "description": "New priority: low, medium, or high (omit to leave unchanged)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "The project to act on. Omit it to use the current project, the one\nthis agent is working in. Accepts a local_key, an id or a name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "New tags list (omit to leave unchanged)",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "New title (omit to leave unchanged)",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "feature_id"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_update_feature"
+  },
+  {
+    "description": "Update an existing hook. Fails if the hook does not exist or is provided by a plugin. Pass only the fields you want to change.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agent": {
+          "description": "New target agent. Omit to leave unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "description": "New event. Omit to leave unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handler": {
+          "description": "New handler JSON (same shape as `automatic_create_hook`). Omit to\nleave unchanged."
+        },
+        "machine_name": {
+          "description": "The hook's machine name. Must already exist.",
+          "type": "string"
+        },
+        "matcher": {
+          "description": "New matcher. Omit to leave unchanged. Pass `null` to clear."
+        },
+        "name": {
+          "description": "New display name. Omit to leave unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_sec": {
+          "description": "New timeout. Omit to leave unchanged. Pass `null` to clear."
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_update_hook"
+  },
+  {
+    "description": "Update an existing rule's display name and/or content. Fails if the rule does not exist or is provided by a plugin. Omit a field to leave it unchanged; at least one of `name` or `content` must be provided.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "content": {
+          "description": "New markdown content. Omit to leave the current content unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_name": {
+          "description": "The rule's machine name. Must already exist.",
+          "type": "string"
+        },
+        "name": {
+          "description": "New display name. Omit to leave the current name unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "machine_name"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_update_rule"
+  },
+  {
+    "description": "Create or replace a Markdown page in a local context. Give `title` (and optionally `folder`, e.g. \"Guides\") for a page addressed by name; the same title in the same folder replaces that page. Or give `path` to replace an existing page exactly. Write pages only when the user asks, or to record something durable the user has agreed, such as a decision. Returns the page path.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "content": {
+          "description": "The page body in Markdown.",
+          "type": "string"
+        },
+        "context": {
+          "description": "The context slug.",
+          "type": "string"
+        },
+        "folder": {
+          "default": null,
+          "description": "Folder for a titled page, e.g. \"Guides\" or \"Guides/Troubleshooting\".\nOmit for the top level.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "default": null,
+          "description": "Exact path of an existing page to replace, as listed by\nautomatic_list_context_entries (e.g. \"guides/setup.md\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "default": null,
+          "description": "Page title. The page path is derived from it and `folder`. Writing\nthe same title in the same folder replaces that page. Give either\n`title` or `path`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "context",
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "automatic_write_context_page"
+  }
+]

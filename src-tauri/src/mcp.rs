@@ -3272,6 +3272,41 @@ mod tests {
     use super::*;
     use crate::core::with_test_home;
 
+    /// Tool names, descriptions and input schemas are a contract with every
+    /// agent that calls this server. This fails on any change to them,
+    /// including one that arrives through an rmcp or schemars upgrade. After
+    /// an intended change, regenerate the file with
+    /// `UPDATE_GOLDEN=1 cargo test tool_list_matches_golden_file` and review
+    /// its diff.
+    #[test]
+    fn tool_list_matches_golden_file() {
+        let mut tools: Vec<serde_json::Value> = AutomaticMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                })
+            })
+            .collect();
+        tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        let actual = serde_json::to_string_pretty(&tools).expect("serialise tool list") + "\n";
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/mcp_tools.golden.json");
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(path, &actual).expect("write golden tool list");
+            return;
+        }
+        let expected = std::fs::read_to_string(path).expect("read golden tool list");
+        assert!(
+            actual == expected,
+            "the MCP tool list no longer matches {path}. If the change is intended, \
+             regenerate it with UPDATE_GOLDEN=1 and review the diff."
+        );
+    }
+
     fn params(name: &str, directory: &str, agents: Option<Vec<&str>>) -> RegisterProjectParams {
         RegisterProjectParams {
             name: name.to_string(),
