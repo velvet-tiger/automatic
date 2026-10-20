@@ -213,8 +213,9 @@ pub fn save_untrusted_mcp_server_config(name: &str, config_json: &str) -> Result
     save_mcp_server_config(name, &blank_ciphertext_like_env_values(config_json))
 }
 
-/// Store a config the user wrote, in the editor, a pasted snippet or a
-/// catalogue install.
+/// Store a config the user wrote, in the editor or a catalogue install.
+/// A pasted snippet also lands here, but the import dialog blanks prefixed
+/// env values before it calls the save.
 ///
 /// The editor loads env values decrypted, so it sends plain text. A plain
 /// value with the encryption prefix would be stored as it is and could never
