@@ -107,7 +107,7 @@ pub fn read_project_profile_parsed(name: &str) -> Result<ProjectProfile, String>
         serde_json::from_str(&raw).map_err(|e| format!("Invalid profile data: {}", e))?;
     profile.name = name.to_string();
     if profile._author.is_none() {
-        profile._author = super::remote_sources::get_provenance_author("profile", name)?;
+        profile._author = super::remote_sources::get_provenance_author("profile", name);
     }
     Ok(profile)
 }

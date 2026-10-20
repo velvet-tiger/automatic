@@ -112,7 +112,7 @@ pub fn read_template(name: &str) -> Result<String, String> {
         let mut template: ProjectTemplate =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
         if template._author.is_none() {
-            template._author = super::remote_sources::get_provenance_author("template", name)?;
+            template._author = super::remote_sources::get_provenance_author("template", name);
         }
         serde_json::to_string(&template).map_err(|e| e.to_string())
     } else {

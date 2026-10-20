@@ -461,6 +461,12 @@ pub(crate) fn fail_sources_writes_after(writes: Option<usize>) {
     SOURCES_WRITES_LEFT.with(|left| left.set(writes));
 }
 
+/// Test support: make writes of source-provenance.json fail on this thread.
+#[cfg(test)]
+pub(crate) fn fail_provenance_writes(fail: bool) {
+    PROVENANCE_WRITES_FAIL.with(|cell| cell.set(fail));
+}
+
 /// Save the sources registry.
 fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     #[cfg(test)]
@@ -480,7 +486,10 @@ fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(sources)
         .map_err(|e| format!("Failed to serialize sources: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write sources.json: {}", e))
+    // Atomic, because `list_sources` fails on a truncated file and an
+    // interrupted plain write would leave one.
+    super::project_registry::write_registry_file(&path, &json)
+        .map_err(|e| format!("Could not save sources.json: {e}"))
 }
 
 /// Add or update a source in the registry.
@@ -526,7 +535,10 @@ fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(prov)
         .map_err(|e| format!("Failed to serialize provenance: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write source-provenance.json: {}", e))
+    // Atomic, because every library reader looks this file up and an
+    // interrupted plain write would leave it truncated (VEL-186).
+    super::project_registry::write_registry_file(&path, &json)
+        .map_err(|e| format!("Could not save source-provenance.json: {e}"))
 }
 
 /// Record provenance for a resource.
@@ -544,13 +556,57 @@ pub fn get_provenance(resource_type: &str, name: &str) -> Result<Option<String>,
     Ok(prov.get(&key).cloned())
 }
 
-/// Get the GitHub author descriptor for a resource based on recorded provenance.
-pub fn get_provenance_author(
-    resource_type: &str,
-    name: &str,
-) -> Result<Option<serde_json::Value>, String> {
-    Ok(get_provenance(resource_type, name)?
-        .map(|repo| serde_json::json!({ "type": "github", "repo": repo })))
+/// Get the source that owns a resource, for display only (an author badge or
+/// a source label). A provenance file that cannot be read or parsed is
+/// logged and treated as "no source", so a damaged file never stops the
+/// resource itself from being read (VEL-186). Callers that change ownership
+/// must use `get_provenance`, which reports the error.
+pub fn get_display_provenance(resource_type: &str, name: &str) -> Option<String> {
+    match get_provenance(resource_type, name) {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!(
+                "warning: could not look up the source of {} '{}', so it is shown without an author: {}",
+                resource_type, name, e
+            );
+            None
+        }
+    }
+}
+
+/// The recorded provenance of every resource, for display only, so a list
+/// call reads the file once instead of once per item. A provenance file that
+/// cannot be read or parsed is logged once and treated as empty, for the
+/// same reason as [`get_display_provenance`].
+pub fn read_display_provenance() -> DisplayProvenance {
+    match read_provenance() {
+        Ok(map) => DisplayProvenance(map),
+        Err(e) => {
+            eprintln!(
+                "warning: could not read source-provenance.json, so resources are shown without an author: {}",
+                e
+            );
+            DisplayProvenance(HashMap::new())
+        }
+    }
+}
+
+/// A snapshot of the provenance map from [`read_display_provenance`].
+pub struct DisplayProvenance(HashMap<String, String>);
+
+impl DisplayProvenance {
+    /// The source that owns a resource, keyed the same way as
+    /// [`get_provenance`].
+    pub fn source_of(&self, resource_type: &str, name: &str) -> Option<String> {
+        self.0.get(&format!("{}:{}", resource_type, name)).cloned()
+    }
+}
+
+/// Get the GitHub author descriptor for a resource based on recorded
+/// provenance. Display only, so a damaged provenance file gives `None`.
+pub fn get_provenance_author(resource_type: &str, name: &str) -> Option<serde_json::Value> {
+    get_display_provenance(resource_type, name)
+        .map(|repo| serde_json::json!({ "type": "github", "repo": repo }))
 }
 
 /// Remove provenance for a resource.
@@ -588,6 +644,36 @@ fn hand_over_provenance(
         save_provenance(&prov)?;
     }
     Ok(())
+}
+
+/// Give `new_name` the ownership state `old_name` has, in one write, so a
+/// failure cannot leave both names owned by the source. "No owner" is a
+/// state too: a stale entry left under `new_name` by a resource deleted
+/// earlier is removed when `old_name` has none. Returns whether the map
+/// changed: `false`, with no write, when neither name has an entry.
+///
+/// Moving back (`new_name` to `old_name`) undoes a move. A stale entry
+/// cleared from `new_name` is not restored, because no resource existed
+/// under that name for it to describe.
+pub fn move_provenance(
+    resource_type: &str,
+    old_name: &str,
+    new_name: &str,
+) -> Result<bool, String> {
+    let mut prov = read_provenance()?;
+    let new_key = provenance_key(resource_type, new_name);
+    match prov.remove(&provenance_key(resource_type, old_name)) {
+        Some(source) => {
+            prov.insert(new_key, source);
+        }
+        None => {
+            if prov.remove(&new_key).is_none() {
+                return Ok(false);
+            }
+        }
+    }
+    save_provenance(&prov)?;
+    Ok(true)
 }
 
 /// The singular type provenance is keyed by, for a type a source lists
@@ -4261,15 +4347,175 @@ mod tests {
     }
 
     #[test]
+    fn provenance_is_written_by_replacing_the_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("rule", "first", REPO).expect("first write");
+            let path = provenance_path().expect("provenance path");
+            let dir = path.parent().expect("provenance dir").to_path_buf();
+            let before = fs::metadata(&path).expect("stat before");
+
+            record_provenance("rule", "second", REPO).expect("second write");
+
+            // A rename puts a new file in place. A plain `fs::write` would
+            // truncate and refill the old one, which a crash can interrupt.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let after = fs::metadata(&path).expect("stat after");
+                assert_ne!(
+                    before.ino(),
+                    after.ino(),
+                    "the file must be replaced, not rewritten"
+                );
+            }
+            #[cfg(not(unix))]
+            let _ = before;
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("rule:first").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("rule:second").map(String::as_str), Some(REPO));
+            let leftovers: Vec<String> = fs::read_dir(&dir)
+                .expect("list dir")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".tmp"))
+                .collect();
+            assert_eq!(leftovers, Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn sources_are_written_by_replacing_the_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            register(REPO, &[], &[]);
+            let path = sources_registry_path().expect("sources path");
+            let dir = path.parent().expect("sources dir").to_path_buf();
+            let before = fs::metadata(&path).expect("stat before");
+
+            register("source-remove/second", &[], &[]);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let after = fs::metadata(&path).expect("stat after");
+                assert_ne!(
+                    before.ino(),
+                    after.ino(),
+                    "the file must be replaced, not rewritten"
+                );
+            }
+            #[cfg(not(unix))]
+            let _ = before;
+
+            let repos: Vec<String> = list_sources()
+                .expect("list sources")
+                .into_iter()
+                .map(|s| s.repo)
+                .collect();
+            assert!(repos.contains(&REPO.to_string()), "{repos:?}");
+            assert!(
+                repos.contains(&"source-remove/second".to_string()),
+                "{repos:?}"
+            );
+            let leftovers: Vec<String> = fs::read_dir(&dir)
+                .expect("list dir")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".tmp"))
+                .collect();
+            assert_eq!(leftovers, Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_list_reads_provenance_once_and_tolerates_a_corrupt_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("skill", "s", REPO).expect("record");
+            assert_eq!(
+                read_display_provenance().source_of("skill", "s"),
+                Some(REPO.to_string())
+            );
+            assert_eq!(read_display_provenance().source_of("skill", "other"), None);
+
+            let path = provenance_path().expect("provenance path");
+            fs::write(&path, "{\"skill:s\": ").expect("write corrupt provenance");
+            assert_eq!(read_display_provenance().source_of("skill", "s"), None);
+        });
+    }
+
+    #[test]
+    fn move_provenance_clears_a_stale_entry_under_the_new_name() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("mcp_server", "stale-new", REPO).expect("record stale");
+
+            assert!(move_provenance("mcp_server", "unowned-old", "stale-new").expect("move"));
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:stale-new"), None);
+            assert_eq!(prov.get("mcp_server:unowned-old"), None);
+        });
+    }
+
+    #[test]
+    fn move_provenance_moves_the_key_in_one_write() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("mcp_server", "before", REPO).expect("record");
+            record_provenance("rule", "other", REPO).expect("record other");
+
+            assert!(move_provenance("mcp_server", "before", "after").expect("move"));
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:before"), None);
+            assert_eq!(prov.get("mcp_server:after").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("rule:other").map(String::as_str), Some(REPO));
+
+            // A failed write leaves the map as it was: never both names.
+            fail_provenance_writes(true);
+            let failed = move_provenance("mcp_server", "after", "again");
+            fail_provenance_writes(false);
+            assert!(failed.is_err());
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:after").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("mcp_server:again"), None);
+
+            // Nothing recorded: no write and no error.
+            assert!(!move_provenance("mcp_server", "unowned", "renamed").expect("no-op move"));
+            assert_eq!(
+                read_provenance().expect("read").get("mcp_server:renamed"),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn a_corrupt_provenance_file_gives_no_display_author() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let path = provenance_path().expect("provenance path");
+            fs::create_dir_all(path.parent().expect("provenance dir")).expect("create dir");
+            fs::write(&path, "{\"rule:r\": ").expect("write corrupt provenance");
+
+            assert_eq!(get_display_provenance("rule", "r"), None);
+            assert_eq!(get_provenance_author("rule", "r"), None);
+            assert!(get_provenance("rule", "r").is_err());
+        });
+    }
+
+    #[test]
     fn a_provenance_write_that_fails_does_not_stop_a_removal() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-provfault");
             install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
 
             let result = remove_source(REPO);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
 
             let result = result.expect("remove");
             assert_eq!(sorted(result.removed.clone()), names.keys());
@@ -4515,10 +4761,10 @@ mod tests {
             install_source(REPO, &first, None, None).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
             let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
 
             let removals = remove_dropped_resources(REPO, &old, &second, &reinstall);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
 
             let removals = removals.expect("removals");
             assert_eq!(removals.removed.get("rules"), Some(&vec![names.rule.clone()]));
@@ -4555,9 +4801,9 @@ mod tests {
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
             install_source(REPO, &manifest, None, None).expect("install");
             // The clears fail, so the records stay with no entry behind them.
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
             let first = remove_source(REPO);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
             assert_eq!(first.expect("remove").warnings.len(), 6);
             assert_eq!(get_provenance("rule", &names.rule), Ok(Some(REPO.to_string())));
 
