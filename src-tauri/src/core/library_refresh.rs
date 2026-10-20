@@ -324,11 +324,15 @@ fn extract_zip(bytes: &[u8], out: &std::path::Path) -> Result<(), String> {
         let mut file = zip
             .by_index(i)
             .map_err(|e| format!("zip entry {} unreadable: {}", i, e))?;
+        let name = file
+            .name()
+            .map_err(|e| format!("zip entry {} name unreadable: {}", i, e))?
+            .into_owned();
         // Guard against zip-slip: refuse any entry whose enclosed_name
         // does not stay under the output directory. `enclosed_name`
         // rejects absolute paths and `..` components.
         let Some(rel) = file.enclosed_name() else {
-            return Err(format!("zip entry {} has an unsafe path", file.name()));
+            return Err(format!("zip entry {} has an unsafe path", name));
         };
         let dest = out.join(rel);
         if file.is_dir() {
@@ -342,7 +346,7 @@ fn extract_zip(bytes: &[u8], out: &std::path::Path) -> Result<(), String> {
         }
         let mut buf = Vec::with_capacity(file.size() as usize);
         file.read_to_end(&mut buf)
-            .map_err(|e| format!("read zip entry {}: {}", file.name(), e))?;
+            .map_err(|e| format!("read zip entry {}: {}", name, e))?;
         std::fs::write(&dest, &buf)
             .map_err(|e| format!("write {}: {}", dest.display(), e))?;
     }
