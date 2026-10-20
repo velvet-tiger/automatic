@@ -1192,7 +1192,10 @@ pub fn import_skill_from_package(path: &str) -> Result<Vec<ImportedSkill>, Strin
             let mut file = zip
                 .by_index(i)
                 .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
-            let name = file.name().to_string();
+            let name = file
+                .name()
+                .map_err(|e| format!("Failed to read zip entry {} name: {}", i, e))?
+                .into_owned();
 
             // Skip directories (they're created automatically)
             if name.ends_with('/') {
@@ -1832,6 +1835,60 @@ mod tests {
 
         let result = import_skill_from_package(&package_path.to_string_lossy());
         assert!(result.is_err());
+    }
+
+    /// Package import copies entries by hand rather than calling
+    /// `ZipArchive::extract`, so a symlink entry must land as a plain file
+    /// and stored SUID/SGID bits must be dropped (RUSTSEC-2026-0367/0368/0369).
+    #[cfg(unix)]
+    #[test]
+    fn package_import_creates_no_symlinks_or_setuid_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        with_temp_home(|home| {
+            let temp = tmp();
+            let package_path = temp.path().join("links.skill");
+            let file = fs::File::create(&package_path).expect("create package");
+            let mut zip = zip::ZipWriter::new(file);
+            let options = SimpleFileOptions::default();
+            zip.start_file("link-skill/SKILL.md", options)
+                .expect("start skill file");
+            std::io::Write::write_all(
+                &mut zip,
+                b"---\nname: link-skill\ndescription: Fixture\n---\n\n# Link skill\n",
+            )
+            .expect("write skill file");
+            zip.add_symlink("link-skill/references/outside", "../../../..", options)
+                .expect("add symlink entry");
+            zip.start_file(
+                "link-skill/scripts/run.sh",
+                options.unix_permissions(0o6755),
+            )
+            .expect("start setuid file");
+            std::io::Write::write_all(&mut zip, b"echo hi\n").expect("write setuid file");
+            zip.finish().expect("finish package");
+
+            import_skill_from_package(&package_path.to_string_lossy())
+                .expect("package should import");
+
+            let mut pending = vec![home.to_path_buf()];
+            while let Some(dir) = pending.pop() {
+                for entry in fs::read_dir(&dir).expect("read dir") {
+                    let path = entry.expect("dir entry").path();
+                    let meta = fs::symlink_metadata(&path).expect("metadata");
+                    assert!(!meta.file_type().is_symlink(), "symlink at {:?}", path);
+                    assert_eq!(
+                        meta.permissions().mode() & 0o6000,
+                        0,
+                        "SUID/SGID on {:?}",
+                        path
+                    );
+                    if meta.is_dir() {
+                        pending.push(path);
+                    }
+                }
+            }
+        });
     }
 
     /// A dot name is never a skill, whether a skill.json lists it or a
