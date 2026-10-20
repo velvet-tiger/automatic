@@ -105,9 +105,8 @@ pub fn list_subagents() -> Result<Vec<SubagentEntry>, String> {
                         if let Ok(raw) = fs::read_to_string(&path) {
                             let name = extract_name_from_frontmatter(&raw)
                                 .unwrap_or_else(|| stem.to_string());
-                            let remote_repo = super::remote_sources::get_provenance("agent", stem)
-                                .ok()
-                                .flatten();
+                            let remote_repo =
+                                super::remote_sources::get_display_provenance("agent", stem);
                             let (source, author, source_repo) = if is_bundled_agent(stem) {
                                 ("automatic".to_string(), "Automatic".to_string(), None)
                             } else if let Some(repo) = remote_repo {

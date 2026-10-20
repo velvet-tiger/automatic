@@ -480,7 +480,10 @@ fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(sources)
         .map_err(|e| format!("Failed to serialize sources: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write sources.json: {}", e))
+    // Atomic, because `list_sources` fails on a truncated file and an
+    // interrupted plain write would leave one.
+    super::project_registry::write_registry_file(&path, &json)
+        .map_err(|e| format!("Failed to write sources.json: {}", e))
 }
 
 /// Add or update a source in the registry.
@@ -526,7 +529,10 @@ fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(prov)
         .map_err(|e| format!("Failed to serialize provenance: {}", e))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write source-provenance.json: {}", e))
+    // Atomic, because every library reader looks this file up and an
+    // interrupted plain write would leave it truncated (VEL-186).
+    super::project_registry::write_registry_file(&path, &json)
+        .map_err(|e| format!("Failed to write source-provenance.json: {}", e))
 }
 
 /// Record provenance for a resource.
@@ -544,13 +550,29 @@ pub fn get_provenance(resource_type: &str, name: &str) -> Result<Option<String>,
     Ok(prov.get(&key).cloned())
 }
 
-/// Get the GitHub author descriptor for a resource based on recorded provenance.
-pub fn get_provenance_author(
-    resource_type: &str,
-    name: &str,
-) -> Result<Option<serde_json::Value>, String> {
-    Ok(get_provenance(resource_type, name)?
-        .map(|repo| serde_json::json!({ "type": "github", "repo": repo })))
+/// Get the source that owns a resource, for display only (an author badge or
+/// a source label). A provenance file that cannot be read or parsed is
+/// logged and treated as "no source", so a damaged file never stops the
+/// resource itself from being read (VEL-186). Callers that change ownership
+/// must use `get_provenance`, which reports the error.
+pub fn get_display_provenance(resource_type: &str, name: &str) -> Option<String> {
+    match get_provenance(resource_type, name) {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!(
+                "warning: could not look up the source of {} '{}', so it is shown without an author: {}",
+                resource_type, name, e
+            );
+            None
+        }
+    }
+}
+
+/// Get the GitHub author descriptor for a resource based on recorded
+/// provenance. Display only, so a damaged provenance file gives `None`.
+pub fn get_provenance_author(resource_type: &str, name: &str) -> Option<serde_json::Value> {
+    get_display_provenance(resource_type, name)
+        .map(|repo| serde_json::json!({ "type": "github", "repo": repo }))
 }
 
 /// Remove provenance for a resource.
@@ -4257,6 +4279,59 @@ mod tests {
             );
             assert!(!path.exists());
             assert_eq!(provenance_of(REPO), Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn provenance_is_written_by_replacing_the_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("rule", "first", REPO).expect("first write");
+            let path = provenance_path().expect("provenance path");
+            let dir = path.parent().expect("provenance dir").to_path_buf();
+            let before = fs::metadata(&path).expect("stat before");
+
+            record_provenance("rule", "second", REPO).expect("second write");
+
+            // A rename puts a new file in place. A plain `fs::write` would
+            // truncate and refill the old one, which a crash can interrupt.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let after = fs::metadata(&path).expect("stat after");
+                assert_ne!(
+                    before.ino(),
+                    after.ino(),
+                    "the file must be replaced, not rewritten"
+                );
+            }
+            #[cfg(not(unix))]
+            let _ = before;
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("rule:first").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("rule:second").map(String::as_str), Some(REPO));
+            let leftovers: Vec<String> = fs::read_dir(&dir)
+                .expect("list dir")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".tmp"))
+                .collect();
+            assert_eq!(leftovers, Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_corrupt_provenance_file_gives_no_display_author() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let path = provenance_path().expect("provenance path");
+            fs::create_dir_all(path.parent().expect("provenance dir")).expect("create dir");
+            fs::write(&path, "{\"rule:r\": ").expect("write corrupt provenance");
+
+            assert_eq!(get_display_provenance("rule", "r"), None);
+            assert_eq!(get_provenance_author("rule", "r"), None);
+            assert!(get_provenance("rule", "r").is_err());
         });
     }
 

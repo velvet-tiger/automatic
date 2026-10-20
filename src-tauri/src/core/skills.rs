@@ -210,17 +210,16 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
             let plugin_id = super::app_plugins::plugin_id_for_skill(&name);
             let collection = collections.get(&name).cloned();
             let source = registry.get(&name).cloned().or_else(|| {
-                super::remote_sources::get_provenance("skill", &name)
-                    .ok()
-                    .flatten()
-                    .map(|repo| SkillSource {
+                super::remote_sources::get_display_provenance("skill", &name).map(|repo| {
+                    SkillSource {
                         source: repo.clone(),
                         id: format!("{repo}/{name}"),
                         kind: "github".to_string(),
                         installed_sha: None,
                         installed_version: None,
                         installed_at: None,
-                    })
+                    }
+                })
             });
 
             SkillEntry {

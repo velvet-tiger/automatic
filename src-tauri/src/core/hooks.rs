@@ -176,7 +176,7 @@ pub fn read_hook(machine_name: &str) -> Result<String, String> {
     let mut hook: Hook =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid hook data: {}", e))?;
     if hook._author.is_none() {
-        hook._author = super::remote_sources::get_provenance_author("hook", machine_name)?;
+        hook._author = super::remote_sources::get_provenance_author("hook", machine_name);
     }
     serde_json::to_string(&hook).map_err(|e| e.to_string())
 }

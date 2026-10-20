@@ -184,7 +184,7 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
         let mut rule: Rule =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid rule data: {}", e))?;
         if rule._author.is_none() {
-            rule._author = super::remote_sources::get_provenance_author("rule", machine_name)?;
+            rule._author = super::remote_sources::get_provenance_author("rule", machine_name);
         }
         serde_json::to_string(&rule).map_err(|e| e.to_string())
     } else {

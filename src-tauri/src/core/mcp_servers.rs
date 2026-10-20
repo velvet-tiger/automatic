@@ -119,7 +119,7 @@ pub fn read_mcp_server_config_if_present(name: &str) -> Result<Option<String>, S
     }
 
     if config.get("_author").is_none() {
-        if let Some(repo) = super::remote_sources::get_provenance("mcp_server", name)? {
+        if let Some(repo) = super::remote_sources::get_display_provenance("mcp_server", name) {
             if let Some(obj) = config.as_object_mut() {
                 obj.insert(
                     "_author".to_string(),
@@ -1732,6 +1732,31 @@ mod tests {
             assert_eq!(
                 value["_author"]["repository_url"].as_str(),
                 Some("https://github.com/octocat/remote-servers")
+            );
+        });
+    }
+
+    #[test]
+    fn read_config_survives_a_corrupt_provenance_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("plain-server", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save config");
+            // A truncated write, as an interrupted save used to leave behind.
+            let provenance = crate::core::paths::get_automatic_dir()
+                .expect("automatic dir")
+                .join("source-provenance.json");
+            fs::write(&provenance, r#"{"mcp_server:plain-server": "octo"#)
+                .expect("write corrupt provenance");
+
+            let raw = read_mcp_server_config("plain-server").expect("read config");
+            let value: serde_json::Value = serde_json::from_str(&raw).expect("parse config");
+
+            assert_eq!(value["command"].as_str(), Some("npx"));
+            assert!(value.get("_author").is_none());
+            assert!(
+                super::super::remote_sources::get_provenance("mcp_server", "plain-server").is_err(),
+                "the strict lookup must still report the damaged file"
             );
         });
     }
