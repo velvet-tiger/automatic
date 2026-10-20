@@ -837,9 +837,8 @@ fn gemini_remove_keeps_hand_edited_settings_and_owned_dir() {
         15,
         "user's ide.fontSize survives: {parsed}"
     );
-    assert_eq!(
-        parsed["telemetry"]["enabled"].as_bool().unwrap(),
-        false,
+    assert!(
+        !parsed["telemetry"]["enabled"].as_bool().unwrap(),
         "unrelated top-level keys survive: {parsed}"
     );
     assert!(
