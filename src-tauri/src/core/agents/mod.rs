@@ -42,7 +42,20 @@ impl std::fmt::Display for AgentId {
 
 /// All provider IDs that Automatic recognises for the in-app AI toggle and
 /// credential auto-enable logic.
+///
+/// These are LLM model providers, not the agent tools in `crate::agent`.
 pub fn known_agents() -> Vec<AgentId> {
+    credential_providers()
+}
+
+/// The LLM provider IDs whose stored API keys may be handed to a caller, such
+/// as the `automatic_get_credential` MCP tool.
+///
+/// The secret store also holds MCP OAuth tokens and the cloud account's
+/// tokens under other account names. Only LLM provider keys belong here, and
+/// any id outside this list must be refused before the store is read.
+/// Adding an id widens what agents can read, so treat it as a security change.
+pub fn credential_providers() -> Vec<AgentId> {
     vec![
         AgentId::new("anthropic"),
         AgentId::new("openai"),
@@ -51,6 +64,23 @@ pub fn known_agents() -> Vec<AgentId> {
         AgentId::new("opencode-zen"),
         AgentId::new("workers-ai"),
     ]
+}
+
+/// Refuse a `provider` that is not one of [`credential_providers`].
+///
+/// Every path that turns a caller-supplied name into a secret store read or
+/// write calls this first. The error names the accepted ids.
+pub fn check_credential_provider(provider: &str) -> Result<(), String> {
+    let accepted = credential_providers();
+    if accepted.iter().any(|id| id.as_str() == provider) {
+        return Ok(());
+    }
+    let valid: Vec<&str> = accepted.iter().map(|id| id.as_str()).collect();
+    Err(format!(
+        "Unknown provider '{}'. Accepted provider ids: {}",
+        provider,
+        valid.join(", ")
+    ))
 }
 
 /// Default model ID for the given agent. Used when the caller does not supply
@@ -215,5 +245,35 @@ pub fn agent_static_models(agent_id: &str) -> Vec<String> {
             "claude-sonnet-4-5".into(),
             "claude-haiku-4-5".into(),
         ],
+    }
+}
+
+#[cfg(test)]
+mod credential_provider_tests {
+    use super::*;
+
+    #[test]
+    fn every_credential_provider_passes_the_check() {
+        for id in credential_providers() {
+            assert_eq!(check_credential_provider(id.as_str()), Ok(()), "{id}");
+        }
+    }
+
+    #[test]
+    fn other_names_are_refused_with_the_accepted_ids() {
+        for name in [
+            "claude",
+            "automatic_account_refresh_token",
+            "env_encryption_key",
+            "mcp_oauth_token_server/abc",
+            "",
+            "Anthropic",
+            " anthropic",
+        ] {
+            let err = check_credential_provider(name).expect_err(name);
+            for id in credential_providers() {
+                assert!(err.contains(id.as_str()), "error does not name '{id}': {err}");
+            }
+        }
     }
 }

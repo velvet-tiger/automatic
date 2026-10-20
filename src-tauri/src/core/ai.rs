@@ -87,7 +87,11 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
         }
     }
 
+    // `active_agent` names the secret store entry to read, and settings can be
+    // written by any caller, so it must be an LLM provider id.
     let agent_id = active_agent_id();
+    super::agents::check_credential_provider(&agent_id)
+        .map_err(|e| format!("The active agent in settings is not supported. {}", e))?;
     api_key_from(
         super::credentials::get_api_key_if_present(&agent_id),
         explicit_key,
@@ -1015,6 +1019,27 @@ mod tests {
         let err = api_key_from(Ok(None), None).expect_err("no key");
 
         assert!(err.contains("No API key found"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn an_active_agent_that_is_not_a_provider_never_reads_the_store() {
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            // Stands in for an OAuth or account entry. No other test uses it.
+            let account = "resolve-api-key-test-account";
+            crate::core::secret_store::store_secret(account, "must-not-leak").expect("store");
+            let mut settings = super::super::settings::read_settings().expect("read settings");
+            settings.agent_features_enabled = Some(true);
+            settings.active_agent = Some(account.to_string());
+            super::super::settings::write_settings(&settings).expect("write settings");
+
+            let err = resolve_api_key(None).expect_err("refused");
+            assert!(!err.contains("must-not-leak"), "{err}");
+            assert!(err.contains("Accepted provider ids"), "{err}");
+            assert!(resolve_api_key(Some("explicit")).is_err(), "refused with a caller key too");
+
+            crate::core::secret_store::delete_secret(account).expect("clean up");
+        });
     }
 
     #[test]

@@ -1076,14 +1076,8 @@ impl AutomaticMcpServer {
         params: Parameters<GetCredentialParams>,
     ) -> Result<CallToolResult, McpError> {
         let provider = &params.0.provider;
-        let known = crate::core::agents::known_agents();
-        if !known.iter().any(|id| id.as_str() == provider) {
-            let valid: Vec<&str> = known.iter().map(|id| id.as_str()).collect();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Unknown provider '{}'. Valid providers: {}",
-                provider,
-                valid.join(", ")
-            ))]));
+        if let Err(e) = crate::core::agents::check_credential_provider(provider) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::core::get_api_key(provider) {
             Ok(key) => Ok(CallToolResult::success(vec![Content::text(key)])),
@@ -3366,6 +3360,59 @@ mod tests {
             description: None,
             agents: agents.map(|a| a.into_iter().map(String::from).collect()),
         }
+    }
+
+    #[test]
+    fn get_credential_refuses_ids_that_are_not_llm_providers() {
+        let server = AutomaticMcpServer::new();
+        // An agent tool id, secret store accounts that hold OAuth tokens, and
+        // an empty string must all be refused before the store is read.
+        let refused = [
+            "claude",
+            "mcp_oauth_token_get-credential-test",
+            "mcp_oauth_creds_get-credential-test",
+            "",
+            "Anthropic",
+        ];
+        for provider in refused {
+            if !provider.is_empty() {
+                crate::core::secret_store::store_secret(provider, "must-not-leak")
+                    .expect("store");
+            }
+            let result = tauri::async_runtime::block_on(server.get_credential(Parameters(
+                GetCredentialParams {
+                    provider: provider.into(),
+                },
+            )))
+            .expect("tool call");
+            let text = result_text(&result);
+            crate::core::secret_store::delete_secret(provider).ok();
+
+            assert_eq!(result.is_error, Some(true), "'{provider}' was accepted: {text}");
+            assert!(!text.contains("must-not-leak"), "'{provider}' leaked: {text}");
+            for id in crate::core::agents::credential_providers() {
+                assert!(text.contains(id.as_str()), "error does not name '{id}': {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn get_credential_returns_a_stored_provider_key() {
+        // workers-ai is read by no other test, and the in-memory store is
+        // shared across the test process.
+        let provider = "workers-ai";
+        crate::core::secret_store::store_secret(provider, "provider-key").expect("store");
+        let server = AutomaticMcpServer::new();
+        let result = tauri::async_runtime::block_on(server.get_credential(Parameters(
+            GetCredentialParams {
+                provider: provider.into(),
+            },
+        )))
+        .expect("tool call");
+        crate::core::secret_store::delete_secret(provider).expect("delete");
+
+        assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+        assert_eq!(result_text(&result), "provider-key");
     }
 
     #[test]
