@@ -63,7 +63,7 @@
   --health-synced: #22c55e;   /* green — matches default --success */
   --health-drifted: #f59e0b;  /* amber — matches default --warning  */
   --health-checking: #3f3f46; /* zinc-700 — neutral track            */
-  --health-failed: #ef4444;   /* red — matches default --danger      */
+  --health-failed: var(--danger); /* follows each theme's danger colour */
 
   /* Avatar palette — focus on indigo and violet */
   --avatar-0: var(--brand);
