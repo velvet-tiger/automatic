@@ -1537,8 +1537,12 @@ export function ProjectEditor({
       setLoadingMemories(true);
       const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectKey });
       setMemories(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // Surface the failure: a silent catch here left the memory list stale
+      // after a promotion, which looked like the promotion did nothing.
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to load memories:", err);
+      setError(`Failed to load memories: ${msg}`);
     } finally {
       setLoadingMemories(false);
     }

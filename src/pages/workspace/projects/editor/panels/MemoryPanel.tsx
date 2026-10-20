@@ -28,6 +28,7 @@ export function MemoryPanel({ projectKey, project, memories, loadingMemories, re
         <ClaudeMemoryPanel
           projectKey={projectKey}
           projectDirectory={project.directory}
+          storedMemories={memories}
           onPromoted={() => reloadMemories(projectKey)}
         />
       )}
