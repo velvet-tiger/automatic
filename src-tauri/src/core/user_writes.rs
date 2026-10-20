@@ -93,8 +93,10 @@ fn without_env_values(config: serde_json::Value) -> serde_json::Value {
 /// `config` with the differences the GUI editor introduces removed, where
 /// none of them changes how the server runs:
 ///
-/// - A missing `type` is `stdio` when `command` is set, else `http` when
-///   `url` is set, as `normalizeConfig` decides it.
+/// - A missing `type` is `stdio`, whatever other fields the config has, as
+///   every agent writer reads it. The editor's own `normalizeConfig` makes
+///   a url-only config `http`, so that edit counts as a change: it changes
+///   how agents run the server.
 /// - Every field whose name starts with `_` (Automatic's `_author`,
 ///   `_builtin`, `_discovered` markers) is dropped.
 /// - An empty `command`, `args`, `env`, `cwd`, `url` or `headers` is dropped,
@@ -117,23 +119,8 @@ fn as_the_editor_saves(mut config: serde_json::Value) -> serde_json::Value {
         return config;
     };
     object.retain(|key, value| !key.starts_with('_') && !value.is_null());
-    let has = |object: &serde_json::Map<String, Value>, key: &str| {
-        object
-            .get(key)
-            .and_then(|v| v.as_str())
-            .is_some_and(|v| !v.is_empty())
-    };
     if !object.contains_key("type") {
-        let inferred = if has(object, "command") {
-            Some("stdio")
-        } else if has(object, "url") {
-            Some("http")
-        } else {
-            None
-        };
-        if let Some(kind) = inferred {
-            object.insert("type".to_string(), Value::String(kind.to_string()));
-        }
+        object.insert("type".to_string(), Value::String("stdio".to_string()));
     }
     if let Some(oauth) = object.get_mut("oauth").and_then(|o| o.as_object_mut()) {
         oauth.retain(|_, v| !is_empty_value(v));

@@ -2073,12 +2073,13 @@ fn source_entry(
 
 /// Write an install's provenance, then register its source, then hand any
 /// confirmed collection over from the source that listed it. When either of
-/// the first two writes fails, delete what the install created, put the
-/// provenance back as `before` held it, and return the error.
+/// the first two writes fails, delete what the install created, reverse this
+/// install's own provenance changes, and return the error.
 ///
-/// If putting the provenance back fails too, one more write removes only
-/// the keys this install added, so no record is left for a name whose entry
-/// was just deleted. The error says when that fails as well.
+/// The reversal reads the provenance again and changes only the keys this
+/// install changed, so a record another process wrote in the meantime
+/// stays. `before`, the map at the start of the install, gives each key's
+/// previous owner.
 fn commit_install(
     repo: &str,
     before: &HashMap<String, String>,
@@ -2086,24 +2087,20 @@ fn commit_install(
     (entry, mut entry_warnings): (RemoteSource, Vec<String>),
     writes: &InstallWrites,
 ) -> Result<Vec<String>, String> {
-    let failure = match save_provenance(prov) {
-        Err(e) => Some(format!("Could not record the source's provenance: {}", e)),
+    // Whether the provenance write landed, so its changes must be reversed.
+    let (mut message, written) = match save_provenance(prov) {
+        Err(e) => (
+            format!("Could not record the source's provenance: {}", e),
+            false,
+        ),
         Ok(()) => match upsert_source(entry) {
-            Err(e) => Some(match save_provenance(before) {
-                Ok(()) => format!("Could not register the source: {}", e),
-                Err(restore) => format!(
-                    "Could not register the source: {}. Its provenance could not be put back: {}",
-                    e, restore
-                ),
-            }),
-            Ok(()) => None,
+            Err(e) => (format!("Could not register the source: {}", e), true),
+            Ok(()) => {
+                entry_warnings.extend(hand_over_collections(repo, writes));
+                return Ok(entry_warnings);
+            }
         },
     };
-    let Some(failure) = failure else {
-        entry_warnings.extend(hand_over_collections(repo, writes));
-        return Ok(entry_warnings);
-    };
-    let mut message = failure;
     let undone = roll_back_install(writes);
     if !undone.is_empty() {
         message.push_str(&format!(
@@ -2111,47 +2108,55 @@ fn commit_install(
             undone.join(", ")
         ));
     }
-    if message.contains("could not be put back") {
-        match remove_added_keys(repo, before, prov) {
-            Ok(()) => message.push_str(". The records this install added were removed"),
-            Err(e) => message.push_str(&format!(
-                ". The records this install added could not be removed either, so they may name entries that no longer exist: {}",
+    if written {
+        if let Err(e) = reverse_provenance_changes(repo, before, prov) {
+            message.push_str(&format!(
+                ". The records this install changed could not be put back, so they may name entries that no longer exist: {}",
                 e
-            )),
+            ));
         }
     }
-    if !writes.replaced.is_empty() {
+    let mut replaced = writes.replaced.clone();
+    replaced.extend(
+        writes
+            .confirmed_collections
+            .iter()
+            .map(|slug| collection_key(slug)),
+    );
+    if !replaced.is_empty() {
         message.push_str(&format!(
             ". These were replaced and keep the new content: {}",
-            writes.replaced.join(", ")
+            replaced.join(", ")
         ));
     }
     Err(message)
 }
 
-/// Remove from the stored provenance each key `prov` gives to `repo` that
-/// `before` did not, leaving every other record as it is now.
-fn remove_added_keys(
+/// Reverse, on a fresh read of the stored provenance, each change `prov`
+/// made to `before`: a key this install gave to `repo` goes back to its
+/// previous owner, or is removed when it had none, and a key this install
+/// dropped is put back. A key someone else has changed since is left alone.
+fn reverse_provenance_changes(
     repo: &str,
     before: &HashMap<String, String>,
     prov: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let added: Vec<&String> = prov
-        .iter()
-        .filter(|(key, owner)| owner.as_str() == repo && before.get(*key) != Some(*owner))
-        .map(|(key, _)| key)
-        .collect();
     let mut current = read_provenance()?;
     let mut changed = false;
-    for key in added {
-        if current.get(key).map(String::as_str) == Some(repo) && before.get(key).is_none() {
-            current.remove(key);
+    for (key, owner) in prov {
+        if before.get(key) == Some(owner) || current.get(key) != Some(owner) {
+            continue;
+        }
+        match before.get(key) {
+            Some(previous) => current.insert(key.clone(), previous.clone()),
+            None => current.remove(key),
+        };
+        changed = true;
+    }
+    for (key, previous) in before {
+        if previous == repo && !prov.contains_key(key) && !current.contains_key(key) {
+            current.insert(key.clone(), previous.clone());
             changed = true;
-        } else if let Some(previous) = before.get(key) {
-            if current.get(key).map(String::as_str) == Some(repo) {
-                current.insert(key.clone(), previous.clone());
-                changed = true;
-            }
         }
     }
     if changed {
@@ -2965,6 +2970,19 @@ fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
 /// folder when joined to it, or can name an alternate data stream. Windows
 /// drops trailing dots and spaces, so `...` names the library folder itself.
 /// Control characters are refused because the name is shown and logged.
+/// [`ensure_resource_name`] for a skill, which may also not start with `.`,
+/// see [`super::skills::is_valid_skill_name`].
+pub(crate) fn ensure_skill_name(name: &str) -> Result<(), String> {
+    ensure_resource_name("skill", name)?;
+    if name.starts_with('.') {
+        return Err(format!(
+            "Invalid skill name '{}': a skill name cannot start with a dot",
+            name.escape_debug()
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn ensure_resource_name(kind: &str, name: &str) -> Result<(), String> {
     let is_one_plain_name = is_valid_name(name)
         && !name.contains(':')
@@ -3019,7 +3037,7 @@ fn install_skill(
     skill: &SkillsJsonSkill,
     mode: WriteMode,
 ) -> Result<Option<String>, String> {
-    ensure_resource_name("skill", &skill.name)?;
+    ensure_skill_name(&skill.name)?;
     let skill_source =
         resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
 
@@ -8150,7 +8168,6 @@ mod tests {
 
             let err = result.expect_err("the install must fail");
             assert!(err.contains("could not be put back"), "{}", err);
-            assert!(err.contains("could not be removed either"), "{}", err);
             for (kind, path) in names.library_paths() {
                 assert!(!path.exists(), "{kind} must be deleted again");
             }
@@ -8158,19 +8175,100 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_install_whose_restore_fails_removes_only_its_own_records() {
+    fn a_rollback_reverses_only_its_own_changes_on_a_fresh_read() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            let names = KindNames::new("vel385-retry");
-            record_provenance("rule", "vel385-unrelated", OTHER_REPO).unwrap();
+            record_provenance("rule", "vel385-taken", OTHER_REPO).unwrap();
             let before = read_provenance().unwrap();
             let mut prov = before.clone();
-            prov.insert(format!("rule:{}", names.rule), REPO.to_string());
+            prov.insert("rule:vel385-added".to_string(), REPO.to_string());
+            prov.insert("rule:vel385-taken".to_string(), REPO.to_string());
             save_provenance(&prov).unwrap();
+            // Another process records something after the install's write.
+            record_provenance("rule", "vel385-meanwhile", "acme/third").unwrap();
 
-            remove_added_keys(REPO, &before, &prov).expect("remove");
+            reverse_provenance_changes(REPO, &before, &prov).expect("reverse");
 
-            assert_eq!(read_provenance().unwrap(), before);
+            let now = read_provenance().unwrap();
+            assert_eq!(now.get("rule:vel385-added"), None);
+            assert_eq!(now.get("rule:vel385-taken"), Some(&OTHER_REPO.to_string()));
+            assert_eq!(
+                now.get("rule:vel385-meanwhile"),
+                Some(&"acme/third".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn the_rollback_error_names_a_replaced_collection() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-coll-err");
+            install_every_kind(OTHER_REPO, &names, MCP);
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                collections: vec![names.collection.clone()],
+                ..Default::default()
+            };
+            let key = format!("collection:{}", names.collection);
+
+            fail_sources_writes_after(Some(0));
+            let result = install_source(REPO, &manifest, Some(selected), None, &[key.clone()]);
+            fail_sources_writes_after(None);
+
+            let err = result.expect_err("the install must fail");
+            assert!(
+                err.contains(&format!("keep the new content: {}", key)),
+                "{}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn the_editor_adding_http_to_a_url_only_server_takes_it_over() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-editor-http");
+            let manifest = write_every_kind(
+                REPO,
+                &names,
+                r#"{"url":"https://a.example/mcp","env":{"API_KEY":""}}"#,
+            );
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            // Agents read a config with no `type` as stdio, so the editor's
+            // `"type":"http"` changes how it runs.
+            crate::core::user_writes::save_mcp_server(
+                &names.mcp_server,
+                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"sk-mine"}}"#,
+            )
+            .expect("save");
+
+            assert_eq!(get_provenance("mcp_server", &names.mcp_server), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_skill_name_cannot_start_with_a_dot() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            assert!(ensure_skill_name(".hidden").is_err());
+            assert!(ensure_skill_name("visible").is_ok());
+            assert!(crate::core::skills::save_skill(".hidden", "---\nname: x\n---\n").is_err());
+            fs::create_dir_all(sandbox.source.join("hidden")).unwrap();
+            fs::write(sandbox.source.join("hidden/SKILL.md"), "# Hidden\n").unwrap();
+            let err = install_skill(
+                &sandbox.source,
+                &skill(".hidden", "hidden"),
+                WriteMode::Create,
+            )
+            .expect_err("refused");
+            assert!(err.contains("cannot start with a dot"), "{}", err);
+            assert!(!crate::core::paths::get_library_skills_dir()
+                .unwrap()
+                .join(".hidden")
+                .exists());
         });
     }
 

@@ -119,7 +119,7 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
         if let Ok(raw) = fs::read_to_string(&skills_json_path) {
             if let Ok(manifest) = serde_json::from_str::<SkillsJson>(&raw) {
                 for skill in &manifest.skills {
-                    if !is_valid_name(&skill.name) {
+                    if !is_valid_skill_name(&skill.name) {
                         continue;
                     }
                     // Resolve the skill directory and entrypoint
@@ -149,10 +149,7 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     // A dot-folder is never a skill. An interrupted remote
                     // source install can leave its hidden staging folder here.
-                    if is_valid_name(name)
-                        && !name.starts_with('.')
-                        && path.join("SKILL.md").exists()
-                    {
+                    if is_valid_skill_name(name) && path.join("SKILL.md").exists() {
                         names.insert(name.to_string());
                     }
                 }
@@ -161,6 +158,14 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
     }
 
     Ok(names)
+}
+
+/// Whether `name` can be a skill: a plain name that does not start with
+/// `.`. The skill scan skips dot-folders, which hold a remote source
+/// install's staging copies, so a skill saved under such a name would be
+/// written and then never listed.
+pub fn is_valid_skill_name(name: &str) -> bool {
+    is_valid_name(name) && !name.starts_with('.')
 }
 
 /// List skills from all global skill directories,
@@ -587,7 +592,7 @@ pub fn get_skill_scan_state(name: &str) -> Result<Option<AssetSecurityScanRecord
 /// store at `~/.automatic/library/skills/`; per-project sync copies skills
 /// out of here on demand.
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
-    if !is_valid_name(name) {
+    if !is_valid_skill_name(name) {
         return Err("Invalid skill name".into());
     }
     let scan = scan_text_asset_report(AssetKind::Skill, content);
@@ -738,7 +743,7 @@ pub fn migrate_agents_skills_to_library() -> Result<Vec<String>, String> {
     let mut migrated = Vec::new();
 
     for name in registry.keys() {
-        if !is_valid_name(name) {
+        if !is_valid_skill_name(name) {
             continue;
         }
         let src = agents_dir.join(name);
@@ -856,7 +861,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             .and_then(|n| n.to_str())
             .ok_or_else(|| "Could not determine skill name from path".to_string())?;
 
-        if !is_valid_name(skill_name) {
+        if !is_valid_skill_name(skill_name) {
             return Err(format!(
                 "Invalid skill name derived from path: {}",
                 skill_name
@@ -898,7 +903,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             serde_json::from_str(&raw).map_err(|e| format!("Invalid skill.json format: {}", e))?;
 
         for skill_entry in &manifest.skills {
-            if !is_valid_name(&skill_entry.name) {
+            if !is_valid_skill_name(&skill_entry.name) {
                 continue;
             }
 
@@ -996,7 +1001,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
                 )
             })?;
 
-        if !is_valid_name(skill_name) {
+        if !is_valid_skill_name(skill_name) {
             continue;
         }
 
@@ -1827,6 +1832,41 @@ mod tests {
 
         let result = import_skill_from_package(&package_path.to_string_lossy());
         assert!(result.is_err());
+    }
+
+    /// A dot name is never a skill, whether a skill.json lists it or a
+    /// folder holds it (VEL-385).
+    #[test]
+    fn the_skill_scan_skips_dot_names_from_skill_json_and_folders() {
+        let temp = tmp();
+        let dir = temp.path().to_path_buf();
+        for name in [".hidden", "shown"] {
+            fs::create_dir_all(dir.join(name)).unwrap();
+            fs::write(dir.join(name).join("SKILL.md"), "# x\n").unwrap();
+        }
+        let folders = scan_skills_dir(&dir).expect("scan folders");
+        assert_eq!(
+            folders.into_iter().collect::<Vec<_>>(),
+            vec!["shown".to_string()]
+        );
+
+        fs::write(
+            dir.join("skill.json"),
+            serde_json::json!({
+                "name": "p", "version": "1.0.0", "description": "p",
+                "skills": [
+                    { "name": ".hidden", "path": ".hidden", "description": "x" },
+                    { "name": "shown", "path": "shown", "description": "x" }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let listed = scan_skills_dir(&dir).expect("scan skill.json");
+        assert_eq!(
+            listed.into_iter().collect::<Vec<_>>(),
+            vec!["shown".to_string()]
+        );
     }
 
     /// Each local import path (a SKILL.md, a skill.json package, a scanned

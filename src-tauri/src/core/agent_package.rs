@@ -566,7 +566,7 @@ fn check_skill_dir(
     if !dir.is_dir() {
         return Ok(None);
     }
-    super::remote_sources::ensure_resource_name("skill", name)?;
+    super::remote_sources::ensure_skill_name(name)?;
     if !is_agent_skill_name(name) {
         return Err(
             "the folder name is not a valid Agent Skills name (lowercase letters, digits and single hyphens, up to 64 characters)"
