@@ -12,7 +12,8 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
-import type { Project, ProjectTemplate, DriftReport, ProjectSummary } from "./projects/types";
+import type { Project, ProjectTemplate, DriftReport, ProjectDriftState, ProjectSummary } from "./projects/types";
+import { driftChecked, driftCheckFailed, isDrifted } from "./projects/helpers";
 import { trackProjectCreated, trackProjectSynced } from "../../lib/analytics";
 import { ProjectDiscoveryDialog } from "../../components/ProjectDiscoveryDialog";
 import { announceAddedProjects, type AddedProject } from "../../components/ProjectDiscovery";
@@ -94,7 +95,7 @@ export default function Projects({
   const [projects, setProjects] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectDetailsMap, setProjectDetailsMap] = useState<Map<string, Project>>(new Map());
-  const [driftByProject, setDriftByProject] = useState<Record<string, boolean>>({});
+  const [driftByProject, setDriftByProject] = useState<Record<string, ProjectDriftState>>({});
   const [syncAllStatus, setSyncAllStatus] = useState<"idle" | "syncing">("idle");
 
   // ── Selection / wizard state ─────────────────────────────────────────────
@@ -200,18 +201,14 @@ export default function Projects({
           const raw: string = await invoke("check_project_drift", { name: key });
           const report = JSON.parse(raw) as DriftReport;
           if (!cancelled) {
-            setDriftByProject((prev) => ({ ...prev, [key]: report.drifted }));
+            setDriftByProject((prev) => ({ ...prev, [key]: driftChecked(report.drifted) }));
           }
         } catch (e) {
           // The check could not run, so the last answer may be out of date.
-          // Drop it: the project then shows as not yet checked, never as in
-          // sync. The project's own page shows the reason.
-          console.error(`check_project_drift failed for ${key}:`, e);
+          // Replace it with the failure: the card then says the check failed
+          // and why, never "in sync".
           if (!cancelled) {
-            setDriftByProject((prev) => {
-              const { [key]: _stale, ...rest } = prev;
-              return rest;
-            });
+            setDriftByProject((prev) => ({ ...prev, [key]: driftCheckFailed(e) }));
           }
         }
         await new Promise((res) => setTimeout(res, 200));
@@ -312,7 +309,7 @@ export default function Projects({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSyncAll = async () => {
-    const driftedProjects = projects.filter((n) => driftByProject[n] === true && !readOnlyKeys.has(n));
+    const driftedProjects = projects.filter((n) => isDrifted(driftByProject[n]) && !readOnlyKeys.has(n));
     if (driftedProjects.length === 0) return;
     setSyncAllStatus("syncing");
     try {
@@ -321,7 +318,7 @@ export default function Projects({
           const result: string = await invoke("sync_project", { name: key });
           const files: string[] = JSON.parse(result);
           trackProjectSynced(projectDetailsMap.get(key)?.name ?? key);
-          setDriftByProject((prev) => ({ ...prev, [key]: false }));
+          setDriftByProject((prev) => ({ ...prev, [key]: driftChecked(false) }));
           void files;
         } catch {
           // continue

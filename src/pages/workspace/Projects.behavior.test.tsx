@@ -5,7 +5,7 @@
  * Each test mocks ONLY the commands needed for the behavior it exercises.
  * Unmocked commands resolve to `undefined` (see tauriMock.ts).
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockInvoke, resetInvokeMock, invokeMock } from "../../test/tauriMock";
 import { renderProjects } from "../../test/renderProjects";
 import { screen, waitFor, act, fireEvent } from "@testing-library/react";
@@ -265,6 +265,142 @@ describe("Projects — characterization", () => {
     expect(screen.getByRole("button", { name: /Continue/i })).toBeEnabled();
     fireEvent.change(nameField, { target: { value: "" } });
     expect(screen.getByRole("button", { name: /Continue/i })).toBeDisabled();
+  });
+
+  describe("failed drift or problems check (VEL-184)", () => {
+    const UNREADABLE =
+      "MCP server 'github' could not be read: the keychain is locked";
+
+    it("B10: the card says the check failed and names the server", async () => {
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha"), summary("beta")],
+          check_project_drift: (args: any) =>
+            args?.name === "key-alpha"
+              ? Promise.reject(UNREADABLE)
+              : JSON.stringify({ drifted: false, agents: [] }),
+        }),
+      );
+      renderProjects();
+      const badge = await screen.findByText("Check failed");
+      expect(badge).toHaveAttribute("title", UNREADABLE);
+      expect(
+        screen.getByText(`Could not check for changes: ${UNREADABLE}`),
+      ).toBeInTheDocument();
+      // The project whose check ran still reads as synced, and the summary
+      // counts the failure separately.
+      await waitFor(() => expect(screen.getByText("Synced")).toBeInTheDocument());
+      expect(screen.getByText("1 check failed")).toBeInTheDocument();
+      // A failed project is not offered to "Sync all", which only syncs drift.
+      expect(screen.queryByRole("button", { name: /Sync all/i })).toBeNull();
+    });
+
+    it("B11: the table view shows the failure with the error in its tooltip", async () => {
+      localStorage.setItem("automatic.projects.viewMode", "table");
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha")],
+          check_project_drift: () => Promise.reject(UNREADABLE),
+        }),
+      );
+      renderProjects();
+      const cell = await screen.findByText("Check failed");
+      expect(cell).toHaveAttribute("title", UNREADABLE);
+    });
+
+    it("B12: the editor shows the failure once, never In Sync, and still opens", async () => {
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha")],
+          check_project_drift: () => Promise.reject(UNREADABLE),
+          check_project_problems: () => Promise.reject(UNREADABLE),
+        }),
+      );
+      renderProjects();
+      await userEvent.click(await screen.findByRole("button", { name: /alpha/i }));
+      await screen.findByRole("heading", { level: 1, name: "alpha" });
+      const banner = await screen.findByRole("alert");
+      expect(banner).toHaveTextContent(
+        "Could not check this project for changes or problems.",
+      );
+      expect(banner).toHaveTextContent(UNREADABLE);
+      // Both checks failed for the same reason, so the reason shows once.
+      expect(banner.textContent?.split(UNREADABLE).length).toBe(2);
+      expect(screen.getByRole("button", { name: /Check failed/i })).toBeInTheDocument();
+      expect(screen.queryByText("In Sync")).toBeNull();
+    });
+
+    it("B13: a failed problems check shows on its own and drops the old report", async () => {
+      const problemsError = "MCP server 'linear' holds invalid JSON: expected value";
+      let problemsFail = false;
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha")],
+          check_project_drift: JSON.stringify({ drifted: false, agents: [] }),
+          check_project_problems: () =>
+            problemsFail
+              ? Promise.reject(problemsError)
+              : JSON.stringify({
+                  has_problems: true,
+                  problems: [
+                    {
+                      kind: "mcp_user_scope_conflict",
+                      title: "Old problem",
+                      description: "From the last check.",
+                      agents: [],
+                      resources: [],
+                    },
+                  ],
+                }),
+        }),
+      );
+      // The editor polls every 15 seconds. Fake timers from the start let the
+      // test reach the next poll; shouldAdvanceTime keeps promises moving.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        renderProjects();
+        await user.click(await screen.findByRole("button", { name: /alpha/i }));
+        expect(await screen.findByText("Old problem")).toBeInTheDocument();
+        expect(await screen.findByText("In Sync")).toBeInTheDocument();
+
+        problemsFail = true;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15_000);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      const banner = await screen.findByRole("alert");
+      expect(banner).toHaveTextContent("Could not check this project for problems.");
+      expect(banner).toHaveTextContent(problemsError);
+      expect(screen.queryByText("Old problem")).toBeNull();
+      // The drift check still ran, so the header still reads In Sync.
+      expect(screen.getByText("In Sync")).toBeInTheDocument();
+    });
+
+    it("B14: a sync after a failed check clears the failure", async () => {
+      let driftFails = true;
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha")],
+          check_project_drift: () =>
+            driftFails
+              ? Promise.reject(UNREADABLE)
+              : JSON.stringify({ drifted: false, agents: [] }),
+          sync_project: () => {
+            driftFails = false;
+            return JSON.stringify([]);
+          },
+        }),
+      );
+      renderProjects();
+      await userEvent.click(await screen.findByRole("button", { name: /alpha/i }));
+      await screen.findByRole("alert");
+      await userEvent.click(screen.getByRole("button", { name: /Check failed/i }));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+      expect(await screen.findByText("In Sync")).toBeInTheDocument();
+    });
   });
 
   // Behaviors NOT covered automatically (gaps for the manual GUI checklist):

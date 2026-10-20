@@ -6,8 +6,8 @@ import { AgentIcon } from "../../../../components/AgentIcon";
 import {
   AlertCircle, ChevronDown, FolderOpen, FolderSearch, Layers, LayoutGrid, Plus, RefreshCw, Search, Table2,
 } from "lucide-react";
-import { relativeTime } from "../helpers";
-import type { Project, ProjectSummary } from "../types";
+import { isCheckFailed, isDrifted, isInSync, relativeTime } from "../helpers";
+import type { Project, ProjectDriftState, ProjectSummary } from "../types";
 import {
   projectKeyOf,
   projectLabelFor,
@@ -34,7 +34,7 @@ interface ProjectsOverviewProps {
   /** Keyed by local_key. */
   projectDetails: Map<string, Project>;
   /** Keyed by local_key. */
-  driftByProject: Record<string, boolean>;
+  driftByProject: Record<string, ProjectDriftState>;
   onSelect: (projectKey: string) => void;
   onCreate: () => void;
   /** Opens the Find projects dialog. */
@@ -55,7 +55,7 @@ function ProjectStatusBadge({
   missingDir,
   readOnly,
 }: {
-  drift: boolean | undefined;
+  drift: ProjectDriftState | undefined;
   missingDir?: boolean;
   readOnly?: boolean;
 }) {
@@ -66,10 +66,17 @@ function ProjectStatusBadge({
   if (readOnly) {
     return <span className="text-[11px] text-text-muted/45">Read only</span>;
   }
-  if (drift === true) {
+  if (isCheckFailed(drift)) {
+    return (
+      <span className="text-[11px] text-danger" title={drift.error}>
+        Check failed
+      </span>
+    );
+  }
+  if (isDrifted(drift)) {
     return <span className="text-[11px] text-warning">Drifted</span>;
   }
-  if (drift === false) {
+  if (isInSync(drift)) {
     return <span className="text-[11px] text-text-muted/45">Synced</span>;
   }
   return <span className="text-[11px] text-text-muted/30">Checking…</span>;
@@ -93,11 +100,14 @@ function ProjectCard({
   /** Name, plus a folder hint where another project has the same name. */
   label: ProjectLabel;
   project: Project | undefined;
-  drift: boolean | undefined;
+  drift: ProjectDriftState | undefined;
   onSelect: (projectKey: string) => void;
 }) {
   const isMissingDir = project?.directory_missing === true;
   const isConfigured = !!(project?.directory && (project?.agents?.length ?? 0) > 0);
+  // Read-only projects are never checked, so a leftover failure is not shown.
+  const checkError =
+    isConfigured && !isMissingDir && !isReadOnlyHere(project) && isCheckFailed(drift) ? drift.error : null;
 
   const totalSkills = (project?.skills?.length ?? 0) + (project?.custom_skills?.length ?? 0);
   const mcpCount = project?.mcp_servers?.length ?? 0;
@@ -166,6 +176,12 @@ function ProjectCard({
         <div className="pl-8 text-[11px] text-danger/80">Folder not found — relink required</div>
       )}
 
+      {checkError && (
+        <div className="pl-8 text-[11px] text-danger/80 leading-snug line-clamp-2 break-words" title={checkError}>
+          Could not check for changes: {checkError}
+        </div>
+      )}
+
       <div className="pl-8 grid grid-rows-[0fr] group-hover:grid-rows-[1fr] group-focus-visible:grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out">
         <div className="overflow-hidden text-[11px] text-text-muted/40">
           {metricParts.join(" · ")}
@@ -180,7 +196,7 @@ function ProjectCard({
 interface ProjectsHealthBarProps {
   projects: string[];
   projectDetails: Map<string, Project>;
-  driftByProject: Record<string, boolean>;
+  driftByProject: Record<string, ProjectDriftState>;
   /** Optional label shown on the left (group name or "Projects"). */
   label?: string;
 }
@@ -189,8 +205,11 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
   if (projects.length === 0) return null;
 
   const total = projects.length;
-  const synced = projects.filter((n) => driftByProject[n] === false).length;
-  const drifted = projects.filter((n) => driftByProject[n] === true).length;
+  const synced = projects.filter((n) => isInSync(driftByProject[n])).length;
+  const drifted = projects.filter((n) => isDrifted(driftByProject[n])).length;
+  const failed = projects.filter(
+    (n) => isCheckFailed(driftByProject[n]) && !isReadOnlyHere(projectDetails.get(n)),
+  ).length;
   // Read-only projects are never checked, so they are not "checking" either.
   const checking = projects.filter(
     (n) => driftByProject[n] === undefined && !isReadOnlyHere(projectDetails.get(n)),
@@ -205,7 +224,8 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
 
   const syncedPct = total > 0 ? Math.round((synced / total) * 100) : 0;
   const driftedPct = total > 0 ? Math.round((drifted / total) * 100) : 0;
-  const checkingPct = total > 0 ? Math.max(0, 100 - syncedPct - driftedPct) : 0;
+  const failedPct = total > 0 ? Math.round((failed / total) * 100) : 0;
+  const checkingPct = total > 0 ? Math.max(0, 100 - syncedPct - driftedPct - failedPct) : 0;
   const title = label && label.length > 0 ? label : "Projects";
 
   return (
@@ -221,13 +241,16 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
         <div
           className="w-40 max-w-[30%] h-1 rounded-full overflow-hidden flex flex-shrink-0"
           style={{ background: "var(--health-checking)" }}
-          title={`${synced} synced, ${drifted} drifted, ${checking} checking`}
+          title={`${synced} synced, ${drifted} drifted, ${failed} check failed, ${checking} checking`}
         >
           {syncedPct > 0 && (
             <div className="h-full transition-all" style={{ width: `${syncedPct}%`, background: "var(--health-synced)" }} />
           )}
           {driftedPct > 0 && (
             <div className="h-full transition-all" style={{ width: `${driftedPct}%`, background: "var(--health-drifted)" }} />
+          )}
+          {failedPct > 0 && (
+            <div className="h-full transition-all bg-danger" style={{ width: `${failedPct}%` }} />
           )}
           {checkingPct > 0 && (
             <div className="h-full transition-all" style={{ width: `${checkingPct}%`, background: "var(--health-checking)" }} />
@@ -240,6 +263,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
         {drifted > 0 && (
           <span style={{ color: "var(--health-drifted)" }}>{drifted} drifted</span>
         )}
+        {failed > 0 && <span className="text-danger">{failed} check failed</span>}
         {checking > 0 && <span>{checking} checking…</span>}
         {fullyConfigured < total && (
           <span>{total - fullyConfigured} unconfigured</span>
@@ -257,11 +281,16 @@ function GroupSectionHeader({
 }: {
   label: string;
   projects: string[];
-  driftByProject: Record<string, boolean>;
+  driftByProject: Record<string, ProjectDriftState>;
 }) {
   const total = projects.length;
-  const synced = projects.filter((n) => driftByProject[n] === false).length;
-  const drifted = projects.filter((n) => driftByProject[n] === true).length;
+  const synced = projects.filter((n) => isInSync(driftByProject[n])).length;
+  const drifted = projects.filter((n) => isDrifted(driftByProject[n])).length;
+  const failed = projects.filter((n) => isCheckFailed(driftByProject[n])).length;
+  const parts: { key: string; text: string; className?: string }[] = [];
+  if (synced > 0) parts.push({ key: "synced", text: `${synced} synced` });
+  if (drifted > 0) parts.push({ key: "drifted", text: `${drifted} drifted`, className: "text-health-drifted" });
+  if (failed > 0) parts.push({ key: "failed", text: `${failed} check failed`, className: "text-danger" });
 
   return (
     <div className="flex items-baseline gap-2.5 min-w-0">
@@ -269,13 +298,14 @@ function GroupSectionHeader({
       <span className="text-[12px] text-text-muted/50 tabular-nums whitespace-nowrap">
         {total} {total === 1 ? "project" : "projects"}
       </span>
-      {(synced > 0 || drifted > 0) && (
+      {parts.length > 0 && (
         <span className="text-[11px] text-text-muted/50 whitespace-nowrap">
-          {synced > 0 && `${synced} synced`}
-          {synced > 0 && drifted > 0 && " · "}
-          {drifted > 0 && (
-            <span style={{ color: "var(--health-drifted)" }}>{drifted} drifted</span>
-          )}
+          {parts.map((part, i) => (
+            <span key={part.key}>
+              {i > 0 && " · "}
+              <span className={part.className}>{part.text}</span>
+            </span>
+          ))}
         </span>
       )}
     </div>
@@ -561,9 +591,11 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
                     <span className="text-[11px] text-warning/80">No agents</span>
                   ) : isReadOnlyHere(project) ? (
                     <span className="text-[11px] text-text-muted/50">Read only</span>
-                  ) : drift === true ? (
+                  ) : isCheckFailed(drift) ? (
+                    <span className="text-[11px] text-danger" title={drift.error}>Check failed</span>
+                  ) : isDrifted(drift) ? (
                     <span className="text-[11px] text-warning">Drifted</span>
-                  ) : drift === false ? (
+                  ) : isInSync(drift) ? (
                     <span className="text-[11px] text-text-muted/50">Synced</span>
                   ) : (
                     <span className="text-[11px] text-text-muted">—</span>
@@ -663,7 +695,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
               className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted"
             />
           </div>
-          {onSyncAll && projects.some((n) => driftByProject[n] === true) && (
+          {onSyncAll && projects.some((n) => isDrifted(driftByProject[n])) && (
             <button
               onClick={onSyncAll}
               disabled={syncAllStatus === "syncing"}

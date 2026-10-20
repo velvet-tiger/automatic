@@ -250,6 +250,16 @@ export interface DriftReport {
   custom_conflicts?: CustomAssetConflict[];
 }
 
+/**
+ * The last drift check for one project, as the project list shows it. A
+ * project with no entry has not been checked yet. A failed check is its own
+ * state, so it can never read as "in sync". The error is the backend message,
+ * which names the server or file that could not be read.
+ */
+export type ProjectDriftState =
+  | { status: "checked"; drifted: boolean }
+  | { status: "failed"; error: string };
+
 export type ProjectProblemKind =
   | "mcp_user_scope_conflict"
   | "silent_mode_stale_root_mcp"
