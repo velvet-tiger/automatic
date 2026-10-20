@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
+import { useProjectMemories } from "./useProjectMemories";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
@@ -769,9 +770,7 @@ export function ProjectEditor({
     }
   }
 
-  // Memory state
-  const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
-  const [loadingMemories, setLoadingMemories] = useState(false);
+  const { selectedMemories, loadingMemories, loadMemories } = useProjectMemories(selectedKey, setError);
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -1529,18 +1528,6 @@ export function ProjectEditor({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Failed to apply template "${templateName}": ${msg}`);
-    }
-  };
-
-  const loadMemories = async (projectKey: string) => {
-    try {
-      setLoadingMemories(true);
-      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectKey });
-      setMemories(data);
-    } catch (err: any) {
-      console.error("Failed to load memories:", err);
-    } finally {
-      setLoadingMemories(false);
     }
   };
 
@@ -4513,7 +4500,7 @@ export function ProjectEditor({
                   <SummaryPanel
                     project={project}
                     isCreating={isCreating}
-                    memories={memories}
+                    memories={selectedMemories ?? {}}
                     projectFiles={projectFiles}
                     linkDocEntries={linkDocEntries}
                     recsDisplayCount={recsDisplayCount}
@@ -4672,7 +4659,7 @@ export function ProjectEditor({
                   <MemoryPanel
                     projectKey={selectedKey}
                     project={project}
-                    memories={memories}
+                    memories={selectedMemories}
                     loadingMemories={loadingMemories}
                     reloadMemories={loadMemories}
                     onError={setError}
