@@ -1893,6 +1893,33 @@ mod tests {
     }
 
     #[test]
+    fn rename_clears_a_stale_provenance_entry_under_the_new_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("unowned-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            // Left behind by a server once saved under the new name.
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "stale-new",
+                "octocat/old-collection",
+            )
+            .expect("record stale provenance");
+
+            rename_mcp_server_config("unowned-old", "stale-new").expect("rename");
+
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stale-new"),
+                Ok(None)
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "unowned-old"),
+                Ok(None)
+            );
+        });
+    }
+
+    #[test]
     fn rename_migrates_provenance_entry() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
@@ -2001,6 +2028,17 @@ mod tests {
             let dir = get_mcp_servers_dir().expect("servers dir");
             let writable = fs::metadata(&dir).expect("stat dir").permissions();
             fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("lock dir");
+            // Root ignores the mode, so the rename would succeed. Probe the
+            // folder and skip when it is still writable.
+            let probe = dir.join(".write-probe");
+            if fs::write(&probe, "").is_ok() {
+                let _ = fs::remove_file(&probe);
+                fs::set_permissions(&dir, writable).expect("unlock dir");
+                eprintln!(
+                    "skipped: the servers folder stays writable at mode 0o555, as it does for root"
+                );
+                return;
+            }
 
             let result = rename_mcp_server_config("stuck-old", "stuck-new");
             fs::set_permissions(&dir, writable).expect("unlock dir");

@@ -646,20 +646,32 @@ fn hand_over_provenance(
     Ok(())
 }
 
-/// Move the provenance of a renamed resource from `old_name` to `new_name`
-/// in one write, so a failure cannot leave both names owned by the source.
-/// Returns whether anything moved: `false`, with no write, when `old_name`
-/// has no provenance.
+/// Give `new_name` the ownership state `old_name` has, in one write, so a
+/// failure cannot leave both names owned by the source. "No owner" is a
+/// state too: a stale entry left under `new_name` by a resource deleted
+/// earlier is removed when `old_name` has none. Returns whether the map
+/// changed: `false`, with no write, when neither name has an entry.
+///
+/// Moving back (`new_name` to `old_name`) undoes a move. A stale entry
+/// cleared from `new_name` is not restored, because no resource existed
+/// under that name for it to describe.
 pub fn move_provenance(
     resource_type: &str,
     old_name: &str,
     new_name: &str,
 ) -> Result<bool, String> {
     let mut prov = read_provenance()?;
-    let Some(source) = prov.remove(&provenance_key(resource_type, old_name)) else {
-        return Ok(false);
-    };
-    prov.insert(provenance_key(resource_type, new_name), source);
+    let new_key = provenance_key(resource_type, new_name);
+    match prov.remove(&provenance_key(resource_type, old_name)) {
+        Some(source) => {
+            prov.insert(new_key, source);
+        }
+        None => {
+            if prov.remove(&new_key).is_none() {
+                return Ok(false);
+            }
+        }
+    }
     save_provenance(&prov)?;
     Ok(true)
 }
@@ -4431,6 +4443,20 @@ mod tests {
             let path = provenance_path().expect("provenance path");
             fs::write(&path, "{\"skill:s\": ").expect("write corrupt provenance");
             assert_eq!(read_display_provenance().source_of("skill", "s"), None);
+        });
+    }
+
+    #[test]
+    fn move_provenance_clears_a_stale_entry_under_the_new_name() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("mcp_server", "stale-new", REPO).expect("record stale");
+
+            assert!(move_provenance("mcp_server", "unowned-old", "stale-new").expect("move"));
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:stale-new"), None);
+            assert_eq!(prov.get("mcp_server:unowned-old"), None);
         });
     }
 
