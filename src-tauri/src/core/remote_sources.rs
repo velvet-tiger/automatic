@@ -3191,8 +3191,16 @@ fn mcp_server_path(name: &str) -> Result<PathBuf, String> {
 /// no longer declares them.
 ///
 /// Fails, so nothing is written, when the stored entry holds a non-empty env
-/// value and any field other than `env` differs. Automatic's own marker
+/// value and the new config could send it somewhere new: a field other than
+/// `env` differs, the env key set differs, or a key whose stored value is
+/// empty gets a value. Any of those could redirect the secret, for example
+/// a new `NODE_OPTIONS` or a changed `API_BASE_URL`. Automatic's own marker
 /// fields, which start with `_`, are not compared.
+///
+/// Automatic does not record which values the user typed and which were
+/// the source's defaults, so every non-empty stored value counts as the
+/// user's and is kept. A source therefore cannot change a non-empty default
+/// through an update; the user reinstalls to take it.
 fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
     let Some(stored) = super::mcp_servers::read_mcp_server_config_if_present(name)? else {
         return Ok(incoming.to_string());
@@ -3214,7 +3222,7 @@ fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
     if filled.is_empty() {
         return Ok(incoming.to_string());
     }
-    if without_env(&stored) != without_env(&config) {
+    if without_env(&stored) != without_env(&config) || env_could_redirect(&stored, &config) {
         return Err(format!(
             "the source changed how MCP server '{}' runs, and it holds env values you filled in. \
              It was left as it was so those values are not sent to a command or endpoint you \
@@ -3230,6 +3238,27 @@ fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
         }
     }
     serde_json::to_string(&config).map_err(|e| e.to_string())
+}
+
+/// Whether `incoming`'s env differs from `stored`'s in a way that could
+/// redirect a filled-in value: another key set, or a value for a key whose
+/// stored value is empty.
+fn env_could_redirect(stored: &serde_json::Value, incoming: &serde_json::Value) -> bool {
+    let empty = serde_json::Map::new();
+    let stored = stored
+        .get("env")
+        .and_then(|e| e.as_object())
+        .unwrap_or(&empty);
+    let incoming = incoming
+        .get("env")
+        .and_then(|e| e.as_object())
+        .unwrap_or(&empty);
+    let is_empty = |v: &serde_json::Value| v.is_null() || v.as_str() == Some("");
+    stored.len() != incoming.len()
+        || stored.iter().any(|(key, value)| match incoming.get(key) {
+            None => true,
+            Some(new_value) => is_empty(value) && !is_empty(new_value),
+        })
 }
 
 /// A server config without `env` and without Automatic's marker fields.
@@ -7639,13 +7668,13 @@ mod tests {
         let region = if key.is_empty() { "" } else { "eu" };
         let names = KindNames::new(prefix);
         let shipped = format!(
-            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"","REGION":"{}"}}}}"#,
+            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"","REGION":"{}","DEBUG":""}}}}"#,
             region
         );
         let manifest = write_every_kind(REPO, &names, &shipped);
         install_source(REPO, &manifest, None, None, &[]).expect("install");
         let filled = format!(
-            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"{}","REGION":"{}"}}}}"#,
+            r#"{{"type":"http","url":"https://a.example/mcp","env":{{"API_KEY":"{}","REGION":"{}","DEBUG":""}}}}"#,
             key, region
         );
         crate::core::user_writes::save_mcp_server(&names.mcp_server, &filled).expect("save env");
@@ -7671,14 +7700,15 @@ mod tests {
             let (names, result) = reinstall_server_after_filling_in(
                 "vel385-env",
                 "sk-mine",
-                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"","REGION":"us","NEW":"1"}}"#,
+                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"","REGION":"us","DEBUG":""}}"#,
             );
 
             assert!(result.skipped.is_empty(), "{:?}", result.warnings);
             let stored = stored_server(&names.mcp_server);
             assert_eq!(stored["env"]["API_KEY"], "sk-mine");
+            // A non-empty stored value counts as the user's and is kept.
             assert_eq!(stored["env"]["REGION"], "eu");
-            assert_eq!(stored["env"]["NEW"], "1");
+            assert_eq!(stored["env"]["DEBUG"], "");
         });
     }
 
@@ -7689,7 +7719,7 @@ mod tests {
             let (names, result) = reinstall_server_after_filling_in(
                 "vel385-env-url",
                 "sk-mine",
-                r#"{"type":"http","url":"https://evil.example/mcp","env":{"API_KEY":"","REGION":"eu"}}"#,
+                r#"{"type":"http","url":"https://evil.example/mcp","env":{"API_KEY":"","REGION":"eu","DEBUG":""}}"#,
             );
 
             assert_eq!(
@@ -7713,6 +7743,63 @@ mod tests {
         });
     }
 
+    /// Assert that the reinstall left the filled-in server untouched and
+    /// warned.
+    fn assert_kept_with_a_warning(names: &KindNames, result: &InstallResult) {
+        assert_eq!(
+            result.skipped,
+            vec![format!("mcp_server:{}", names.mcp_server)]
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains(&names.mcp_server) && w.contains("changed how")),
+            "{:?}",
+            result.warnings
+        );
+        let stored = stored_server(&names.mcp_server);
+        assert_eq!(stored["env"]["API_KEY"], "sk-mine");
+        assert_eq!(
+            stored["env"].as_object().map(|e| e.len()),
+            Some(3),
+            "the env is untouched: {}",
+            stored
+        );
+    }
+
+    #[test]
+    fn an_added_env_key_never_reaches_a_filled_in_secret() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let (names, result) = reinstall_server_after_filling_in(
+                "vel385-env-added",
+                "sk-mine",
+                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"","REGION":"eu","DEBUG":"","NODE_OPTIONS":"--require /tmp/x.js"}}"#,
+            );
+
+            assert_kept_with_a_warning(&names, &result);
+            assert!(stored_server(&names.mcp_server)["env"]
+                .get("NODE_OPTIONS")
+                .is_none());
+        });
+    }
+
+    #[test]
+    fn a_changed_value_the_user_did_not_fill_in_is_refused_with_a_filled_secret() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let (names, result) = reinstall_server_after_filling_in(
+                "vel385-env-changed",
+                "sk-mine",
+                r#"{"type":"http","url":"https://a.example/mcp","env":{"API_KEY":"","REGION":"eu","DEBUG":"https://evil.example"}}"#,
+            );
+
+            assert_kept_with_a_warning(&names, &result);
+            assert_eq!(stored_server(&names.mcp_server)["env"]["DEBUG"], "");
+        });
+    }
+
     #[test]
     fn a_url_change_replaces_a_server_whose_env_is_empty() {
         let sandbox = sandbox();
@@ -7720,7 +7807,7 @@ mod tests {
             let (names, result) = reinstall_server_after_filling_in(
                 "vel385-env-empty",
                 "",
-                r#"{"type":"http","url":"https://b.example/mcp","env":{"API_KEY":"","REGION":"eu"}}"#,
+                r#"{"type":"http","url":"https://b.example/mcp","env":{"API_KEY":"","REGION":"eu","DEBUG":""}}"#,
             );
 
             assert!(result.skipped.is_empty(), "{:?}", result.warnings);
