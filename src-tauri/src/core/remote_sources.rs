@@ -461,6 +461,12 @@ pub(crate) fn fail_sources_writes_after(writes: Option<usize>) {
     SOURCES_WRITES_LEFT.with(|left| left.set(writes));
 }
 
+/// Test support: make writes of source-provenance.json fail on this thread.
+#[cfg(test)]
+pub(crate) fn fail_provenance_writes(fail: bool) {
+    PROVENANCE_WRITES_FAIL.with(|cell| cell.set(fail));
+}
+
 /// Save the sources registry.
 fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     #[cfg(test)]
@@ -483,7 +489,7 @@ fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     // Atomic, because `list_sources` fails on a truncated file and an
     // interrupted plain write would leave one.
     super::project_registry::write_registry_file(&path, &json)
-        .map_err(|e| format!("Failed to write sources.json: {}", e))
+        .map_err(|e| format!("Could not save sources.json: {e}"))
 }
 
 /// Add or update a source in the registry.
@@ -532,7 +538,7 @@ fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
     // Atomic, because every library reader looks this file up and an
     // interrupted plain write would leave it truncated (VEL-186).
     super::project_registry::write_registry_file(&path, &json)
-        .map_err(|e| format!("Failed to write source-provenance.json: {}", e))
+        .map_err(|e| format!("Could not save source-provenance.json: {e}"))
 }
 
 /// Record provenance for a resource.
@@ -565,6 +571,34 @@ pub fn get_display_provenance(resource_type: &str, name: &str) -> Option<String>
             );
             None
         }
+    }
+}
+
+/// The recorded provenance of every resource, for display only, so a list
+/// call reads the file once instead of once per item. A provenance file that
+/// cannot be read or parsed is logged once and treated as empty, for the
+/// same reason as [`get_display_provenance`].
+pub fn read_display_provenance() -> DisplayProvenance {
+    match read_provenance() {
+        Ok(map) => DisplayProvenance(map),
+        Err(e) => {
+            eprintln!(
+                "warning: could not read source-provenance.json, so resources are shown without an author: {}",
+                e
+            );
+            DisplayProvenance(HashMap::new())
+        }
+    }
+}
+
+/// A snapshot of the provenance map from [`read_display_provenance`].
+pub struct DisplayProvenance(HashMap<String, String>);
+
+impl DisplayProvenance {
+    /// The source that owns a resource, keyed the same way as
+    /// [`get_provenance`].
+    pub fn source_of(&self, resource_type: &str, name: &str) -> Option<String> {
+        self.0.get(&format!("{}:{}", resource_type, name)).cloned()
     }
 }
 
@@ -4318,6 +4352,67 @@ mod tests {
                 .filter(|name| name.ends_with(".tmp"))
                 .collect();
             assert_eq!(leftovers, Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn sources_are_written_by_replacing_the_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            register(REPO, &[], &[]);
+            let path = sources_registry_path().expect("sources path");
+            let dir = path.parent().expect("sources dir").to_path_buf();
+            let before = fs::metadata(&path).expect("stat before");
+
+            register("source-remove/second", &[], &[]);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let after = fs::metadata(&path).expect("stat after");
+                assert_ne!(
+                    before.ino(),
+                    after.ino(),
+                    "the file must be replaced, not rewritten"
+                );
+            }
+            #[cfg(not(unix))]
+            let _ = before;
+
+            let repos: Vec<String> = list_sources()
+                .expect("list sources")
+                .into_iter()
+                .map(|s| s.repo)
+                .collect();
+            assert!(repos.contains(&REPO.to_string()), "{repos:?}");
+            assert!(
+                repos.contains(&"source-remove/second".to_string()),
+                "{repos:?}"
+            );
+            let leftovers: Vec<String> = fs::read_dir(&dir)
+                .expect("list dir")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".tmp"))
+                .collect();
+            assert_eq!(leftovers, Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_list_reads_provenance_once_and_tolerates_a_corrupt_file() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("skill", "s", REPO).expect("record");
+            assert_eq!(
+                read_display_provenance().source_of("skill", "s"),
+                Some(REPO.to_string())
+            );
+            assert_eq!(read_display_provenance().source_of("skill", "other"), None);
+
+            let path = provenance_path().expect("provenance path");
+            fs::write(&path, "{\"skill:s\": ").expect("write corrupt provenance");
+            assert_eq!(read_display_provenance().source_of("skill", "s"), None);
         });
     }
 

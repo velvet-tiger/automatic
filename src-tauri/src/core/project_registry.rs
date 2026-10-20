@@ -154,7 +154,34 @@ pub(crate) fn write_registry_file(path: &std::path::Path, contents: &str) -> Res
     fs::rename(&temp, path).map_err(|e| {
         let _ = fs::remove_file(&temp);
         format!("Failed to replace {}: {}", path.display(), e)
-    })
+    })?;
+    sync_parent_dir(path)
+}
+
+/// Flush the directory entry the rename changed, so a power loss right after
+/// `write_registry_file` returns cannot bring back the old file. Only unix
+/// can open and fsync a directory.
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<(), String> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| {
+            format!(
+                "Replaced {} but could not flush its folder {}: {}",
+                path.display(),
+                parent.display(),
+                e
+            )
+        })
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// Whether two project names are the same name. Ignores case.
@@ -366,6 +393,35 @@ pub(crate) fn new_registry_path(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_failed_replace_removes_its_temporary_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // A non-empty directory at the target makes the rename fail.
+        let target = tmp.path().join("entry.json");
+        fs::create_dir_all(target.join("inside")).expect("create blocking dir");
+
+        let err = write_registry_file(&target, "{}").expect_err("rename fails");
+
+        assert!(err.contains("Failed to replace"), "unexpected error: {err}");
+        let names: Vec<String> = fs::read_dir(tmp.path())
+            .expect("list dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["entry.json".to_string()]);
+    }
+
+    #[test]
+    fn a_replace_writes_the_new_content() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let target = tmp.path().join("entry.json");
+        fs::write(&target, "old").expect("seed");
+
+        write_registry_file(&target, "new").expect("replace");
+
+        assert_eq!(fs::read_to_string(&target).expect("read"), "new");
+    }
 
     fn write(dir: &Path, file: &str, value: &serde_json::Value) {
         fs::create_dir_all(dir).unwrap();

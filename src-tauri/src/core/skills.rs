@@ -182,6 +182,7 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
     // Best-effort registry load — don't fail list_skills if the file is missing/corrupt
     let registry = read_skill_sources().unwrap_or_default();
     let collections = read_skill_collections().unwrap_or_default();
+    let provenance = super::remote_sources::read_display_provenance();
 
     // Sort names for deterministic output
     let mut all_names: Vec<String> = skill_sources.keys().cloned().collect();
@@ -210,16 +211,16 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
             let plugin_id = super::app_plugins::plugin_id_for_skill(&name);
             let collection = collections.get(&name).cloned();
             let source = registry.get(&name).cloned().or_else(|| {
-                super::remote_sources::get_display_provenance("skill", &name).map(|repo| {
-                    SkillSource {
+                provenance
+                    .source_of("skill", &name)
+                    .map(|repo| SkillSource {
                         source: repo.clone(),
                         id: format!("{repo}/{name}"),
                         kind: "github".to_string(),
                         installed_sha: None,
                         installed_version: None,
                         installed_at: None,
-                    }
-                })
+                    })
             });
 
             SkillEntry {

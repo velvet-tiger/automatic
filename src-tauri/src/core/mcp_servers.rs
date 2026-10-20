@@ -609,7 +609,9 @@ pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, Str
 /// under `new_name`. If `old_name == new_name` this is a no-op.
 ///
 /// Any provenance entry recorded against `old_name` is moved to `new_name` so
-/// the GitHub author badge continues to show.
+/// the GitHub author badge continues to show. A provenance file that cannot
+/// be read refuses the rename before anything moves. A provenance write that
+/// fails after the move is returned as an error naming both servers.
 ///
 /// The server's OAuth secrets are filed under its name and URL, so they move
 /// to `new_name` once the file has. Left behind, the renamed server would
@@ -638,6 +640,16 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
         return Err(format!("MCP server '{}' already exists", new_name));
     }
 
+    // Read ownership strictly before anything moves. A damaged provenance
+    // file would otherwise lose the server's source on rename, so the rename
+    // is refused and nothing on disk changes.
+    let source = super::remote_sources::get_provenance("mcp_server", old_name).map_err(|e| {
+        format!(
+            "MCP server '{}' was not renamed, because its source ownership could not be read: {}",
+            old_name, e
+        )
+    })?;
+
     record_legacy_oauth_urls()?;
     let url = stored_server_url(&old_path)?;
 
@@ -649,9 +661,15 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
 
     remove_recently_added("mcp_servers", old_name);
 
-    if let Ok(Some(source)) = super::remote_sources::get_provenance("mcp_server", old_name) {
-        let _ = super::remote_sources::record_provenance("mcp_server", new_name, &source);
-        let _ = super::remote_sources::remove_provenance("mcp_server", old_name);
+    if let Some(source) = source {
+        super::remote_sources::record_provenance("mcp_server", new_name, &source)
+            .and_then(|()| super::remote_sources::remove_provenance("mcp_server", old_name))
+            .map_err(|e| {
+                format!(
+                    "MCP server '{}' was renamed to '{}', but its source ownership could not be moved: {}",
+                    old_name, new_name, e
+                )
+            })?;
     }
 
     Ok(())
@@ -1871,6 +1889,61 @@ mod tests {
                     .expect("read new provenance"),
                 Some("octocat/mcp-collection".to_string())
             );
+        });
+    }
+
+    #[test]
+    fn rename_is_refused_when_provenance_cannot_be_read() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("owned-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            let provenance = crate::core::paths::get_automatic_dir()
+                .expect("automatic dir")
+                .join("source-provenance.json");
+            fs::write(&provenance, r#"{"mcp_server:owned-old": "octo"#)
+                .expect("write corrupt provenance");
+
+            let err = rename_mcp_server_config("owned-old", "owned-new").expect_err("refused");
+
+            assert!(err.contains("was not renamed"), "unexpected error: {err}");
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            assert!(dir.join("owned-old.json").exists());
+            assert!(!dir.join("owned-new.json").exists());
+            assert_eq!(
+                fs::read_to_string(&provenance).expect("read provenance"),
+                r#"{"mcp_server:owned-old": "octo"#
+            );
+        });
+    }
+
+    #[test]
+    fn rename_reports_a_provenance_move_that_fails() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("moving-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "moving-old",
+                "octocat/mcp-collection",
+            )
+            .expect("record provenance");
+
+            super::super::remote_sources::fail_provenance_writes(true);
+            let result = rename_mcp_server_config("moving-old", "moving-new");
+            super::super::remote_sources::fail_provenance_writes(false);
+
+            let err = result.expect_err("provenance move fails");
+            assert!(
+                err.contains("'moving-old' was renamed to 'moving-new'")
+                    && err.contains("source ownership could not be moved"),
+                "unexpected error: {err}"
+            );
+            assert!(get_mcp_servers_dir()
+                .expect("servers dir")
+                .join("moving-new.json")
+                .exists());
         });
     }
 
