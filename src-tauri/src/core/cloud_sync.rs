@@ -616,9 +616,10 @@ fn delete_asset(kind: &str, machine_name: &str) -> Result<(), String> {
 /// inside a skill round-trip correctly.
 fn write_skill_asset(machine_name: &str, payload: &Value) -> Result<(), String> {
     use super::asset_security::validate_relative_asset_path;
-    use super::paths::{get_library_skills_dir, is_valid_name};
+    use super::paths::get_library_skills_dir;
 
-    if !is_valid_name(machine_name) {
+    // The skill scan hides dot-named folders, so a pull must not create one.
+    if !super::skills::is_valid_skill_name(machine_name) {
         return Err(format!("invalid skill name '{}'", machine_name));
     }
     let files = payload
