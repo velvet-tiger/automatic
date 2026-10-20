@@ -126,10 +126,12 @@ Controls how Automatic tracks the git ref for this source.
 | Strategy | Behaviour |
 |----------|-----------|
 | `branch` | Tracks a branch. `update` pulls latest. Default if omitted. |
-| `tag` | Pins to a git tag. Only updates when the user changes the pin. |
-| `commit` | Pins to a specific SHA. Only updates when the user changes the pin. |
+| `tag` | Pins to a git tag. An update clones the tag again. |
+| `commit` | Pins to a specific SHA. An update clones the commit again. |
 
 When `pinning` is omitted, defaults to `{ "strategy": "branch", "ref": "main" }`.
+
+The pin Automatic stores for an installed source is the ref the user fetched, not this field. The install reads it from the clone: the branch it is on, else a tag that names its commit, else the commit. A fetch with no ref clones branch `main`. A `ref` of 40 hex characters is fetched as a commit; any other `ref` is passed to `git clone --branch`.
 
 ## Skills
 
@@ -404,28 +406,40 @@ Used for conflict detection (two sources providing the same resource name) and c
 ## Updating a Source
 
 - **Branch-tracking sources**: `update_remote_source` runs `git pull --ff-only`. If fast-forward fails (force push upstream), the clone is deleted and re-created.
-- **Tag/commit-pinned sources**: cannot be updated without changing the pin. The user must explicitly set a new ref.
+- **Tag/commit-pinned sources**: the clone is deleted and re-created at the stored ref. A shallow clone at a tag or commit is on a detached HEAD, which `git pull` cannot fast-forward.
 
-On update, the manifest is re-parsed and resources are diffed against the previous install. Added resources are installed, changed resources are overwritten, and removed resources are deleted.
+On update, the manifest is re-parsed with its `skill_json` resolved. Then:
+
+- **Reinstalled**: each resource the source installed before, still owns, and the new manifest still lists.
+- **Not installed**: a resource the new manifest adds, or one the user did not select. These are returned in `new_available`. An install with a selection adds them.
+- **Left alone**: a resource the user has since saved as their own, or another source took over.
+- **Kept on failure**: a resource whose reinstall fails keeps its installed copy and its provenance. The failure is a warning.
+- **Removed**: a resource the manifest no longer lists, and only while this source still owns it.
 
 ## Conflict Resolution
 
-When a resource name already exists:
+A source may replace or delete only the entries whose provenance names that source. Names are compared without regard to letter case or Unicode form (NFKC, lowercased), because APFS and NTFS treat such names as one file.
 
-1. **Same source owns it** — overwritten silently (this is an update).
-2. **Different source owns it** — conflict is surfaced to the user. Options: replace, skip.
-3. **No provenance record (user-created)** — treated as "local". Default: skip with warning.
+When a selected resource matches an existing library entry:
 
-Conflicts are checked before install begins and presented in the confirmation UI.
+1. **Same source owns it, same name** — replaced (this is an update).
+2. **Different source owns it** — a conflict the user may confirm.
+3. **No provenance record (user-created)** — a "local" conflict the user may confirm.
+4. **Built-in, bundled, plugin-owned, required or Codex entry** — blocked. It can never be replaced.
+5. **Name differs only in letter case or form** — blocked. The write would land in the other entry's file.
+
+An install with any unconfirmed conflict installs nothing and returns the conflicts. The install dialog calls `check_source_conflicts` after the fetch. A resource with a conflict starts unselected, and selecting it confirms the replacement. Every write that is not a confirmed or owned replacement is create-only, so it fails rather than replace a file.
+
+Saving a resource through the editor (skills, MCP servers, rules, templates, sub-agents, commands) clears the source's provenance for that name. The user owns it from then on.
 
 ## Tauri Commands
 
 | Command | Description |
 |---------|-------------|
 | `fetch_remote_source(repo, git_ref?, dir?)` | Clone repo and return parsed manifest as JSON. `dir` for monorepo subdirectory. |
-| `install_remote_source(repo, selected?, dir?)` | Install resources from a fetched source. `dir` must match fetch. |
-| `update_remote_source(repo)` | Pull latest and re-install changed resources. Uses stored `directory`. |
+| `install_remote_source(repo, selected?, dir?, overrides?)` | Install resources from a fetched source. `dir` must match fetch. `overrides` lists the `type:name` key of each confirmed conflict. |
+| `update_remote_source(repo)` | Bring the clone up to date and reinstall what the source owns. Uses stored `directory`. |
 | `remove_remote_source(repo)` | Remove source and all resources it provided. |
 | `list_remote_sources()` | List all registered sources. |
-| `check_source_conflicts(repo, dir?)` | Pre-flight conflict check. `dir` for monorepo subdirectory. |
+| `check_source_conflicts(repo, dir?, selected?)` | Pre-flight conflict check. `dir` for monorepo subdirectory. Without `selected`, every resource is checked. |
 | `handle_install_uri(uri)` | Parse an `automatic://install?...` URI. Returns `repo`, `ref`, `dir`. |
