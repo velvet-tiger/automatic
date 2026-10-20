@@ -195,6 +195,59 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Store a config that did not come from this install's registry: one read
+/// from an agent's own config file, one a remote source provides, or one a
+/// cloud sync pull delivers.
+///
+/// Env values with the encryption prefix are stored empty first, as
+/// [`blank_ciphertext_like_env_values`] describes. Every writer of outside
+/// config goes through here, or through that same blanking step, so no such
+/// writer can store an entry that fails to decrypt. Otherwise this stores the
+/// config as [`save_mcp_server_config`] does, and replaces any existing entry.
+pub fn save_untrusted_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
+    save_mcp_server_config(name, &blank_ciphertext_like_env_values(config_json))
+}
+
+/// Store a config the user wrote, in the editor, a pasted snippet or a
+/// catalogue install.
+///
+/// The editor loads env values decrypted, so it sends plain text. A plain
+/// value with the encryption prefix would be stored as it is and could never
+/// be decrypted. The save is refused instead, with a message that names the
+/// env key. Blanking the value would lose what the user typed without a word.
+/// A prefixed value that decrypts with this install's key is real ciphertext
+/// and is accepted, so a config that carries one back unchanged still saves.
+pub fn save_user_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    reject_undecryptable_env_values(data)?;
+    save_mcp_server_config(name, data)
+}
+
+/// Fail on the first `env` string value that carries the encryption prefix
+/// but does not decrypt.
+///
+/// A config that is not JSON, or has no `env` object, passes. The save that
+/// follows parses it again and reports invalid JSON itself.
+fn reject_undecryptable_env_values(data: &str) -> Result<(), String> {
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(data) else {
+        return Ok(());
+    };
+    let Some(env) = config.get("env").and_then(|env| env.as_object()) else {
+        return Ok(());
+    };
+    for (key, value) in env {
+        let serde_json::Value::String(text) = value else {
+            continue;
+        };
+        if env_crypto::is_encrypted(text) && env_crypto::decrypt_value(text).is_err() {
+            return Err(format!(
+                "Env value for '{}' cannot start with 'enc:v1:'. That prefix is reserved for encrypted values.",
+                key
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Store a config for a server that must be new, and refuse to replace any
 /// existing file.
 ///
@@ -513,16 +566,16 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
     {
         return Ok(());
     }
-    // Blanked first, so the config that is validated is the one stored.
-    // Validation reads env key names only, and blanking keeps every key.
-    let config_json = blank_ciphertext_like_env_values(config_json);
-    save_mcp_server_config(name, &super::mark_discovered_if_blocked(&config_json))
+    // The guard reads env key names only, and blanking keeps every key, so
+    // the marker is the same whether it is decided before or after blanking.
+    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(config_json))
 }
 
 /// Replace every `env` value that carries the encryption prefix with an
 /// empty string, in a config that did not come from this install's registry:
-/// one discovered in an agent file, or one a remote source provides.  The key
-/// is kept.
+/// one discovered in an agent file, one a remote source or agent package
+/// provides, or one a cloud sync pull delivers.  The key is kept.  Callers
+/// that replace an entry use [`save_untrusted_mcp_server_config`].
 ///
 /// Saving a config leaves a prefixed value as it is, because it is taken for
 /// a value that is already encrypted.  A prefixed value from an agent file is
@@ -2715,6 +2768,92 @@ mod tests {
             assert_eq!(stored["env"]["API_KEY"], "");
             assert_eq!(stored["env"]["REGION"], "eu");
             assert_eq!(stored["command"], "npx");
+        });
+    }
+
+    // ── untrusted and user-written configs: prefixed env values ──────────────
+
+    #[test]
+    fn an_untrusted_config_with_a_ciphertext_like_env_value_replaces_an_entry_readably() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("untrusted-planted", r#"{"command":"old"}"#).expect("seed");
+
+            let incoming = r#"{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}"#;
+            save_untrusted_mcp_server_config("untrusted-planted", incoming).expect("save");
+
+            let raw = read_mcp_server_config("untrusted-planted")
+                .expect("the stored entry must be readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["command"], "npx", "the existing entry is replaced");
+            assert_eq!(stored["env"]["API_KEY"], "");
+            assert_eq!(stored["env"]["REGION"], "eu");
+        });
+    }
+
+    #[test]
+    fn a_user_config_with_a_plain_prefixed_env_value_is_refused_and_names_the_key() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let path = get_mcp_servers_dir().expect("dir").join("user-typed.json");
+            save_mcp_server_config("user-typed", r#"{"command":"npx","env":{"TOKEN":"kept"}}"#)
+                .expect("seed");
+            let before = fs::read(&path).expect("read before");
+
+            let err = save_user_mcp_server_config(
+                "user-typed",
+                r#"{"command":"npx","env":{"TOKEN":"enc:v1:typed-by-hand","REGION":"eu"}}"#,
+            )
+            .expect_err("a plain value with the prefix is refused");
+            assert_eq!(
+                err,
+                "Env value for 'TOKEN' cannot start with 'enc:v1:'. That prefix is reserved for encrypted values."
+            );
+            assert_eq!(
+                fs::read(&path).expect("read after"),
+                before,
+                "nothing is written"
+            );
+
+            let err = save_user_mcp_server_config(
+                "user-typed-new",
+                r#"{"command":"npx","env":{"TOKEN":"enc:v1:"}}"#,
+            )
+            .expect_err("the bare prefix is refused too");
+            assert!(err.contains("'TOKEN'"), "{err}");
+            assert!(!get_mcp_servers_dir()
+                .expect("dir")
+                .join("user-typed-new.json")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn a_user_config_that_carries_real_ciphertext_back_is_accepted() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let ciphertext = env_crypto::encrypt_value("secret").expect("encrypt");
+            let config = serde_json::json!({
+                "command": "npx",
+                "env": { "TOKEN": ciphertext, "PLAIN": "value", "MENTION": "see enc:v1: later" },
+            });
+            save_user_mcp_server_config("user-roundtrip", &config.to_string()).expect("save");
+
+            let raw = read_mcp_server_config("user-roundtrip").expect("readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["env"]["TOKEN"], "secret");
+            assert_eq!(stored["env"]["PLAIN"], "value");
+            assert_eq!(stored["env"]["MENTION"], "see enc:v1: later");
+        });
+    }
+
+    #[test]
+    fn a_user_config_that_is_not_json_is_reported_by_the_save() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let err = save_user_mcp_server_config("user-bad-json", "{not json")
+                .expect_err("invalid JSON");
+            assert!(err.starts_with("Invalid JSON"), "{err}");
         });
     }
 }

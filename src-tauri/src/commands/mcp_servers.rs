@@ -24,7 +24,7 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
-    core::save_mcp_server_config(name, data)?;
+    core::save_user_mcp_server_config(name, data)?;
     sync_projects_referencing_mcp_server(name);
     // Global assignments render the same registry entry per agent, so an
     // edit here should propagate to every agent that has this server
@@ -233,6 +233,27 @@ mod tests {
                 core::remote_sources::get_provenance("mcp_server", MOVED_NEW),
                 Ok(Some("octocat/servers".to_string()))
             );
+        });
+    }
+
+    #[test]
+    fn the_editor_save_refuses_a_plain_prefixed_env_value() {
+        with_temp_home(|_home| {
+            let err = save_mcp_server_config(
+                "vel183-editor",
+                r#"{"command":"npx","env":{"API_KEY":"enc:v1:typed"}}"#,
+            )
+            .expect_err("the save is refused");
+            assert!(err.contains("'API_KEY'"), "{err}");
+            assert!(core::read_mcp_server_config_if_present("vel183-editor")
+                .expect("read")
+                .is_none());
+
+            save_mcp_server_config(
+                "vel183-editor",
+                r#"{"command":"npx","env":{"API_KEY":"typed"}}"#,
+            )
+            .expect("a plain value saves");
         });
     }
 }

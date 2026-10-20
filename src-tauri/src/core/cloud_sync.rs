@@ -751,7 +751,11 @@ fn write_mcp_server_asset(machine_name: &str, payload: &Value) -> Result<(), Str
 
     let data = serde_json::to_string(&config)
         .map_err(|e| format!("failed to serialise mcp_server config: {}", e))?;
-    super::mcp_servers::save_mcp_server_config(machine_name, &data)
+    // A payload with no `env_keys` keeps its own `env`, and another machine
+    // wrote that. A prefixed value in it is not ciphertext this install can
+    // read, so it is stored empty. Values kept from the local entry were
+    // decrypted, and never carry the prefix.
+    super::mcp_servers::save_untrusted_mcp_server_config(machine_name, &data)
 }
 
 /// The decrypted `env` of the server stored under `machine_name`.
@@ -1561,6 +1565,29 @@ mod tests {
             let raw = super::super::mcp_servers::read_mcp_server_config("new-server").unwrap();
             let v: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(v["env"]["TOKEN"].as_str().unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn write_mcp_server_asset_blanks_a_ciphertext_like_value_in_the_payload_env() {
+        // With no `env_keys` and no local entry, the payload keeps its own
+        // `env`. Another machine wrote it, so a prefixed value in it is not
+        // ciphertext this install can read. Stored as it is, the entry would
+        // fail to read and stop the next cloud sync.
+        with_temp_home(|_| {
+            let payload = json!({
+                "config": {
+                    "command": "npx",
+                    "env": { "API_KEY": "enc:v1:from-another-machine", "REGION": "eu" }
+                }
+            });
+            write_mcp_server_asset("pull-planted", &payload).expect("write");
+
+            let raw = super::super::mcp_servers::read_mcp_server_config("pull-planted")
+                .expect("the pulled entry must be readable");
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(v["env"]["API_KEY"].as_str().unwrap(), "");
+            assert_eq!(v["env"]["REGION"].as_str().unwrap(), "eu");
         });
     }
 

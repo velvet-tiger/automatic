@@ -2087,8 +2087,7 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
     // carries the encryption prefix is blanked first: this install could
     // never decrypt it, and the unreadable entry would stop cloud sync and
     // project sync.
-    let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
-    super::mcp_servers::save_mcp_server_config(&server.name, &content)
+    super::mcp_servers::save_untrusted_mcp_server_config(&server.name, &content)
         .map_err(|e| format!("Failed to write MCP server config: {}", e))
 }
 

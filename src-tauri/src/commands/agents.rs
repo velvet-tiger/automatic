@@ -158,7 +158,9 @@ pub fn import_agent_global_configs(agent_ids: Vec<String>) -> Result<String, Str
             let config_str = serde_json::to_string_pretty(&config)
                 .map_err(|e| format!("Failed to serialise config for '{}': {}", name, e))?;
             let config_str = core::mark_discovered_if_blocked(&config_str);
-            core::save_mcp_server_config(&name, &config_str)?;
+            // An agent's own file never holds this install's ciphertext, so
+            // a prefixed env value is stored empty rather than unreadable.
+            core::save_untrusted_mcp_server_config(&name, &config_str)?;
             imported.push(name);
         }
     }
@@ -208,4 +210,35 @@ pub fn import_agent_global_skills(agent_ids: Vec<String>) -> Result<String, Stri
     imported.dedup();
 
     serde_json::to_string(&imported).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_global_import_stores_a_ciphertext_like_env_value_readably() {
+        // The import replaces existing entries, so it must not store a value
+        // this install cannot decrypt. Sync writes decrypted values to agent
+        // files, so a prefixed value there is never this install's ciphertext.
+        let home = tempfile::tempdir().expect("tempdir");
+        core::with_test_home(home.path().to_path_buf(), || {
+            core::save_mcp_server_config("vel183-global", r#"{"command":"old"}"#).expect("seed");
+            std::fs::write(
+                home.path().join(".claude.json"),
+                r#"{"mcpServers":{"vel183-global":{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}}}"#,
+            )
+            .expect("write claude config");
+
+            let imported = import_agent_global_configs(vec!["claude".to_string()]).expect("import");
+            assert!(imported.contains("vel183-global"), "{imported}");
+
+            let raw = core::read_mcp_server_config("vel183-global")
+                .expect("the imported entry must be readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["command"], "npx");
+            assert_eq!(stored["env"]["API_KEY"], "");
+            assert_eq!(stored["env"]["REGION"], "eu");
+        });
+    }
 }
