@@ -646,15 +646,15 @@ fn attach_profile_to_group_result(group: &str, profile: &str) -> CallToolResult 
         ));
     }
     match crate::commands::attach_group_profile(group, profile) {
-        Ok(true) => CallToolResult::success(vec![Content::text(format!(
+        Ok(true) => tool_success(format!(
             "Attached profile '{}' to group '{}'. Every member project received it \
              and was synced.",
             profile, group
-        ))]),
-        Ok(false) => CallToolResult::success(vec![Content::text(format!(
+        )),
+        Ok(false) => tool_success(format!(
             "Profile '{}' was already attached to group '{}'.",
             profile, group
-        ))]),
+        )),
         Err(e) => tool_error(format!(
             "Failed to attach profile '{}' to group '{}': {}",
             profile, group, e
@@ -665,15 +665,15 @@ fn attach_profile_to_group_result(group: &str, profile: &str) -> CallToolResult 
 /// Detach a profile from a known group and report it as a tool result.
 fn detach_profile_from_group_result(group: &str, profile: &str) -> CallToolResult {
     match crate::commands::detach_group_profile(group, profile) {
-        Ok(true) => CallToolResult::success(vec![Content::text(format!(
+        Ok(true) => tool_success(format!(
             "Detached profile '{}' from group '{}'. Member projects that no other \
              group provides it to lost it and were synced.",
             profile, group
-        ))]),
-        Ok(false) => CallToolResult::success(vec![Content::text(format!(
+        )),
+        Ok(false) => tool_success(format!(
             "Profile '{}' was not attached to group '{}'.",
             profile, group
-        ))]),
+        )),
         Err(e) => tool_error(format!(
             "Failed to detach profile '{}' from group '{}': {}",
             profile, group, e
@@ -721,16 +721,21 @@ fn project_list_rows(
 
 fn tool_json<T: Serialize>(value: &T) -> CallToolResult {
     match serde_json::to_string_pretty(value) {
-        Ok(json) => CallToolResult::success(vec![Content::text(json)]),
-        Err(e) => CallToolResult::error(vec![Content::text(format!(
-            "Failed to serialise result: {}",
-            e
-        ))]),
+        Ok(json) => tool_success(json),
+        Err(e) => tool_error(format!("Failed to serialise result: {}", e)),
     }
 }
 
-fn tool_error(message: String) -> CallToolResult {
-    CallToolResult::error(vec![Content::text(message)])
+/// A successful tool result carrying one text block. Every tool's text
+/// output goes through here and `tool_error`, so a change to rmcp's content
+/// types touches only these two functions.
+fn tool_success(text: impl Into<String>) -> CallToolResult {
+    CallToolResult::success(vec![ContentBlock::text(text)])
+}
+
+/// A failed tool result (`isError: true`) carrying one text block.
+fn tool_error(message: impl Into<String>) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(message)])
 }
 
 /// Resolve the `file_rules` key for a rule attach/detach operation.
@@ -1079,18 +1084,18 @@ impl AutomaticMcpServer {
         let known = crate::core::agents::known_agents();
         if !known.iter().any(|id| id.as_str() == provider) {
             let valid: Vec<&str> = known.iter().map(|id| id.as_str()).collect();
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Unknown provider '{}'. Valid providers: {}",
                 provider,
                 valid.join(", ")
-            ))]));
+            )));
         }
         match crate::core::get_api_key(provider) {
-            Ok(key) => Ok(CallToolResult::success(vec![Content::text(key)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(key) => Ok(tool_success(key)),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to retrieve credential for '{}': {}",
                 provider, e
-            ))])),
+            ))),
         }
     }
 
@@ -1103,12 +1108,9 @@ impl AutomaticMcpServer {
             Ok(skills) => {
                 let json =
                     serde_json::to_string_pretty(&skills).unwrap_or_else(|_| "[]".to_string());
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+                Ok(tool_success(json))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list skills: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to list skills: {}", e))),
         }
     }
 
@@ -1147,19 +1149,17 @@ impl AutomaticMcpServer {
                 .as_ref()
                 .and_then(|skills| skills.iter().find(|s| s.name == *name))
             {
-                return Ok(CallToolResult::success(vec![Content::text(
-                    custom.content.clone(),
-                )]));
+                return Ok(tool_success(custom.content.clone()));
             }
         }
 
         // Fall back to the global registry.
         match crate::core::read_skill(name) {
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(content) => Ok(tool_success(content)),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read skill '{}': {}",
                 name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1180,14 +1180,11 @@ impl AutomaticMcpServer {
                     }
                 }
                 let result = serde_json::json!({ "mcpServers": servers });
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(tool_success(
                     serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string()),
-                )]))
+                ))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list MCP servers: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to list MCP servers: {}", e))),
         }
     }
 
@@ -1236,7 +1233,7 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::core::read_project(crate::core::checkout_ident(&checkout)) {
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Ok(content) => Ok(tool_success(content)),
             Err(e) => Ok(tool_error(format!(
                 "Failed to read project '{}': {}",
                 checkout.name, e
@@ -1259,11 +1256,8 @@ impl AutomaticMcpServer {
         params: Parameters<RegisterProjectParams>,
     ) -> Result<CallToolResult, McpError> {
         match register_project_impl(&params.0) {
-            Ok(report) => Ok(CallToolResult::success(vec![Content::text(report)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to register project: {}",
-                e
-            ))])),
+            Ok(report) => Ok(tool_success(report)),
+            Err(e) => Ok(tool_error(format!("Failed to register project: {}", e))),
         }
     }
 
@@ -1293,9 +1287,9 @@ impl AutomaticMcpServer {
         let groups = crate::core::groups_for_project(crate::core::checkout_ident(&this));
 
         if groups.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(
+            return Ok(tool_success(
                 "This project does not belong to any groups and has no related projects.",
-            )]));
+            ));
         }
         let index = match crate::core::ProjectKeyIndex::load() {
             Ok(index) => index,
@@ -1350,7 +1344,7 @@ impl AutomaticMcpServer {
             output.push('\n');
         }
 
-        Ok(CallToolResult::success(vec![Content::text(output)]))
+        Ok(tool_success(output))
     }
 
     // ── Rules tools ──────────────────────────────────────────────────────
@@ -1367,12 +1361,9 @@ impl AutomaticMcpServer {
             Ok(rules) => {
                 let json =
                     serde_json::to_string_pretty(&rules).unwrap_or_else(|_| "[]".to_string());
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+                Ok(tool_success(json))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list rules: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to list rules: {}", e))),
         }
     }
 
@@ -1386,11 +1377,11 @@ impl AutomaticMcpServer {
         params: Parameters<ReadRuleParams>,
     ) -> Result<CallToolResult, McpError> {
         match crate::core::read_rule(&params.0.machine_name) {
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(content) => Ok(tool_success(content)),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read rule '{}': {}",
                 params.0.machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1409,21 +1400,18 @@ impl AutomaticMcpServer {
         let machine_name = &params.0.machine_name;
 
         if crate::core::read_rule(machine_name).is_ok() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Rule '{}' already exists. Use automatic_update_rule to modify it.",
                 machine_name
-            ))]));
+            )));
         }
 
         match crate::core::user_writes::save_rule(machine_name, &params.0.name, &params.0.content) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Created rule '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Created rule '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to create rule '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1441,9 +1429,9 @@ impl AutomaticMcpServer {
         let machine_name = &params.0.machine_name;
 
         if params.0.name.is_none() && params.0.content.is_none() {
-            return Ok(CallToolResult::error(vec![Content::text(
+            return Ok(tool_error(
                 "Provide at least one of `name` or `content` to update.".to_string(),
-            )]));
+            ));
         }
 
         // Load the existing rule so unspecified fields are preserved and we
@@ -1451,41 +1439,38 @@ impl AutomaticMcpServer {
         let existing_raw = match crate::core::read_rule(machine_name) {
             Ok(raw) => raw,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Cannot update rule '{}': {}",
                     machine_name, e
-                ))]));
+                )));
             }
         };
         let existing: crate::core::Rule = match serde_json::from_str(&existing_raw) {
             Ok(rule) => rule,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse existing rule '{}': {}",
                     machine_name, e
-                ))]));
+                )));
             }
         };
 
         if existing.plugin_id.is_some() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Cannot update rule '{}' — it is provided by a plugin.",
                 machine_name
-            ))]));
+            )));
         }
 
         let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
         let new_content = params.0.content.as_deref().unwrap_or(&existing.content);
 
         match crate::core::user_writes::save_rule(machine_name, new_name, new_content) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Updated rule '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Updated rule '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to update rule '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1504,14 +1489,11 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let machine_name = &params.0.machine_name;
         match crate::core::user_writes::delete_rule(machine_name) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Deleted rule '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Deleted rule '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to delete rule '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1536,65 +1518,65 @@ impl AutomaticMcpServer {
         let project_ident = crate::core::checkout_ident(&checkout);
         let project_name = &checkout.name;
         if crate::core::read_rule(machine_name).is_err() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Rule '{}' does not exist in the library. Call \
                  automatic_list_rules to see available rules.",
                 machine_name
-            ))]));
+            )));
         }
 
         let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to read project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
 
         let key = match resolve_file_rules_key(&project, params.0.file.as_deref()) {
             Ok(k) => k,
-            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => return Ok(tool_error(e)),
         };
 
         let entries = project.file_rules.entry(key.clone()).or_default();
         if entries.iter().any(|r| r == machine_name) {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Rule '{}' is already attached to project '{}' under '{}'.",
                 machine_name, project_name, key
-            ))]));
+            )));
         }
         entries.push(machine_name.to_string());
 
         let new_json = match serde_json::to_string(&project) {
             Ok(s) => s,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to serialise project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         match crate::core::save_project(project_ident, &new_json) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Attached rule '{}' to project '{}' under '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 machine_name, project_name, key
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            ))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to save project '{}': {}",
                 project_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1621,35 +1603,35 @@ impl AutomaticMcpServer {
         let project_ident = crate::core::checkout_ident(&checkout);
         let project_name = &checkout.name;
         if crate::core::is_mandatory_rule(machine_name) {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Cannot detach rule '{}' — it is required by Automatic and \
                  is re-added automatically on save.",
                 machine_name
-            ))]));
+            )));
         }
 
         let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to read project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
 
         let key = match resolve_file_rules_key(&project, params.0.file.as_deref()) {
             Ok(k) => k,
-            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => return Ok(tool_error(e)),
         };
 
         let removed = match project.file_rules.get_mut(&key) {
@@ -1662,31 +1644,31 @@ impl AutomaticMcpServer {
         };
 
         if !removed {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Rule '{}' was not attached to project '{}' under '{}'.",
                 machine_name, project_name, key
-            ))]));
+            )));
         }
 
         let new_json = match serde_json::to_string(&project) {
             Ok(s) => s,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to serialise project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         match crate::core::save_project(project_ident, &new_json) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Detached rule '{}' from project '{}' under '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 machine_name, project_name, key
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            ))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to save project '{}': {}",
                 project_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1703,12 +1685,9 @@ impl AutomaticMcpServer {
             Ok(hooks) => {
                 let json =
                     serde_json::to_string_pretty(&hooks).unwrap_or_else(|_| "[]".to_string());
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+                Ok(tool_success(json))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list hooks: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to list hooks: {}", e))),
         }
     }
 
@@ -1723,11 +1702,11 @@ impl AutomaticMcpServer {
         params: Parameters<ReadHookParams>,
     ) -> Result<CallToolResult, McpError> {
         match crate::core::read_hook(&params.0.machine_name) {
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(content) => Ok(tool_success(content)),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read hook '{}': {}",
                 params.0.machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1747,20 +1726,20 @@ impl AutomaticMcpServer {
         let machine_name = &params.0.machine_name;
 
         if crate::core::read_hook(machine_name).is_ok() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Hook '{}' already exists. Use automatic_update_hook to modify it.",
                 machine_name
-            ))]));
+            )));
         }
 
         let handler: crate::core::HookHandler =
             match serde_json::from_value(params.0.handler.clone()) {
                 Ok(h) => h,
                 Err(e) => {
-                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                    return Ok(tool_error(format!(
                         "Invalid handler payload for hook '{}': {}",
                         machine_name, e
-                    ))]))
+                    )))
                 }
             };
 
@@ -1773,14 +1752,11 @@ impl AutomaticMcpServer {
             handler,
             params.0.timeout_sec,
         ) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Created hook '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Created hook '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to create hook '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1799,27 +1775,27 @@ impl AutomaticMcpServer {
         let existing_raw = match crate::core::read_hook(machine_name) {
             Ok(raw) => raw,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Cannot update hook '{}': {}",
                     machine_name, e
-                ))]));
+                )));
             }
         };
         let existing: crate::core::Hook = match serde_json::from_str(&existing_raw) {
             Ok(h) => h,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse existing hook '{}': {}",
                     machine_name, e
-                ))]));
+                )));
             }
         };
 
         if existing.plugin_id.is_some() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Cannot update hook '{}' — it is provided by a plugin.",
                 machine_name
-            ))]));
+            )));
         }
 
         let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
@@ -1832,10 +1808,10 @@ impl AutomaticMcpServer {
             Some(serde_json::Value::Null) => None,
             Some(serde_json::Value::String(s)) => Some(s),
             Some(other) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Invalid matcher payload for hook '{}': expected string or null, got {}",
                     machine_name, other
-                ))]));
+                )));
             }
             None => existing.matcher.clone(),
         };
@@ -1845,17 +1821,17 @@ impl AutomaticMcpServer {
             Some(serde_json::Value::Number(n)) => match n.as_u64() {
                 Some(v) if v <= u32::MAX as u64 => Some(v as u32),
                 _ => {
-                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                    return Ok(tool_error(format!(
                         "Invalid timeout_sec for hook '{}': must be a u32",
                         machine_name
-                    ))]));
+                    )));
                 }
             },
             Some(other) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Invalid timeout_sec for hook '{}': expected number or null, got {}",
                     machine_name, other
-                ))]));
+                )));
             }
             None => existing.timeout_sec,
         };
@@ -1864,10 +1840,10 @@ impl AutomaticMcpServer {
             Some(val) => match serde_json::from_value(val) {
                 Ok(h) => h,
                 Err(e) => {
-                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                    return Ok(tool_error(format!(
                         "Invalid handler payload for hook '{}': {}",
                         machine_name, e
-                    ))]));
+                    )));
                 }
             },
             None => existing.handler.clone(),
@@ -1882,14 +1858,11 @@ impl AutomaticMcpServer {
             new_handler,
             new_timeout,
         ) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Updated hook '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Updated hook '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to update hook '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1907,14 +1880,11 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let machine_name = &params.0.machine_name;
         match crate::core::delete_hook(machine_name) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Deleted hook '{}'.",
-                machine_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!("Deleted hook '{}'.", machine_name))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to delete hook '{}': {}",
                 machine_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -1938,59 +1908,59 @@ impl AutomaticMcpServer {
         let project_ident = crate::core::checkout_ident(&checkout);
         let project_name = &checkout.name;
         if crate::core::read_hook(machine_name).is_err() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Hook '{}' does not exist in the library. Call \
                  automatic_list_hooks to see available hooks.",
                 machine_name
-            ))]));
+            )));
         }
 
         let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to read project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
 
         if project.hooks.iter().any(|h| h == machine_name) {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Hook '{}' is already attached to project '{}'.",
                 machine_name, project_name
-            ))]));
+            )));
         }
         project.hooks.push(machine_name.to_string());
 
         let new_json = match serde_json::to_string(&project) {
             Ok(s) => s,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to serialise project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         match crate::core::save_project(project_ident, &new_json) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Attached hook '{}' to project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 machine_name, project_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            ))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to save project '{}': {}",
                 project_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -2017,50 +1987,50 @@ impl AutomaticMcpServer {
         let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to read project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to parse project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
 
         let before = project.hooks.len();
         project.hooks.retain(|h| h != machine_name);
         if project.hooks.len() == before {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Hook '{}' was not attached to project '{}'.",
                 machine_name, project_name
-            ))]));
+            )));
         }
 
         let new_json = match serde_json::to_string(&project) {
             Ok(s) => s,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(tool_error(format!(
                     "Failed to serialise project '{}': {}",
                     project_name, e
-                ))]));
+                )));
             }
         };
         match crate::core::save_project(project_ident, &new_json) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Detached hook '{}' from project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 machine_name, project_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            ))),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to save project '{}': {}",
                 project_name, e
-            ))])),
+            ))),
         }
     }
 
@@ -2079,10 +2049,7 @@ impl AutomaticMcpServer {
         let names = match crate::core::list_project_profiles() {
             Ok(names) => names,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to list profiles: {}",
-                    e
-                ))]));
+                return Ok(tool_error(format!("Failed to list profiles: {}", e)));
             }
         };
         let entries: Vec<serde_json::Value> = names
@@ -2096,7 +2063,7 @@ impl AutomaticMcpServer {
             })
             .collect();
         let json = serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string());
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(tool_success(json))
     }
 
     #[tool(
@@ -2111,11 +2078,11 @@ impl AutomaticMcpServer {
         params: Parameters<ReadProfileParams>,
     ) -> Result<CallToolResult, McpError> {
         match crate::core::read_project_profile(&params.0.name) {
-            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Ok(content) => Ok(tool_success(content)),
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read profile '{}': {}",
                 params.0.name, e
-            ))])),
+            ))),
         }
     }
 
@@ -2152,23 +2119,23 @@ impl AutomaticMcpServer {
         };
         let project_name = &checkout.name;
         if crate::core::read_project_profile_parsed(profile_name).is_err() {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
+            return Ok(tool_error(format!(
                 "Profile '{}' does not exist in the library. Call \
                  automatic_list_profiles to see available profiles.",
                 profile_name
-            ))]));
+            )));
         }
 
         let mut project = match load_project(&checkout) {
             Ok(p) => p,
-            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => return Ok(tool_error(e)),
         };
 
         if project.profiles.iter().any(|p| p == profile_name) {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Profile '{}' is already attached to project '{}'.",
                 profile_name, project_name
-            ))]));
+            )));
         }
         // Group profiles first: they decide which profiles are attached.
         crate::core::reconcile_group_profiles(
@@ -2181,12 +2148,12 @@ impl AutomaticMcpServer {
         crate::core::reconcile_project_profiles(&mut project);
 
         match persist_project(&checkout, &project) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Attached profile '{}' to project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 profile_name, project_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+            ))),
+            Err(e) => Ok(tool_error(e)),
         }
     }
 
@@ -2225,7 +2192,7 @@ impl AutomaticMcpServer {
 
         let mut project = match load_project(&checkout) {
             Ok(p) => p,
-            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+            Err(e) => return Ok(tool_error(e)),
         };
 
         // Reconcile against the groups on disk first, so a stale record
@@ -2246,20 +2213,20 @@ impl AutomaticMcpServer {
         project.profiles.retain(|p| p != profile_name);
         let recorded = project.profile_contributions.contains_key(profile_name);
         if project.profiles.len() == before && !recorded && !groups_changed {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
+            return Ok(tool_success(format!(
                 "Profile '{}' was not attached to project '{}'.",
                 profile_name, project_name
-            ))]));
+            )));
         }
         crate::core::reconcile_project_profiles(&mut project);
 
         match persist_project(&checkout, &project) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Detached profile '{}' from project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 profile_name, project_name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+            ))),
+            Err(e) => Ok(tool_error(e)),
         }
     }
 
@@ -2407,7 +2374,7 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::core::read_source_entry(&context, &p.source, &p.path).await {
-            Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
+            Ok(text) => Ok(tool_success(text)),
             Err(e) => Ok(tool_error(format!(
                 "Failed to read '{}' from source '{}' of context '{}': {}",
                 p.path, p.source, context.slug, e
@@ -2434,14 +2401,14 @@ impl AutomaticMcpServer {
         };
         let slug = &params.0.context;
         match crate::core::attach_context(&target, slug) {
-            Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(true) => Ok(tool_success(format!(
                 "Attached context '{}' to {}.",
                 slug, label
-            ))])),
-            Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
+            ))),
+            Ok(false) => Ok(tool_success(format!(
                 "Context '{}' was already attached to {}.",
                 slug, label
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to attach context '{}': {}",
                 slug, e
@@ -2467,14 +2434,14 @@ impl AutomaticMcpServer {
         };
         let slug = &params.0.context;
         match crate::core::detach_context(&target, slug) {
-            Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(true) => Ok(tool_success(format!(
                 "Detached context '{}' from {}.",
                 slug, label
-            ))])),
-            Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
+            ))),
+            Ok(false) => Ok(tool_success(format!(
                 "Context '{}' was not attached to {}.",
                 slug, label
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to detach context '{}': {}",
                 slug, e
@@ -2496,12 +2463,12 @@ impl AutomaticMcpServer {
         params: Parameters<CreateContextParams>,
     ) -> Result<CallToolResult, McpError> {
         match crate::core::create_local_context(&params.0.name, &params.0.description) {
-            Ok(context) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(context) => Ok(tool_success(format!(
                 "Created context '{}' with slug '{}'. Add pages with \
                  automatic_write_context_page, and attach it with \
                  automatic_attach_context.",
                 context.display_name, context.slug
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!("Failed to create context: {}", e))),
         }
     }
@@ -2531,10 +2498,10 @@ impl AutomaticMcpServer {
             _ => return Ok(tool_error("Give exactly one of `title` or `path`.".to_string())),
         };
         match crate::core::write_context_page(&p.context, target, &p.content) {
-            Ok(path) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(path) => Ok(tool_success(format!(
                 "Saved page '{}' in context '{}'.",
                 path, p.context
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to write page in context '{}': {}",
                 p.context, e
@@ -2554,10 +2521,10 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
         match crate::core::move_context_page(&p.context, &p.path, p.folder.as_deref(), p.title.as_deref()) {
-            Ok(to) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(to) => Ok(tool_success(format!(
                 "Moved '{}' to '{}' in context '{}'.",
                 p.path, to, p.context
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!("Failed to move page '{}': {}", p.path, e))),
         }
     }
@@ -2573,10 +2540,10 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
         match crate::core::delete_context_page(&p.context, &p.path) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Deleted page '{}' from context '{}'.",
                 p.path, p.context
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!("Failed to delete page '{}': {}", p.path, e))),
         }
     }
@@ -2598,10 +2565,10 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
         match crate::core::link_folder_for_agent(&p.context, &p.path, &p.name, &p.description) {
-            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(id) => Ok(tool_success(format!(
                 "Linked '{}' into context '{}' as source '{}'.",
                 p.path, p.context, id
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to link '{}' into context '{}': {}",
                 p.path, p.context, e
@@ -2623,12 +2590,12 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
         match crate::core::link_web_page_for_agent(&p.context, &p.url, &p.name, &p.description, p.ttl_secs) {
-            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(id) => Ok(tool_success(format!(
                 "Linked '{}' into context '{}' as source '{}'.",
                 p.url.trim(),
                 p.context,
                 id
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to link '{}' into context '{}': {}",
                 p.url, p.context, e
@@ -2649,10 +2616,10 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
         match crate::core::remove_linked_source(&p.context, &p.source) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Removed source '{}' from context '{}'.",
                 p.source, p.context
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(format!(
                 "Failed to remove source '{}' from context '{}': {}",
                 p.source, p.context, e
@@ -2668,11 +2635,8 @@ impl AutomaticMcpServer {
     )]
     async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_sessions() {
-            Ok(json) => Ok(CallToolResult::success(vec![Content::text(json)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list sessions: {}",
-                e
-            ))])),
+            Ok(json) => Ok(tool_success(json)),
+            Err(e) => Ok(tool_error(format!("Failed to list sessions: {}", e))),
         }
     }
 
@@ -2690,12 +2654,9 @@ impl AutomaticMcpServer {
             Ok(results) => {
                 let json =
                     serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string());
-                Ok(CallToolResult::success(vec![Content::text(json)]))
+                Ok(tool_success(json))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to search skills: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to search skills: {}", e))),
         }
     }
 
@@ -2736,20 +2697,20 @@ impl AutomaticMcpServer {
             match crate::core::set_mcp_server_enabled(&mut project, &params.0.server, enabled) {
                 Ok(toggle) if toggle.changed => toggle.server,
                 Ok(toggle) => {
-                    return Ok(CallToolResult::success(vec![Content::text(format!(
+                    return Ok(tool_success(format!(
                         "MCP server '{}' is already {} on project '{}'.",
                         toggle.server, state, checkout.name
-                    ))]));
+                    )));
                 }
                 Err(e) => return Ok(tool_error(e)),
             };
 
         match persist_project(&checkout, &project) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "MCP server '{}' is now {} on project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 server, state, checkout.name
-            ))])),
+            ))),
             Err(e) => Ok(tool_error(e)),
         }
     }
@@ -2796,15 +2757,12 @@ impl AutomaticMcpServer {
                         response["mcp_validation_error"] = serde_json::Value::String(e);
                     }
                 }
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(tool_success(
                     serde_json::to_string_pretty(&response)
                         .unwrap_or_else(|_| format!("Synced {} files", files.len())),
-                )]))
+                ))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Sync failed: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Sync failed: {}", e))),
         }
     }
 
@@ -2830,11 +2788,8 @@ impl AutomaticMcpServer {
             &params.0.value,
             params.0.source.as_deref(),
         ) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to store memory: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to store memory: {}", e))),
         }
     }
 
@@ -2853,11 +2808,8 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::memory::get_memory(&keys, &params.0.key) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to get memory: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to get memory: {}", e))),
         }
     }
 
@@ -2876,11 +2828,8 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::memory::list_memories(&keys, params.0.pattern.as_deref()) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list memories: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to list memories: {}", e))),
         }
     }
 
@@ -2899,11 +2848,8 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::memory::search_memories(&keys, &params.0.query) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to search memories: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to search memories: {}", e))),
         }
     }
 
@@ -2922,11 +2868,8 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::memory::delete_memory(&keys, &params.0.key) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to delete memory: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to delete memory: {}", e))),
         }
     }
 
@@ -2949,11 +2892,8 @@ impl AutomaticMcpServer {
             params.0.pattern.as_deref(),
             params.0.confirm,
         ) {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to clear memories: {}",
-                e
-            ))])),
+            Ok(result) => Ok(tool_success(result)),
+            Err(e) => Ok(tool_error(format!("Failed to clear memories: {}", e))),
         }
     }
 
@@ -3009,12 +2949,12 @@ impl AutomaticMcpServer {
                     }
                 }
 
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read Claude auto-memory: {}",
                 e
-            ))])),
+            ))),
         }
     }
 
@@ -3046,12 +2986,9 @@ impl AutomaticMcpServer {
                     &keys.name,
                     include_archived,
                 );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list features: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to list features: {}", e))),
         }
     }
 
@@ -3072,12 +3009,9 @@ impl AutomaticMcpServer {
         match crate::features::get_feature_with_updates(&keys, &params.0.feature_id) {
             Ok(fw) => {
                 let output = crate::features::format_feature_detail_markdown(&fw);
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to get feature: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to get feature: {}", e))),
         }
     }
 
@@ -3113,12 +3047,9 @@ impl AutomaticMcpServer {
                     "Feature created successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** {}\n**Priority:** {}\n",
                     feature.id, feature.title, feature.state, feature.priority
                 );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to create feature: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to create feature: {}", e))),
         }
     }
 
@@ -3157,12 +3088,9 @@ impl AutomaticMcpServer {
                     "Feature updated successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** {}\n**Priority:** {}\n",
                     feature.id, feature.title, feature.state, feature.priority
                 );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to update feature: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to update feature: {}", e))),
         }
     }
 
@@ -3190,12 +3118,9 @@ impl AutomaticMcpServer {
                     "Feature state updated.\n\n**ID:** `{}`\n**Title:** {}\n**New state:** {}\n",
                     feature.id, feature.title, feature.state
                 );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to set feature state: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to set feature state: {}", e))),
         }
     }
 
@@ -3214,14 +3139,11 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::features::delete_feature(&keys, &params.0.feature_id) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(()) => Ok(tool_success(format!(
                 "Feature '{}' deleted from project '{}'.",
                 params.0.feature_id, keys.name
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to delete feature: {}",
-                e
-            ))])),
+            ))),
+            Err(e) => Ok(tool_error(format!("Failed to delete feature: {}", e))),
         }
     }
 
@@ -3240,14 +3162,11 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::features::archive_feature(&keys, &params.0.feature_id) {
-            Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(feature) => Ok(tool_success(format!(
                 "Feature '{}' archived. State '{}' is preserved for later restoration.",
                 feature.title, feature.state
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to archive feature: {}",
-                e
-            ))])),
+            ))),
+            Err(e) => Ok(tool_error(format!("Failed to archive feature: {}", e))),
         }
     }
 
@@ -3266,14 +3185,11 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::features::unarchive_feature(&keys, &params.0.feature_id) {
-            Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(feature) => Ok(tool_success(format!(
                 "Feature '{}' unarchived and restored to state '{}'.",
                 feature.title, feature.state
-            ))])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to unarchive feature: {}",
-                e
-            ))])),
+            ))),
+            Err(e) => Ok(tool_error(format!("Failed to unarchive feature: {}", e))),
         }
     }
 
@@ -3305,19 +3221,16 @@ impl AutomaticMcpServer {
                     update.timestamp,
                     update.author.as_deref().unwrap_or("unknown")
                 );
-                Ok(CallToolResult::success(vec![Content::text(output)]))
+                Ok(tool_success(output))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to add feature update: {}",
-                e
-            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to add feature update: {}", e))),
         }
     }
 }
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AutomaticMcpServer {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let server_info = Implementation::new("automatic", env!("CARGO_PKG_VERSION"))
             .with_title("Automatic")
             .with_description(
@@ -3325,7 +3238,7 @@ impl ServerHandler for AutomaticMcpServer {
             )
             .with_website_url("https://github.com/anomalyco/automatic");
 
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
                 "Automatic is a desktop hub for AI coding agents. \
                  Use these tools to retrieve API keys, discover and search skills, list MCP \
@@ -3358,6 +3271,41 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use crate::core::with_test_home;
+
+    /// Tool names, descriptions and input schemas are a contract with every
+    /// agent that calls this server. This fails on any change to them,
+    /// including one that arrives through an rmcp or schemars upgrade. After
+    /// an intended change, regenerate the file with
+    /// `UPDATE_GOLDEN=1 cargo test tool_list_matches_golden_file` and review
+    /// its diff.
+    #[test]
+    fn tool_list_matches_golden_file() {
+        let mut tools: Vec<serde_json::Value> = AutomaticMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                })
+            })
+            .collect();
+        tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        let actual = serde_json::to_string_pretty(&tools).expect("serialise tool list") + "\n";
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/mcp_tools.golden.json");
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(path, &actual).expect("write golden tool list");
+            return;
+        }
+        let expected = std::fs::read_to_string(path).expect("read golden tool list");
+        assert!(
+            actual == expected,
+            "the MCP tool list no longer matches {path}. If the change is intended, \
+             regenerate it with UPDATE_GOLDEN=1 and review the diff."
+        );
+    }
 
     fn params(name: &str, directory: &str, agents: Option<Vec<&str>>) -> RegisterProjectParams {
         RegisterProjectParams {
