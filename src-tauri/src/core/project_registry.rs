@@ -160,23 +160,24 @@ pub(crate) fn write_registry_file(path: &std::path::Path, contents: &str) -> Res
 
 /// Flush the directory entry the rename changed, so a power loss right after
 /// `write_registry_file` returns cannot bring back the old file. Only unix
-/// can open and fsync a directory.
+/// can open and fsync a directory. Best effort: the rename has already
+/// succeeded and readers see the new file, so a failed flush is logged and
+/// the save still counts as done.
 #[cfg(unix)]
 fn sync_parent_dir(path: &Path) -> Result<(), String> {
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    fs::File::open(parent)
-        .and_then(|dir| dir.sync_all())
-        .map_err(|e| {
-            format!(
-                "Replaced {} but could not flush its folder {}: {}",
-                path.display(),
-                parent.display(),
-                e
-            )
-        })
+    if let Err(e) = fs::File::open(parent).and_then(|dir| dir.sync_all()) {
+        eprintln!(
+            "warning: replaced {} but could not flush its folder {}: {}",
+            path.display(),
+            parent.display(),
+            e
+        );
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]

@@ -646,6 +646,18 @@ fn hand_over_provenance(
     Ok(())
 }
 
+/// Move the provenance of a renamed resource from `old_name` to `new_name`
+/// in one write, so a failure cannot leave both names owned by the source.
+/// Does nothing when `old_name` has no provenance.
+pub fn move_provenance(resource_type: &str, old_name: &str, new_name: &str) -> Result<(), String> {
+    let mut prov = read_provenance()?;
+    let Some(source) = prov.remove(&provenance_key(resource_type, old_name)) else {
+        return Ok(());
+    };
+    prov.insert(provenance_key(resource_type, new_name), source);
+    save_provenance(&prov)
+}
+
 /// The singular type provenance is keyed by, for a type a source lists
 /// resources under. Sources list `skills`, provenance records `skill`.
 fn provenance_type(resource_type: &str) -> Option<&'static str> {
@@ -4417,6 +4429,38 @@ mod tests {
     }
 
     #[test]
+    fn move_provenance_moves_the_key_in_one_write() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("mcp_server", "before", REPO).expect("record");
+            record_provenance("rule", "other", REPO).expect("record other");
+
+            move_provenance("mcp_server", "before", "after").expect("move");
+
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:before"), None);
+            assert_eq!(prov.get("mcp_server:after").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("rule:other").map(String::as_str), Some(REPO));
+
+            // A failed write leaves the map as it was: never both names.
+            fail_provenance_writes(true);
+            let failed = move_provenance("mcp_server", "after", "again");
+            fail_provenance_writes(false);
+            assert!(failed.is_err());
+            let prov = read_provenance().expect("read provenance");
+            assert_eq!(prov.get("mcp_server:after").map(String::as_str), Some(REPO));
+            assert_eq!(prov.get("mcp_server:again"), None);
+
+            // Nothing recorded: no write and no error.
+            move_provenance("mcp_server", "unowned", "renamed").expect("no-op move");
+            assert_eq!(
+                read_provenance().expect("read").get("mcp_server:renamed"),
+                None
+            );
+        });
+    }
+
+    #[test]
     fn a_corrupt_provenance_file_gives_no_display_author() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
@@ -4436,10 +4480,10 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-provfault");
             install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
 
             let result = remove_source(REPO);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
 
             let result = result.expect("remove");
             assert_eq!(sorted(result.removed.clone()), names.keys());
@@ -4685,10 +4729,10 @@ mod tests {
             install_source(REPO, &first, None, None).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
             let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
 
             let removals = remove_dropped_resources(REPO, &old, &second, &reinstall);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
 
             let removals = removals.expect("removals");
             assert_eq!(removals.removed.get("rules"), Some(&vec![names.rule.clone()]));
@@ -4725,9 +4769,9 @@ mod tests {
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
             install_source(REPO, &manifest, None, None).expect("install");
             // The clears fail, so the records stay with no entry behind them.
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(true));
+            fail_provenance_writes(true);
             let first = remove_source(REPO);
-            PROVENANCE_WRITES_FAIL.with(|fail| fail.set(false));
+            fail_provenance_writes(false);
             assert_eq!(first.expect("remove").warnings.len(), 6);
             assert_eq!(get_provenance("rule", &names.rule), Ok(Some(REPO.to_string())));
 

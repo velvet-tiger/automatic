@@ -603,7 +603,8 @@ pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, Str
 }
 
 /// Rename a local MCP server config on disk. Callers are responsible for
-/// updating any project or template that referenced the old name.
+/// updating any project or template that referenced the old name, and must
+/// do so whenever this returns `Ok`, warnings or not.
 ///
 /// Refuses built-in server names and refuses to overwrite an existing config
 /// under `new_name`. If `old_name == new_name` this is a no-op.
@@ -611,19 +612,21 @@ pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, Str
 /// Any provenance entry recorded against `old_name` is moved to `new_name` so
 /// the GitHub author badge continues to show. A provenance file that cannot
 /// be read refuses the rename before anything moves. A provenance write that
-/// fails after the move is returned as an error naming both servers.
+/// fails after the move does not fail the rename, because the file has moved
+/// and the caller still has references to rewrite. It is returned as a
+/// warning naming both servers.
 ///
 /// The server's OAuth secrets are filed under its name and URL, so they move
 /// to `new_name` once the file has. Left behind, the renamed server would
 /// look signed out. A failed move is logged and does not fail the rename, as
 /// [`crate::proxy::move_oauth_secrets`] explains. A server with no URL is
 /// renamed without a call to the store.
-pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
+pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
     if !is_valid_name(old_name) || !is_valid_name(new_name) {
         return Err("Invalid server name".into());
     }
     if old_name == new_name {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if is_builtin_mcp_server(old_name) {
         return Err("Built-in servers cannot be renamed".into());
@@ -661,18 +664,17 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
 
     remove_recently_added("mcp_servers", old_name);
 
-    if let Some(source) = source {
-        super::remote_sources::record_provenance("mcp_server", new_name, &source)
-            .and_then(|()| super::remote_sources::remove_provenance("mcp_server", old_name))
-            .map_err(|e| {
-                format!(
-                    "MCP server '{}' was renamed to '{}', but its source ownership could not be moved: {}",
-                    old_name, new_name, e
-                )
-            })?;
+    let mut warnings = Vec::new();
+    if source.is_some() {
+        if let Err(e) = super::remote_sources::move_provenance("mcp_server", old_name, new_name) {
+            warnings.push(format!(
+                "MCP server '{}' was renamed to '{}', but its source ownership could not be moved: {}",
+                old_name, new_name, e
+            ));
+        }
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
 /// Reported availability of a configured MCP server, shown as a status
@@ -1918,7 +1920,7 @@ mod tests {
     }
 
     #[test]
-    fn rename_reports_a_provenance_move_that_fails() {
+    fn rename_warns_when_a_provenance_move_fails() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             save_mcp_server_config("moving-old", r#"{"type":"stdio","command":"npx"}"#)
@@ -1934,11 +1936,18 @@ mod tests {
             let result = rename_mcp_server_config("moving-old", "moving-new");
             super::super::remote_sources::fail_provenance_writes(false);
 
-            let err = result.expect_err("provenance move fails");
+            let warnings = result.expect("the rename itself succeeds");
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
             assert!(
-                err.contains("'moving-old' was renamed to 'moving-new'")
-                    && err.contains("source ownership could not be moved"),
-                "unexpected error: {err}"
+                warnings[0].contains("'moving-old' was renamed to 'moving-new'")
+                    && warnings[0].contains("source ownership could not be moved"),
+                "unexpected warnings: {warnings:?}"
+            );
+            assert!(
+                super::super::remote_sources::get_provenance("mcp_server", "moving-new")
+                    .expect("read provenance")
+                    .is_none(),
+                "a failed move must not record the new name"
             );
             assert!(get_mcp_servers_dir()
                 .expect("servers dir")

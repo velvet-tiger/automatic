@@ -34,15 +34,19 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rename an MCP server and rewrite every reference to it. Returns warnings
+/// about parts of the rename that did not complete, such as moving the
+/// server's source ownership. The rename itself succeeded when this returns
+/// `Ok`, so every reference is rewritten whatever the warnings say.
 #[tauri::command]
-pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
+pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
     if old_name == new_name {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if core::is_builtin_mcp_server(old_name) {
         return Err(format!("Cannot rename built-in MCP server '{}'", old_name));
     }
-    core::rename_mcp_server_config(old_name, new_name)?;
+    let warnings = core::rename_mcp_server_config(old_name, new_name)?;
 
     // Rewrite every project and template that referenced the old name so no
     // dangling references remain. Projects are re-synced from within the
@@ -57,7 +61,7 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
     crate::sync::global_mcp::rename_server_in_global(old_name, new_name);
     crate::sync::global_mcp::reapply_agents_referencing(new_name);
 
-    Ok(())
+    Ok(warnings)
 }
 
 #[tauri::command]
@@ -151,4 +155,62 @@ pub fn search_discover_mcp(query: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn search_collections(query: &str) -> Result<String, String> {
     core::search_collections(query)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::projects::propagation_tests::{make_project, read_back, with_temp_home};
+
+    // Names are unique to this test: the secret store and the token cache
+    // are shared by the whole test process.
+    const OLD: &str = "vel186-cmd-old";
+    const NEW: &str = "vel186-cmd-new";
+    const PROJECT: &str = "vel186-cmd-project";
+    const PROFILE: &str = "vel186-cmd-profile";
+
+    #[test]
+    fn a_rename_rewrites_references_when_provenance_cannot_move() {
+        with_temp_home(|_home| {
+            core::save_mcp_server_config(OLD, r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save server");
+            core::remote_sources::record_provenance("mcp_server", OLD, "octocat/servers")
+                .expect("record provenance");
+            let profile = core::ProjectProfile {
+                name: PROFILE.to_string(),
+                mcp_servers: vec![OLD.to_string()],
+                ..Default::default()
+            };
+            core::save_project_profile(
+                PROFILE,
+                &serde_json::to_string(&profile).expect("profile json"),
+            )
+            .expect("save profile");
+            let (_dir, _path) = make_project(PROJECT, |p| p.mcp_servers = vec![OLD.to_string()]);
+
+            core::remote_sources::fail_provenance_writes(true);
+            let result = rename_mcp_server_config(OLD, NEW);
+            core::remote_sources::fail_provenance_writes(false);
+
+            let warnings = result.expect("the rename succeeds with a warning");
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            assert!(
+                warnings[0].contains(&format!("'{OLD}' was renamed to '{NEW}'")),
+                "{warnings:?}"
+            );
+            assert_eq!(read_back(PROJECT).mcp_servers, vec![NEW.to_string()]);
+            let profile = core::read_project_profile_parsed(PROFILE).expect("read profile");
+            assert_eq!(profile.mcp_servers, vec![NEW.to_string()]);
+            // The failed write changed nothing, so the source still owns the
+            // old name only.
+            assert_eq!(
+                core::remote_sources::get_provenance("mcp_server", OLD),
+                Ok(Some("octocat/servers".to_string()))
+            );
+            assert_eq!(
+                core::remote_sources::get_provenance("mcp_server", NEW),
+                Ok(None)
+            );
+        });
+    }
 }
