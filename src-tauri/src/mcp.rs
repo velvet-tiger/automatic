@@ -1415,17 +1415,7 @@ impl AutomaticMcpServer {
             ))]));
         }
 
-        // The user, through this agent, now owns the rule, so no source may
-        // replace or delete it.
-        if let Err(e) =
-            crate::core::remote_sources::release_ownership_on_user_save("rule", machine_name)
-        {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to save rule '{}': {}",
-                machine_name, e
-            ))]));
-        }
-        match crate::core::save_rule(machine_name, &params.0.name, &params.0.content) {
+        match crate::core::user_writes::save_rule(machine_name, &params.0.name, &params.0.content) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Created rule '{}'.",
                 machine_name
@@ -1487,17 +1477,7 @@ impl AutomaticMcpServer {
         let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
         let new_content = params.0.content.as_deref().unwrap_or(&existing.content);
 
-        // The user, through this agent, now owns the rule, so no source may
-        // replace or delete it.
-        if let Err(e) =
-            crate::core::remote_sources::release_ownership_on_user_save("rule", machine_name)
-        {
-            return Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to save rule '{}': {}",
-                machine_name, e
-            ))]));
-        }
-        match crate::core::save_rule(machine_name, new_name, new_content) {
+        match crate::core::user_writes::save_rule(machine_name, new_name, new_content) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Updated rule '{}'.",
                 machine_name
@@ -1523,7 +1503,7 @@ impl AutomaticMcpServer {
         params: Parameters<DeleteRuleParams>,
     ) -> Result<CallToolResult, McpError> {
         let machine_name = &params.0.machine_name;
-        match crate::core::delete_rule(machine_name) {
+        match crate::core::user_writes::delete_rule(machine_name) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Deleted rule '{}'.",
                 machine_name
@@ -4247,6 +4227,43 @@ mod tests {
                 serde_json::from_str(&crate::core::read_project("toggle").expect("read"))
                     .expect("parse");
             assert!(saved.disabled_mcp_servers.is_empty(), "a refusal saves nothing");
+        });
+    }
+
+    /// The rule tools are user writes: each clears a source's claim on the
+    /// rule, so a later removal of the source leaves it alone (VEL-385).
+    #[test]
+    fn the_rule_tools_take_a_rule_away_from_its_source() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            use crate::core::remote_sources::{get_provenance, record_provenance};
+            let server = AutomaticMcpServer::new();
+            for name in ["vel385-created", "vel385-updated", "vel385-deleted"] {
+                record_provenance("rule", name, "acme/tools").expect("own");
+            }
+            crate::core::save_rule("vel385-updated", "Old", "Old.\n").expect("save");
+            crate::core::save_rule("vel385-deleted", "Old", "Old.\n").expect("save");
+
+            tauri::async_runtime::block_on(server.create_rule(Parameters(CreateRuleParams {
+                machine_name: "vel385-created".into(),
+                name: "Created".into(),
+                content: "New.\n".into(),
+            })))
+            .expect("create");
+            tauri::async_runtime::block_on(server.update_rule(Parameters(UpdateRuleParams {
+                machine_name: "vel385-updated".into(),
+                name: None,
+                content: Some("Mine.\n".into()),
+            })))
+            .expect("update");
+            tauri::async_runtime::block_on(server.delete_rule(Parameters(DeleteRuleParams {
+                machine_name: "vel385-deleted".into(),
+            })))
+            .expect("delete");
+
+            for name in ["vel385-created", "vel385-updated", "vel385-deleted"] {
+                assert_eq!(get_provenance("rule", name), Ok(None), "{name}");
+            }
         });
     }
 }

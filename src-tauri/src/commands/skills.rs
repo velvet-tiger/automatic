@@ -26,9 +26,7 @@ pub fn get_skill_scan_state(name: &str) -> Result<Option<core::AssetSecurityScan
 
 #[tauri::command]
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
-    // The user now owns this version, so no source may replace or delete it.
-    core::remote_sources::release_ownership_on_user_save("skill", name)?;
-    core::save_skill(name, content)?;
+    core::user_writes::save_skill(name, content)?;
     sync_projects_referencing_skill(name);
     Ok(())
 }
@@ -36,7 +34,7 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn delete_skill(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Skill, name)?;
-    core::delete_skill(name)?;
+    core::user_writes::delete_skill(name)?;
     prune_skill_references(name);
     Ok(())
 }

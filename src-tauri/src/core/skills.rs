@@ -865,19 +865,13 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             return Err(scan.to_display_message(&format!("imported skill '{}'", skill_name)));
         }
 
-        let skill_dir = library_dir.join(skill_name);
-        let was_updated = skill_dir.join("SKILL.md").exists();
-        fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("Failed to create skill directory: {}", e))?;
-
-        fs::write(skill_dir.join("SKILL.md"), &content)
-            .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
-        let _ = record_skill_scan_state(skill_name, &scan.to_record());
-
-        // Copy any companion files from the source directory
-        if let Some(parent_dir) = source_path.parent() {
-            copy_companion_files(parent_dir, &skill_dir)?;
-        }
+        let was_updated = write_imported_skill(
+            &library_dir,
+            skill_name,
+            &content,
+            &scan,
+            source_path.parent(),
+        )?;
 
         imported.push(ImportedSkill {
             name: skill_name.to_string(),
@@ -931,17 +925,13 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
                 );
             }
 
-            let skill_dir = library_dir.join(&skill_entry.name);
-            let was_updated = skill_dir.join("SKILL.md").exists();
-            fs::create_dir_all(&skill_dir)
-                .map_err(|e| format!("Failed to create skill directory: {}", e))?;
-
-            fs::write(skill_dir.join("SKILL.md"), &content)
-                .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
-            let _ = record_skill_scan_state(&skill_entry.name, &scan.to_record());
-
-            // Copy companion files
-            copy_companion_files(&skill_base, &skill_dir)?;
+            let was_updated = write_imported_skill(
+                &library_dir,
+                &skill_entry.name,
+                &content,
+                &scan,
+                Some(skill_base.as_path()),
+            )?;
 
             imported.push(ImportedSkill {
                 name: skill_entry.name.clone(),
@@ -1012,19 +1002,13 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             return Err(scan.to_display_message(&format!("imported skill '{}'", skill_name)));
         }
 
-        let skill_dir = library_dir.join(skill_name);
-        let was_updated = skill_dir.join("SKILL.md").exists();
-        fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("Failed to create skill directory: {}", e))?;
-
-        fs::write(skill_dir.join("SKILL.md"), &content)
-            .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
-        let _ = record_skill_scan_state(skill_name, &scan.to_record());
-
-        // Copy companion files
-        if let Some(parent_dir) = skill_file.parent() {
-            copy_companion_files(parent_dir, &skill_dir)?;
-        }
+        let was_updated = write_imported_skill(
+            &library_dir,
+            skill_name,
+            &content,
+            &scan,
+            skill_file.parent(),
+        )?;
 
         imported.push(ImportedSkill {
             name: skill_name.to_string(),
@@ -1038,6 +1022,32 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
 
 /// Copy companion files (scripts/, references/, etc.) from a source skill directory
 /// to the destination skill directory.
+/// Write one skill a local or package import found into the library, with
+/// its companion files from `companions`, as the user's own write: a source
+/// that installed a skill of this name no longer owns it. Returns whether
+/// the skill already existed.
+fn write_imported_skill(
+    library_dir: &std::path::Path,
+    name: &str,
+    content: &str,
+    scan: &super::asset_security::AssetSecurityReport,
+    companions: Option<&std::path::Path>,
+) -> Result<bool, String> {
+    super::remote_sources::as_user_write("skill", name, || {
+        let skill_dir = library_dir.join(name);
+        let was_updated = skill_dir.join("SKILL.md").exists();
+        fs::create_dir_all(&skill_dir)
+            .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+        fs::write(skill_dir.join("SKILL.md"), content)
+            .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
+        let _ = record_skill_scan_state(name, &scan.to_record());
+        if let Some(companions) = companions {
+            copy_companion_files(companions, &skill_dir)?;
+        }
+        Ok(was_updated)
+    })
+}
+
 fn copy_companion_files(source: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
     let companion_dirs = [
         "scripts",
@@ -1812,6 +1822,53 @@ mod tests {
 
         let result = import_skill_from_package(&package_path.to_string_lossy());
         assert!(result.is_err());
+    }
+
+    /// Each local import path (a SKILL.md, a skill.json package, a scanned
+    /// folder; a .zip package unpacks into the scanned one) is the user's
+    /// write, so a source that owned the name no longer does (VEL-385).
+    #[test]
+    fn a_local_import_takes_a_skill_away_from_its_source() {
+        with_temp_home(|_home| {
+            let body = "---\nname: x\ndescription: An imported skill\n---\n# Imported\n";
+            let temp = tmp();
+            let direct = temp.path().join("vel385-direct");
+            fs::create_dir_all(&direct).unwrap();
+            fs::write(direct.join("SKILL.md"), body).unwrap();
+            let package = temp.path().join("package");
+            fs::create_dir_all(package.join("vel385-manifest")).unwrap();
+            fs::write(package.join("vel385-manifest/SKILL.md"), body).unwrap();
+            fs::write(
+                package.join("skill.json"),
+                serde_json::json!({
+                    "name": "p", "version": "1.0.0", "description": "p",
+                    "skills": [{ "name": "vel385-manifest", "path": "vel385-manifest",
+                                 "description": "x", "entrypoint": "SKILL.md" }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let scanned = temp.path().join("scan");
+            fs::create_dir_all(scanned.join("vel385-scanned")).unwrap();
+            fs::write(scanned.join("vel385-scanned/SKILL.md"), body).unwrap();
+            for name in ["vel385-direct", "vel385-manifest", "vel385-scanned"] {
+                super::super::remote_sources::record_provenance("skill", name, "acme/tools")
+                    .unwrap();
+            }
+
+            import_skill_from_local_path(&direct.join("SKILL.md").to_string_lossy())
+                .expect("direct");
+            import_skill_from_local_path(&package.to_string_lossy()).expect("manifest");
+            import_skill_from_local_path(&scanned.to_string_lossy()).expect("scanned");
+
+            for name in ["vel385-direct", "vel385-manifest", "vel385-scanned"] {
+                assert_eq!(
+                    super::super::remote_sources::get_provenance("skill", name),
+                    Ok(None),
+                    "{name}"
+                );
+            }
+        });
     }
 
     #[test]

@@ -102,8 +102,12 @@ fn prune_update_removals(result: &remote_sources::UpdateResult) {
 /// Take a resource a source removed out of every place that names it, with
 /// the pruning its delete command runs. `resource_type` is the type the
 /// source lists it under. Nothing names a template or a collection.
+///
+/// A skill name that still resolves to a skill in another skill folder,
+/// such as `~/.agents/skills`, is the user's skill, so its references stay.
 fn prune_removed_resource(resource_type: &str, name: &str) {
     match resource_type {
+        "skills" | "skill" if remote_sources::skill_resolves_outside_library(name) => {}
         "skills" | "skill" => super::skills::prune_skill_references(name),
         "mcp_servers" | "mcp_server" => super::mcp_servers::prune_mcp_server_references(name),
         "rules" | "rule" => super::rules::prune_rule_references(name),
@@ -507,6 +511,63 @@ mod tests {
             assert!(core::read_mcp_server_config(SERVER)
                 .expect("read server")
                 .contains("mine"));
+        });
+    }
+
+    /// A skill the user keeps in `~/.agents/skills` under the same name as
+    /// the source's skill stays in projects and profiles when the source is
+    /// removed (VEL-385).
+    #[test]
+    fn removing_a_source_keeps_references_to_a_skill_that_resolves_elsewhere() {
+        with_temp_home(|_| {
+            install_fixture_source();
+            save_fixture_profile();
+            let external = core::get_agents_skills_dir()
+                .expect("agents dir")
+                .join(SKILL);
+            fs::create_dir_all(&external).expect("create external skill");
+            fs::write(
+                external.join("SKILL.md"),
+                "---\nname: x\ndescription: Mine\n---\nMine\n",
+            )
+            .expect("write external skill");
+            let (_keep, _dir) = make_project("source-remove-project", |p| {
+                p.skills = vec![SKILL.to_string()];
+            });
+
+            remove_remote_source(REPO.to_string()).expect("remove");
+
+            assert_eq!(read_back("source-remove-project").skills, vec![SKILL]);
+            let profile = core::read_project_profile_parsed(PROFILE).expect("read profile");
+            assert_eq!(profile.skills, vec![SKILL.to_string()]);
+        });
+    }
+
+    /// Each user delete command clears the source's claim (VEL-385).
+    #[test]
+    fn a_user_delete_takes_a_resource_away_from_its_source() {
+        with_temp_home(|_| {
+            install_fixture_source();
+
+            crate::commands::delete_skill(SKILL).expect("delete skill");
+            crate::commands::delete_mcp_server_config(SERVER).expect("delete server");
+            crate::commands::delete_rule(RULE).expect("delete rule");
+            crate::commands::delete_user_command(COMMAND.to_string()).expect("delete command");
+            crate::commands::delete_subagent(AGENT.to_string()).expect("delete agent");
+
+            for (kind, name) in [
+                ("skill", SKILL),
+                ("mcp_server", SERVER),
+                ("rule", RULE),
+                ("command", COMMAND),
+                ("agent", AGENT),
+            ] {
+                assert_eq!(
+                    remote_sources::get_provenance(kind, name),
+                    Ok(None),
+                    "{kind}"
+                );
+            }
         });
     }
 }

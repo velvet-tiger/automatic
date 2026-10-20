@@ -50,6 +50,7 @@ mod projects;
 mod read_only;
 mod recently_added;
 pub mod remote_sources;
+pub mod user_writes;
 mod rules;
 mod rules_injection;
 pub(crate) mod secret_store;

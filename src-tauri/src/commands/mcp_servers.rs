@@ -24,9 +24,7 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
-    // The user now owns this version, so no source may replace or delete it.
-    core::remote_sources::release_ownership_on_user_save("mcp_server", name)?;
-    core::save_user_mcp_server_config(name, data)?;
+    core::user_writes::save_mcp_server(name, data)?;
     sync_projects_referencing_mcp_server(name);
     // Global assignments render the same registry entry per agent, so an
     // edit here should propagate to every agent that has this server
@@ -69,7 +67,7 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
 #[tauri::command]
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::McpServer, name)?;
-    core::delete_mcp_server_config(name)?;
+    core::user_writes::delete_mcp_server(name)?;
     prune_mcp_server_references(name);
     Ok(())
 }

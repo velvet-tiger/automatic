@@ -93,10 +93,19 @@ pub struct ManifestResource {
 }
 
 /// Reference to a collection JSON file in the repository.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CollectionRef {
     /// Relative path to the collection JSON file.
     pub path: String,
+    /// The collection's slug, read from its file when the manifest is
+    /// resolved. `None` when the file could not be read; installing it then
+    /// fails with a warning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// The collection's display name, read the same way, for the install
+    /// dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Skills section supporting both skill.json reference and inline entries.
@@ -345,6 +354,9 @@ pub struct SelectedResources {
     pub commands: Vec<String>,
     #[serde(default)]
     pub agents: Vec<String>,
+    /// Collection slugs.
+    #[serde(default)]
+    pub collections: Vec<String>,
 }
 
 // ── Path Helpers ────────────────────────────────────────────────────────────
@@ -728,9 +740,9 @@ fn provenance_type(resource_type: &str) -> Option<&'static str> {
     }
 }
 
-/// Drop each provenance record `repo` owns for a name this install neither
-/// installed nor attempted, and the source's previous entry does not list.
-/// Returns the key of each record dropped.
+/// Drop from `prov` each record `repo` owns for a name this install
+/// neither installed nor attempted, and the source's previous entry does not
+/// list. Returns the key of each record dropped. The caller writes `prov`.
 ///
 /// Such a record is stale. It is left when a clear fails after a removal,
 /// and nothing the repo provides stands behind it. Left in place, a later
@@ -741,11 +753,12 @@ fn provenance_type(resource_type: &str) -> Option<&'static str> {
 /// user did not select does not, as nothing in this install stands behind
 /// it either.
 fn drop_stale_provenance(
+    prov: &mut HashMap<String, String>,
     repo: &str,
     installed: &HashMap<String, Vec<String>>,
     attempted: &HashSet<String>,
     previous: Option<&RemoteSource>,
-) -> Result<Vec<String>, String> {
+) -> Vec<String> {
     let mut current: HashSet<String> = listed_resources(installed)
         .into_iter()
         .map(|(resource_type, name)| provenance_key(resource_type, name))
@@ -758,25 +771,23 @@ fn drop_stale_provenance(
                 .map(|(resource_type, name)| provenance_key(resource_type, name)),
         );
     }
-    let mut prov = read_provenance()?;
     let mut dropped: Vec<String> = prov
         .iter()
         .filter(|(key, owner)| owner.as_str() == repo && !current.contains(*key))
         .map(|(key, _)| key.clone())
         .collect();
-    if dropped.is_empty() {
-        return Ok(dropped);
-    }
     prov.retain(|key, _| !dropped.contains(key));
-    save_provenance(&prov)?;
     dropped.sort();
-    Ok(dropped)
+    dropped
 }
 
-/// The names `repo` owns among the `type:name` keys an install skipped, by
-/// the plural type a source lists resources under.
-fn owned_skipped(repo: &str, skipped: &[String]) -> Result<HashMap<String, Vec<String>>, String> {
-    let prov = read_provenance()?;
+/// The names `repo` owns in `prov` among the `type:name` keys an install
+/// skipped, by the plural type a source lists resources under.
+fn owned_skipped(
+    prov: &HashMap<String, String>,
+    repo: &str,
+    skipped: &[String],
+) -> HashMap<String, Vec<String>> {
     let mut owned = HashMap::new();
     for key in skipped {
         if prov.get(key).map(String::as_str) != Some(repo) {
@@ -786,7 +797,7 @@ fn owned_skipped(repo: &str, skipped: &[String]) -> Result<HashMap<String, Vec<S
             list_once(&mut owned, listing_type(kind), name);
         }
     }
-    Ok(owned)
+    owned
 }
 
 /// The plural type a source lists resources under, for a provenance type.
@@ -829,6 +840,8 @@ fn provenance_key(resource_type: &str, name: &str) -> String {
 /// Clone a repo to the sources cache directory.
 pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, String> {
     let clone_path = source_clone_path(repo)?;
+    // Before the old clone is deleted, so a refused pin leaves it in place.
+    validate_pin(pin)?;
 
     // Remove existing clone if present
     if clone_path.exists() {
@@ -859,6 +872,7 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
         }
     }
 
+    args.push("--".to_string());
     args.push(url.clone());
     args.push(clone_path.to_string_lossy().to_string());
 
@@ -875,7 +889,14 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
         let checkout_output = Command::new("git")
-            .args(["fetch", "--depth", "1", "origin", &pin.git_ref])
+            .args([
+                "fetch",
+                "--depth",
+                "1",
+                "--end-of-options",
+                "origin",
+                &pin.git_ref,
+            ])
             .current_dir(&clone_path)
             .output()
             .map_err(|e| format!("Failed to fetch commit: {}", e))?;
@@ -886,7 +907,7 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
         }
 
         let checkout_output = Command::new("git")
-            .args(["checkout", &pin.git_ref])
+            .args(["checkout", "--detach", "--end-of-options", &pin.git_ref])
             .current_dir(&clone_path)
             .output()
             .map_err(|e| format!("Failed to checkout commit: {}", e))?;
@@ -895,9 +916,72 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
             let stderr = String::from_utf8_lossy(&checkout_output.stderr);
             return Err(format!("git checkout failed: {}", stderr.trim()));
         }
+        // A tag can name the same commit. The marker keeps the pin a commit,
+        // as the user asked for, see [`git_checked_out_pin`].
+        fs::write(
+            clone_path.join(".git").join(COMMIT_PIN_MARKER),
+            &pin.git_ref,
+        )
+        .map_err(|e| format!("Failed to record the fetched commit: {}", e))?;
     }
 
     Ok(clone_path)
+}
+
+/// The file in a clone's `.git` folder that records a commit the user
+/// fetched by its SHA.
+const COMMIT_PIN_MARKER: &str = "automatic-commit-pin";
+
+/// Refuse a pin whose ref could be read by git as an option or as anything
+/// but one plain ref. A ref reaches git from a deep link, an RPC caller or
+/// `sources.json`, which older versions filled from the repository's own
+/// manifest.
+///
+/// A commit is 7 to 40 hex digits. A branch or tag follows the rules of
+/// `git check-ref-format`, and a little more: it may not start with `-`, so
+/// it can never be taken for an option such as `--upload-pack=...`.
+pub fn validate_pin(pin: &PinningConfig) -> Result<(), String> {
+    let git_ref = pin.git_ref.as_str();
+    let valid = match pin.strategy.as_str() {
+        "commit" => {
+            (7..=40).contains(&git_ref.len()) && git_ref.bytes().all(|b| b.is_ascii_hexdigit())
+        }
+        "branch" | "tag" => is_plain_ref_name(git_ref),
+        other => return Err(format!("Unknown pinning strategy: {}", other)),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refused the {} ref '{}': it is not a plain git {} name",
+            pin.strategy,
+            git_ref.escape_debug(),
+            if pin.strategy == "commit" {
+                "commit"
+            } else {
+                "ref"
+            }
+        ))
+    }
+}
+
+/// The `git check-ref-format` rules for one branch or tag name, plus no
+/// leading `-`.
+fn is_plain_ref_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.starts_with(['-', '/', '.'])
+        && !name.ends_with(['/', '.'])
+        && !name.ends_with(".lock")
+        && name != "@"
+        && !name.contains("..")
+        && !name.contains("//")
+        && !name.contains("@{")
+        && !name.contains("/.")
+        && !name.contains(".lock/")
+        && !name
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || "~^:?*[\\".contains(c))
 }
 
 // Test support: clone from local repositories instead of GitHub, on this
@@ -943,6 +1027,15 @@ fn git_head_sha(clone_path: &Path) -> Result<String, String> {
 /// names its commit, else the commit itself. This is what the user fetched,
 /// so an update follows it.
 fn git_checked_out_pin(clone_path: &Path) -> Result<PinningConfig, String> {
+    let head = git_head_sha(clone_path)?;
+    if let Ok(fetched) = fs::read_to_string(clone_path.join(".git").join(COMMIT_PIN_MARKER)) {
+        if head.starts_with(&fetched.trim().to_ascii_lowercase()) {
+            return Ok(PinningConfig {
+                strategy: "commit".to_string(),
+                git_ref: head,
+            });
+        }
+    }
     let run = |args: &[&str]| -> Result<Option<String>, String> {
         let output = Command::new("git")
             .args(args)
@@ -966,7 +1059,7 @@ fn git_checked_out_pin(clone_path: &Path) -> Result<PinningConfig, String> {
     }
     Ok(PinningConfig {
         strategy: "commit".to_string(),
-        git_ref: git_head_sha(clone_path)?,
+        git_ref: head,
     })
 }
 
@@ -1070,12 +1163,11 @@ pub fn fetch_source_manifest(
     let pin = pin.unwrap_or_default();
     let _clone_path = git_clone_source(repo, &pin)?;
     let base_dir = resolve_base_dir(repo, directory)?;
-    let mut manifest = parse_manifest(&base_dir)?;
-    // The frontend confirmation UI needs the full skill list. Without this
-    // the dialog reports "no installable resources" for manifests that
-    // delegate their skill list to a separate skill.json file.
-    resolve_manifest_skills(&base_dir, &mut manifest)?;
-    Ok(manifest)
+    // The frontend confirmation UI needs the full skill list and each
+    // collection's slug. Without the skills the dialog reports "no
+    // installable resources" for manifests that delegate their skill list to
+    // a separate skill.json file.
+    resolve_manifest(&base_dir)
 }
 
 /// Parse the manifest in `base_dir` with its `skill_json` resolved into its
@@ -1083,7 +1175,25 @@ pub fn fetch_source_manifest(
 pub fn resolve_manifest(base_dir: &Path) -> Result<AutomaticManifest, String> {
     let mut manifest = parse_manifest(base_dir)?;
     resolve_manifest_skills(base_dir, &mut manifest)?;
+    resolve_manifest_collections(base_dir, &mut manifest);
     Ok(manifest)
+}
+
+/// Read each collection file's slug and name into its reference. A file
+/// that cannot be read keeps `None`, and its install fails with a warning.
+fn resolve_manifest_collections(base_dir: &Path, manifest: &mut AutomaticManifest) {
+    for coll_ref in &mut manifest.collections {
+        if let Ok(collection) = read_collection_file(base_dir, coll_ref) {
+            coll_ref.slug = collection
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            coll_ref.name = collection
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+        }
+    }
 }
 
 /// Flatten a manifest's `skill_json` reference into its inline `entries`.
@@ -1173,6 +1283,14 @@ pub fn check_conflicts(
     let mut conflicts = Vec::new();
     for (resource_type, names) in manifest_names(manifest) {
         let wanted = names_of_type(selected, resource_type);
+        if resource_type == "collection" {
+            for slug in names.iter().filter(|slug| wanted.contains(slug)) {
+                if let Some(conflict) = collection_conflict(repo, slug)? {
+                    conflicts.push(conflict);
+                }
+            }
+            continue;
+        }
         let library = library_names(resource_type)?;
         for name in names.iter().filter(|name| wanted.contains(name)) {
             if let Some(conflict) = conflict_for(repo, &prov, resource_type, name, &library)? {
@@ -1200,7 +1318,18 @@ fn manifest_names(manifest: &AutomaticManifest) -> Vec<(&'static str, Vec<String
         ("template", names(&manifest.templates)),
         ("command", names(&manifest.commands)),
         ("agent", names(&manifest.agents)),
+        ("collection", manifest_collection_slugs(manifest)),
     ]
+}
+
+/// The slugs of the manifest's collections that resolved. See
+/// [`resolve_manifest_collections`].
+fn manifest_collection_slugs(manifest: &AutomaticManifest) -> Vec<String> {
+    manifest
+        .collections
+        .iter()
+        .filter_map(|c| c.slug.clone())
+        .collect()
 }
 
 /// The conflict installing `name` as a `resource_type` would cause, given
@@ -1210,7 +1339,7 @@ fn conflict_for(
     prov: &HashMap<String, String>,
     resource_type: &str,
     name: &str,
-    library: &[String],
+    library: &[LibraryEntry],
 ) -> Result<Option<ConflictInfo>, String> {
     let kind = asset_kind(resource_type)
         .ok_or_else(|| format!("Unknown resource type: {}", resource_type))?;
@@ -1225,7 +1354,7 @@ fn conflict_for(
         }
     };
 
-    if let Some(protection) = protection_of(kind, name)? {
+    if let Some(protection) = install_protection(kind, name)? {
         return Ok(Some(conflict(
             name,
             protection.label(),
@@ -1239,16 +1368,38 @@ fn conflict_for(
     }
 
     let folded = fold_name(name);
-    let existing = library
-        .iter()
-        .find(|entry| entry.as_str() == name)
-        .or_else(|| library.iter().find(|entry| fold_name(entry) == folded));
+    let existing = library.iter().find(|entry| entry.name == name).or_else(|| {
+        library
+            .iter()
+            .find(|entry| fold_name(&entry.name) == folded)
+    });
     let Some(existing) = existing else {
         return Ok(None);
     };
+    if let Some(folder) = &existing.external {
+        // A skill the user keeps in another skill folder. The install writes
+        // to the library, which would shadow it, and removing the source
+        // would then take the name out of every project.
+        let blocked = existing.name != name;
+        let reason = if blocked {
+            format!(
+                "Your skill '{}' in {} differs from '{}' only in letter case or form",
+                existing.name, folder, name
+            )
+        } else {
+            format!("Replaces your own '{}' from {}", name, folder)
+        };
+        return Ok(Some(conflict(
+            &existing.name,
+            "local".to_string(),
+            blocked,
+            reason,
+        )));
+    }
+    let existing = existing.name.as_str();
 
     let owner = prov.get(&provenance_key(resource_type, existing)).cloned();
-    let existing_source = match (&owner, protection_of(kind, existing)?) {
+    let existing_source = match (&owner, install_protection(kind, existing)?) {
         (_, Some(protection)) => protection.label(),
         (Some(owner), None) => format!("source:{}", owner),
         (None, None) => "local".to_string(),
@@ -1282,11 +1433,44 @@ fn fold_name(name: &str) -> String {
     name.nfkc().collect::<String>().to_lowercase()
 }
 
-/// The names of the library entries of one type, read from the folder its
-/// install function writes to. A missing folder holds none.
-fn library_names(resource_type: &str) -> Result<Vec<String>, String> {
+/// How Automatic protects an asset from being replaced by an install: what
+/// [`protection_of`] protects from deletion, and also the bundled default
+/// rules and bundled sub-agents. Those two can be deleted by the user, but
+/// an install must not replace them, as Automatic writes them again.
+fn install_protection(
+    kind: LibraryAssetKind,
+    name: &str,
+) -> Result<Option<super::deletion_guards::Protection>, String> {
+    if let Some(protection) = protection_of(kind, name)? {
+        return Ok(Some(protection));
+    }
+    let bundled = match kind {
+        LibraryAssetKind::Rule => super::rules::is_bundled_rule(name),
+        LibraryAssetKind::Subagent => super::subagents::is_bundled_agent(name),
+        _ => false,
+    };
+    Ok(bundled.then_some(super::deletion_guards::Protection::Bundled))
+}
+
+/// An existing entry an install could collide with.
+#[derive(Debug, Clone, PartialEq)]
+struct LibraryEntry {
+    name: String,
+    /// The skill folder that holds it, when that is not the library.
+    external: Option<String>,
+}
+
+/// The names of the existing entries of one type, read from the folder its
+/// install function writes to. A missing folder holds none. For skills this
+/// also reads every other skill folder Automatic loads skills from (see
+/// [`super::skills::get_all_skill_sources`]), as a skill there resolves by
+/// the same name. Hidden entries, such as an install's staging folder, are
+/// left out.
+fn library_names(resource_type: &str) -> Result<Vec<LibraryEntry>, String> {
+    if provenance_type(resource_type) == Some("skill") {
+        return skill_entries();
+    }
     let (dir, extension) = match provenance_type(resource_type) {
-        Some("skill") => (super::paths::get_library_skills_dir()?, None),
         Some("mcp_server") => (super::mcp_servers::get_mcp_servers_dir()?, Some("json")),
         Some("rule") => (super::rules::get_rules_dir()?, Some("json")),
         Some("template") => (super::templates::get_templates_dir()?, Some("json")),
@@ -1294,7 +1478,66 @@ fn library_names(resource_type: &str) -> Result<Vec<String>, String> {
         Some("agent") => (super::subagents::get_subagents_dir()?, Some("md")),
         _ => return Err(format!("Unknown resource type: {}", resource_type)),
     };
-    let entries = match fs::read_dir(&dir) {
+    Ok(entry_names(&dir, extension)?
+        .into_iter()
+        .map(|name| LibraryEntry {
+            name,
+            external: None,
+        })
+        .collect())
+}
+
+/// Every skill name in the library, then each one found only in another
+/// skill folder.
+fn skill_entries() -> Result<Vec<LibraryEntry>, String> {
+    let library = super::paths::get_library_skills_dir()?;
+    let mut entries: Vec<LibraryEntry> = entry_names(&library, None)?
+        .into_iter()
+        .map(|name| LibraryEntry {
+            name,
+            external: None,
+        })
+        .collect();
+    for folder in external_skill_folders()? {
+        for name in entry_names(&folder, None)? {
+            if folder.join(&name).join("SKILL.md").is_file() {
+                entries.push(LibraryEntry {
+                    name,
+                    external: Some(folder.display().to_string()),
+                });
+            }
+        }
+    }
+    Ok(entries)
+}
+
+/// Every skill folder Automatic loads skills from, except the library.
+fn external_skill_folders() -> Result<Vec<PathBuf>, String> {
+    let library = super::paths::get_library_skills_dir()?;
+    Ok(super::skills::get_all_skill_sources()
+        .into_iter()
+        .map(|source| PathBuf::from(source.path))
+        .filter(|path| path != &library)
+        .collect())
+}
+
+/// Whether a skill named exactly `name` exists in a skill folder other than
+/// the library, so the name still resolves after the library copy is gone.
+pub(crate) fn skill_resolves_outside_library(name: &str) -> bool {
+    external_skill_folders()
+        .map(|folders| {
+            folders
+                .iter()
+                .any(|folder| folder.join(name).join("SKILL.md").is_file())
+        })
+        .unwrap_or(false)
+}
+
+/// The names in `dir`, without `extension` when one is given. A name with
+/// another extension, or a hidden one, is left out. A missing folder holds
+/// none.
+fn entry_names(dir: &Path, extension: Option<&str>) -> Result<Vec<String>, String> {
+    let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("Failed to read {}: {}", dir.display(), e)),
@@ -1303,6 +1546,9 @@ fn library_names(resource_type: &str) -> Result<Vec<String>, String> {
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?;
         let file_name = entry.file_name().to_string_lossy().into_owned();
+        if file_name.starts_with('.') {
+            continue;
+        }
         match extension {
             None => names.push(file_name),
             Some(extension) => {
@@ -1313,6 +1559,55 @@ fn library_names(resource_type: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(names)
+}
+
+/// The conflict installing the collection `slug` from `repo` would cause.
+///
+/// A bundled slug is blocked: the bundled collection is Automatic's. A slug
+/// already in Discover is owned by the source whose entry lists it; with no
+/// such source it is the user's (`local`).
+fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, String> {
+    let conflict = |existing_source: String, blocked: bool, reason: String| ConflictInfo {
+        resource_type: "collection".to_string(),
+        resource_name: slug.to_string(),
+        existing_source,
+        existing_name: slug.to_string(),
+        blocked,
+        reason,
+    };
+    if super::discover_data::seed_collection(slug)?.is_some() {
+        return Ok(Some(conflict(
+            "bundled".to_string(),
+            true,
+            format!("'{}' is a bundled collection and cannot be replaced", slug),
+        )));
+    }
+    let exists = super::discover_data::read_collection_entries()?
+        .iter()
+        .any(|entry| entry.get("slug").and_then(|v| v.as_str()) == Some(slug));
+    if !exists {
+        return Ok(None);
+    }
+    let owner = list_sources()?
+        .into_iter()
+        .find(|source| source.collection_slugs.iter().any(|s| s == slug))
+        .map(|source| source.repo);
+    match owner {
+        Some(owner) if owner == repo => Ok(None),
+        Some(owner) => Ok(Some(conflict(
+            format!("source:{}", owner),
+            false,
+            format!(
+                "Replaces the collection '{}', which {} installed",
+                slug, owner
+            ),
+        ))),
+        None => Ok(Some(conflict(
+            "local".to_string(),
+            false,
+            format!("Replaces your own collection '{}'", slug),
+        ))),
+    }
 }
 
 /// The keys of `conflicts` an install may replace: each confirmed in
@@ -1333,38 +1628,73 @@ fn confirm_conflicts(
     (confirmed, unconfirmed)
 }
 
-/// Release a source's claim on a resource the user has just saved their own
-/// version of, so a later update or removal of that source leaves it alone.
-/// The user save commands call this before they write. Doing it first means
-/// a failed release stops the save, so the source can never delete what the
-/// user wrote. A source's own install never calls it.
+/// Run a user's write or delete of a library resource, and release any
+/// source's claim on that name for it. After a user save the user owns the
+/// resource, and after a user delete no source owns a later resource of that
+/// name. Either way a later update or removal of the source leaves it alone.
+///
+/// The claim is released before `write` runs, so a failed release stops the
+/// write and a source can never delete what the user wrote. When `write`
+/// fails, the claim is put back. Every user save, import and delete path
+/// calls this. A source's own install and a cloud pull do not.
 ///
 /// `resource_type` is a provenance type such as `skill` or `mcp_server`.
-/// Nothing happens when no source owns the name.
-pub fn release_ownership_on_user_save(resource_type: &str, name: &str) -> Result<(), String> {
+/// The error type only needs to hold a message, so a caller with its own
+/// error enum can use this too.
+pub fn as_user_write<T, E>(
+    resource_type: &str,
+    name: &str,
+    write: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: From<String> + std::fmt::Display,
+{
+    let key = provenance_key(resource_type, name);
     let mut prov = read_provenance()?;
-    if prov.remove(&provenance_key(resource_type, name)).is_some() {
+    let previous = prov.remove(&key);
+    if previous.is_some() {
         save_provenance(&prov)?;
     }
-    Ok(())
+    match write() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let Some(owner) = previous else {
+                return Err(error);
+            };
+            match record_provenance(resource_type, name, &owner) {
+                Ok(()) => Err(error),
+                Err(restore) => Err(E::from(format!(
+                    "{} (and the source {} could not be restored as its owner: {})",
+                    error, owner, restore
+                ))),
+            }
+        }
+    }
 }
 
 /// Install resources from a fetched source into canonical locations.
 ///
 /// `directory` specifies the subdirectory within the repo where the manifest
 /// lives. All resource paths are resolved relative to this base directory.
-/// With no selection, every resource the manifest lists is installed,
-/// including the skills a referenced `skill.json` lists.
+/// With no selection, every resource and collection the manifest lists is
+/// installed, including the skills a referenced `skill.json` lists. With a
+/// selection, only the selected ones are.
 ///
 /// The install is all or nothing for conflicts. When a selected resource
-/// would replace an existing library entry that this source does not own,
-/// and `overrides` does not confirm it by its [`ConflictInfo::key`], nothing
-/// is installed and the result lists the conflicts. A blocked conflict can
+/// would replace an existing entry that this source does not own, and
+/// `overrides` does not confirm it by its [`ConflictInfo::key`], nothing is
+/// installed and the result lists the conflicts. A blocked conflict can
 /// never be confirmed. A confirmed entry, and one this source already owns,
-/// is replaced. Every other resource is written create-only, so a file that
-/// appears in the meantime, or one the file system folds onto this name in
-/// a way [`check_conflicts`] does not foresee, is never replaced: that
-/// resource fails with a warning instead.
+/// is replaced, see [`WriteMode`]. Every other write is create-only, so a
+/// file that appears in the meantime, or one the file system folds onto
+/// this name in a way [`check_conflicts`] does not foresee, is never
+/// replaced: that resource fails with a warning instead.
+///
+/// Provenance for everything installed is written once, at the end, and
+/// then the source is registered. If either write fails, what this install
+/// created is deleted again and the error is returned. A replaced entry
+/// cannot be put back: it keeps the new content and its old ownership, and
+/// the error names it.
 ///
 /// The source is registered with the git ref its clone has checked out, so
 /// an update follows the branch, tag or commit the user fetched.
@@ -1382,10 +1712,8 @@ pub fn install_source(
             repo
         ));
     }
-
     let base_dir = resolve_base_dir(repo, directory)?;
-    let mut manifest = manifest.clone();
-    resolve_manifest_skills(&base_dir, &mut manifest)?;
+    let manifest = resolved_copy(&base_dir, manifest)?;
     let select = selected.unwrap_or_else(|| select_all(&manifest));
 
     let (confirmed, unconfirmed) =
@@ -1401,46 +1729,181 @@ pub fn install_source(
     }
 
     let previous = get_source(repo)?;
-    let prov = read_provenance()?;
-    // A resource may replace an existing entry only when this source owns
-    // that entry or the user confirmed the replacement.
-    let may_replace = |resource_type: &str, name: &str| {
-        let key = provenance_key(resource_type, name);
-        prov.get(&key).map(String::as_str) == Some(repo) || confirmed.contains(&key)
+    let mut prov = read_provenance()?;
+    let modes = WriteModes {
+        repo,
+        prov: &prov,
+        confirmed: &confirmed,
+        owned_collections: previous
+            .as_ref()
+            .map(|p| p.collection_slugs.clone())
+            .unwrap_or_default(),
     };
+    let mut writes = write_resources(&base_dir, &manifest, &select, &modes);
+    write_collections(&base_dir, &manifest, &select, &modes, &mut writes);
 
-    let mut installed: HashMap<String, Vec<String>> = HashMap::new();
-    let mut skipped = Vec::new();
-    let mut warnings = Vec::new();
+    let attempted: HashSet<String> = writes.skipped.iter().cloned().collect();
+    for (resource_type, name) in listed_resources(&writes.installed) {
+        prov.insert(provenance_key(resource_type, name), repo.to_string());
+    }
+    for key in drop_stale_provenance(
+        &mut prov,
+        repo,
+        &writes.installed,
+        &attempted,
+        previous.as_ref(),
+    ) {
+        let (kind, name) = key.split_once(':').unwrap_or((key.as_str(), ""));
+        writes.warnings.push(format!(
+            "Cleared the old provenance record of {}:{}: this source no longer installs or lists it",
+            listing_type(kind),
+            name
+        ));
+    }
 
-    let mut outcome = |resource_type: &str, label: &str, name: &str, result: Result<(), String>| {
+    let entry = source_entry(
+        repo,
+        &manifest,
+        directory,
+        &clone_path,
+        &prov,
+        &writes,
+        previous.as_ref(),
+    );
+    let entry_warnings = commit_install(&prov, entry, &writes)?;
+    writes.warnings.extend(entry_warnings);
+
+    Ok(InstallResult {
+        installed: writes.installed,
+        skipped: writes.skipped,
+        warnings: writes.warnings,
+        failed_collections: writes.failed_collections,
+        conflicts: Vec::new(),
+    })
+}
+
+/// A copy of `manifest` with its `skill_json` and collection slugs resolved.
+fn resolved_copy(
+    base_dir: &Path,
+    manifest: &AutomaticManifest,
+) -> Result<AutomaticManifest, String> {
+    let mut manifest = manifest.clone();
+    resolve_manifest_skills(base_dir, &mut manifest)?;
+    resolve_manifest_collections(base_dir, &mut manifest);
+    Ok(manifest)
+}
+
+/// How an install may write one resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WriteMode {
+    /// Nothing is in the way: write create-only.
+    Create,
+    /// The source owns the existing entry: replace it, as an update.
+    ReplaceOwned,
+    /// The user confirmed replacing an entry the source does not own.
+    ReplaceConfirmed,
+}
+
+impl WriteMode {
+    fn replaces(self) -> bool {
+        self != WriteMode::Create
+    }
+}
+
+/// What decides the [`WriteMode`] of each resource in one install.
+struct WriteModes<'a> {
+    repo: &'a str,
+    prov: &'a HashMap<String, String>,
+    confirmed: &'a HashSet<String>,
+    /// The collection slugs the source's previous entry lists.
+    owned_collections: Vec<String>,
+}
+
+impl WriteModes<'_> {
+    fn of(&self, resource_type: &str, name: &str) -> WriteMode {
+        let key = provenance_key(resource_type, name);
+        if self.prov.get(&key).map(String::as_str) == Some(self.repo) {
+            WriteMode::ReplaceOwned
+        } else if self.confirmed.contains(&key) {
+            WriteMode::ReplaceConfirmed
+        } else {
+            WriteMode::Create
+        }
+    }
+
+    fn of_collection(&self, slug: &str) -> WriteMode {
+        if self.owned_collections.iter().any(|s| s == slug) {
+            WriteMode::ReplaceOwned
+        } else if self.confirmed.contains(&collection_key(slug)) {
+            WriteMode::ReplaceConfirmed
+        } else {
+            WriteMode::Create
+        }
+    }
+}
+
+/// What one install wrote, before its provenance and registration.
+#[derive(Debug, Default)]
+struct InstallWrites {
+    installed: HashMap<String, Vec<String>>,
+    skipped: Vec<String>,
+    warnings: Vec<String>,
+    /// `(type, name)` of each entry this install created, which a failed
+    /// install deletes again.
+    created: Vec<(String, String)>,
+    /// `type:name` of each entry this install replaced.
+    replaced: Vec<String>,
+    collection_slugs: Vec<String>,
+    created_collections: Vec<String>,
+    failed_collections: Vec<String>,
+}
+
+impl InstallWrites {
+    fn record(
+        &mut self,
+        resource_type: &str,
+        label: &str,
+        name: &str,
+        mode: WriteMode,
+        result: Result<(), String>,
+    ) {
         match result {
             Ok(()) => {
-                record_provenance(resource_type, name, repo)?;
-                list_once(&mut installed, listing_type(resource_type), name);
+                list_once(&mut self.installed, listing_type(resource_type), name);
+                if mode.replaces() {
+                    self.replaced.push(provenance_key(resource_type, name));
+                } else {
+                    self.created
+                        .push((resource_type.to_string(), name.to_string()));
+                }
             }
             Err(e) => {
-                warnings.push(format!("Failed to install {} '{}': {}", label, name, e));
-                skipped.push(provenance_key(resource_type, name));
-            }
-        }
-        Ok::<(), String>(())
-    };
-
-    if let Some(ref skills_section) = manifest.skills {
-        for skill in &skills_section.entries {
-            if select.skills.contains(&skill.name) {
-                let replace = may_replace("skill", &skill.name);
-                outcome(
-                    "skill",
-                    "skill",
-                    &skill.name,
-                    install_skill(&base_dir, skill, replace),
-                )?;
+                self.warnings
+                    .push(format!("Failed to install {} '{}': {}", label, name, e));
+                self.skipped.push(provenance_key(resource_type, name));
             }
         }
     }
-    type Installer = fn(&Path, &ManifestResource, bool) -> Result<(), String>;
+}
+
+/// Write each selected skill and file resource.
+fn write_resources(
+    base_dir: &Path,
+    manifest: &AutomaticManifest,
+    select: &SelectedResources,
+    modes: &WriteModes,
+) -> InstallWrites {
+    let mut writes = InstallWrites::default();
+    if let Some(ref skills_section) = manifest.skills {
+        for skill in &skills_section.entries {
+            if select.skills.contains(&skill.name) {
+                let mode = modes.of("skill", &skill.name);
+                let result = install_skill(base_dir, skill, mode);
+                writes.record("skill", "skill", &skill.name, mode, result);
+            }
+        }
+    }
+    type Installer = fn(&Path, &ManifestResource, WriteMode) -> Result<(), String>;
     let file_kinds: [(&str, &str, &[ManifestResource], Installer); 5] = [
         (
             "mcp_server",
@@ -1459,70 +1922,95 @@ pub fn install_source(
         ("agent", "agent", &manifest.agents, install_agent),
     ];
     for (resource_type, label, resources, install) in file_kinds {
-        let wanted = names_of_type(&select, resource_type);
+        let wanted = names_of_type(select, resource_type);
         for resource in resources.iter().filter(|r| wanted.contains(&r.name)) {
-            let replace = may_replace(resource_type, &resource.name);
-            outcome(
-                resource_type,
-                label,
-                &resource.name,
-                install(&base_dir, resource, replace),
-            )?;
+            let mode = modes.of(resource_type, &resource.name);
+            let result = install(base_dir, resource, mode);
+            writes.record(resource_type, label, &resource.name, mode, result);
         }
     }
+    writes
+}
 
-    // Install collections
-    let mut collection_slugs = Vec::new();
-    let mut failed_collections = Vec::new();
+/// Write each selected collection. A collection whose slug could not be
+/// read is attempted when the whole manifest is selected, so its failure is
+/// reported.
+fn write_collections(
+    base_dir: &Path,
+    manifest: &AutomaticManifest,
+    select: &SelectedResources,
+    modes: &WriteModes,
+    writes: &mut InstallWrites,
+) {
     for coll_ref in &manifest.collections {
-        match install_collection(&base_dir, coll_ref) {
+        let wanted = match &coll_ref.slug {
+            Some(slug) => select.collections.contains(slug),
+            None => select.collections.len() == manifest_collection_slugs(manifest).len(),
+        };
+        if !wanted {
+            continue;
+        }
+        let mode = coll_ref
+            .slug
+            .as_deref()
+            .map(|slug| modes.of_collection(slug))
+            .unwrap_or(WriteMode::Create);
+        match install_collection(base_dir, coll_ref, mode) {
             Ok(slug) => {
-                collection_slugs.push(slug);
+                if !mode.replaces() {
+                    writes.created_collections.push(slug.clone());
+                }
+                writes.collection_slugs.push(slug);
             }
             Err(e) => {
-                warnings.push(format!(
+                writes.warnings.push(format!(
                     "Failed to install collection '{}': {}",
                     coll_ref.path, e
                 ));
-                failed_collections.push(coll_ref.path.clone());
+                writes.failed_collections.push(coll_ref.path.clone());
             }
         }
     }
+}
 
-    // Skipped keys are already `type:name` provenance keys.
-    let attempted: HashSet<String> = skipped.iter().cloned().collect();
-    match drop_stale_provenance(repo, &installed, &attempted, previous.as_ref()) {
-        Ok(dropped) => {
-            for key in dropped {
-                let (kind, name) = key.split_once(':').unwrap_or((key.as_str(), ""));
-                warnings.push(format!(
-                    "Cleared the old provenance record of {}:{}: this source no longer installs or lists it",
-                    listing_type(kind),
-                    name
-                ));
-            }
+/// The registry entry for an install: what it installed, each skipped name
+/// the source owns (so a later removal finds the file an earlier install
+/// left), and each collection it installed or listed before.
+fn source_entry(
+    repo: &str,
+    manifest: &AutomaticManifest,
+    directory: Option<&str>,
+    clone_path: &Path,
+    prov: &HashMap<String, String>,
+    writes: &InstallWrites,
+    previous: Option<&RemoteSource>,
+) -> (RemoteSource, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut listed = writes.installed.clone();
+    for (resource_type, name) in listed_resources(&owned_skipped(prov, repo, &writes.skipped)) {
+        list_once(&mut listed, resource_type, name);
+    }
+    let mut collection_slugs = writes.collection_slugs.clone();
+    for slug in previous
+        .map(|p| p.collection_slugs.as_slice())
+        .unwrap_or_default()
+    {
+        if !collection_slugs.contains(slug) {
+            collection_slugs.push(slug.clone());
         }
-        Err(e) => warnings.push(format!("Failed to clear old provenance records: {}", e)),
     }
 
-    // A skipped name the repo owns stays listed, so a later removal finds the
-    // file an earlier install left. The update path does the same.
-    let mut listed = installed.clone();
-    match owned_skipped(repo, &skipped) {
-        Ok(owned) => {
-            for (resource_type, name) in listed_resources(&owned) {
-                list_once(&mut listed, resource_type, name);
-            }
+    let commit_sha = match git_head_sha(clone_path) {
+        Ok(sha) => sha,
+        Err(e) => {
+            warnings.push(format!("Could not read the clone's commit: {}", e));
+            String::new()
         }
-        Err(e) => warnings.push(format!("Failed to read provenance for skipped resources: {}", e)),
-    }
-
-    // Register the source — use clone_path (repo root) for git SHA
-    let commit_sha = git_head_sha(&clone_path).unwrap_or_default();
-    let pin = match git_checked_out_pin(&clone_path) {
+    };
+    let pin = match git_checked_out_pin(clone_path) {
         Ok(pin) => pin,
         Err(e) => {
-            let pin = previous.as_ref().map(|p| p.pin.clone()).unwrap_or_default();
+            let pin = previous.map(|p| p.pin.clone()).unwrap_or_default();
             warnings.push(format!(
                 "Could not read the git ref of the clone, so the source tracks {} '{}': {}",
                 pin.strategy, pin.git_ref, e
@@ -1531,7 +2019,7 @@ pub fn install_source(
         }
     };
 
-    let source_entry = RemoteSource {
+    let entry = RemoteSource {
         repo: repo.to_string(),
         name: manifest.name.clone(),
         version: manifest.version.clone(),
@@ -1542,15 +2030,99 @@ pub fn install_source(
         resources: listed,
         collection_slugs,
     };
-    upsert_source(source_entry)?;
+    (entry, warnings)
+}
 
-    Ok(InstallResult {
-        installed,
-        skipped,
-        warnings,
-        failed_collections,
-        conflicts: Vec::new(),
-    })
+/// Write an install's provenance, then register its source. When either
+/// write fails, delete what the install created, put the provenance back,
+/// and return the error.
+fn commit_install(
+    prov: &HashMap<String, String>,
+    (entry, entry_warnings): (RemoteSource, Vec<String>),
+    writes: &InstallWrites,
+) -> Result<Vec<String>, String> {
+    let before = read_provenance()?;
+    let failure = match save_provenance(prov) {
+        Err(e) => Some(format!("Could not record the source's provenance: {}", e)),
+        Ok(()) => match upsert_source(entry) {
+            Err(e) => {
+                let restored = save_provenance(&before).err();
+                Some(match restored {
+                    None => format!("Could not register the source: {}", e),
+                    Some(r) => format!(
+                        "Could not register the source: {}. Its provenance could not be put back either: {}",
+                        e, r
+                    ),
+                })
+            }
+            Ok(()) => None,
+        },
+    };
+    let Some(failure) = failure else {
+        return Ok(entry_warnings);
+    };
+    let mut message = failure;
+    let undone = roll_back_install(writes);
+    if !undone.is_empty() {
+        message.push_str(&format!(
+            ". These could not be deleted again: {}",
+            undone.join(", ")
+        ));
+    }
+    if !writes.replaced.is_empty() {
+        message.push_str(&format!(
+            ". These were replaced and keep the new content: {}",
+            writes.replaced.join(", ")
+        ));
+    }
+    Err(message)
+}
+
+/// Delete each entry and collection an install created. Returns the
+/// `type:name` of each one that could not be deleted.
+fn roll_back_install(writes: &InstallWrites) -> Vec<String> {
+    let mut left = Vec::new();
+    for (resource_type, name) in &writes.created {
+        if let Err(e) = delete_created_entry(resource_type, name) {
+            left.push(format!("{}:{} ({})", resource_type, name, e));
+        }
+    }
+    if !writes.created_collections.is_empty() {
+        if let Err(e) = rewrite_collections_without(&writes.created_collections) {
+            left.push(format!(
+                "collections {} ({})",
+                writes.created_collections.join(", "),
+                e
+            ));
+        }
+    }
+    left
+}
+
+/// Delete the library entry an install just created, without the tidying a
+/// delete command does: nothing else refers to it yet.
+fn delete_created_entry(resource_type: &str, name: &str) -> Result<(), String> {
+    let path = match provenance_type(resource_type) {
+        Some("skill") => {
+            let dir = super::paths::get_library_skills_dir()?.join(name);
+            return fs::remove_dir_all(&dir).map_err(|e| e.to_string());
+        }
+        Some("mcp_server") => {
+            super::mcp_servers::get_mcp_servers_dir()?.join(format!("{}.json", name))
+        }
+        Some("rule") => super::rules::get_rules_dir()?.join(format!("{}.json", name)),
+        Some("template") => super::templates::get_templates_dir()?.join(format!("{}.json", name)),
+        Some("command") => super::paths::get_commands_dir()?.join(format!("{}.md", name)),
+        Some("agent") => super::subagents::get_subagents_dir()?.join(format!("{}.md", name)),
+        _ => return Err(format!("Unknown resource type: {}", resource_type)),
+    };
+    fs::remove_file(&path).map_err(|e| e.to_string())?;
+    let recent_kind = match listing_type(resource_type) {
+        "agents" => "subagents",
+        other => other,
+    };
+    remove_recently_added(recent_kind, name);
+    Ok(())
 }
 
 /// Remove a source and every resource and collection it installed.
@@ -1858,6 +2430,12 @@ fn rewrite_collections_without(slugs: &[String]) -> Result<(), String> {
 /// cannot fast-forward.
 pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
     let existing = get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
+    validate_pin(&existing.pin).map_err(|e| {
+        format!(
+            "Cannot update {}: {}. Remove the source and install it again from a valid ref.",
+            repo, e
+        )
+    })?;
 
     match existing.pin.strategy.as_str() {
         "branch" => {
@@ -1950,6 +2528,15 @@ fn plan_reinstall(
     let mut plan = ReinstallPlan::default();
     for (resource_type, names) in manifest_names(manifest) {
         for name in names {
+            if resource_type == "collection" {
+                // A source owns the collections its entry lists.
+                if existing.collection_slugs.contains(&name) {
+                    plan.selection.collections.push(name);
+                } else {
+                    list_once(&mut plan.new_available, "collections", &name);
+                }
+                continue;
+            }
             let key = provenance_key(resource_type, &name);
             let owned = prov.get(&key).map(String::as_str) == Some(repo);
             if !listed.contains(&key) {
@@ -1973,7 +2560,11 @@ fn plan_reinstall(
             .retain(|name| name != &conflict.resource_name);
         plan.warnings.push(format!(
             "Did not update {}:{}: {}",
-            listing_type(&conflict.resource_type),
+            if conflict.resource_type == "collection" {
+                "collections"
+            } else {
+                listing_type(&conflict.resource_type)
+            },
             conflict.resource_name,
             conflict.reason
         ));
@@ -1986,6 +2577,9 @@ fn selected_names_mut<'a>(
     selected: &'a mut SelectedResources,
     resource_type: &str,
 ) -> &'a mut Vec<String> {
+    if matches!(resource_type, "collection" | "collections") {
+        return &mut selected.collections;
+    }
     match provenance_type(resource_type) {
         Some("skill") => &mut selected.skills,
         Some("mcp_server") => &mut selected.mcp_servers,
@@ -2043,7 +2637,7 @@ fn remove_dropped_resources(
     entry.collection_slugs = remove_dropped_collections(
         old,
         &registered.collection_slugs,
-        install,
+        manifest,
         &others,
         &mut removals,
     );
@@ -2123,40 +2717,51 @@ fn remove_dropped_names(
     listed
 }
 
-/// Remove each collection `old` lists that the reinstall did not register
-/// again. `registered` holds the slugs it did register. Returns the slugs the
-/// source lists afterwards.
+/// Remove each collection the source listed that `manifest` no longer
+/// names. `registered` holds the slugs the reinstall's entry lists. Returns
+/// the slugs the source lists afterwards.
 ///
-/// The slug of a collection that failed to install is not known without its
-/// file. When any collection failed, every old slug stays listed and nothing
-/// is removed, so a collection still in the manifest is not lost.
+/// The slug of a collection whose file could not be read is not known. When
+/// the manifest has one, every slug stays listed and nothing is removed, so
+/// a collection still in the manifest is not lost.
 fn remove_dropped_collections(
     old: &RemoteSource,
     registered: &[String],
-    install: &InstallResult,
+    manifest: &AutomaticManifest,
     others: &[RemoteSource],
     removals: &mut UpdateRemovals,
 ) -> Vec<String> {
-    let mut slugs = registered.to_vec();
-    let dropped: Vec<String> = old
-        .collection_slugs
+    let named = manifest_collection_slugs(manifest);
+    let mut listed: Vec<String> = registered.to_vec();
+    for slug in &old.collection_slugs {
+        if !listed.contains(slug) {
+            listed.push(slug.clone());
+        }
+    }
+    let dropped: Vec<String> = listed
         .iter()
-        .filter(|slug| !registered.contains(slug))
+        .filter(|slug| !named.contains(slug))
         .cloned()
         .collect();
     if dropped.is_empty() {
-        return slugs;
+        return listed;
     }
-    if !install.failed_collections.is_empty() {
+    let unread: Vec<&str> = manifest
+        .collections
+        .iter()
+        .filter(|c| c.slug.is_none())
+        .map(|c| c.path.as_str())
+        .collect();
+    if !unread.is_empty() {
         removals.warnings.push(format!(
-            "Kept the collections {} because a collection failed to install: {}",
+            "Kept the collections {} because a collection file could not be read: {}",
             dropped.join(", "),
-            install.failed_collections.join(", ")
+            unread.join(", ")
         ));
-        slugs.extend(dropped);
-        return slugs;
+        return listed;
     }
 
+    listed.retain(|slug| !dropped.contains(slug));
     let outcome = remove_collections(&dropped, others);
     if !outcome.removed.is_empty() {
         removals
@@ -2168,15 +2773,18 @@ fn remove_dropped_collections(
         .extend(outcome.kept.iter().map(|slug| collection_key(slug)));
     for failure in &outcome.failed {
         if let Some(slug) = failure.resource.strip_prefix("collection:") {
-            slugs.push(slug.to_string());
+            listed.push(slug.to_string());
         }
     }
     removals.failed.extend(outcome.failed);
-    slugs
+    listed
 }
 
 /// The names `selected` holds for a type a source lists resources under.
 fn names_of_type<'a>(selected: &'a SelectedResources, resource_type: &str) -> &'a [String] {
+    if matches!(resource_type, "collection" | "collections") {
+        return &selected.collections;
+    }
     match provenance_type(resource_type) {
         Some("skill") => &selected.skills,
         Some("mcp_server") => &selected.mcp_servers,
@@ -2225,6 +2833,7 @@ fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
     for a in &manifest.agents {
         sel.agents.push(a.name.clone());
     }
+    sel.collections = manifest_collection_slugs(manifest);
 
     sel
 }
@@ -2282,10 +2891,18 @@ fn resolve_manifest_path(source_dir: &Path, path: &str, owner: &str) -> Result<P
 ///
 /// `skill.name` must be a plain name and `skill.path` must resolve to a
 /// folder inside `source_dir`. Both come from the repository's manifest.
-/// With `replace`, an existing skill folder of this name is replaced.
-/// Without it the folder is created with `create_dir`, which fails on any
-/// existing entry the file system treats as this name.
-fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill, replace: bool) -> Result<(), String> {
+///
+/// A new skill's folder is created with `create_dir`, which fails on any
+/// existing entry the file system treats as this name, and is removed again
+/// if the copy fails. A replacement is copied into a hidden staging folder
+/// first. Only once the copy is complete is the old folder moved aside and
+/// the staged one moved into place, so a failed copy leaves the installed
+/// skill as it was. A skill folder that is a symlink is never replaced.
+fn install_skill(
+    source_dir: &Path,
+    skill: &SkillsJsonSkill,
+    mode: WriteMode,
+) -> Result<(), String> {
     ensure_resource_name("skill", &skill.name)?;
     let skill_source =
         resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
@@ -2299,16 +2916,17 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill, replace: bool) -> R
     fs::create_dir_all(&skills_dir)
         .map_err(|e| format!("Failed to create skills directory: {}", e))?;
     let dest = skills_dir.join(&skill.name);
-    if replace && dest.exists() {
-        fs::remove_dir_all(&dest).map_err(|e| format!("Failed to remove existing skill: {}", e))?;
+    if mode.replaces() && fs::symlink_metadata(&dest).is_ok() {
+        refuse_symlink(&dest, "skill", &skill.name)?;
+        return replace_skill_folder(&skill_source, &skills_dir, &dest);
     }
+
     fs::create_dir(&dest).map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => {
             format!("skill '{}' already exists in the library", skill.name)
         }
         _ => format!("Failed to create skill directory: {}", e),
     })?;
-
     if let Err(e) = copy_dir_recursive(&skill_source, &dest) {
         // This call created the folder, so a half-copied skill is removed
         // rather than left looking installed.
@@ -2316,6 +2934,65 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill, replace: bool) -> R
         return Err(e);
     }
     Ok(())
+}
+
+/// Replace the skill folder `dest` with a copy of `source`, staged in
+/// `skills_dir`. See [`install_skill`].
+fn replace_skill_folder(source: &Path, skills_dir: &Path, dest: &Path) -> Result<(), String> {
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let unique = format!(
+        "{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+    let staged = skills_dir.join(format!(".{}.installing-{}", name, unique));
+    let aside = skills_dir.join(format!(".{}.replaced-{}", name, unique));
+
+    fs::create_dir(&staged).map_err(|e| format!("Failed to create a staging folder: {}", e))?;
+    if let Err(e) = copy_dir_recursive(source, &staged) {
+        let _ = fs::remove_dir_all(&staged);
+        return Err(e);
+    }
+    if let Err(e) = fs::rename(dest, &aside) {
+        let _ = fs::remove_dir_all(&staged);
+        return Err(format!("Failed to move the installed skill aside: {}", e));
+    }
+    if let Err(e) = fs::rename(&staged, dest) {
+        let restored = fs::rename(&aside, dest);
+        let _ = fs::remove_dir_all(&staged);
+        return Err(match restored {
+            Ok(()) => format!("Failed to move the new skill into place: {}", e),
+            Err(r) => format!(
+                "Failed to move the new skill into place: {}. The old skill is at {}: {}",
+                e,
+                aside.display(),
+                r
+            ),
+        });
+    }
+    if let Err(e) = fs::remove_dir_all(&aside) {
+        eprintln!(
+            "[remote_sources] Left the replaced skill at {}: {}",
+            aside.display(),
+            e
+        );
+    }
+    Ok(())
+}
+
+/// Refuse to replace `path` when it is a symlink: the write would land
+/// wherever the link points.
+fn refuse_symlink(path: &Path, what: &str, name: &str) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "{} '{}' in the library is a symlink, so it is not replaced",
+            what, name
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Walk a skill directory and run the asset security scanner on every
@@ -2382,8 +3059,8 @@ fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
 }
 
 /// Install a rule: read .md file, wrap in JSON, write to rules dir. See
-/// [`write_library_file`] for `replace`.
-fn install_rule(source_dir: &Path, rule: &ManifestResource, replace: bool) -> Result<(), String> {
+/// [`write_library_file`] for `mode`.
+fn install_rule(source_dir: &Path, rule: &ManifestResource, mode: WriteMode) -> Result<(), String> {
     ensure_resource_name("rule", &rule.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &rule.path, &format!("rule '{}'", rule.name))?;
@@ -2405,15 +3082,15 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource, replace: bool) -> Re
     let dest = rules_dir.join(format!("{}.json", rule.name));
     let json_str = serde_json::to_string_pretty(&rule_json)
         .map_err(|e| format!("Failed to serialize rule: {}", e))?;
-    write_library_file(&dest, &json_str, replace, "rule", &rule.name)
+    write_library_file(&dest, &json_str, mode, "rule", &rule.name)
 }
 
 /// Install a template: copy JSON file to project_templates dir. See
-/// [`write_library_file`] for `replace`.
+/// [`write_library_file`] for `mode`.
 fn install_template(
     source_dir: &Path,
     template: &ManifestResource,
-    replace: bool,
+    mode: WriteMode,
 ) -> Result<(), String> {
     ensure_resource_name("template", &template.name)?;
     let source_path = resolve_manifest_path(
@@ -2439,17 +3116,22 @@ fn install_template(
         .map_err(|e| format!("Failed to create project_templates directory: {}", e))?;
 
     let dest = templates_dir.join(format!("{}.json", template.name));
-    write_library_file(&dest, &content, replace, "template", &template.name)
+    write_library_file(&dest, &content, mode, "template", &template.name)
 }
 
 /// Install an MCP server config: scan the JSON file and save it to the MCP
-/// server registry. With `replace`, an existing entry of this name is
-/// replaced. Without it the entry is created with `create_new`, as
-/// [`write_library_file`] describes.
+/// server registry. A replacing mode replaces an existing entry of this
+/// name, unless its file is a symlink. [`WriteMode::Create`] creates the
+/// entry with `create_new`, as [`write_library_file`] describes.
+///
+/// When the source already owns the entry, the user's own env values are
+/// kept: for each env key the new config declares, a non-empty value the
+/// stored entry holds wins over the source's. The user fills in API keys
+/// there, and an update must not wipe them.
 fn install_mcp_server(
     source_dir: &Path,
     server: &ManifestResource,
-    replace: bool,
+    mode: WriteMode,
 ) -> Result<(), String> {
     ensure_resource_name("MCP server", &server.name)?;
     let source_path = resolve_manifest_path(
@@ -2473,26 +3155,63 @@ fn install_mcp_server(
     let _: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", server.name, e))?;
 
-    // Stored through the registry's own save, so env values are encrypted
-    // like every other server's, and the OAuth secrets of a server this
-    // install replaces with another URL are tidied. A value that already
-    // carries the encryption prefix is blanked first: this install could
-    // never decrypt it, and the unreadable entry would stop cloud sync and
-    // project sync.
-    let written = if replace {
-        super::mcp_servers::save_untrusted_mcp_server_config(&server.name, &content)
-    } else {
-        super::mcp_servers::create_mcp_server_config(
-            &server.name,
-            &super::mcp_servers::blank_ciphertext_like_env_values(&content),
-        )
+    // A value that already carries the encryption prefix is blanked: this
+    // install could never decrypt it, and the unreadable entry would stop
+    // cloud sync and project sync. Env values are encrypted on save, and the
+    // OAuth secrets of a server this install replaces with another URL are
+    // tidied.
+    let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
+    let written = match mode {
+        WriteMode::Create => super::mcp_servers::create_mcp_server_config(&server.name, &content),
+        WriteMode::ReplaceConfirmed => {
+            refuse_symlink(&mcp_server_path(&server.name)?, "MCP server", &server.name)?;
+            super::mcp_servers::save_mcp_server_config(&server.name, &content)
+        }
+        WriteMode::ReplaceOwned => {
+            refuse_symlink(&mcp_server_path(&server.name)?, "MCP server", &server.name)?;
+            let merged = keep_local_env_values(&server.name, &content)?;
+            super::mcp_servers::save_mcp_server_config(&server.name, &merged)
+        }
     };
     written.map_err(|e| format!("Failed to write MCP server config: {}", e))
 }
 
+fn mcp_server_path(name: &str) -> Result<PathBuf, String> {
+    Ok(super::mcp_servers::get_mcp_servers_dir()?.join(format!("{}.json", name)))
+}
+
+/// `incoming` with each env value it declares replaced by the stored
+/// entry's non-empty value for the same key. Keys only the stored entry has
+/// are dropped, as the source no longer declares them.
+fn keep_local_env_values(name: &str, incoming: &str) -> Result<String, String> {
+    let Some(stored) = super::mcp_servers::read_mcp_server_config_if_present(name)? else {
+        return Ok(incoming.to_string());
+    };
+    let stored: serde_json::Value = serde_json::from_str(&stored)
+        .map_err(|e| format!("Failed to parse the stored MCP server '{}': {}", name, e))?;
+    let mut config: serde_json::Value = serde_json::from_str(incoming)
+        .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", name, e))?;
+    let (Some(local), Some(env)) = (
+        stored.get("env").and_then(|e| e.as_object()),
+        config.get_mut("env").and_then(|e| e.as_object_mut()),
+    ) else {
+        return Ok(incoming.to_string());
+    };
+    for (key, value) in env.iter_mut() {
+        if let Some(local_value) = local.get(key).filter(|v| v.as_str() != Some("")) {
+            *value = local_value.clone();
+        }
+    }
+    serde_json::to_string(&config).map_err(|e| e.to_string())
+}
+
 /// Install a command: copy .md file to commands dir. See
-/// [`write_library_file`] for `replace`.
-fn install_command(source_dir: &Path, cmd: &ManifestResource, replace: bool) -> Result<(), String> {
+/// [`write_library_file`] for `mode`.
+fn install_command(
+    source_dir: &Path,
+    cmd: &ManifestResource,
+    mode: WriteMode,
+) -> Result<(), String> {
     ensure_resource_name("command", &cmd.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &cmd.path, &format!("command '{}'", cmd.name))?;
@@ -2510,12 +3229,16 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource, replace: bool) -> 
         .map_err(|e| format!("Failed to create commands directory: {}", e))?;
 
     let dest = commands_dir.join(format!("{}.md", cmd.name));
-    write_library_file(&dest, &content, replace, "command", &cmd.name)
+    write_library_file(&dest, &content, mode, "command", &cmd.name)
 }
 
 /// Install an agent: copy .md file to agents dir. See
-/// [`write_library_file`] for `replace`.
-fn install_agent(source_dir: &Path, agent: &ManifestResource, replace: bool) -> Result<(), String> {
+/// [`write_library_file`] for `mode`.
+fn install_agent(
+    source_dir: &Path,
+    agent: &ManifestResource,
+    mode: WriteMode,
+) -> Result<(), String> {
     ensure_resource_name("agent", &agent.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &agent.path, &format!("agent '{}'", agent.name))?;
@@ -2533,25 +3256,28 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource, replace: bool) -> 
         .map_err(|e| format!("Failed to create agents directory: {}", e))?;
 
     let dest = agents_dir.join(format!("{}.md", agent.name));
-    write_library_file(&dest, &content, replace, "agent", &agent.name)
+    write_library_file(&dest, &content, mode, "agent", &agent.name)
 }
 
-/// Write a resource's library file. With `replace`, an existing file is
-/// replaced. Without it the file is opened with `create_new`, so it is never
-/// replaced: not one written since the conflict check, and not one the file
-/// system treats as the same name, such as a case variant on APFS. A file
-/// this call created is removed again if the write fails.
+/// Write a resource's library file. A replacing mode replaces an existing
+/// file atomically, unless it is a symlink. [`WriteMode::Create`] opens the
+/// file with `create_new`, so it is never replaced: not one written since
+/// the conflict check, and not one the file system treats as the same name,
+/// such as a case variant on APFS. A file this call created is removed
+/// again if the write fails.
 fn write_library_file(
     path: &Path,
     content: &str,
-    replace: bool,
+    mode: WriteMode,
     what: &str,
     name: &str,
 ) -> Result<(), String> {
     use std::io::Write;
 
-    if replace {
-        return fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", what, e));
+    if mode.replaces() {
+        refuse_symlink(path, what, name)?;
+        return super::project_registry::write_registry_file(path, content)
+            .map_err(|e| format!("Failed to write {}: {}", what, e));
     }
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -2570,8 +3296,11 @@ fn write_library_file(
     Ok(())
 }
 
-/// Install a collection: parse JSON and append to Discover collections.
-fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<String, String> {
+/// Read and parse a manifest's collection file.
+fn read_collection_file(
+    source_dir: &Path,
+    coll_ref: &CollectionRef,
+) -> Result<serde_json::Value, String> {
     let source_path = resolve_manifest_path(
         source_dir,
         &coll_ref.path,
@@ -2579,39 +3308,40 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
     )?;
     let content = fs::read_to_string(&source_path)
         .map_err(|e| format!("Failed to read collection file {}: {}", coll_ref.path, e))?;
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Collection '{}' is not valid JSON: {}", coll_ref.path, e))
+}
 
-    let collection: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Collection '{}' is not valid JSON: {}", coll_ref.path, e))?;
-
+/// Install a collection into the Discover collections. A replacing mode
+/// replaces the entry with the same slug. [`WriteMode::Create`] fails when
+/// one exists. A collections file that does not parse is an error, so its
+/// entries are never written over.
+fn install_collection(
+    source_dir: &Path,
+    coll_ref: &CollectionRef,
+    mode: WriteMode,
+) -> Result<String, String> {
+    let collection = read_collection_file(source_dir, coll_ref)?;
     let slug = collection
         .get("slug")
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("Collection at '{}' missing 'slug' field", coll_ref.path))?
         .to_string();
 
-    // Append to Discover collections
-    let discover_dir = get_automatic_dir()?.join("discover");
-    fs::create_dir_all(&discover_dir)
-        .map_err(|e| format!("Failed to create discover directory: {}", e))?;
-
-    let collections_path = discover_dir.join("collections.json");
-    let mut collections: Vec<serde_json::Value> = if collections_path.exists() {
-        let raw = fs::read_to_string(&collections_path)
-            .map_err(|e| format!("Failed to read collections.json: {}", e))?;
-        serde_json::from_str(&raw).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    // Remove existing entry with same slug, then add new one
-    collections.retain(|c| c.get("slug").and_then(|v| v.as_str()) != Some(&slug));
-    collections.push(collection);
-
-    let json = serde_json::to_string_pretty(&collections)
-        .map_err(|e| format!("Failed to serialize collections: {}", e))?;
-    fs::write(&collections_path, json)
-        .map_err(|e| format!("Failed to write collections.json: {}", e))?;
-
+    let slug_of =
+        |c: &serde_json::Value| c.get("slug").and_then(|v| v.as_str()) == Some(slug.as_str());
+    let mut collections = super::discover_data::read_collection_entries()?;
+    match collections.iter().position(slug_of) {
+        Some(_) if !mode.replaces() => {
+            return Err(format!("collection '{}' already exists in Discover", slug));
+        }
+        Some(position) => {
+            collections.retain(|c| !slug_of(c));
+            collections.insert(position.min(collections.len()), collection);
+        }
+        None => collections.push(collection),
+    }
+    super::discover_data::write_collection_entries(&collections)?;
     Ok(slug)
 }
 
@@ -2672,8 +3402,13 @@ fn remove_library_skill(name: &str) -> Result<Vec<String>, String> {
         }
     }
     // The tidying `core::delete_skill` does. That function also deletes from
-    // external skill folders, so it is not called.
+    // external skill folders, so it is not called. A skill of this name in
+    // another skill folder is the user's, and its records stay.
     let mut warnings = Vec::new();
+    if skill_resolves_outside_library(name) {
+        remove_recently_added("skills", name);
+        return Ok(warnings);
+    }
     if let Err(e) = super::skill_store::remove_skill_source(name) {
         warnings.push(format!("Could not clear the source record of skill '{}': {}", name, e));
     }
@@ -2999,7 +3734,7 @@ mod tests {
                 path: "server.json".to_string(),
                 description: String::new(),
             };
-            install_mcp_server(source.path(), &server, true).unwrap();
+            install_mcp_server(source.path(), &server, WriteMode::ReplaceConfirmed).unwrap();
 
             let stored = crate::core::read_mcp_server_config(name).unwrap();
             assert!(stored.contains("https://other.example/mcp"));
@@ -3027,7 +3762,7 @@ mod tests {
                 path: "server.json".to_string(),
                 description: String::new(),
             };
-            install_mcp_server(source.path(), &server, true).unwrap();
+            install_mcp_server(source.path(), &server, WriteMode::ReplaceConfirmed).unwrap();
 
             assert_eq!(
                 crate::proxy::load_oauth_token(name, "https://mcp.example.com/mcp").unwrap(),
@@ -3119,7 +3854,7 @@ mod tests {
         }
     }
 
-    type FileInstaller = fn(&Path, &ManifestResource, bool) -> Result<(), String>;
+    type FileInstaller = fn(&Path, &ManifestResource, WriteMode) -> Result<(), String>;
 
     /// Each installer that copies one file, with a file name and content it
     /// accepts.
@@ -3167,8 +3902,12 @@ mod tests {
 
             crate::core::paths::with_test_home(sandbox.home.clone(), || {
                 for name in UNSAFE_NAMES {
-                    let err = install(&sandbox.source, &resource(name, file_name), false)
-                        .expect_err(&format!("{} name {:?} should be refused", kind, name));
+                    let err = install(
+                        &sandbox.source,
+                        &resource(name, file_name),
+                        WriteMode::Create,
+                    )
+                    .expect_err(&format!("{} name {:?} should be refused", kind, name));
                     assert!(
                         err.contains(&quoted(name)),
                         "the error for {} name {:?} should name it: {}",
@@ -3208,7 +3947,7 @@ mod tests {
 
             crate::core::paths::with_test_home(sandbox.home.clone(), || {
                 for path in &paths {
-                    let err = install(&sandbox.source, &resource("probe", path), false)
+                    let err = install(&sandbox.source, &resource("probe", path), WriteMode::Create)
                         .expect_err(&format!("{} path {:?} should be refused", kind, path));
                     assert!(
                         err.contains("'probe'"),
@@ -3241,7 +3980,7 @@ mod tests {
                 install(
                     &sandbox.source,
                     &resource("probe", &format!("./nested/{}", file_name)),
-                    false,
+                    WriteMode::Create,
                 )
                 .unwrap_or_else(|e| panic!("a plain {} should install: {}", kind, e));
             });
@@ -3270,7 +4009,7 @@ mod tests {
             let before = files_under(&sandbox.home);
 
             for name in UNSAFE_NAMES {
-                let err = install_skill(&sandbox.source, &skill(name, "probe"), false)
+                let err = install_skill(&sandbox.source, &skill(name, "probe"), WriteMode::Create)
                     .expect_err(&format!("skill name {:?} should be refused", name));
                 assert!(
                     err.contains(&quoted(name)),
@@ -3302,7 +4041,7 @@ mod tests {
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             for path in &paths {
-                let err = install_skill(&sandbox.source, &skill("probe", path), false)
+                let err = install_skill(&sandbox.source, &skill("probe", path), WriteMode::Create)
                     .expect_err(&format!("skill path {:?} should be refused", path));
                 assert!(
                     err.contains("'probe'"),
@@ -3323,8 +4062,12 @@ mod tests {
         fs::write(sandbox.source.join("skills/probe/SKILL.md"), "# Probe\n").expect("write");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_skill(&sandbox.source, &skill("probe", "./skills/probe"), false)
-                .expect("install");
+            install_skill(
+                &sandbox.source,
+                &skill("probe", "./skills/probe"),
+                WriteMode::Create,
+            )
+            .expect("install");
             let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
             assert_eq!(
                 fs::read_to_string(skills_dir.join("probe/SKILL.md")).expect("read"),
@@ -3425,9 +4168,15 @@ mod tests {
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             for path in &paths {
-                let err =
-                    install_collection(&sandbox.source, &CollectionRef { path: path.clone() })
-                        .expect_err(&format!("collection path {:?} should be refused", path));
+                let err = install_collection(
+                    &sandbox.source,
+                    &CollectionRef {
+                        path: path.clone(),
+                        ..Default::default()
+                    },
+                    WriteMode::Create,
+                )
+                .expect_err(&format!("collection path {:?} should be refused", path));
                 assert!(
                     err.contains("collection"),
                     "the error for {:?} should name the collection: {}",
@@ -3598,8 +4347,12 @@ mod tests {
         .expect("write server");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_mcp_server(&sandbox.source, &resource("probe", "server.json"), false)
-                .expect("install");
+            install_mcp_server(
+                &sandbox.source,
+                &resource("probe", "server.json"),
+                WriteMode::Create,
+            )
+            .expect("install");
 
             let stored: serde_json::Value = serde_json::from_str(
                 &crate::core::mcp_servers::read_mcp_server_config("probe")
@@ -3628,7 +4381,7 @@ mod tests {
             let err = install_rule(
                 &sandbox.source,
                 &resource("probe", "rules/absent.md"),
-                false,
+                WriteMode::Create,
             )
             .expect_err("a missing file should be refused");
             assert_eq!(
@@ -3654,7 +4407,7 @@ mod tests {
             let err = install_rule(
                 &sandbox.source,
                 &resource("probe", "out-link/resource.md"),
-                false,
+                WriteMode::Create,
             )
             .expect_err("a path through a folder link that leaves the source is refused");
             assert!(err.contains("'probe'"), "{}", err);
@@ -3663,7 +4416,7 @@ mod tests {
             install_rule(
                 &sandbox.source,
                 &resource("probe", "in-link/resource.md"),
-                false,
+                WriteMode::Create,
             )
             .expect("a link that stays inside the source is followed");
         });
@@ -3675,7 +4428,8 @@ mod tests {
         fs::write(sandbox.source.join("SKILL.md"), "# Root skill\n").expect("write skill");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_skill(&sandbox.source, &skill("probe", "."), false).expect("install");
+            install_skill(&sandbox.source, &skill("probe", "."), WriteMode::Create)
+                .expect("install");
             let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
             assert!(skills_dir.join("probe/SKILL.md").exists());
         });
@@ -3920,6 +4674,7 @@ mod tests {
             agents: vec![resource(&names.agent, "agent.md")],
             collections: vec![CollectionRef {
                 path: "collection.json".to_string(),
+                ..Default::default()
             }],
             ..Default::default()
         }
@@ -4186,7 +4941,7 @@ mod tests {
             // owns their provenance.
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
             let refused = install_source(REPO, &manifest, None, None, &[]).expect("install");
-            assert_eq!(refused.conflicts.len(), 6, "{:?}", refused.conflicts);
+            assert_eq!(refused.conflicts.len(), 7, "{:?}", refused.conflicts);
             let confirmed: Vec<String> = refused.conflicts.iter().map(ConflictInfo::key).collect();
             let result =
                 install_source(REPO, &manifest, None, None, &confirmed).expect("confirmed install");
@@ -4351,7 +5106,6 @@ mod tests {
             for (file, slug) in [
                 ("own.json", "source-remove-own"),
                 ("shared.json", "source-remove-shared"),
-                ("seed.json", "automatic-skills"),
             ] {
                 fs::write(
                     clone.join(file),
@@ -4360,10 +5114,23 @@ mod tests {
                 .expect("write collection");
                 manifest.collections.push(CollectionRef {
                     path: file.to_string(),
+                    ..Default::default()
                 });
             }
             install_source(REPO, &manifest, None, None, &[]).expect("install");
             register(OTHER_REPO, &[], &["source-remove-shared"]);
+            // An older version also let the source replace a bundled
+            // collection, which an install now refuses.
+            let mut entries = collections();
+            for entry in entries.iter_mut() {
+                if entry["slug"] == "automatic-skills" {
+                    *entry = serde_json::json!({ "slug": "automatic-skills", "name": "From the source" });
+                }
+            }
+            write_collections(&entries);
+            let mut source = get_source(REPO).expect("read").expect("registered");
+            source.collection_slugs.push("automatic-skills".to_string());
+            upsert_source(source).expect("list the bundled slug");
 
             let result = remove_source(REPO).expect("remove");
 
@@ -4390,13 +5157,20 @@ mod tests {
 
     // ── updating a source ────────────────────────────────────────────────────
 
+    /// `manifest` resolved against the clone of `REPO`, as an update
+    /// resolves it.
+    fn resolved(manifest: &AutomaticManifest) -> AutomaticManifest {
+        resolved_copy(&source_clone_path(REPO).expect("clone path"), manifest).expect("resolve")
+    }
+
     /// Install `first` from `REPO`, then reinstall `second` the way an
     /// update does, and return the removals the update makes.
     fn update_from(first: &AutomaticManifest, second: &AutomaticManifest) -> UpdateRemovals {
         install_source(REPO, first, None, None, &[]).expect("first install");
         let old = get_source(REPO).expect("read").expect("registered");
         let reinstall = install_source(REPO, second, None, None, &[]).expect("reinstall");
-        remove_dropped_resources(REPO, &old, second, &reinstall).expect("remove dropped")
+        remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall)
+            .expect("remove dropped")
     }
 
     #[test]
@@ -4451,8 +5225,8 @@ mod tests {
             let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
             assert_eq!(reinstall.skipped, vec![format!("rule:{}", names.rule)]);
 
-            let removals =
-                remove_dropped_resources(REPO, &old, &manifest, &reinstall).expect("removals");
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&manifest), &reinstall)
+                .expect("removals");
 
             assert_eq!(removals, UpdateRemovals::default());
             let stored = fs::read_to_string(library_path("rules", &names.rule)).expect("read rule");
@@ -4484,8 +5258,8 @@ mod tests {
             record_provenance("skill", "group/skill", REPO).unwrap();
             let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
 
-            let removals =
-                remove_dropped_resources(REPO, &old, &manifest, &reinstall).expect("removals");
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&manifest), &reinstall)
+                .expect("removals");
 
             assert_eq!(removals.removed, HashMap::new());
             assert_eq!(
@@ -5109,8 +5883,8 @@ mod tests {
             register(OTHER_REPO, &[("rules", &[names.rule.as_str()])], &[]);
             let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
 
-            let removals =
-                remove_dropped_resources(REPO, &old, &second, &reinstall).expect("removals");
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall)
+                .expect("removals");
 
             assert_eq!(removals.removed, HashMap::new());
             assert_eq!(removals.kept, vec![format!("rules:{}", names.rule)]);
@@ -5140,8 +5914,8 @@ mod tests {
             // A collections file that cannot be read back.
             fs::write(collections_file(), "not json").unwrap();
 
-            let removals =
-                remove_dropped_resources(REPO, &old, &second, &reinstall).expect("removals");
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall)
+                .expect("removals");
 
             assert_eq!(
                 failed_resources(&removals.failed),
@@ -5167,8 +5941,8 @@ mod tests {
             let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
             assert_eq!(reinstall.failed_collections, vec!["collection.json".to_string()]);
 
-            let removals =
-                remove_dropped_resources(REPO, &old, &manifest, &reinstall).expect("removals");
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&manifest), &reinstall)
+                .expect("removals");
 
             assert_eq!(removals.removed.get("collection"), None);
             assert_eq!(removals.failed, Vec::new());
@@ -5200,7 +5974,7 @@ mod tests {
             // The first write, of every name, succeeds. The last one fails.
             SOURCES_WRITES_LEFT.with(|left| left.set(Some(1)));
 
-            let outcome = remove_dropped_resources(REPO, &old, &second, &reinstall);
+            let outcome = remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall);
             SOURCES_WRITES_LEFT.with(|left| left.set(None));
 
             assert!(outcome.is_err());
@@ -5230,7 +6004,7 @@ mod tests {
             let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
             fail_provenance_writes(true);
 
-            let removals = remove_dropped_resources(REPO, &old, &second, &reinstall);
+            let removals = remove_dropped_resources(REPO, &old, &resolved(&second), &reinstall);
             fail_provenance_writes(false);
 
             let removals = removals.expect("removals");
@@ -5250,7 +6024,7 @@ mod tests {
                 Some(&vec![names.command.clone()])
             );
 
-            let retry = remove_dropped_resources(REPO, &entry, &second, &reinstall)
+            let retry = remove_dropped_resources(REPO, &entry, &resolved(&second), &reinstall)
                 .expect("retry");
             assert_eq!(retry.removed.get("rules"), Some(&vec![names.rule.clone()]));
             assert_eq!(get_provenance("rule", &names.rule), Ok(None));
@@ -5730,15 +6504,18 @@ mod tests {
             install_every_kind(OTHER_REPO, &names, MCP);
             let manifest = write_every_kind(REPO, &names, MCP);
 
-            let conflicts = check_conflicts(REPO, &manifest, None).expect("check");
+            let conflicts = check_conflicts(REPO, &resolved(&manifest), None).expect("check");
 
-            assert_eq!(keys_of(&conflicts), conflict_keys(&names));
+            let mut expected = conflict_keys(&names);
+            expected.push(format!("collection:{}", names.collection));
+            let expected = sorted(expected);
+            assert_eq!(keys_of(&conflicts), expected);
             for conflict in &conflicts {
                 assert_eq!(conflict.existing_source, format!("source:{}", OTHER_REPO));
                 assert!(!conflict.blocked);
             }
             let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
-            assert_eq!(keys_of(&result.conflicts), conflict_keys(&names));
+            assert_eq!(keys_of(&result.conflicts), expected);
             assert_eq!(
                 get_provenance("rule", &names.rule),
                 Ok(Some(OTHER_REPO.to_string()))
@@ -5874,8 +6651,12 @@ mod tests {
                 let name = format!("vel385-create-{}", library_kind);
                 let path = plant(library_kind, &name, "original");
 
-                let err = install(&sandbox.source, &resource(&name, file_name), false)
-                    .expect_err("an existing entry must not be replaced");
+                let err = install(
+                    &sandbox.source,
+                    &resource(&name, file_name),
+                    WriteMode::Create,
+                )
+                .expect_err("an existing entry must not be replaced");
 
                 assert!(err.contains("already exists"), "{kind}: {err}");
                 assert_eq!(
@@ -5891,7 +6672,7 @@ mod tests {
             let err = install_skill(
                 &sandbox.source,
                 &skill("vel385-create-skill", "probe"),
-                false,
+                WriteMode::Create,
             )
             .expect_err("an existing skill must not be replaced");
             assert!(err.contains("already exists"), "{err}");
@@ -6089,8 +6870,8 @@ mod tests {
             let names = KindNames::new("vel385-upd-user");
             let manifest = write_every_kind(REPO, &names, MCP);
             install_source(REPO, &manifest, None, None, &[]).expect("install");
-            release_ownership_on_user_save("rule", &names.rule).expect("release");
-            crate::core::save_rule(&names.rule, "Mine", "My own rule.\n").expect("save rule");
+            crate::core::user_writes::save_rule(&names.rule, "Mine", "My own rule.\n")
+                .expect("save rule");
 
             // A version that still lists the rule does not touch it.
             publish(&manifest);
@@ -6172,18 +6953,27 @@ mod tests {
     }
 
     #[test]
-    fn a_user_save_release_clears_only_that_name() {
+    fn a_user_write_releases_only_that_name_and_restores_it_on_failure() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             record_provenance("rule", "vel385-mine", REPO).unwrap();
             record_provenance("rule", "vel385-theirs", REPO).unwrap();
+            record_provenance("rule", "vel385-failed", REPO).unwrap();
 
-            release_ownership_on_user_save("rule", "vel385-mine").expect("release");
-            release_ownership_on_user_save("rule", "vel385-never-owned").expect("no-op");
+            as_user_write("rule", "vel385-mine", || Ok::<(), String>(())).expect("write");
+            as_user_write("rule", "vel385-never-owned", || Ok::<(), String>(())).expect("no-op");
+            let failed = as_user_write("rule", "vel385-failed", || {
+                Err::<(), String>("disk full".to_string())
+            });
 
+            assert_eq!(failed, Err("disk full".to_string()));
             assert_eq!(get_provenance("rule", "vel385-mine"), Ok(None));
             assert_eq!(
                 get_provenance("rule", "vel385-theirs"),
+                Ok(Some(REPO.to_string()))
+            );
+            assert_eq!(
+                get_provenance("rule", "vel385-failed"),
                 Ok(Some(REPO.to_string()))
             );
         });
@@ -6340,6 +7130,8 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let origin = make_origin(&sandbox, "# One\n");
             let sha = git(&origin, &["rev-parse", "HEAD"]);
+            // A tag on the same commit: the user still fetched a commit.
+            git(&origin, &["tag", "v-same"]);
 
             let source = fetch_and_install(Some(pin_for_ref(&sha)));
 
@@ -6354,6 +7146,598 @@ mod tests {
             update_source(PIN_REPO).expect("update");
             assert!(installed_rule().contains("# One"), "{}", installed_rule());
             set_source_url_base(None);
+        });
+    }
+
+    // ── fix round 1 (VEL-385) ───────────────────────────────────────────────
+
+    /// Whether this process can read a file whose mode is 000, as root can.
+    #[cfg(unix)]
+    fn can_read_unreadable_files(dir: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let probe = dir.join("probe-mode-000");
+        fs::write(&probe, "x").expect("write probe");
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o000)).expect("chmod probe");
+        let readable = fs::read(&probe).is_ok();
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o644)).expect("chmod back");
+        fs::remove_file(&probe).expect("remove probe");
+        readable
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_skill_reinstall_keeps_the_installed_skill() {
+        use std::os::unix::fs::PermissionsExt;
+        let sandbox = sandbox();
+        if can_read_unreadable_files(&sandbox.outside) {
+            eprintln!("skipped: this process can read mode 000 files");
+            return;
+        }
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-staged");
+            install_every_kind(REPO, &names, MCP);
+            let installed = library_path("skills", &names.skill).join("SKILL.md");
+            let before = fs::read_to_string(&installed).expect("read skill");
+            // The new version adds a file the copy cannot read.
+            let logo = source_clone_path(REPO)
+                .expect("clone path")
+                .join("skills")
+                .join(&names.skill)
+                .join("logo.png");
+            fs::write(&logo, [0u8, 1, 2]).expect("write logo");
+            fs::set_permissions(&logo, fs::Permissions::from_mode(0o000)).expect("chmod logo");
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
+            fs::set_permissions(&logo, fs::Permissions::from_mode(0o644)).expect("chmod back");
+
+            assert_eq!(
+                result.skipped,
+                vec![format!("skill:{}", names.skill)],
+                "{:?}",
+                result
+            );
+            assert_eq!(fs::read_to_string(&installed).expect("read skill"), before);
+            assert_eq!(
+                get_provenance("skill", &names.skill),
+                Ok(Some(REPO.to_string()))
+            );
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert!(entry.resources["skills"].contains(&names.skill));
+            let leftovers: Vec<String> =
+                fs::read_dir(crate::core::paths::get_library_skills_dir().unwrap())
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.starts_with('.'))
+                    .collect();
+            assert!(
+                leftovers.is_empty(),
+                "staging folders left: {:?}",
+                leftovers
+            );
+        });
+    }
+
+    #[test]
+    fn a_confirmed_skill_replacement_swaps_the_folder_in_one_step() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-swap");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let mine = plant("skills", &names.skill, "# Mine\n");
+            fs::write(mine.join("notes.md"), "my notes").expect("write notes");
+
+            let result = install_source(
+                REPO,
+                &manifest,
+                None,
+                None,
+                &[format!("skill:{}", names.skill)],
+            )
+            .expect("install");
+
+            assert!(result.skipped.is_empty(), "{:?}", result.warnings);
+            let skill = fs::read_to_string(mine.join("SKILL.md")).expect("read");
+            assert!(skill.contains("# Fixture"), "{}", skill);
+            assert!(
+                !mine.join("notes.md").exists(),
+                "the old folder was replaced whole"
+            );
+        });
+    }
+
+    /// Plant a skill in `~/.agents/skills`, outside the library.
+    fn plant_external_skill(name: &str) -> PathBuf {
+        let dir = crate::core::paths::get_agents_skills_dir()
+            .expect("external skills dir")
+            .join(name);
+        fs::create_dir_all(&dir).expect("create external skill");
+        fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: mine\ndescription: Mine\n---\nMine\n",
+        )
+        .expect("write external skill");
+        dir
+    }
+
+    #[test]
+    fn a_skill_outside_the_library_is_a_local_conflict() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-external");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            plant_external_skill(&names.skill);
+            plant_external_skill("Vel385-External-Variant");
+            let mut variant = manifest.clone();
+            variant.skills = Some(SkillsSection {
+                skill_json: None,
+                entries: vec![skill(
+                    "vel385-external-variant",
+                    &format!("skills/{}", names.skill),
+                )],
+            });
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
+            let variant_conflicts = check_conflicts(REPO, &variant, None).expect("check");
+
+            assert_eq!(
+                keys_of(&result.conflicts),
+                vec![format!("skill:{}", names.skill)]
+            );
+            let conflict = &result.conflicts[0];
+            assert_eq!(conflict.existing_source, "local");
+            assert!(!conflict.blocked);
+            assert!(
+                conflict.reason.contains(".agents/skills"),
+                "{}",
+                conflict.reason
+            );
+            assert!(!library_path("skills", &names.skill).exists());
+            let variant_skill: Vec<&ConflictInfo> = variant_conflicts
+                .iter()
+                .filter(|c| c.resource_type == "skill")
+                .collect();
+            assert!(variant_skill[0].blocked, "{:?}", variant_skill);
+        });
+    }
+
+    #[test]
+    fn removing_a_source_keeps_the_records_of_a_skill_that_still_resolves_elsewhere() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-shadow");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            plant_external_skill(&names.skill);
+            crate::core::skill_store::record_skill_source(
+                &names.skill,
+                "me/mine",
+                &names.skill,
+                "github",
+            )
+            .expect("record the user's skill source");
+            install_source(
+                REPO,
+                &manifest,
+                None,
+                None,
+                &[format!("skill:{}", names.skill)],
+            )
+            .expect("confirmed install");
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert!(
+                result.removed.contains(&format!("skills:{}", names.skill)),
+                "{:?}",
+                result
+            );
+            assert!(!library_path("skills", &names.skill).exists());
+            assert!(skill_resolves_outside_library(&names.skill));
+            let sources = crate::core::skill_store::read_skill_sources().expect("read sources");
+            assert!(
+                sources.contains_key(&names.skill),
+                "the user's record must stay"
+            );
+        });
+    }
+
+    #[test]
+    fn a_ref_that_is_not_a_plain_name_is_refused() {
+        let pin = |strategy: &str, git_ref: &str| PinningConfig {
+            strategy: strategy.to_string(),
+            git_ref: git_ref.to_string(),
+        };
+        for bad in [
+            "--upload-pack=touch /tmp/pwned",
+            "-b",
+            "a..b",
+            "a b",
+            "a\nb",
+            "refs/heads/x.lock",
+            "a//b",
+            "@{-1}",
+            "x~1",
+            "x^",
+            "x:y",
+            ".hidden",
+            "trailing/",
+            "",
+        ] {
+            assert!(
+                validate_pin(&pin("branch", bad)).is_err(),
+                "branch {:?}",
+                bad
+            );
+            assert!(validate_pin(&pin("tag", bad)).is_err(), "tag {:?}", bad);
+        }
+        for bad in [
+            "--upload-pack=x",
+            "abc",
+            "0123456789abcdef0123456789abcdef012345678",
+            "xyz1234",
+        ] {
+            assert!(
+                validate_pin(&pin("commit", bad)).is_err(),
+                "commit {:?}",
+                bad
+            );
+        }
+        for good in ["main", "v1.0", "release/2.0", "feature-x_1"] {
+            assert!(
+                validate_pin(&pin("branch", good)).is_ok(),
+                "branch {:?}",
+                good
+            );
+        }
+        assert!(validate_pin(&pin("commit", "0123abc")).is_ok());
+        assert!(validate_pin(&pin("commit", &"a".repeat(40))).is_ok());
+        assert!(validate_pin(&pin("nightly", "main")).is_err());
+    }
+
+    #[test]
+    fn a_bad_pin_is_refused_before_the_clone_is_touched() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let clone = source_clone_path(REPO).expect("clone path");
+            fs::create_dir_all(&clone).expect("create clone");
+            fs::write(clone.join("keep"), "x").expect("write");
+            let bad = PinningConfig {
+                strategy: "commit".to_string(),
+                git_ref: "--upload-pack=touch /tmp/vel385".to_string(),
+            };
+
+            let err = git_clone_source(REPO, &bad).expect_err("refused");
+
+            assert!(err.contains("Refused"), "{}", err);
+            assert!(clone.join("keep").exists(), "the clone must be left alone");
+
+            register(REPO, &[], &[]);
+            let mut source = get_source(REPO).expect("read").expect("registered");
+            source.pin = PinningConfig {
+                strategy: "tag".to_string(),
+                git_ref: "--upload-pack=touch /tmp/vel385".to_string(),
+            };
+            upsert_source(source).expect("store the old pin");
+            let err = update_source(REPO).expect_err("refused");
+            assert!(
+                err.starts_with(&format!("Cannot update {}", REPO)),
+                "{}",
+                err
+            );
+            assert!(clone.join("keep").exists());
+        });
+    }
+
+    #[test]
+    fn a_bundled_collection_is_blocked_and_a_local_one_needs_confirmation() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("vel385-coll");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            let clone = source_clone_path(REPO).expect("clone path");
+            fs::write(
+                clone.join("seed.json"),
+                serde_json::json!({ "slug": "automatic-skills", "name": "Mine now" }).to_string(),
+            )
+            .expect("write collection");
+            manifest.collections.push(CollectionRef {
+                path: "seed.json".to_string(),
+                ..Default::default()
+            });
+            let mut entries = collections();
+            entries.push(serde_json::json!({ "slug": names.collection, "name": "Mine" }));
+            write_collections(&entries);
+            let before = collections();
+
+            let result = install_source(
+                REPO,
+                &manifest,
+                None,
+                None,
+                &["collection:automatic-skills".to_string()],
+            )
+            .expect("install");
+
+            let found: HashMap<String, bool> = result
+                .conflicts
+                .iter()
+                .map(|c| (c.key(), c.blocked))
+                .collect();
+            assert_eq!(found.get("collection:automatic-skills"), Some(&true));
+            assert_eq!(
+                found.get(&format!("collection:{}", names.collection)),
+                Some(&false)
+            );
+            assert_eq!(collections(), before, "nothing was written");
+
+            // Confirming the local one and leaving the bundled one out installs.
+            let selected = SelectedResources {
+                rules: vec![names.rule.clone()],
+                collections: vec![names.collection.clone()],
+                ..Default::default()
+            };
+            let result = install_source(
+                REPO,
+                &manifest,
+                Some(selected),
+                None,
+                &[format!("collection:{}", names.collection)],
+            )
+            .expect("install");
+            assert!(result.conflicts.is_empty(), "{:?}", result.conflicts);
+            let seed = collections()
+                .into_iter()
+                .find(|c| c["slug"] == "automatic-skills")
+                .expect("seed");
+            assert_ne!(
+                seed["name"], "Mine now",
+                "the bundled collection is untouched"
+            );
+            let mine = collections()
+                .into_iter()
+                .find(|c| c["slug"] == names.collection.as_str())
+                .expect("collection");
+            assert_eq!(mine["name"], "Fixture");
+        });
+    }
+
+    #[test]
+    fn only_selected_collections_are_installed() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-coll-sel");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                rules: vec![names.rule.clone()],
+                ..Default::default()
+            };
+
+            let result =
+                install_source(REPO, &manifest, Some(selected), None, &[]).expect("install");
+
+            assert!(result.conflicts.is_empty());
+            assert!(!collection_slugs().contains(&names.collection));
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert!(entry.collection_slugs.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_corrupt_collections_file_fails_the_collection_and_is_left_alone() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-coll-bad");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let path = get_automatic_dir()
+                .unwrap()
+                .join("discover")
+                .join("collections.json");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "{ not json").expect("write corrupt file");
+
+            let result = install_collection(
+                &source_clone_path(REPO).unwrap(),
+                &CollectionRef {
+                    path: "collection.json".to_string(),
+                    ..Default::default()
+                },
+                WriteMode::Create,
+            );
+
+            assert!(result.is_err(), "{:?}", result);
+            assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
+        });
+    }
+
+    #[test]
+    fn a_failed_provenance_write_rolls_the_install_back() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-rollback");
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            fail_provenance_writes(true);
+            let result = install_source(REPO, &manifest, None, None, &[]);
+            fail_provenance_writes(false);
+
+            let err = result.expect_err("the install must fail");
+            assert!(err.contains("provenance"), "{}", err);
+            for (kind, path) in names.library_paths() {
+                assert!(!path.exists(), "{kind} must be deleted again");
+            }
+            assert!(!collection_slugs().contains(&names.collection));
+            assert_eq!(get_source(REPO), Ok(None));
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_failed_registration_rolls_the_install_back_and_its_provenance() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-rollback-reg");
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            fail_sources_writes_after(Some(0));
+            let result = install_source(REPO, &manifest, None, None, &[]);
+            fail_sources_writes_after(None);
+
+            assert!(result.is_err());
+            for (kind, path) in names.library_paths() {
+                assert!(!path.exists(), "{kind} must be deleted again");
+            }
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn an_update_keeps_the_env_values_the_user_filled_in() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-env");
+            let server = r#"{"command":"npx","env":{"API_KEY":"","REGION":"eu"}}"#;
+            let manifest = write_every_kind(REPO, &names, server);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            // The user fills in the key; only env values change.
+            crate::core::user_writes::save_mcp_server(
+                &names.mcp_server,
+                r#"{"command":"npx","env":{"API_KEY":"sk-mine","REGION":"eu"}}"#,
+            )
+            .expect("save env");
+            assert_eq!(
+                get_provenance("mcp_server", &names.mcp_server),
+                Ok(Some(REPO.to_string())),
+                "an env-only edit keeps the source's ownership"
+            );
+
+            // The new version changes the args and the region default.
+            fs::write(
+                source_clone_path(REPO).unwrap().join("server.json"),
+                r#"{"command":"npx","args":["-y"],"env":{"API_KEY":"","REGION":"us"}}"#,
+            )
+            .expect("write server");
+            install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
+
+            let stored: serde_json::Value = serde_json::from_str(
+                &crate::core::read_mcp_server_config(&names.mcp_server).expect("read"),
+            )
+            .unwrap();
+            assert_eq!(stored["env"]["API_KEY"], "sk-mine");
+            assert_eq!(stored["env"]["REGION"], "eu");
+            assert_eq!(stored["args"], serde_json::json!(["-y"]));
+        });
+    }
+
+    #[test]
+    fn a_save_that_changes_more_than_env_values_takes_the_server_over() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-env-take");
+            let manifest = write_every_kind(REPO, &names, r#"{"command":"npx","env":{"K":""}}"#);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            crate::core::user_writes::save_mcp_server(
+                &names.mcp_server,
+                r#"{"command":"uvx","env":{"K":""}}"#,
+            )
+            .expect("save");
+
+            assert_eq!(get_provenance("mcp_server", &names.mcp_server), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_user_delete_clears_the_name_so_a_later_resource_is_not_the_sources() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-delete");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            crate::core::user_writes::delete_skill(&names.skill).expect("delete skill");
+            crate::core::user_writes::delete_mcp_server(&names.mcp_server).expect("delete server");
+            crate::core::user_writes::delete_rule(&names.rule).expect("delete rule");
+            crate::core::user_writes::delete_template(&names.template).expect("delete template");
+            crate::core::user_writes::delete_user_command(&names.command).expect("delete command");
+            crate::core::user_writes::delete_subagent(&names.agent).expect("delete agent");
+
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+            // A rule the user makes later, through any path, is not the source's.
+            crate::core::save_rule(&names.rule, "Mine", "Mine.\n").expect("save rule");
+            remove_source(REPO).expect("remove");
+            assert!(library_path("rules", &names.rule).exists());
+        });
+    }
+
+    #[test]
+    fn a_symlinked_library_entry_is_never_replaced() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-link");
+            install_every_kind(REPO, &names, MCP);
+            let target = sandbox.outside.join("target.json");
+            fs::write(&target, "outside").expect("write target");
+            let rule = library_path("rules", &names.rule);
+            fs::remove_file(&rule).expect("remove rule");
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&target, &rule).expect("link rule");
+            #[cfg(not(unix))]
+            return;
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
+
+            assert!(
+                result.skipped.contains(&format!("rule:{}", names.rule)),
+                "{:?}",
+                result
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("symlink")),
+                "{:?}",
+                result.warnings
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), "outside");
+        });
+    }
+
+    #[test]
+    fn a_bundled_rule_or_sub_agent_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let rule = crate::core::bundled_library::rules()
+                .into_iter()
+                .map(|e| crate::core::rules::library_rule_machine_name(&e.pack, &e.id))
+                .find(|name| !crate::core::rules::is_mandatory_rule(name))
+                .expect("a bundled rule");
+            let agent = crate::core::bundled_library::subagents()
+                .iter()
+                .map(crate::core::subagents::subagent_machine_name)
+                .next()
+                .expect("a bundled sub-agent");
+            let names = KindNames::new("vel385-bundled");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            manifest.rules = vec![resource(&rule, "rule.md")];
+            manifest.agents = vec![resource(&agent, "agent.md")];
+
+            let conflicts = check_conflicts(REPO, &manifest, None).expect("check");
+
+            let bundled: Vec<(String, bool, String)> = conflicts
+                .iter()
+                .map(|c| (c.key(), c.blocked, c.existing_source.clone()))
+                .collect();
+            assert!(
+                bundled.contains(&(format!("rule:{}", rule), true, "bundled".to_string())),
+                "{:?}",
+                bundled
+            );
+            assert!(
+                bundled.contains(&(format!("agent:{}", agent), true, "bundled".to_string())),
+                "{:?}",
+                bundled
+            );
         });
     }
 }

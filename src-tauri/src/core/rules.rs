@@ -354,6 +354,17 @@ fn default_rules() -> Vec<(String, String, String)> {
     rules
 }
 
+/// Whether `machine_name` is one of the default rules Automatic installs
+/// from its bundled library or ships itself.
+pub fn is_bundled_rule(machine_name: &str) -> bool {
+    super::bundled_library::rules()
+        .iter()
+        .any(|entry| library_rule_machine_name(&entry.pack, &entry.id) == machine_name)
+        || APP_BUNDLED_RULES
+            .iter()
+            .any(|(name, _, _)| *name == machine_name)
+}
+
 /// Compose the compound machine name the app uses for a library rule
 /// (`{pack}-{id}`). Used by both the bundled loader and the Phase 3b
 /// refresh installer so both sides agree on the on-disk filename.

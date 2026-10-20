@@ -397,7 +397,7 @@ pub fn delete_subagent(machine_name: &str) -> Result<(), String> {
 
 /// Compose the compound machine name the app uses for a library subagent
 /// (`{pack}-{id}`, e.g. `automatic-code-reviewer`).
-fn subagent_machine_name(entry: &super::bundled_library::SubagentEntry) -> String {
+pub(crate) fn subagent_machine_name(entry: &super::bundled_library::SubagentEntry) -> String {
     format!("{}-{}", entry.pack, entry.id)
 }
 

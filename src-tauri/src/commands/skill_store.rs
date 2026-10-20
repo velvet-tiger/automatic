@@ -24,7 +24,7 @@ pub async fn import_remote_skill(
     source: String,
     id: String,
 ) -> Result<(), String> {
-    core::save_skill(&name, &content)?;
+    core::user_writes::save_skill(&name, &content)?;
     let installed_sha = Some(core::sha256_hex(&content));
     // skill.json is best-effort: many published skills do not include one,
     // and an outage here must not block the install.

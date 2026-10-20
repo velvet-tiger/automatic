@@ -201,7 +201,7 @@ pub fn import_agent_global_skills(agent_ids: Vec<String>) -> Result<String, Stri
         };
 
         for (name, content) in agent::collect_new_skills_from_extra_dirs(agent) {
-            core::save_skill(&name, &content)?;
+            core::user_writes::save_skill(&name, &content)?;
             imported.push(name);
         }
     }
