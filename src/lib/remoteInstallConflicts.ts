@@ -24,7 +24,8 @@ export type ResourceGroupKey =
   | "rules"
   | "templates"
   | "commands"
-  | "agents";
+  | "agents"
+  | "collections";
 
 const SINGULAR_TYPE: Record<ResourceGroupKey, string> = {
   skills: "skill",
@@ -33,6 +34,7 @@ const SINGULAR_TYPE: Record<ResourceGroupKey, string> = {
   templates: "template",
   commands: "command",
   agents: "agent",
+  collections: "collection",
 };
 
 /** The `type:name` key the install command takes to confirm a replacement. */
@@ -98,6 +100,39 @@ export function overridesFor(
     }
   }
   return overrides.sort();
+}
+
+/**
+ * The selection after a click on a group's checkbox. When every item without
+ * a conflict is selected, the click clears the group. Otherwise it selects
+ * every item without a conflict and keeps the conflicting ones the user
+ * already chose. A conflicting item is never selected from the group, so
+ * each replacement takes its own click.
+ */
+export function toggleGroupSelection(
+  group: ResourceGroupKey,
+  items: Array<{ name: string }>,
+  current: Set<string>,
+  conflicts: Map<string, SourceConflict>,
+): Set<string> {
+  const free = items.filter((item) => !conflicts.has(conflictKey(group, item.name)));
+  if (free.length > 0 && free.every((item) => current.has(item.name))) {
+    return new Set();
+  }
+  const next = new Set(current);
+  for (const item of free) next.add(item.name);
+  return next;
+}
+
+/** Whether the group's checkbox shows as ticked: every item without a conflict is selected. */
+export function isGroupSelected(
+  group: ResourceGroupKey,
+  items: Array<{ name: string }>,
+  current: Set<string>,
+  conflicts: Map<string, SourceConflict>,
+): boolean {
+  const free = items.filter((item) => !conflicts.has(conflictKey(group, item.name)));
+  return free.length > 0 && free.every((item) => current.has(item.name));
 }
 
 /** Drop every resource from the selection that has a conflict. */

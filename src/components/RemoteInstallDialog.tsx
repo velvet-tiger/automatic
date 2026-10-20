@@ -13,14 +13,17 @@ import {
   LayoutTemplate,
   Terminal,
   Bot,
+  Layers,
 } from "lucide-react";
 import {
   conflictKey,
   describeConflict,
   indexConflicts,
   initialSelection,
+  isGroupSelected,
   isSelectable,
   overridesFor,
+  toggleGroupSelection,
   withoutConflicts,
   type SourceConflict,
 } from "../lib/remoteInstallConflicts";
@@ -43,6 +46,13 @@ interface SkillsSection {
   entries: SkillsJsonSkill[];
 }
 
+interface CollectionRef {
+  path: string;
+  /** Read from the collection file when the manifest is fetched. */
+  slug?: string;
+  name?: string;
+}
+
 interface AutomaticManifest {
   name: string;
   version: string;
@@ -54,6 +64,7 @@ interface AutomaticManifest {
   templates: ManifestResource[];
   commands: ManifestResource[];
   agents: ManifestResource[];
+  collections?: CollectionRef[];
 }
 
 interface SelectedResources {
@@ -63,6 +74,7 @@ interface SelectedResources {
   templates: string[];
   commands: string[];
   agents: string[];
+  collections: string[];
 }
 
 interface InstallResult {
@@ -135,6 +147,20 @@ function buildResourceGroups(manifest: AutomaticManifest): ResourceGroup[] {
         items: rt.items.map((r) => ({ name: r.name, description: r.description })),
       });
     }
+  }
+
+  // A collection whose file could not be read has no slug and cannot be
+  // selected; the install reports it.
+  const collections = (manifest.collections ?? []).filter(
+    (c): c is CollectionRef & { slug: string } => typeof c.slug === "string",
+  );
+  if (collections.length > 0) {
+    groups.push({
+      key: "collections",
+      label: "Collections",
+      icon: Layers,
+      items: collections.map((c) => ({ name: c.slug, description: c.name })),
+    });
   }
 
   return groups;
@@ -215,18 +241,15 @@ export default function RemoteInstallDialog({
 
   const toggleGroup = useCallback(
     (groupKey: keyof SelectedResources, items: Array<{ name: string }>) => {
-      const selectable = items.filter((i) => isSelectable(groupKey, i.name, conflicts));
-      setSelected((prev) => {
-        const next = { ...prev };
-        const set = prev[groupKey] ?? new Set<string>();
-        const allSelected = selectable.every((i) => set.has(i.name));
-        if (allSelected) {
-          next[groupKey] = new Set();
-        } else {
-          next[groupKey] = new Set(selectable.map((i) => i.name));
-        }
-        return next;
-      });
+      setSelected((prev) => ({
+        ...prev,
+        [groupKey]: toggleGroupSelection(
+          groupKey,
+          items,
+          prev[groupKey] ?? new Set<string>(),
+          conflicts,
+        ),
+      }));
     },
     [conflicts],
   );
@@ -245,6 +268,7 @@ export default function RemoteInstallDialog({
         templates: Array.from(selected["templates"] ?? []),
         commands: Array.from(selected["commands"] ?? []),
         agents: Array.from(selected["agents"] ?? []),
+        collections: Array.from(selected["collections"] ?? []),
       };
 
       const raw = await invoke("install_remote_source", {
@@ -371,17 +395,19 @@ export default function RemoteInstallDialog({
                   {groups.map((group) => {
                     const GroupIcon = group.icon;
                     const groupSet = selected[group.key] ?? new Set<string>();
-                    const selectable = group.items.filter((i) =>
-                      isSelectable(group.key, i.name, conflicts),
+                    const allSelected = isGroupSelected(
+                      group.key,
+                      group.items,
+                      groupSet,
+                      conflicts,
                     );
-                    const allSelected =
-                      selectable.length > 0 && selectable.every((i) => groupSet.has(i.name));
                     return (
                       <div
                         key={group.key}
                         className="rounded-lg border border-border-strong/40 overflow-hidden"
                       >
                         <button
+                          aria-label={`Select all ${group.label}`}
                           onClick={() => toggleGroup(group.key, group.items)}
                           className="w-full flex items-center gap-2.5 px-3 py-2 bg-bg-sidebar hover:bg-bg-sidebar/80 transition-colors"
                         >
@@ -416,6 +442,7 @@ export default function RemoteInstallDialog({
                                   type="checkbox"
                                   checked={groupSet.has(item.name)}
                                   disabled={blocked}
+                                  aria-label={`Install ${item.name}`}
                                   onChange={() => toggleItem(group.key, item.name)}
                                   className="accent-brand mt-0.5"
                                 />

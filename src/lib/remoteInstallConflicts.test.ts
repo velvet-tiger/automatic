@@ -4,8 +4,10 @@ import {
   describeConflict,
   indexConflicts,
   initialSelection,
+  isGroupSelected,
   isSelectable,
   overridesFor,
+  toggleGroupSelection,
   withoutConflicts,
   type SourceConflict,
 } from "./remoteInstallConflicts";
@@ -89,5 +91,20 @@ describe("remote install conflicts", () => {
     expect(
       describeConflict(conflict({ blocked: true, reason: "'automatic' is built-in and cannot be replaced" })),
     ).toBe("Cannot install: 'automatic' is built-in and cannot be replaced");
+  });
+
+  it("selects only conflict-free items from a group click", () => {
+    const items = groups[1].items;
+    const first = toggleGroupSelection("mcp_servers", items, new Set(), conflicts);
+    expect([...first]).toEqual([]);
+    const rules = toggleGroupSelection("rules", groups[0].items, new Set(), conflicts);
+    expect([...rules]).toEqual(["fresh"]);
+    expect(isGroupSelected("rules", groups[0].items, rules, conflicts)).toBe(true);
+    // A second click clears the group, the confirmed conflict too.
+    const cleared = toggleGroupSelection("rules", groups[0].items, new Set(["fresh", "style"]), conflicts);
+    expect([...cleared]).toEqual([]);
+    // A conflict the user already picked stays when the group fills in.
+    const kept = toggleGroupSelection("rules", groups[0].items, new Set(["style"]), conflicts);
+    expect([...kept].sort()).toEqual(["fresh", "style"]);
   });
 });
