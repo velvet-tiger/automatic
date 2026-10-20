@@ -32,6 +32,8 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
         return Err("Sub-agent content must start with YAML frontmatter (---)".into());
     }
 
+    // The user now owns this version, so no source may replace or delete it.
+    core::remote_sources::release_ownership_on_user_save("agent", &machine_name)?;
     core::save_subagent(&machine_name, &name, &content)?;
     sync_projects_referencing_subagent(&machine_name);
     Ok(())

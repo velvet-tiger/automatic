@@ -16,6 +16,8 @@ pub fn read_user_command(machine_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_user_command(machine_name: String, content: String) -> Result<(), String> {
+    // The user now owns this version, so no source may replace or delete it.
+    core::remote_sources::release_ownership_on_user_save("command", &machine_name)?;
     core::save_user_command(&machine_name, &content)?;
     sync_projects_referencing_user_command(&machine_name);
     Ok(())

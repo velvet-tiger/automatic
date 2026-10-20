@@ -75,7 +75,7 @@ pub use commands::*;
 pub use context_sources::*;
 pub use contexts::*;
 pub use credentials::*;
-pub use deletion_guards::{ensure_deletable, LibraryAssetKind};
+pub use deletion_guards::{ensure_deletable, protection_of, LibraryAssetKind, Protection};
 pub use discover::*;
 pub use discover_data::init_discover_files;
 pub use editors::*;

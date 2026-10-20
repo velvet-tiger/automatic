@@ -13,10 +13,7 @@ pub fn fetch_remote_source(
     git_ref: Option<String>,
     dir: Option<String>,
 ) -> Result<String, String> {
-    let pin = git_ref.map(|r| remote_sources::PinningConfig {
-        strategy: "tag".to_string(),
-        git_ref: r,
-    });
+    let pin = git_ref.as_deref().map(remote_sources::pin_for_ref);
 
     let manifest = remote_sources::fetch_source_manifest(&repo, pin, dir.as_deref())?;
     serde_json::to_string(&manifest).map_err(|e| format!("Failed to serialize manifest: {}", e))
@@ -25,27 +22,40 @@ pub fn fetch_remote_source(
 /// Install resources from a previously fetched source.
 /// `selected` is an optional JSON-encoded SelectedResources.
 /// `dir` specifies the subdirectory within the repo (must match what was passed to fetch).
+/// `overrides` holds the `type:name` key of each conflict the user confirmed
+/// replacing, from [`check_source_conflicts`]. With an unconfirmed conflict
+/// nothing is installed and the result lists the conflicts.
 #[tauri::command]
 pub fn install_remote_source(
     repo: String,
     selected: Option<String>,
     dir: Option<String>,
+    overrides: Option<Vec<String>>,
 ) -> Result<String, String> {
     let base_dir = remote_sources::resolve_base_dir(&repo, dir.as_deref())?;
     let manifest = remote_sources::parse_manifest(&base_dir)?;
+    let selected_resources = parse_selected(selected)?;
 
-    let selected_resources = match selected {
-        Some(json) => {
-            let sel: remote_sources::SelectedResources = serde_json::from_str(&json)
-                .map_err(|e| format!("Failed to parse selected resources: {}", e))?;
-            Some(sel)
-        }
-        None => None,
-    };
-
-    let result =
-        remote_sources::install_source(&repo, &manifest, selected_resources, dir.as_deref())?;
+    let result = remote_sources::install_source(
+        &repo,
+        &manifest,
+        selected_resources,
+        dir.as_deref(),
+        &overrides.unwrap_or_default(),
+    )?;
     serde_json::to_string(&result).map_err(|e| format!("Failed to serialize install result: {}", e))
+}
+
+/// Parse an optional JSON-encoded SelectedResources.
+fn parse_selected(
+    selected: Option<String>,
+) -> Result<Option<remote_sources::SelectedResources>, String> {
+    selected
+        .map(|json| {
+            serde_json::from_str(&json)
+                .map_err(|e| format!("Failed to parse selected resources: {}", e))
+        })
+        .transpose()
 }
 
 /// Update a previously installed source (pull latest + re-install).
@@ -110,13 +120,21 @@ pub fn list_remote_sources() -> Result<String, String> {
     serde_json::to_string(&sources).map_err(|e| format!("Failed to serialize sources: {}", e))
 }
 
-/// Check for conflicts before installing a source.
+/// Check for conflicts before installing a source: each existing library
+/// entry the install would replace that this source does not own.
 /// `dir` specifies the subdirectory within the repo (must match what was passed to fetch).
+/// `selected` is an optional JSON-encoded SelectedResources; without it
+/// every resource the manifest lists is checked.
 #[tauri::command]
-pub fn check_source_conflicts(repo: String, dir: Option<String>) -> Result<String, String> {
+pub fn check_source_conflicts(
+    repo: String,
+    dir: Option<String>,
+    selected: Option<String>,
+) -> Result<String, String> {
     let base_dir = remote_sources::resolve_base_dir(&repo, dir.as_deref())?;
-    let manifest = remote_sources::parse_manifest(&base_dir)?;
-    let conflicts = remote_sources::check_conflicts(&manifest)?;
+    let manifest = remote_sources::resolve_manifest(&base_dir)?;
+    let selected_resources = parse_selected(selected)?;
+    let conflicts = remote_sources::check_conflicts(&repo, &manifest, selected_resources.as_ref())?;
     serde_json::to_string(&conflicts).map_err(|e| format!("Failed to serialize conflicts: {}", e))
 }
 
@@ -181,7 +199,8 @@ mod tests {
             agents: vec![resource(AGENT, "agent.md")],
             ..manifest
         };
-        let result = remote_sources::install_source(REPO, &manifest, None, None).expect("install");
+        let result =
+            remote_sources::install_source(REPO, &manifest, None, None, &[]).expect("install");
         assert!(result.skipped.is_empty(), "{:?}", result.warnings);
     }
 
@@ -309,6 +328,7 @@ mod tests {
                 Ok(remote_sources::UpdateResult {
                     added: Default::default(),
                     updated: Default::default(),
+                    new_available: Default::default(),
                     removed,
                     failed: Vec::new(),
                     kept: Vec::new(),
@@ -344,6 +364,7 @@ mod tests {
             prune_update_removals(&remote_sources::UpdateResult {
                 added: Default::default(),
                 updated: Default::default(),
+                new_available: Default::default(),
                 removed,
                 failed: Vec::new(),
                 kept: Vec::new(),
@@ -406,7 +427,7 @@ mod tests {
             };
             manifest(true);
             let parsed = remote_sources::parse_manifest(&clone).expect("parse manifest");
-            remote_sources::install_source(REPO, &parsed, None, None).expect("install");
+            remote_sources::install_source(REPO, &parsed, None, None, &[]).expect("install");
             let (_keep, _dir) = make_project("source-remove-project", |p| {
                 p.file_rules
                     .insert("_project".to_string(), vec![RULE.to_string()]);
@@ -431,6 +452,61 @@ mod tests {
             assert_eq!(result["removed"]["rules"], serde_json::json!([RULE]), "{}", raw);
             assert!(read_back("source-remove-project").file_rules.is_empty());
             assert_eq!(remote_sources::get_provenance("rule", RULE), Ok(None));
+        });
+    }
+
+    /// A user save through each save command makes the resource the
+    /// user's: the source no longer owns it, and removing the source leaves
+    /// the user's version in place (VEL-385).
+    #[test]
+    fn a_user_save_takes_a_resource_away_from_its_source() {
+        with_temp_home(|_| {
+            install_fixture_source();
+            const TEMPLATE: &str = "source-remove-cmd-template";
+            core::save_template(TEMPLATE, r#"{"name":"source-remove-cmd-template"}"#)
+                .expect("save template");
+            remote_sources::record_provenance("template", TEMPLATE, REPO).expect("own template");
+
+            crate::commands::save_skill(
+                SKILL,
+                &format!("---\nname: {SKILL}\ndescription: Mine\n---\n# Mine\n"),
+            )
+            .expect("save skill");
+            crate::commands::save_mcp_server_config(SERVER, r#"{"command":"mine"}"#)
+                .expect("save server");
+            crate::commands::save_rule(RULE, "Rule", "Mine.\n").expect("save rule");
+            crate::commands::save_user_command(COMMAND.to_string(), "# Mine\n".to_string())
+                .expect("save command");
+            crate::commands::save_subagent(
+                AGENT.to_string(),
+                "Agent".to_string(),
+                format!("---\nname: {AGENT}\ndescription: Mine\n---\nMine\n"),
+            )
+            .expect("save agent");
+            crate::commands::save_template(TEMPLATE, r#"{"name":"mine"}"#).expect("save template");
+
+            for (kind, name) in [
+                ("skill", SKILL),
+                ("mcp_server", SERVER),
+                ("rule", RULE),
+                ("command", COMMAND),
+                ("agent", AGENT),
+                ("template", TEMPLATE),
+            ] {
+                assert_eq!(
+                    remote_sources::get_provenance(kind, name),
+                    Ok(None),
+                    "{kind} '{name}' is still owned by the source"
+                );
+            }
+
+            let raw = remove_remote_source(REPO.to_string()).expect("remove");
+            let result: remote_sources::RemoveResult = serde_json::from_str(&raw).expect("parse");
+            assert!(result.removed.is_empty(), "{:?}", result);
+            assert!(core::read_rule(RULE).expect("read rule").contains("Mine."));
+            assert!(core::read_mcp_server_config(SERVER)
+                .expect("read server")
+                .contains("mine"));
         });
     }
 }

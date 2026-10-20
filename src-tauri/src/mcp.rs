@@ -1415,6 +1415,16 @@ impl AutomaticMcpServer {
             ))]));
         }
 
+        // The user, through this agent, now owns the rule, so no source may
+        // replace or delete it.
+        if let Err(e) =
+            crate::core::remote_sources::release_ownership_on_user_save("rule", machine_name)
+        {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save rule '{}': {}",
+                machine_name, e
+            ))]));
+        }
         match crate::core::save_rule(machine_name, &params.0.name, &params.0.content) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Created rule '{}'.",
@@ -1477,6 +1487,16 @@ impl AutomaticMcpServer {
         let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
         let new_content = params.0.content.as_deref().unwrap_or(&existing.content);
 
+        // The user, through this agent, now owns the rule, so no source may
+        // replace or delete it.
+        if let Err(e) =
+            crate::core::remote_sources::release_ownership_on_user_save("rule", machine_name)
+        {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save rule '{}': {}",
+                machine_name, e
+            ))]));
+        }
         match crate::core::save_rule(machine_name, new_name, new_content) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Updated rule '{}'.",

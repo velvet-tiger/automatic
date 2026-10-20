@@ -18,6 +18,8 @@ pub fn read_template(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_template(name: &str, data: &str) -> Result<(), String> {
+    // The user now owns this version, so no source may replace or delete it.
+    core::remote_sources::release_ownership_on_user_save("template", name)?;
     core::save_template(name, data)
 }
 

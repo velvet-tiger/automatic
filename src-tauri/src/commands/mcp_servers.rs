@@ -24,6 +24,8 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    // The user now owns this version, so no source may replace or delete it.
+    core::remote_sources::release_ownership_on_user_save("mcp_server", name)?;
     core::save_user_mcp_server_config(name, data)?;
     sync_projects_referencing_mcp_server(name);
     // Global assignments render the same registry entry per agent, so an

@@ -26,6 +26,8 @@ pub fn get_skill_scan_state(name: &str) -> Result<Option<core::AssetSecurityScan
 
 #[tauri::command]
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
+    // The user now owns this version, so no source may replace or delete it.
+    core::remote_sources::release_ownership_on_user_save("skill", name)?;
     core::save_skill(name, content)?;
     sync_projects_referencing_skill(name);
     Ok(())
