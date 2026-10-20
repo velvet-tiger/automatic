@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
-import type { MemoryRecord } from "../../../../components/MemoryBrowser";
+import { useProjectMemories } from "./useProjectMemories";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
@@ -770,13 +770,7 @@ export function ProjectEditor({
     }
   }
 
-  // Memory state. The loaded entries carry the project they were loaded
-  // for, because loads can finish after the user has switched projects.
-  // Panels see them only while that project is selected.
-  const [loadedMemories, setLoadedMemories] = useState<{ projectKey: string; entries: MemoryRecord } | null>(null);
-  const [loadingMemories, setLoadingMemories] = useState(false);
-  const selectedMemories: MemoryRecord | null =
-    loadedMemories !== null && loadedMemories.projectKey === selectedKey ? loadedMemories.entries : null;
+  const { selectedMemories, loadingMemories, loadMemories } = useProjectMemories(selectedKey, setError);
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -1534,24 +1528,6 @@ export function ProjectEditor({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Failed to apply template "${templateName}": ${msg}`);
-    }
-  };
-
-  const loadMemories = async (projectKey: string) => {
-    try {
-      setLoadingMemories(true);
-      const data: MemoryRecord = await invoke("get_project_memories", { project: projectKey });
-      setLoadedMemories({ projectKey, entries: data });
-    } catch (err: unknown) {
-      // A failed load drops what was loaded for this project, so no panel
-      // shows entries the store may no longer hold. The error is shown
-      // because a stale list makes saves look like they did nothing.
-      setLoadedMemories((prev) => (prev?.projectKey === projectKey ? null : prev));
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("Failed to load memories:", err);
-      setError(`Failed to load memories: ${msg}`);
-    } finally {
-      setLoadingMemories(false);
     }
   };
 

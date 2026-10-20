@@ -496,10 +496,11 @@ fn claude_project_path_candidates(project_dir: &str) -> Vec<String> {
 }
 
 /// The folder under `projects_root` that Claude Code uses for `encoded`, or
-/// `None` when the name is too long and no folder matches. A long name
-/// carries a hash suffix Automatic cannot compute, so it is found the way
-/// the Claude Agent SDK finds it: the first folder (in name order) whose
-/// name is the 200-character prefix followed by `-`.
+/// `None` when the name is too long and no single folder matches. A long
+/// name carries a hash suffix Automatic cannot compute, so it is found by
+/// its 200-character prefix followed by `-`. Only a unique match is
+/// accepted: two projects whose paths share that prefix must never read
+/// each other's memory, and the hash cannot tell them apart.
 fn claude_project_folder(projects_root: &Path, encoded: &str) -> Option<PathBuf> {
     if encoded.len() <= CLAUDE_FOLDER_NAME_MAX {
         return Some(projects_root.join(encoded));
@@ -507,14 +508,25 @@ fn claude_project_folder(projects_root: &Path, encoded: &str) -> Option<PathBuf>
     // `encoded` is ASCII, so this byte index is a character boundary.
     let prefix = format!("{}-", &encoded[..CLAUDE_FOLDER_NAME_MAX]);
     let entries = fs::read_dir(projects_root).ok()?;
-    let mut names: Vec<String> = entries
+    let names: Vec<String> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|name| name.starts_with(&prefix))
         .collect();
-    names.sort();
-    names.into_iter().next().map(|name| projects_root.join(name))
+    match names.as_slice() {
+        [only] => Some(projects_root.join(only)),
+        [] => None,
+        _ => {
+            eprintln!(
+                "[automatic] not reading Claude memory: {} folders in {} share the prefix {}",
+                names.len(),
+                projects_root.display(),
+                prefix
+            );
+            None
+        }
+    }
 }
 
 /// The Claude memory folder for `project_dir` under `projects_root`. Each
@@ -623,13 +635,30 @@ pub fn read_claude_memory(project_dir: &str) -> Result<ClaudeMemoryContent, Stri
 /// [`read_claude_memory_file`] for which files are read.
 fn read_claude_memory_at(memory_dir: &Path) -> Result<ClaudeMemoryContent, String> {
     let memory_dir_str = memory_dir.to_string_lossy().to_string();
+    let no_memory = || ClaudeMemoryContent {
+        memory_dir: memory_dir_str.clone(),
+        memory_md: None,
+        topic_files: Vec::new(),
+    };
 
-    if !memory_dir.exists() {
-        return Ok(ClaudeMemoryContent {
-            memory_dir: memory_dir_str,
-            memory_md: None,
-            topic_files: Vec::new(),
-        });
+    // The project folder and the memory folder must be real folders. A
+    // symlink at either level could point the read (and the MCP tool that
+    // returns it) at any folder the user can read. A link is treated as "no
+    // memory folder" and logged, so the panel stays usable.
+    let project_folder = memory_dir.parent().filter(|p| !p.as_os_str().is_empty());
+    for folder in project_folder.into_iter().chain(std::iter::once(memory_dir)) {
+        match fs::symlink_metadata(folder) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                eprintln!(
+                    "[automatic] not reading Claude memory: {} is a symlink",
+                    folder.display()
+                );
+                return Ok(no_memory());
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(no_memory()),
+            Err(e) => return Err(format!("Failed to inspect {}: {}", folder.display(), e)),
+        }
     }
 
     let memory_md = read_claude_memory_file(&memory_dir.join("MEMORY.md"))?;
@@ -965,6 +994,23 @@ mod tests {
     }
 
     #[test]
+    fn claude_memory_dir_refuses_an_ambiguous_long_prefix() {
+        let home = tempdir().unwrap();
+        let project_dir = format!("/no/such/{}", "a".repeat(250));
+        let encoded = encode_claude_project_dir(&project_dir);
+        let root = home.path().join(".claude/projects");
+        fs::create_dir_all(root.join(format!("{}-hash1", &encoded[..200]))).unwrap();
+        fs::create_dir_all(root.join(format!("{}-hash2", &encoded[..200]))).unwrap();
+
+        assert_eq!(claude_project_folder(&root, &encoded), None);
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let content = read_claude_memory(&project_dir).unwrap();
+            assert!(content.memory_md.is_none());
+            assert!(content.topic_files.is_empty());
+        });
+    }
+
+    #[test]
     #[cfg(unix)]
     fn claude_memory_dir_prefers_the_canonical_path() {
         let home = tempdir().unwrap();
@@ -1012,6 +1058,35 @@ mod tests {
         assert!(content.memory_md.is_none());
         let names: Vec<&str> = content.topic_files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["real.md"]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn claude_reader_refuses_a_symlinked_memory_or_project_folder() {
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir_all(real.join("memory")).unwrap();
+        fs::write(real.join("memory/MEMORY.md"), "outside").unwrap();
+        fs::write(real.join("memory/topic.md"), "outside").unwrap();
+
+        // The memory folder is a link.
+        let project = dir.path().join("projects/-a");
+        fs::create_dir_all(&project).unwrap();
+        std::os::unix::fs::symlink(real.join("memory"), project.join("memory")).unwrap();
+        let content = read_claude_memory_at(&project.join("memory")).unwrap();
+        assert!(content.memory_md.is_none());
+        assert!(content.topic_files.is_empty());
+
+        // The project folder is a link.
+        let linked_project = dir.path().join("projects/-b");
+        std::os::unix::fs::symlink(&real, &linked_project).unwrap();
+        let content = read_claude_memory_at(&linked_project.join("memory")).unwrap();
+        assert!(content.memory_md.is_none());
+        assert!(content.topic_files.is_empty());
+
+        // The real folder itself still reads.
+        let content = read_claude_memory_at(&real.join("memory")).unwrap();
+        assert_eq!(content.memory_md.as_deref(), Some("outside"));
     }
 
     #[test]
