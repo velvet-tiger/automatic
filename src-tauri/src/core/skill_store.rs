@@ -745,7 +745,7 @@ pub async fn update_skill_from_source(name: &str) -> Result<SkillUpdateStatus, S
         .await
         .map_err(|e| format!("Could not fetch remote skill: {}", e))?;
 
-    super::save_skill(name, &remote_content)
+    super::user_writes::save_skill(name, &remote_content)
         .map_err(|e| format!("Failed to save updated skill: {}", e))?;
 
     let remote_sha = sha256_hex(&remote_content);
@@ -863,7 +863,7 @@ pub async fn import_skill_from_repository(
                     extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
                 let was_updated = super::skill_exists(&actual_name);
-                super::save_skill(&actual_name, &content)?;
+                super::user_writes::save_skill(&actual_name, &content)?;
 
                 let id = format!("{}/{}", source, actual_name);
                 let installed_sha = Some(sha256_hex(&content));
@@ -944,7 +944,7 @@ pub async fn import_skill_from_repository(
                         extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
                     let was_updated = super::skill_exists(&actual_name);
-                    if let Err(e) = super::save_skill(&actual_name, &content) {
+                    if let Err(e) = super::user_writes::save_skill(&actual_name, &content) {
                         eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);
                         continue;
                     }
@@ -1016,7 +1016,7 @@ pub async fn import_skill_from_repository(
                     extract_frontmatter_name(&content).unwrap_or_else(|| dir_name.to_string());
 
                 let was_updated = super::skill_exists(&actual_name);
-                if let Err(e) = super::save_skill(&actual_name, &content) {
+                if let Err(e) = super::user_writes::save_skill(&actual_name, &content) {
                     eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);
                     continue;
                 }

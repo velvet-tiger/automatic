@@ -32,7 +32,7 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
         return Err("Sub-agent content must start with YAML frontmatter (---)".into());
     }
 
-    core::save_subagent(&machine_name, &name, &content)?;
+    core::user_writes::save_subagent(&machine_name, &name, &content)?;
     sync_projects_referencing_subagent(&machine_name);
     Ok(())
 }
@@ -40,7 +40,7 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
 #[tauri::command]
 pub fn delete_subagent(machine_name: String) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Subagent, &machine_name)?;
-    core::delete_subagent(&machine_name)?;
+    core::user_writes::delete_subagent(&machine_name)?;
     prune_subagent_references(&machine_name);
     Ok(())
 }

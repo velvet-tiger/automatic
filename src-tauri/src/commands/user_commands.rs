@@ -16,7 +16,7 @@ pub fn read_user_command(machine_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_user_command(machine_name: String, content: String) -> Result<(), String> {
-    core::save_user_command(&machine_name, &content)?;
+    core::user_writes::save_user_command(&machine_name, &content)?;
     sync_projects_referencing_user_command(&machine_name);
     Ok(())
 }
@@ -40,7 +40,7 @@ pub fn rename_user_command(old_name: String, new_name: String) -> Result<(), Str
 
 #[tauri::command]
 pub fn delete_user_command(machine_name: String) -> Result<(), String> {
-    core::delete_user_command(&machine_name)?;
+    core::user_writes::delete_user_command(&machine_name)?;
     prune_user_command_references(&machine_name);
     Ok(())
 }

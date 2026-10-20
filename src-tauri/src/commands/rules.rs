@@ -21,7 +21,7 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), String> {
-    core::save_rule(machine_name, name, content)?;
+    core::user_writes::save_rule(machine_name, name, content)?;
     // Propagate to every project that references this rule so on-disk
     // instruction files stay in sync with the library content. Sync output
     // directories are excluded from the Vite dev watcher so this does not
@@ -32,7 +32,7 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
 
 #[tauri::command]
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
-    core::delete_rule(machine_name)?;
+    core::user_writes::delete_rule(machine_name)?;
     prune_rule_references(machine_name);
     Ok(())
 }

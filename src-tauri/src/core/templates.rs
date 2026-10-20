@@ -405,7 +405,7 @@ async fn install_community_skills(template: &BundledProjectTemplate) {
 
         match fetch_remote_skill_content(source, skill_name).await {
             Ok(content) => {
-                if let Err(e) = save_skill(skill_name, &content) {
+                if let Err(e) = super::user_writes::save_skill(skill_name, &content) {
                     eprintln!(
                         "[automatic] template import: failed to save community skill '{}': {}",
                         skill_name, e
