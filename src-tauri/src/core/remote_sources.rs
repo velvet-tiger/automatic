@@ -502,6 +502,10 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     /// Whether writes of source-provenance.json fail.
     static PROVENANCE_WRITES_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How many more writes of source-provenance.json succeed, or `None`
+    /// for no limit.
+    static PROVENANCE_WRITES_LEFT: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Test support: let `writes` more writes of sources.json succeed on this
@@ -515,6 +519,13 @@ pub(crate) fn fail_sources_writes_after(writes: Option<usize>) {
 #[cfg(test)]
 pub(crate) fn fail_provenance_writes(fail: bool) {
     PROVENANCE_WRITES_FAIL.with(|cell| cell.set(fail));
+}
+
+/// Test support: let `writes` more writes of source-provenance.json succeed
+/// on this thread, then fail every one. `None` removes the limit.
+#[cfg(test)]
+pub(crate) fn fail_provenance_writes_after(writes: Option<usize>) {
+    PROVENANCE_WRITES_LEFT.with(|left| left.set(writes));
 }
 
 /// Save the sources registry.
@@ -576,7 +587,16 @@ pub fn read_provenance() -> Result<HashMap<String, String>, String> {
 /// Save the provenance map.
 fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
     #[cfg(test)]
-    if PROVENANCE_WRITES_FAIL.with(|fail| fail.get()) {
+    if PROVENANCE_WRITES_FAIL.with(|fail| fail.get())
+        || PROVENANCE_WRITES_LEFT.with(|left| match left.get() {
+            Some(0) => true,
+            Some(n) => {
+                left.set(Some(n - 1));
+                false
+            }
+            None => false,
+        })
+    {
         return Err("Failed to write source-provenance.json: test fault".to_string());
     }
     let path = provenance_path()?;
@@ -1588,10 +1608,19 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
     if !exists {
         return Ok(None);
     }
-    let owner = list_sources()?
+    // The source that lists the slug owns it. An older version could leave
+    // a slug listed on two sources; this source's own claim wins then, as
+    // the install replaces an entry it owns.
+    let listers: Vec<String> = list_sources()?
         .into_iter()
-        .find(|source| source.collection_slugs.iter().any(|s| s == slug))
-        .map(|source| source.repo);
+        .filter(|source| source.collection_slugs.iter().any(|s| s == slug))
+        .map(|source| source.repo)
+        .collect();
+    let owner = listers
+        .iter()
+        .find(|lister| lister.as_str() == repo)
+        .or_else(|| listers.first())
+        .cloned();
     match owner {
         Some(owner) if owner == repo => Ok(None),
         Some(owner) => Ok(Some(conflict(
@@ -1730,6 +1759,9 @@ pub fn install_source(
 
     let previous = get_source(repo)?;
     let mut prov = read_provenance()?;
+    // The map as it was, for putting back if the install cannot be
+    // committed. Taken here so the commit step needs no read that could fail.
+    let before = prov.clone();
     let modes = WriteModes {
         repo,
         prov: &prov,
@@ -1770,7 +1802,7 @@ pub fn install_source(
         &writes,
         previous.as_ref(),
     );
-    let entry_warnings = commit_install(&prov, entry, &writes)?;
+    let entry_warnings = commit_install(repo, &before, &prov, entry, &writes)?;
     writes.warnings.extend(entry_warnings);
 
     Ok(InstallResult {
@@ -1855,6 +1887,8 @@ struct InstallWrites {
     replaced: Vec<String>,
     collection_slugs: Vec<String>,
     created_collections: Vec<String>,
+    /// Collections the user confirmed taking over from another owner.
+    confirmed_collections: Vec<String>,
     failed_collections: Vec<String>,
 }
 
@@ -1898,7 +1932,9 @@ fn write_resources(
         for skill in &skills_section.entries {
             if select.skills.contains(&skill.name) {
                 let mode = modes.of("skill", &skill.name);
-                let result = install_skill(base_dir, skill, mode);
+                let result = install_skill(base_dir, skill, mode).map(|warning| {
+                    writes.warnings.extend(warning);
+                });
                 writes.record("skill", "skill", &skill.name, mode, result);
             }
         }
@@ -1957,8 +1993,10 @@ fn write_collections(
             .unwrap_or(WriteMode::Create);
         match install_collection(base_dir, coll_ref, mode) {
             Ok(slug) => {
-                if !mode.replaces() {
-                    writes.created_collections.push(slug.clone());
+                match mode {
+                    WriteMode::Create => writes.created_collections.push(slug.clone()),
+                    WriteMode::ReplaceConfirmed => writes.confirmed_collections.push(slug.clone()),
+                    WriteMode::ReplaceOwned => {}
                 }
                 writes.collection_slugs.push(slug);
             }
@@ -2033,32 +2071,36 @@ fn source_entry(
     (entry, warnings)
 }
 
-/// Write an install's provenance, then register its source. When either
-/// write fails, delete what the install created, put the provenance back,
-/// and return the error.
+/// Write an install's provenance, then register its source, then hand any
+/// confirmed collection over from the source that listed it. When either of
+/// the first two writes fails, delete what the install created, put the
+/// provenance back as `before` held it, and return the error.
+///
+/// If putting the provenance back fails too, one more write removes only
+/// the keys this install added, so no record is left for a name whose entry
+/// was just deleted. The error says when that fails as well.
 fn commit_install(
+    repo: &str,
+    before: &HashMap<String, String>,
     prov: &HashMap<String, String>,
-    (entry, entry_warnings): (RemoteSource, Vec<String>),
+    (entry, mut entry_warnings): (RemoteSource, Vec<String>),
     writes: &InstallWrites,
 ) -> Result<Vec<String>, String> {
-    let before = read_provenance()?;
     let failure = match save_provenance(prov) {
         Err(e) => Some(format!("Could not record the source's provenance: {}", e)),
         Ok(()) => match upsert_source(entry) {
-            Err(e) => {
-                let restored = save_provenance(&before).err();
-                Some(match restored {
-                    None => format!("Could not register the source: {}", e),
-                    Some(r) => format!(
-                        "Could not register the source: {}. Its provenance could not be put back either: {}",
-                        e, r
-                    ),
-                })
-            }
+            Err(e) => Some(match save_provenance(before) {
+                Ok(()) => format!("Could not register the source: {}", e),
+                Err(restore) => format!(
+                    "Could not register the source: {}. Its provenance could not be put back: {}",
+                    e, restore
+                ),
+            }),
             Ok(()) => None,
         },
     };
     let Some(failure) = failure else {
+        entry_warnings.extend(hand_over_collections(repo, writes));
         return Ok(entry_warnings);
     };
     let mut message = failure;
@@ -2069,6 +2111,15 @@ fn commit_install(
             undone.join(", ")
         ));
     }
+    if message.contains("could not be put back") {
+        match remove_added_keys(repo, before, prov) {
+            Ok(()) => message.push_str(". The records this install added were removed"),
+            Err(e) => message.push_str(&format!(
+                ". The records this install added could not be removed either, so they may name entries that no longer exist: {}",
+                e
+            )),
+        }
+    }
     if !writes.replaced.is_empty() {
         message.push_str(&format!(
             ". These were replaced and keep the new content: {}",
@@ -2076,6 +2127,68 @@ fn commit_install(
         ));
     }
     Err(message)
+}
+
+/// Remove from the stored provenance each key `prov` gives to `repo` that
+/// `before` did not, leaving every other record as it is now.
+fn remove_added_keys(
+    repo: &str,
+    before: &HashMap<String, String>,
+    prov: &HashMap<String, String>,
+) -> Result<(), String> {
+    let added: Vec<&String> = prov
+        .iter()
+        .filter(|(key, owner)| owner.as_str() == repo && before.get(*key) != Some(*owner))
+        .map(|(key, _)| key)
+        .collect();
+    let mut current = read_provenance()?;
+    let mut changed = false;
+    for key in added {
+        if current.get(key).map(String::as_str) == Some(repo) && before.get(key).is_none() {
+            current.remove(key);
+            changed = true;
+        } else if let Some(previous) = before.get(key) {
+            if current.get(key).map(String::as_str) == Some(repo) {
+                current.insert(key.clone(), previous.clone());
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        save_provenance(&current)?;
+    }
+    Ok(())
+}
+
+/// Take each collection this install replaced at the user's request out of
+/// the other sources that list it, so this source owns it, as resource
+/// provenance changes owner. Returns a warning for a hand-over that failed.
+fn hand_over_collections(repo: &str, writes: &InstallWrites) -> Vec<String> {
+    if writes.confirmed_collections.is_empty() {
+        return Vec::new();
+    }
+    let result = list_sources().and_then(|mut sources| {
+        let mut changed = false;
+        for source in sources.iter_mut().filter(|s| s.repo != repo) {
+            let count = source.collection_slugs.len();
+            source
+                .collection_slugs
+                .retain(|slug| !writes.confirmed_collections.contains(slug));
+            changed |= source.collection_slugs.len() != count;
+        }
+        if changed {
+            save_sources(&sources)?;
+        }
+        Ok(())
+    });
+    match result {
+        Ok(()) => Vec::new(),
+        Err(e) => vec![format!(
+            "Installed the collections {}, but the source that had them still lists them: {}",
+            writes.confirmed_collections.join(", "),
+            e
+        )],
+    }
 }
 
 /// Delete each entry and collection an install created. Returns the
@@ -2898,11 +3011,14 @@ fn resolve_manifest_path(source_dir: &Path, path: &str, owner: &str) -> Result<P
 /// first. Only once the copy is complete is the old folder moved aside and
 /// the staged one moved into place, so a failed copy leaves the installed
 /// skill as it was. A skill folder that is a symlink is never replaced.
+///
+/// Returns a warning when the replaced folder could not be deleted after the
+/// swap. The new skill is in place either way.
 fn install_skill(
     source_dir: &Path,
     skill: &SkillsJsonSkill,
     mode: WriteMode,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     ensure_resource_name("skill", &skill.name)?;
     let skill_source =
         resolve_manifest_path(source_dir, &skill.path, &format!("skill '{}'", skill.name))?;
@@ -2933,12 +3049,17 @@ fn install_skill(
         let _ = fs::remove_dir_all(&dest);
         return Err(e);
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Replace the skill folder `dest` with a copy of `source`, staged in
-/// `skills_dir`. See [`install_skill`].
-fn replace_skill_folder(source: &Path, skills_dir: &Path, dest: &Path) -> Result<(), String> {
+/// `skills_dir`. See [`install_skill`]. The hidden staging and aside folders
+/// are never listed as skills, as the skill scan skips dot-folders.
+fn replace_skill_folder(
+    source: &Path,
+    skills_dir: &Path,
+    dest: &Path,
+) -> Result<Option<String>, String> {
     let name = dest
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -2973,14 +3094,14 @@ fn replace_skill_folder(source: &Path, skills_dir: &Path, dest: &Path) -> Result
             ),
         });
     }
-    if let Err(e) = fs::remove_dir_all(&aside) {
-        eprintln!(
-            "[remote_sources] Left the replaced skill at {}: {}",
+    Ok(fs::remove_dir_all(&aside).err().map(|e| {
+        format!(
+            "Installed skill '{}', but the old version could not be deleted from {}: {}",
+            name,
             aside.display(),
             e
-        );
-    }
-    Ok(())
+        )
+    }))
 }
 
 /// Refuse to replace `path` when it is a symlink: the write would land
@@ -5023,12 +5144,22 @@ mod tests {
 
             let result = remove_source(REPO).expect("remove");
 
-            assert_eq!(result.removed, Vec::<String>::new());
-            assert_eq!(sorted(result.kept.clone()), names.keys());
+            // The confirmed collection moved to this source, so it goes with
+            // it. The resources are still listed by the other source.
+            let collection = format!("collection:{}", names.collection);
+            assert_eq!(result.removed, vec![collection.clone()]);
+            assert_eq!(
+                sorted(result.kept.clone()),
+                names
+                    .keys()
+                    .into_iter()
+                    .filter(|k| k != &collection)
+                    .collect::<Vec<_>>()
+            );
             for (kind, path) in names.library_paths() {
                 assert!(path.exists(), "the shared {kind} should survive");
             }
-            assert!(collection_slugs().contains(&names.collection));
+            assert!(!collection_slugs().contains(&names.collection));
             // The provenance moves to the source that still provides it.
             assert_eq!(
                 get_provenance("rule", &names.rule),
@@ -7926,6 +8057,193 @@ mod tests {
                 "{:?}",
                 bundled
             );
+        });
+    }
+
+    // ── fix round 2 (VEL-385) ───────────────────────────────────────────────
+
+    #[test]
+    fn a_key_filled_in_through_the_editor_keeps_the_sources_ownership() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-editor");
+            let manifest =
+                write_every_kind(REPO, &names, r#"{"command":"npx","env":{"API_KEY":""}}"#);
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            // Exactly what `cleanConfig` in McpServers.tsx sends after the
+            // user types the key: a `type`, no empty fields, and `_author`.
+            let editor = serde_json::json!({
+                "type": "stdio",
+                "command": "npx",
+                "env": { "API_KEY": "sk-mine" },
+                "_author": { "name": REPO, "repository_url": format!("https://github.com/{}", REPO) },
+            });
+            crate::core::user_writes::save_mcp_server(&names.mcp_server, &editor.to_string())
+                .expect("save");
+
+            assert_eq!(
+                get_provenance("mcp_server", &names.mcp_server),
+                Ok(Some(REPO.to_string()))
+            );
+        });
+    }
+
+    #[test]
+    fn an_editor_save_that_drops_a_field_it_does_not_know_takes_the_server_over() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-editor-drop");
+            let manifest = write_every_kind(
+                REPO,
+                &names,
+                r#"{"command":"npx","disabledTools":["write"],"env":{"API_KEY":""}}"#,
+            );
+            install_source(REPO, &manifest, None, None, &[]).expect("install");
+
+            crate::core::user_writes::save_mcp_server(
+                &names.mcp_server,
+                r#"{"type":"stdio","command":"npx","env":{"API_KEY":"sk-mine"}}"#,
+            )
+            .expect("save");
+
+            assert_eq!(get_provenance("mcp_server", &names.mcp_server), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_failed_install_puts_back_the_provenance_it_started_with() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-snapshot");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            record_provenance("rule", "vel385-unrelated", OTHER_REPO).unwrap();
+
+            fail_sources_writes_after(Some(0));
+            let result = install_source(REPO, &manifest, None, None, &[]);
+            fail_sources_writes_after(None);
+
+            assert!(result.is_err());
+            let prov = read_provenance().expect("read");
+            assert_eq!(
+                prov.get("rule:vel385-unrelated"),
+                Some(&OTHER_REPO.to_string())
+            );
+            assert_eq!(provenance_of(REPO), Vec::<String>::new());
+        });
+    }
+
+    #[test]
+    fn a_failed_install_whose_provenance_cannot_be_put_back_says_so() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-stuck");
+            let manifest = write_every_kind(REPO, &names, MCP);
+
+            // The commit's own write succeeds; registration, the restore
+            // and the second attempt all fail.
+            fail_sources_writes_after(Some(0));
+            fail_provenance_writes_after(Some(1));
+            let result = install_source(REPO, &manifest, None, None, &[]);
+            fail_provenance_writes_after(None);
+            fail_sources_writes_after(None);
+
+            let err = result.expect_err("the install must fail");
+            assert!(err.contains("could not be put back"), "{}", err);
+            assert!(err.contains("could not be removed either"), "{}", err);
+            for (kind, path) in names.library_paths() {
+                assert!(!path.exists(), "{kind} must be deleted again");
+            }
+        });
+    }
+
+    #[test]
+    fn a_failed_install_whose_restore_fails_removes_only_its_own_records() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-retry");
+            record_provenance("rule", "vel385-unrelated", OTHER_REPO).unwrap();
+            let before = read_provenance().unwrap();
+            let mut prov = before.clone();
+            prov.insert(format!("rule:{}", names.rule), REPO.to_string());
+            save_provenance(&prov).unwrap();
+
+            remove_added_keys(REPO, &before, &prov).expect("remove");
+
+            assert_eq!(read_provenance().unwrap(), before);
+        });
+    }
+
+    #[test]
+    fn a_leftover_staging_folder_is_not_listed_as_a_skill() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let skills = crate::core::paths::get_library_skills_dir().unwrap();
+            for name in [
+                ".vel385.installing-1-2",
+                ".vel385.replaced-1-2",
+                "vel385-real",
+            ] {
+                fs::create_dir_all(skills.join(name)).unwrap();
+                fs::write(
+                    skills.join(name).join("SKILL.md"),
+                    "---\nname: x\ndescription: x\n---\n",
+                )
+                .unwrap();
+            }
+
+            let listed: Vec<String> = crate::core::list_skills()
+                .expect("list")
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+
+            assert!(listed.contains(&"vel385-real".to_string()), "{:?}", listed);
+            assert!(!listed.iter().any(|n| n.starts_with('.')), "{:?}", listed);
+        });
+    }
+
+    #[test]
+    fn a_confirmed_collection_moves_to_the_new_source() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("vel385-coll-move");
+            install_every_kind(OTHER_REPO, &names, MCP);
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                collections: vec![names.collection.clone()],
+                ..Default::default()
+            };
+            let key = format!("collection:{}", names.collection);
+            let conflicts =
+                check_conflicts(REPO, &resolved(&manifest), Some(&selected)).expect("check");
+            assert_eq!(
+                conflicts[0].existing_source,
+                format!("source:{}", OTHER_REPO)
+            );
+
+            let result = install_source(REPO, &manifest, Some(selected.clone()), None, &[key])
+                .expect("install");
+
+            assert!(result.conflicts.is_empty(), "{:?}", result);
+            let other = get_source(OTHER_REPO).expect("read").expect("registered");
+            assert!(
+                !other.collection_slugs.contains(&names.collection),
+                "{:?}",
+                other
+            );
+            // The other source now sees this source as the owner.
+            let other_manifest = write_every_kind(OTHER_REPO, &names, MCP);
+            let from_other = check_conflicts(
+                OTHER_REPO,
+                &resolved_copy(&source_clone_path(OTHER_REPO).unwrap(), &other_manifest).unwrap(),
+                Some(&selected),
+            )
+            .expect("check");
+            assert_eq!(from_other[0].existing_source, format!("source:{}", REPO));
+            // Removing the other source leaves the collection.
+            remove_source(OTHER_REPO).expect("remove");
+            assert!(collection_slugs().contains(&names.collection));
         });
     }
 }

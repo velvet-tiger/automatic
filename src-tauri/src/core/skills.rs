@@ -147,7 +147,12 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_valid_name(name) && path.join("SKILL.md").exists() {
+                    // A dot-folder is never a skill. An interrupted remote
+                    // source install can leave its hidden staging folder here.
+                    if is_valid_name(name)
+                        && !name.starts_with('.')
+                        && path.join("SKILL.md").exists()
+                    {
                         names.insert(name.to_string());
                     }
                 }

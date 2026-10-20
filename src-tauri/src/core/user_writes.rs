@@ -60,6 +60,11 @@ pub fn save_mcp_server(name: &str, data: &str) -> Result<(), String> {
 /// Whether `data` differs from the stored config of `name` only in the
 /// values of env keys both have. A server that is not stored, or a config
 /// that is not JSON, is more than an env change.
+///
+/// Both sides are first put in the form the GUI editor saves
+/// (`normalizeConfig` then `cleanConfig` in `McpServers.tsx`), so a save
+/// from the editor that only fills in a key compares equal. See
+/// [`as_the_editor_saves`].
 fn changes_only_env_values(name: &str, data: &str) -> Result<bool, String> {
     let Some(stored) = super::mcp_servers::read_mcp_server_config_if_present(name)? else {
         return Ok(false);
@@ -73,18 +78,91 @@ fn changes_only_env_values(name: &str, data: &str) -> Result<bool, String> {
     Ok(without_env_values(stored) == without_env_values(incoming))
 }
 
-/// A config with each env value blanked, keeping the keys, and without the
-/// `_author` display field a read adds.
-fn without_env_values(mut config: serde_json::Value) -> serde_json::Value {
-    if let Some(object) = config.as_object_mut() {
-        object.remove("_author");
-        if let Some(env) = object.get_mut("env").and_then(|e| e.as_object_mut()) {
-            for value in env.values_mut() {
-                *value = serde_json::Value::String(String::new());
-            }
+/// A config with each env value blanked, keeping the keys, in the form
+/// [`as_the_editor_saves`] gives it.
+fn without_env_values(config: serde_json::Value) -> serde_json::Value {
+    let mut config = as_the_editor_saves(config);
+    if let Some(env) = config.get_mut("env").and_then(|e| e.as_object_mut()) {
+        for value in env.values_mut() {
+            *value = serde_json::Value::String(String::new());
         }
     }
     config
+}
+
+/// `config` with the differences the GUI editor introduces removed, where
+/// none of them changes how the server runs:
+///
+/// - A missing `type` is `stdio` when `command` is set, else `http` when
+///   `url` is set, as `normalizeConfig` decides it.
+/// - Every field whose name starts with `_` (Automatic's `_author`,
+///   `_builtin`, `_discovered` markers) is dropped.
+/// - An empty `command`, `args`, `env`, `cwd`, `url` or `headers` is dropped,
+///   as is a null value. The editor omits them, and sync treats a missing
+///   field the same way.
+/// - `oauth` keeps only its non-empty members, and is dropped when none is
+///   left, as `cleanConfig` does.
+/// - `enabled: true` is dropped, as it is the default; `enabled: false`
+///   stays. A `timeout` that is not a positive number is dropped.
+///
+/// Fields `cleanConfig` also drops are kept here, so a save that removes
+/// them counts as a change and the user takes the server over: any field the
+/// editor does not know, and the fields of the other transport (`url`,
+/// `headers` and `oauth` on a stdio server; `command`, `args`, `env` and
+/// `cwd` on an http one). Agents can read those, so dropping one could
+/// change how the server runs.
+fn as_the_editor_saves(mut config: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    let Some(object) = config.as_object_mut() else {
+        return config;
+    };
+    object.retain(|key, value| !key.starts_with('_') && !value.is_null());
+    let has = |object: &serde_json::Map<String, Value>, key: &str| {
+        object
+            .get(key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.is_empty())
+    };
+    if !object.contains_key("type") {
+        let inferred = if has(object, "command") {
+            Some("stdio")
+        } else if has(object, "url") {
+            Some("http")
+        } else {
+            None
+        };
+        if let Some(kind) = inferred {
+            object.insert("type".to_string(), Value::String(kind.to_string()));
+        }
+    }
+    if let Some(oauth) = object.get_mut("oauth").and_then(|o| o.as_object_mut()) {
+        oauth.retain(|_, v| !is_empty_value(v));
+    }
+    for key in ["command", "args", "env", "cwd", "url", "headers", "oauth"] {
+        if object.get(key).is_some_and(is_empty_value) {
+            object.remove(key);
+        }
+    }
+    if object.get("enabled") == Some(&Value::Bool(true)) {
+        object.remove("enabled");
+    }
+    if object
+        .get("timeout")
+        .is_some_and(|t| !t.as_f64().is_some_and(|t| t > 0.0))
+    {
+        object.remove("timeout");
+    }
+    config
+}
+
+fn is_empty_value(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::String(s) => s.is_empty(),
+        serde_json::Value::Array(a) => a.is_empty(),
+        serde_json::Value::Object(o) => o.is_empty(),
+        _ => false,
+    }
 }
 
 /// Delete a skill at the user's request.
