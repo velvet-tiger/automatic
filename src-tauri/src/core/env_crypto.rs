@@ -44,6 +44,22 @@ thread_local! {
     /// The key for the running test. Each test runs on its own thread, so a
     /// test starts with no key, as a new install does.
     static TEST_KEY: std::cell::Cell<Option<[u8; 32]>> = const { std::cell::Cell::new(None) };
+
+    /// When set, a decrypt in this test fails to read the key, as it does
+    /// when the keychain is locked or a keychain prompt is denied.
+    static FAIL_KEY_READS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Replace the key of the running test. `None` leaves the test with no key.
+#[cfg(test)]
+pub(crate) fn set_test_key(key: Option<[u8; 32]>) {
+    TEST_KEY.with(|stored| stored.set(key));
+}
+
+/// Make every later decrypt in the running test fail to read the key.
+#[cfg(test)]
+pub(crate) fn fail_key_reads_in_test(fail: bool) {
+    FAIL_KEY_READS.with(|stored| stored.set(fail));
 }
 
 #[cfg(not(test))]
@@ -67,7 +83,10 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
 /// Retrieve the encryption key for a decrypt. Like the keychain version, it
 /// never creates a key, so a test can show that a decrypt does not.
 #[cfg(test)]
-fn existing_key() -> Result<[u8; 32], String> {
+fn existing_key() -> Result<[u8; 32], DecryptError> {
+    if FAIL_KEY_READS.with(|stored| stored.get()) {
+        return key_for_decrypt(Err("the test keychain is locked".to_string()));
+    }
     key_for_decrypt(Ok(TEST_KEY.with(|stored| stored.get()).map(hex::encode)))
 }
 
@@ -93,7 +112,7 @@ fn get_or_create_key() -> Result<[u8; 32], String> {
 /// A missing key is not cached. Another process may create the key later, and
 /// the next call must find it.
 #[cfg(not(test))]
-fn existing_key() -> Result<[u8; 32], String> {
+fn existing_key() -> Result<[u8; 32], DecryptError> {
     if let Some(key) = CACHED_KEY.get() {
         return Ok(*key);
     }
@@ -132,14 +151,20 @@ fn existing_or_new_key(
 ///
 /// The value being decrypted was encrypted with a key that is no longer in
 /// the store. A new key could not read it, and creating one would only hide
-/// that the old key was lost.
-fn key_for_decrypt(loaded: Result<Option<String>, String>) -> Result<[u8; 32], String> {
-    stored_key(loaded)?.ok_or_else(|| {
-        "The encryption key for this value is no longer in the keychain, so the value cannot \
-         be decrypted (no new key was created). The value has to be entered again: delete \
-         this MCP server and add it again."
-            .to_string()
-    })
+/// that the old key was lost. That is [`DecryptError::Undecryptable`]: no key
+/// this install has can read the value. A key that is stored but could not
+/// be read or decoded is [`DecryptError::KeyUnreadable`].
+fn key_for_decrypt(loaded: Result<Option<String>, String>) -> Result<[u8; 32], DecryptError> {
+    stored_key(loaded)
+        .map_err(DecryptError::KeyUnreadable)?
+        .ok_or_else(|| {
+            DecryptError::Undecryptable(
+                "The encryption key for this value is no longer in the keychain, so the value \
+                 cannot be decrypted (no new key was created). The value has to be entered \
+                 again: delete this MCP server and add it again."
+                    .to_string(),
+            )
+        })
 }
 
 /// Decode the result of reading the stored key. `Ok(None)` means no key has
@@ -187,19 +212,52 @@ pub fn encrypt_value(plaintext: &str) -> Result<String, String> {
     Ok(format!("{}{}", SENTINEL, URL_SAFE_NO_PAD.encode(payload)))
 }
 
+/// Why a value could not be decrypted.
+///
+/// The messages never include the value itself.
+#[derive(Debug, PartialEq)]
+pub enum DecryptError {
+    /// The stored key could not be read or decoded, as when the keychain is
+    /// locked or a prompt is denied. The value itself may be fine.
+    KeyUnreadable(String),
+    /// No key this install has can read the value. It is badly formed, no
+    /// key is stored, or it fails authentication under the stored key.
+    Undecryptable(String),
+}
+
+impl std::fmt::Display for DecryptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecryptError::KeyUnreadable(message) | DecryptError::Undecryptable(message) => {
+                f.write_str(message)
+            }
+        }
+    }
+}
+
 /// Decrypt an `enc:v1:<base64url>` sentinel string.  Returns `Err` if the
 /// sentinel prefix is missing, no key is stored, or decryption fails.
 pub fn decrypt_value(ciphertext_str: &str) -> Result<String, String> {
+    decrypt_value_reporting(ciphertext_str).map_err(|e| e.to_string())
+}
+
+/// Like [`decrypt_value`], and say whether the key or the value is at fault.
+///
+/// The value's shape is checked before the key is read, so a badly formed
+/// value never reaches the keychain.
+pub fn decrypt_value_reporting(ciphertext_str: &str) -> Result<String, DecryptError> {
     let encoded = ciphertext_str
         .strip_prefix(SENTINEL)
-        .ok_or("Not an encrypted value")?;
+        .ok_or_else(|| DecryptError::Undecryptable("Not an encrypted value".to_string()))?;
 
-    let payload = URL_SAFE_NO_PAD
-        .decode(encoded)
-        .map_err(|e| format!("Failed to base64-decode encrypted value: {}", e))?;
+    let payload = URL_SAFE_NO_PAD.decode(encoded).map_err(|e| {
+        DecryptError::Undecryptable(format!("Failed to base64-decode encrypted value: {}", e))
+    })?;
 
     if payload.len() < 12 {
-        return Err("Encrypted payload too short".into());
+        return Err(DecryptError::Undecryptable(
+            "Encrypted payload too short".to_string(),
+        ));
     }
 
     let (nonce_bytes, ciphertext) = payload.split_at(12);
@@ -211,9 +269,11 @@ pub fn decrypt_value(ciphertext_str: &str) -> Result<String, String> {
 
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|e| format!("Decryption failed: {}", e))?;
+        .map_err(|e| DecryptError::Undecryptable(format!("Decryption failed: {}", e)))?;
 
-    String::from_utf8(plaintext).map_err(|e| format!("Decrypted value is not valid UTF-8: {}", e))
+    String::from_utf8(plaintext).map_err(|e| {
+        DecryptError::Undecryptable(format!("Decrypted value is not valid UTF-8: {}", e))
+    })
 }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
@@ -319,6 +379,8 @@ mod tests {
         // A new key could not read the value, and would hide that the old
         // key was lost.
         let error = key_for_decrypt(Ok(None)).unwrap_err();
+        assert!(matches!(error, DecryptError::Undecryptable(_)), "{error:?}");
+        let error = error.to_string();
         assert!(
             error.contains("no new key was created"),
             "error was: {error}"
@@ -328,6 +390,8 @@ mod tests {
     #[test]
     fn a_decrypt_keeps_a_failed_read_as_an_error() {
         let error = key_for_decrypt(Err("keychain is locked".to_string())).unwrap_err();
+        assert!(matches!(error, DecryptError::KeyUnreadable(_)), "{error:?}");
+        let error = error.to_string();
         assert!(error.contains("keychain is locked"), "error was: {error}");
     }
 

@@ -13,6 +13,7 @@ import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { nextAvailableName } from "../../lib/uniqueName";
+import { encryptedPrefixMessage, envKeysWithEncryptedPrefix } from "../../lib/encryptedEnvValues";
 import { McpConfigFindings } from "../../components/McpConfigFindings";
 import {
   fixMcpDockerArgs,
@@ -776,6 +777,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   }, [configToValidate]);
 
   const saveBlockedByErrors = hasMcpConfigErrors(validation) && !saveDespiteErrors;
+  // The backend refuses these values. Checking here too stops a rename from
+  // going through before a save that would then fail. "Save anyway" does not
+  // override it, because the backend would still refuse.
+  const encryptedPrefixKey = envKeysWithEncryptedPrefix(config?.env)[0];
+  const envPrefixError =
+    encryptedPrefixKey !== undefined ? encryptedPrefixMessage(encryptedPrefixKey) : null;
 
   const applyDockerFix = async () => {
     if (!config) return;
@@ -864,6 +871,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
     if (saveBlockedByErrors) return;
+    if (envPrefixError) {
+      setError(envPrefixError);
+      return;
+    }
     let renamed = false;
     try {
       // Rename first when the user changed the name of an existing server.
@@ -1335,9 +1346,13 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     disabled={
                       (isCreating && !newName.trim()) ||
                       (!isCreating && !editName.trim()) ||
-                      saveBlockedByErrors
+                      saveBlockedByErrors ||
+                      envPrefixError !== null
                     }
-                    title={saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined}
+                    title={
+                      envPrefixError ??
+                      (saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined)
+                    }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
@@ -1626,6 +1641,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       colorKey
                       maskValue
                     />
+                    {envPrefixError && (
+                      <p className="mt-2 text-[11px] text-danger">{envPrefixError}</p>
+                    )}
                     <p className="mt-2 text-[11px] text-text-muted leading-relaxed">
                       Values are encrypted at rest but{" "}
                       <strong className="font-semibold text-text-base">written as plaintext to your project</strong>.
