@@ -119,16 +119,184 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
 }
 
+/// Scan `root` for folders that look like agent projects. Runs off the main
+/// thread: a scan of a home folder can open tens of thousands of folders.
+#[tauri::command]
+pub async fn discover_projects(
+    root: String,
+) -> Result<core::project_discovery::DiscoveryReport, String> {
+    tokio::task::spawn_blocking(move || {
+        core::project_discovery::discover_projects(
+            &root,
+            core::project_discovery::DiscoveryLimits::default(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Project scan failed: {}", e))?
+}
+
+/// The outcome of adding one folder in [`add_discovered_projects`].
+#[derive(Debug, Serialize)]
+pub struct AddedDiscoveredProject {
+    pub directory: String,
+    /// The new project's `local_key`, when it was added.
+    pub local_key: Option<String>,
+    /// The project's name. An imported config keeps its own name, which may
+    /// differ from the folder name.
+    pub name: Option<String>,
+    /// True when an imported config asked for read-only mode.
+    pub read_only: bool,
+    pub error: Option<String>,
+}
+
+/// Add each folder in `directories` as a project. A new folder goes through
+/// the Add Project wizard's create path, which names it after the folder,
+/// adopts the agents found on disk and runs the first sync. A folder with an
+/// unregistered Automatic config is imported and keeps that config. One
+/// failure does not stop the rest; each folder reports its own result.
+#[tauri::command]
+pub async fn add_discovered_projects(
+    directories: Vec<String>,
+    created_by: Option<String>,
+) -> Result<Vec<AddedDiscoveredProject>, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(add_discovered_folders(directories, created_by.as_deref()))
+    })
+    .await
+    .map_err(|e| format!("Adding projects failed: {}", e))?
+}
+
+/// Synchronous body of [`add_discovered_projects`].
+fn add_discovered_folders(
+    directories: Vec<String>,
+    created_by: Option<&str>,
+) -> Vec<AddedDiscoveredProject> {
+    directories
+        .into_iter()
+        .map(|directory| match add_discovered_project(&directory, created_by) {
+            Ok(added) => AddedDiscoveredProject {
+                directory,
+                local_key: Some(added.local_key),
+                name: Some(added.name),
+                read_only: added.read_only,
+                error: None,
+            },
+            Err(e) => AddedDiscoveredProject {
+                directory,
+                local_key: None,
+                name: None,
+                read_only: false,
+                error: Some(e),
+            },
+        })
+        .collect()
+}
+
+/// Validate one discovered folder and add it as a project. A folder with an
+/// unregistered Automatic config is imported, keeping that config, as the
+/// wizard's Import choice does. Any other folder gets a new project.
+fn add_discovered_project(
+    directory: &str,
+    created_by: Option<&str>,
+) -> Result<core::ImportedProject, String> {
+    let path = std::path::Path::new(directory);
+    if !path.is_absolute() {
+        return Err(format!("'{}' is not an absolute folder path.", directory));
+    }
+    // The scan reports canonical paths and never follows symlinks. A path
+    // that differs from its canonical form holds a symlink or `..`, so it did
+    // not come from the scan.
+    let canonical = core::project_discovery::canonical_path(path)
+        .map_err(|e| format!("Cannot read folder '{}': {}", directory, e))?;
+    if canonical != path {
+        return Err(format!(
+            "'{}' goes through a symlink or '..'. Add it with Add Project instead.",
+            directory
+        ));
+    }
+    if !canonical.is_dir() {
+        return Err(format!("'{}' is not a folder.", directory));
+    }
+    // Home holds each agent's global config. Syncing it as a project would
+    // rewrite that config.
+    let home =
+        crate::agent::home_dir().and_then(|h| core::project_discovery::canonical_path(&h).ok());
+    if home.as_deref() == Some(canonical.as_path()) {
+        return Err("Your home folder cannot be added as a project.".to_string());
+    }
+
+    // The folder may have been added, or gained a config, since the scan.
+    match core::inspect_project_directory(directory)? {
+        core::DirectoryStatus::Available => {}
+        core::DirectoryStatus::RegisteredHere { name, .. } => {
+            return Err(format!("Already added as project '{}'.", name));
+        }
+        core::DirectoryStatus::OrphanConfig { .. } => {
+            return import_existing_project(directory);
+        }
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| core::is_valid_name(s))
+        .ok_or_else(|| format!("Cannot name a project after '{}'.", directory))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    // Built as JSON so serde fills every other field with its default, the
+    // same as the wizard's stub.
+    let mut stub = serde_json::json!({
+        "name": name,
+        "directory": directory,
+        "created_at": now,
+        "updated_at": now,
+    });
+    if let Some(user) = created_by.filter(|u| !u.is_empty()) {
+        stub["created_by"] = serde_json::Value::String(user.to_string());
+    }
+    // A bulk add would otherwise fire one forced AI call per folder at once.
+    // Each project gets its recommendations on its next save instead, under
+    // the normal once-a-day throttle.
+    let local_key =
+        save_project_with(name, &stub.to_string(), true, NewProjectRecommendations::Skip)?;
+    Ok(core::ImportedProject {
+        name: name.to_string(),
+        local_key,
+        read_only: false,
+    })
+}
+
+/// Whether creating a project runs the forced first AI recommendations call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NewProjectRecommendations {
+    Run,
+    Skip,
+}
+
 /// Save a project and sync it. `name` is an identifier (a `local_key`, or a
 /// name). Returns the saved project's `local_key` (its name while it has no
 /// key), which the Add Project wizard uses to address the project it just
 /// created: the name may be shared with another project.
 #[tauri::command]
 pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<String, String> {
+    save_project_with(
+        name,
+        data,
+        creating.unwrap_or(false),
+        NewProjectRecommendations::Run,
+    )
+}
+
+/// Body of [`save_project`]. `recommendations` decides whether a new
+/// project gets the forced first AI recommendations call.
+fn save_project_with(
+    name: &str,
+    data: &str,
+    creating: bool,
+    recommendations: NewProjectRecommendations,
+) -> Result<String, String> {
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
-    let creating = creating.unwrap_or(false);
-
     // Add Project wizard: refuse a directory another project owns, then give
     // the new project its identity keys before the first write. The name is
     // not looked up: another project may already use it. From here on the
@@ -362,8 +530,9 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
     // Spawn on the Tauri async runtime so we never block the UI.
     // The throttle check inside ai_generate_project_recommendations_bg ensures
     // this runs at most once per 24 hours automatically; on a brand-new project
-    // (is_new == true) we always run it regardless of the throttle.
-    {
+    // (is_new == true) we always run it regardless of the throttle, unless
+    // the caller asked to skip it (bulk add).
+    if !(is_new && recommendations == NewProjectRecommendations::Skip) {
         let project_name = name.to_string();
         let is_new_project = is_new;
         tauri::async_runtime::spawn(async move {
@@ -2353,6 +2522,153 @@ fn detach_profile_from_projects_removes_provided_entries() {
             )
             .expect("parse");
             assert_eq!(detected.agents, vec!["claude".to_string()]);
+        });
+    }
+
+    /// A folder added from the Find projects dialog goes through the same
+    /// create path as the wizard: it is named after the folder and adopts
+    /// the agents found on disk.
+    #[test]
+    fn adding_a_discovered_folder_creates_a_project_with_its_agents() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let project_dir = parent.path().canonicalize().expect("canonical").join("my-app");
+            std::fs::create_dir_all(&project_dir).expect("mkdir");
+            std::fs::write(project_dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
+            let dir = project_dir.display().to_string();
+
+            let added = add_discovered_project(&dir, Some("user_1")).expect("add");
+            assert_eq!(added.name, "my-app");
+            assert!(!added.read_only);
+
+            let saved = read_back(&added.local_key);
+            assert_eq!(saved.name, "my-app");
+            assert_eq!(saved.directory, dir);
+            assert_eq!(saved.agents, vec!["claude".to_string()]);
+            assert_eq!(saved.created_by.as_deref(), Some("user_1"));
+            assert_eq!(saved.instruction_mode, "per-agent");
+
+            let err = add_discovered_project(&dir, None).expect_err("second add");
+            assert!(err.contains("Already added as project 'my-app'"), "{err}");
+        });
+    }
+
+    #[test]
+    fn adding_a_discovered_folder_rejects_bad_paths() {
+        with_temp_home(|_| {
+            assert!(add_discovered_project("relative/dir", None).is_err());
+
+            let parent = tempdir().expect("parent");
+            let base = parent.path().canonicalize().expect("canonical");
+            std::fs::create_dir_all(base.join("x")).expect("mkdir");
+            std::fs::create_dir_all(base.join("y")).expect("mkdir");
+            let dotted = format!("{}/x/../y", base.display());
+            let err = add_discovered_project(&dotted, None).expect_err("dotted path");
+            assert!(err.contains("symlink or '..'"), "{err}");
+
+            let file = base.join("file.txt");
+            std::fs::write(&file, "x").expect("write");
+            assert!(add_discovered_project(&file.display().to_string(), None).is_err());
+
+            #[cfg(unix)]
+            {
+                let target = base.join("real");
+                std::fs::create_dir_all(&target).expect("mkdir");
+                let link = base.join("link");
+                std::os::unix::fs::symlink(&target, &link).expect("symlink");
+                assert!(add_discovered_project(&link.display().to_string(), None).is_err());
+                // A symlink higher up the path is caught too.
+                std::fs::create_dir_all(target.join("inner")).expect("mkdir");
+                let through = link.join("inner");
+                assert!(add_discovered_project(&through.display().to_string(), None).is_err());
+            }
+        });
+    }
+
+    /// A folder with an unregistered Automatic config is imported, so it
+    /// keeps the name and id its committed config carries.
+    #[test]
+    fn adding_a_discovered_folder_imports_an_existing_config() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("folder-name");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(
+                dir.join(".automatic.json"),
+                r#"{"name":"ambient","id":"proj-ambient-1","agents":["claude"]}"#,
+            )
+            .expect("write config");
+            let dir_str = dir.display().to_string();
+            assert!(matches!(
+                core::inspect_project_directory(&dir_str).expect("inspect"),
+                core::DirectoryStatus::OrphanConfig { .. }
+            ));
+
+            let added = add_discovered_project(&dir_str, None).expect("import");
+
+            assert_eq!(added.name, "ambient");
+            assert!(!added.read_only);
+            let saved = read_back(&added.local_key);
+            assert_eq!(saved.name, "ambient");
+            assert_eq!(saved.id, "proj-ambient-1");
+            assert_eq!(saved.directory, dir_str);
+            assert!(matches!(
+                core::inspect_project_directory(&dir_str).expect("inspect"),
+                core::DirectoryStatus::RegisteredHere { .. }
+            ));
+        });
+    }
+
+    /// A committed `read_only` hint is honoured on import, as in the wizard.
+    #[test]
+    fn adding_a_discovered_folder_imports_a_read_only_config_as_read_only() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("locked");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(
+                dir.join(".automatic.json"),
+                r#"{"name":"locked","id":"proj-locked-1","read_only":true}"#,
+            )
+            .expect("write config");
+
+            let added = add_discovered_project(&dir.display().to_string(), None).expect("import");
+
+            assert!(added.read_only);
+        });
+    }
+
+    #[test]
+    fn adding_a_discovered_folder_refuses_the_home_folder() {
+        with_temp_home(|_| {
+            let home = crate::agent::home_dir().expect("home");
+            std::fs::create_dir_all(&home).expect("mkdir");
+            let home = home.canonicalize().expect("canonical");
+            std::fs::write(home.join("CLAUDE.md"), "# global").expect("write");
+
+            let err = add_discovered_project(&home.display().to_string(), None)
+                .expect_err("home must be refused");
+            assert!(err.contains("home folder"), "{err}");
+        });
+    }
+
+    #[test]
+    fn adding_discovered_folders_reports_each_result() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let base = parent.path().canonicalize().expect("canonical");
+            let good = base.join("good");
+            std::fs::create_dir_all(&good).expect("mkdir");
+            let missing = base.join("missing");
+
+            let results = add_discovered_folders(
+                vec![missing.display().to_string(), good.display().to_string()],
+                None,
+            );
+
+            assert_eq!(results.len(), 2);
+            assert!(results[0].error.is_some() && results[0].local_key.is_none());
+            assert!(results[1].error.is_none() && results[1].local_key.is_some());
         });
     }
 

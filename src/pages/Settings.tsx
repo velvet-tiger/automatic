@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { THEMES, applyTheme, Theme } from "../lib/theme";
+import { THEMES, getStoredTheme, onThemeChanged, setStoredTheme, Theme } from "../lib/theme";
 import {
   useProjectNavLayout,
   setProjectNavLayout,
@@ -181,22 +181,16 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   const [accountBusy, setAccountBusy] = useState<"idle" | "signing-in" | "signing-out">("idle");
   const [accountError, setAccountError] = useState("");
 
-  const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
-    let saved = localStorage.getItem("automatic.theme") as string;
-    if (saved === "sleek-hacker") saved = "corporate-dark";
-    if (saved === "sleek") saved = "corporate-dark";
-    if (saved === "neon-cyberpunk") saved = "cyberpunk";
-    if (saved === "minimalist-coral") saved = "coral";
-    return (saved as Theme) || "system";
-  });
+  const [currentTheme, setCurrentTheme] = useState<Theme>(getStoredTheme);
+  // The sidebar switcher can change the theme while Settings is open.
+  useEffect(() => onThemeChanged(setCurrentTheme), []);
 
   const followSystem = currentTheme === "system";
   const projectNavLayout = useProjectNavLayout();
 
   const handleThemeChange = (theme: Theme) => {
     setCurrentTheme(theme);
-    localStorage.setItem("automatic.theme", theme);
-    applyTheme(theme);
+    setStoredTheme(theme);
   };
 
   const handleFollowSystemToggle = () => {
@@ -389,8 +383,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       setSettings(defaults);
       setAnalyticsEnabled(true);
       setCurrentTheme("system");
-      localStorage.setItem("automatic.theme", "system");
-      applyTheme("system");
+      setStoredTheme("system");
     } catch (e) {
       console.error("Failed to reset settings", e);
     }
@@ -453,8 +446,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       setSettings(defaults);
       setAnalyticsEnabled(true);
       setCurrentTheme("system");
-      localStorage.setItem("automatic.theme", "system");
-      applyTheme("system");
+      setStoredTheme("system");
       setShowEraseDataModal(false);
       setEraseInput("");
     } catch (e) {

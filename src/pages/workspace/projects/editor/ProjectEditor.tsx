@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
+import { useProjectMemories } from "./useProjectMemories";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
@@ -44,6 +46,7 @@ import type {
   UnifiedCandidate,
   RebuildPreview,
   DriftReport,
+  ProjectDriftState,
   ProjectProblemsReport,
   ProjectFileInfo,
   ProjectTemplate,
@@ -55,6 +58,9 @@ import type {
 import {
   parseInvokeResult,
   agentIdToLabel,
+  checkErrorText,
+  checkFailureNotices,
+  driftChecked,
   emptyProject,
   isHttpDocPath,
   isManagedDocNotePath,
@@ -96,6 +102,18 @@ import { CommandsPanel } from "./panels/CommandsPanel";
 import { HooksPanel } from "./panels/HooksPanel";
 import { CustomAgentsPanel } from "./panels/CustomAgentsPanel";
 import { ProjectFilePanel } from "./panels/ProjectFilePanel";
+import {
+  WizardGroupStep,
+  WizardProfileStep,
+  WizardToolsStep,
+  WizardSettingsStep,
+  WizardNav,
+  continueLabel,
+  WIZARD_STEPS,
+  WIZARD_STEP_LABELS,
+  profilesProvidedByGroups,
+  type WizardStepNumber,
+} from "./NewProjectWizardSteps";
 
 import {
   Plus,
@@ -192,7 +210,7 @@ interface ProjectEditorProps {
   reloadProjects: () => Promise<void>;
   /** Keyed by local_key. */
   setProjectDetailsMap: React.Dispatch<React.SetStateAction<Map<string, Project>>>;
-  setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, ProjectDriftState>>>;
   onBack: () => void;
   /**
    * Cached project from the router's overview map, used as the initial value
@@ -205,6 +223,8 @@ interface ProjectEditorProps {
   onInitialProjectTabConsumed?: () => void;
   createFromTemplates?: ProjectTemplate[] | null;
   onCreateFromTemplatesConsumed?: () => void;
+  /** The group the user was viewing when they clicked Add Project. The wizard starts with it selected. */
+  createInGroup?: string | null;
   onNavigateToSkill?: (skillName: string) => void;
   onNavigateToMcpServer?: (serverName: string) => void;
   onNavigateToSkillStore?: (skillId: string) => void;
@@ -230,6 +250,7 @@ export function ProjectEditor({
   onInitialProjectTabConsumed,
   createFromTemplates = null,
   onCreateFromTemplatesConsumed,
+  createInGroup = null,
   onNavigateToSkill,
   onNavigateToMcpServer,
   onNavigateToSkillStore,
@@ -253,7 +274,17 @@ export function ProjectEditor({
   // loading failed; nothing depends on it for correctness.
   const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
   // Wizard state (used while isCreating === true)
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  // 1 Directory, 2 Agents, 3 Group, 4 Profile, 5 Templates, 6 Tools, 7 Settings.
+  const [wizardStep, setWizardStep] = useState<WizardStepNumber>(1);
+  // Groups and profiles need a saved project, so the wizard only records the
+  // choices here and applies them after the final save.
+  const [wizardGroups, setWizardGroups] = useState<string[]>([]);
+  const [wizardGroupsLoading, setWizardGroupsLoading] = useState(false);
+  const [wizardProfiles, setWizardProfiles] = useState<string[]>([]);
+  /** Profiles each selected group lists, keyed by group name. The backend gives them to the project once it joins. */
+  const [wizardGroupProfiles, setWizardGroupProfiles] = useState<Record<string, string[]>>({});
+  /** Tools found in the project directory, shown with a "Detected" badge. */
+  const [wizardDetectedTools, setWizardDetectedTools] = useState<string[]>([]);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
   const [wizardDefaultAgents, setWizardDefaultAgents] = useState<string[]>([]);
@@ -308,6 +339,77 @@ export function ProjectEditor({
     if (!isCreating || wizardStep !== 1 || nameEdited) return;
     setNewName(folderBasename(wizardDirectory));
   }, [isCreating, wizardStep, nameEdited, wizardDirectory]);
+
+  // Fill the optional wizard steps when they are shown. The profile list is
+  // already kept current by the loader further down.
+  useEffect(() => {
+    if (!isCreating) return;
+    let cancelled = false;
+    if (wizardStep === 3) {
+      setWizardGroupsLoading(true);
+      invoke<string[]>("list_groups")
+        .then((names) => {
+          if (cancelled) return;
+          setAllGroups([...names].sort((a, b) => a.localeCompare(b)));
+          // A prefilled group may have been deleted since the page was drawn.
+          setWizardGroups((prev) => prev.filter((g) => names.includes(g)));
+        })
+        .catch((err: unknown) => {
+          console.error("Failed to load groups for the wizard:", err);
+          if (!cancelled) setError(`Failed to load groups: ${err}`);
+        })
+        .finally(() => {
+          if (!cancelled) setWizardGroupsLoading(false);
+        });
+    } else if (wizardStep === 6) {
+      loadToolEntries();
+      invoke<string[]>("autodetect_tools_for_project", { projectDir: wizardDirectory })
+        .then((names) => {
+          if (!cancelled) setWizardDetectedTools(names);
+        })
+        .catch((err: unknown) => {
+          // Detection only adds a badge, so the step still works without it.
+          console.warn("Tool detection failed:", err);
+          if (!cancelled) setWizardDetectedTools([]);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreating, wizardStep, wizardDirectory]);
+
+  // Read the profiles of each newly selected group, so the Profile step can
+  // show what the groups will provide. A group that cannot be read is dropped
+  // from the selection and named in the error, since the save would fail on it.
+  useEffect(() => {
+    if (!isCreating) return;
+    const missing = wizardGroups.filter((g) => !(g in wizardGroupProfiles));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const loaded: Record<string, string[]> = {};
+      const unreadable: string[] = [];
+      for (const group of missing) {
+        try {
+          const raw: string = await invoke("read_group", { name: group });
+          const parsed = JSON.parse(raw) as { profiles?: string[] };
+          loaded[group] = parsed.profiles ?? [];
+        } catch (err: unknown) {
+          console.error(`Could not read group "${group}":`, err);
+          unreadable.push(group);
+        }
+      }
+      if (cancelled) return;
+      setWizardGroupProfiles((prev) => ({ ...prev, ...loaded }));
+      if (unreadable.length > 0) {
+        setWizardGroups((prev) => prev.filter((g) => !unreadable.includes(g)));
+        setError(`Could not read group${unreadable.length > 1 ? "s" : ""}: ${unreadable.join(", ")}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreating, wizardGroups, wizardGroupProfiles]);
 
   const wizardTrimmedName = newName.trim();
   const wizardNameFormatProblem = projectNameFormatProblem(wizardTrimmedName);
@@ -369,11 +471,13 @@ export function ProjectEditor({
   // Why the last drift check could not run, when it could not. Shown as a
   // banner, because a check that fails silently leaves "In Sync" on screen.
   const [driftCheckError, setDriftCheckError] = useState<string | null>(null);
-  const driftCheckInFlight = useRef(false);
 
   // Project problems state (e.g. MCP user-scope conflicts)
   // null = unknown/not yet checked, ProjectProblemsReport = result of last check
   const [problemsReport, setProblemsReport] = useState<ProjectProblemsReport | null>(null);
+  // Why the last problems check could not run, when it could not. A failed
+  // check must not leave an older report, or no banner at all, on screen.
+  const [problemsCheckError, setProblemsCheckError] = useState<string | null>(null);
 
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
@@ -666,9 +770,7 @@ export function ProjectEditor({
     }
   }
 
-  // Memory state
-  const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
-  const [loadingMemories, setLoadingMemories] = useState(false);
+  const { selectedMemories, loadingMemories, loadMemories } = useProjectMemories(selectedKey, setError);
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -899,7 +1001,10 @@ export function ProjectEditor({
   // The router flips isCreating; the editor seeds the wizard.
   useEffect(() => {
     if (isCreating) {
-      void startCreate(createFromTemplates && createFromTemplates.length > 0 ? { fromTemplates: createFromTemplates } : undefined);
+      void startCreate({
+        ...(createFromTemplates && createFromTemplates.length > 0 ? { fromTemplates: createFromTemplates } : {}),
+        ...(createInGroup ? { inGroup: createInGroup } : {}),
+      });
       onCreateFromTemplatesConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -909,6 +1014,7 @@ export function ProjectEditor({
   useEffect(() => {
     setDriftReport(null);
     setProblemsReport(null);
+    setProblemsCheckError(null);
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
     setGlobalRuleSearch("");
@@ -991,9 +1097,7 @@ export function ProjectEditor({
       .then(async (ok) => {
         if (!ok || selectedKeyRef.current !== name) return;
         if (synced) {
-          setDriftReport({ drifted: false, agents: [] });
-          setDriftByProject((prev) => ({ ...prev, [name]: false }));
-          setDriftCheckError(null);
+          markSynced(name);
           refreshProblemsReport(name);
           // Rules and instruction settings change the generated files. Leave
           // them alone while the user has an instruction file open for edit.
@@ -1023,14 +1127,21 @@ export function ProjectEditor({
   useEffect(() => {
     // A failure belongs to the project it was seen on.
     setDriftCheckError(null);
+    setProblemsCheckError(null);
     const name = selectedKey;
     if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
       return;
     }
 
+    // Owned by this run of the effect. A check still running for the project
+    // the user just left must not hold back the first check of the new one.
+    // `cancelled` drops the reply of a run that is no longer current, so an
+    // older reply cannot overwrite a newer one when the effect re-runs.
+    let inFlight = false;
+    let cancelled = false;
     const runCheck = async () => {
-      if (driftCheckInFlight.current) return;
-      driftCheckInFlight.current = true;
+      if (inFlight) return;
+      inFlight = true;
       try {
         // Settled separately so a failing drift check cannot leave a stale
         // problems banner on screen, and the reverse.
@@ -1038,73 +1149,162 @@ export function ProjectEditor({
           invoke<string>("check_project_drift", { name }),
           invoke<string>("check_project_problems", { name }),
         ]);
-        if (problemsResult.status === "fulfilled") {
-          setProblemsReport(JSON.parse(problemsResult.value) as ProjectProblemsReport);
-        } else {
-          console.error(`check_project_problems failed for ${name}:`, problemsResult.reason);
-        }
-        if (driftResult.status === "rejected") {
-          console.error(`check_project_drift failed for ${name}:`, driftResult.reason);
-          // The last report may be out of date, so it goes. The project then
-          // shows as not yet checked, never as in sync.
-          setDriftCheckError(String(driftResult.reason));
-          setDriftReport(null);
-          setDriftByProject((prev) => {
-            const { [name]: _stale, ...rest } = prev;
-            return rest;
-          });
-          return;
-        }
-        const report = JSON.parse(driftResult.value) as DriftReport;
-        setDriftCheckError(null);
-        setDriftReport(report);
-        setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
-
-        // If there are instruction file conflicts, surface the first one so the
-        // user can resolve it.  Only show one at a time to avoid overwhelming the UI.
-        const conflicts = report.instruction_conflicts ?? [];
-        if (conflicts.length > 0) {
-          setInstructionConflict((prev) => {
-            // Don't replace an already-open conflict dialog.
-            if (prev !== null) return prev;
-            return conflicts[0]!;
-          });
-        }
-
-        // Same for project-scoped custom asset conflicts. Prefer leaving an
-        // open instruction conflict alone; custom conflicts wait their turn.
-        const customConflicts = report.custom_conflicts ?? [];
-        if (customConflicts.length > 0) {
-          setCustomAssetConflict((prev) => {
-            if (prev !== null) return prev;
-            if (conflicts.length > 0) return prev;
-            return customConflicts[0]!;
-          });
-        }
-      } catch (err) {
-        console.error(`Drift/problems check failed for ${name}:`, err);
+        if (cancelled) return;
+        applyProblemsResult(name, problemsResult);
+        const report = applyDriftResult(name, driftResult);
+        // The conflict dialogs belong to the open project only.
+        if (report === null || selectedKeyRef.current !== name) return;
+        surfaceConflicts(report);
       } finally {
-        driftCheckInFlight.current = false;
+        inFlight = false;
       }
     };
 
     // Run immediately on mount / project change, then every 15 seconds
     runCheck();
     const interval = setInterval(runCheck, 15_000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [selectedKey, project?.directory, project?.agents.length, isCreating]);
+
+  /**
+   * Record one settled problems check. A reply that cannot be parsed is a
+   * failed problems check, never a failed drift check.
+   */
+  const applyProblemsResult = (name: string, result: PromiseSettledResult<string>) => {
+    if (result.status === "rejected") {
+      applyProblemsCheckFailure(name, result.reason);
+      return;
+    }
+    let report: ProjectProblemsReport;
+    try {
+      report = JSON.parse(result.value) as ProjectProblemsReport;
+    } catch (err) {
+      applyProblemsCheckFailure(name, err);
+      return;
+    }
+    applyProblemsReport(name, report);
+  };
+
+  /**
+   * Record one settled drift check. Returns the report, or null when the
+   * check failed or its reply could not be parsed.
+   */
+  const applyDriftResult = (name: string, result: PromiseSettledResult<string>): DriftReport | null => {
+    if (result.status === "rejected") {
+      applyDriftCheckFailure(name, result.reason);
+      return null;
+    }
+    let report: DriftReport;
+    try {
+      report = JSON.parse(result.value) as DriftReport;
+    } catch (err) {
+      applyDriftCheckFailure(name, err);
+      return null;
+    }
+    applyDriftReport(name, report);
+    return report;
+  };
+
+  /**
+   * Open the first instruction file conflict, or else the first custom asset
+   * conflict, unless a conflict dialog is already open. One at a time keeps
+   * the UI calm.
+   */
+  const surfaceConflicts = (report: DriftReport) => {
+    const conflicts = report.instruction_conflicts ?? [];
+    if (conflicts.length > 0) {
+      setInstructionConflict((prev) => prev ?? conflicts[0]!);
+    }
+    const customConflicts = report.custom_conflicts ?? [];
+    if (customConflicts.length > 0) {
+      setCustomAssetConflict((prev) => {
+        if (prev !== null) return prev;
+        if (conflicts.length > 0) return prev;
+        return customConflicts[0]!;
+      });
+    }
+  };
+
+  /**
+   * Record a drift check that ran. The list card is keyed by project, so it
+   * is always updated. The page state is only updated while that project is
+   * still the open one, so a late reply cannot land on another project.
+   */
+  const applyDriftReport = (name: string, report: DriftReport) => {
+    setDriftByProject((prev) => ({ ...prev, [name]: driftChecked(report.drifted) }));
+    if (selectedKeyRef.current !== name) return;
+    setDriftCheckError(null);
+    setDriftReport(report);
+  };
+
+  /**
+   * Record a drift check that could not run. The last report may be out of
+   * date, so it goes, and the project shows the failure instead of "In Sync".
+   */
+  const applyDriftCheckFailure = (name: string, err: unknown) => {
+    const error = checkErrorText(err);
+    setDriftByProject((prev) => ({ ...prev, [name]: { status: "failed", error } }));
+    if (selectedKeyRef.current !== name) return;
+    setDriftCheckError(error);
+    setDriftReport(null);
+  };
+
+  /** Record that the project's files were just written, so nothing has drifted. */
+  const markSynced = (name: string) => {
+    setDriftByProject((prev) => ({ ...prev, [name]: driftChecked(false) }));
+    // While creating, no project is selected yet and the page is the new one.
+    if (selectedKeyRef.current !== null && selectedKeyRef.current !== name) return;
+    setDriftReport({ drifted: false, agents: [] });
+    setDriftCheckError(null);
+  };
+
+  /**
+   * Run the drift check again after an action that changes the files, and
+   * record the outcome. Returns the report, or null when the check failed.
+   */
+  const recheckDrift = async (name: string): Promise<DriftReport | null> => {
+    let report: DriftReport;
+    try {
+      const raw = await invoke<string>("check_project_drift", { name });
+      report = JSON.parse(raw) as DriftReport;
+    } catch (err) {
+      applyDriftCheckFailure(name, err);
+      return null;
+    }
+    applyDriftReport(name, report);
+    return report;
+  };
+
+  const applyProblemsReport = (name: string, report: ProjectProblemsReport) => {
+    if (selectedKeyRef.current !== name) return;
+    setProblemsCheckError(null);
+    setProblemsReport(report);
+  };
+
+  /** The old report may be out of date, so it goes and the failure shows. */
+  const applyProblemsCheckFailure = (name: string, err: unknown) => {
+    if (selectedKeyRef.current !== name) return;
+    setProblemsCheckError(checkErrorText(err));
+    setProblemsReport(null);
+  };
 
   // Re-fetch just the problems report for the given project name, so
   // mutations that change what would appear in the banner (adding, removing,
   // or toggling MCP servers) update the UI immediately rather than waiting
   // for the next 15-second polling tick.
   const refreshProblemsReport = async (name: string) => {
+    let report: ProjectProblemsReport;
     try {
       const raw = await invoke<string>("check_project_problems", { name });
-      setProblemsReport(JSON.parse(raw) as ProjectProblemsReport);
+      report = JSON.parse(raw) as ProjectProblemsReport;
     } catch (err) {
-      console.error(`check_project_problems failed for ${name}:`, err);
+      applyProblemsCheckFailure(name, err);
+      return;
     }
+    applyProblemsReport(name, report);
   };
 
   // Clean up any in-progress wizard stub when the component unmounts (e.g. user
@@ -1331,18 +1531,6 @@ export function ProjectEditor({
     }
   };
 
-  const loadMemories = async (projectKey: string) => {
-    try {
-      setLoadingMemories(true);
-      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectKey });
-      setMemories(data);
-    } catch (err: any) {
-      console.error("Failed to load memories:", err);
-    } finally {
-      setLoadingMemories(false);
-    }
-  };
-
   /** Load which groups this project belongs to, and all available groups. */
   const loadGroups = async (projectKey: string) => {
     try {
@@ -1366,22 +1554,27 @@ export function ProjectEditor({
   /** Add this project to a group, save the group, then re-sync ALL projects
    *  in the group so every project's peer list is updated. Groups list
    *  members by local_key. */
+  const addProjectToGroup = async (groupName: string, projectKey: string): Promise<boolean> => {
+    const raw: string = await invoke("read_group", { name: groupName });
+    const g = JSON.parse(raw);
+    if (g.projects.includes(projectKey)) return false;
+    g.projects.push(projectKey);
+    g.updated_at = new Date().toISOString();
+    await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+    // Sync ALL projects in the group - each one's peer list changes.
+    for (const name of g.projects) {
+      invoke("sync_project", { name }).catch((e: unknown) => {
+        console.warn(`Group sync: could not sync project '${name}':`, e);
+      });
+    }
+    window.dispatchEvent(new CustomEvent("groups-updated"));
+    return true;
+  };
+
   const handleAddToGroup = async (groupName: string, projectKey: string) => {
     try {
-      const raw: string = await invoke("read_group", { name: groupName });
-      const g = JSON.parse(raw);
-      if (!g.projects.includes(projectKey)) {
-        g.projects.push(projectKey);
-        g.updated_at = new Date().toISOString();
-        await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+      if (await addProjectToGroup(groupName, projectKey)) {
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
-        // Sync ALL projects in the group - each one's peer list changes.
-        for (const name of g.projects) {
-          invoke("sync_project", { name }).catch((e: unknown) => {
-            console.warn(`Group sync: could not sync project '${name}':`, e);
-          });
-        }
-        window.dispatchEvent(new CustomEvent("groups-updated"));
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
@@ -2111,6 +2304,33 @@ export function ProjectEditor({
     }
   };
 
+  /**
+   * Link a project the wizard just created to the groups and profiles chosen
+   * in steps 3 and 4. Both need a saved project, so this runs after the final
+   * save. A failure leaves the project in place and is reported by name,
+   * and the remaining links are still attempted.
+   */
+  const applyWizardLinks = async (projectKey: string, groups: string[], profiles: string[]) => {
+    const failures: string[] = [];
+    for (const group of groups) {
+      try {
+        await addProjectToGroup(group, projectKey);
+      } catch (err: unknown) {
+        failures.push(`group "${group}": ${err}`);
+      }
+    }
+    for (const profile of profiles) {
+      try {
+        await invoke("attach_profile_to_project", { projectName: projectKey, profileName: profile });
+      } catch (err: unknown) {
+        failures.push(`profile "${profile}": ${err}`);
+      }
+    }
+    if (failures.length > 0) {
+      setError(`The project was created, but some choices could not be applied. ${failures.join("; ")}`);
+    }
+  };
+
   const handleSave = async () => {
     if (!project) return;
     const folderName = project.directory
@@ -2203,6 +2423,7 @@ export function ProjectEditor({
         // Clear the stub reference so the unmount cleanup does not delete the
         // project we just successfully saved.
         wizardStubKey.current = null;
+        resetWizardChoices();
         setIsCreating(false);
         setProjectTab("summary");
         setProjectGroup("summary");
@@ -2223,9 +2444,7 @@ export function ProjectEditor({
         ? "Saved & synced"
         : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
-        setDriftReport({ drifted: false, agents: [] });
-        setDriftByProject((prev) => ({ ...prev, [name]: false }));
-        setDriftCheckError(null);
+        markSynced(name);
       }
 
       // Write any pending unified instruction content from one or more template applies.
@@ -2272,6 +2491,12 @@ export function ProjectEditor({
         }
       }
 
+      if (isCreating) {
+        // The backend gives group-provided profiles to the project when it joins the group.
+        const fromGroups = profilesProvidedByGroups(wizardGroups, wizardGroupProfiles);
+        await applyWizardLinks(name, wizardGroups, wizardProfiles.filter((p) => !(p in fromGroups)));
+      }
+
       // Reload UI state from disk (picks up autodetected changes)
       await reloadProject(name);
 
@@ -2304,7 +2529,7 @@ export function ProjectEditor({
     }
   };
 
-  const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[] }) => {
+  const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[]; inGroup?: string }) => {
     setSelectedKey(null);
     clearSelectedProject();
     if (!opts?.fromTemplates?.length) setWizardSourceTemplates([]);
@@ -2380,9 +2605,19 @@ export function ProjectEditor({
     setSelectedProjectTemplates(templates.map((t) => t.name));
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
+    resetWizardChoices();
+    if (opts?.inGroup) setWizardGroups([opts.inGroup]);
     setWizardDiscoveredAgents([]);
     setWizardDiscovering(false);
     wizardStubKey.current = null;
+  };
+
+  /** Forget the group and profile picks and the detected tools of an earlier wizard run. */
+  const resetWizardChoices = () => {
+    setWizardGroups([]);
+    setWizardProfiles([]);
+    setWizardGroupProfiles({});
+    setWizardDetectedTools([]);
   };
 
   /**
@@ -2414,6 +2649,7 @@ export function ProjectEditor({
   const cancelCreate = async () => {
     const stub = wizardStubKey.current;
     wizardStubKey.current = null;
+    resetWizardChoices();
     setIsCreating(false);
     setProject(null);
     setDirty(false);
@@ -2818,12 +3054,10 @@ export function ProjectEditor({
         setProjectFileContent(adoptedContent);
         setProjectFileDirty(false);
       }
-      // Re-run drift check: conflict should now be gone.
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
+      // Re-run drift check: conflict should now be gone. A failure shows on
+      // the page; it does not mean the adopt failed.
+      await recheckDrift(name);
     } catch (err: any) {
       setError(`Failed to adopt instruction file: ${err}`);
     } finally {
@@ -2842,12 +3076,10 @@ export function ProjectEditor({
         setProjectFileContent("");
         setProjectFileDirty(false);
       }
-      // Re-run drift check.
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
+      // Re-run drift check. A failure shows on the page; it does not mean
+      // the overwrite failed.
+      await recheckDrift(name);
     } catch (err: any) {
       setError(`Failed to overwrite instruction file: ${err}`);
     } finally {
@@ -2863,13 +3095,9 @@ export function ProjectEditor({
       await invoke("adopt_custom_asset", { name, kind, assetName });
       const projRaw: string = await invoke("read_project", { name });
       setProject(JSON.parse(projRaw));
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
-      const remaining = report.custom_conflicts ?? [];
-      setCustomAssetConflict(remaining[0] ?? null);
+      const report = await recheckDrift(name);
+      setCustomAssetConflict(report?.custom_conflicts?.[0] ?? null);
     } catch (err: unknown) {
       setError(`Failed to adopt custom ${kind}: ${err}`);
       setCustomAssetConflict(null);
@@ -2884,13 +3112,9 @@ export function ProjectEditor({
       await invoke("overwrite_custom_asset", { name, kind, assetName });
       const projRaw: string = await invoke("read_project", { name });
       setProject(JSON.parse(projRaw));
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       notifyProjectUpdated();
-      const remaining = report.custom_conflicts ?? [];
-      setCustomAssetConflict(remaining[0] ?? null);
+      const report = await recheckDrift(name);
+      setCustomAssetConflict(report?.custom_conflicts?.[0] ?? null);
     } catch (err: unknown) {
       setError(`Failed to overwrite custom ${kind}: ${err}`);
       setCustomAssetConflict(null);
@@ -2901,17 +3125,15 @@ export function ProjectEditor({
   const handleDriftResolved = async () => {
     const name = selectedKey;
     if (!name) return;
+    // A failed check shows on the page through recheckDrift.
+    await recheckDrift(name);
+    notifyProjectUpdated();
+    // Re-read the project to pick up config changes (e.g. adopted skill).
     try {
-      const raw: string = await invoke("check_project_drift", { name });
-      const report = JSON.parse(raw) as DriftReport;
-      setDriftReport(report);
-      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
-      notifyProjectUpdated();
-      // Re-read the project to pick up config changes (e.g. adopted skill).
       const projRaw: string = await invoke("read_project", { name });
-      setProject(JSON.parse(projRaw));
-    } catch {
-      // Silently ignore — next periodic check will catch up.
+      if (selectedKeyRef.current === name) setProject(JSON.parse(projRaw));
+    } catch (err: unknown) {
+      setError(`Could not reload the project: ${checkErrorText(err)}`);
     }
   };
 
@@ -2932,9 +3154,7 @@ export function ProjectEditor({
       const files: string[] = JSON.parse(result);
       trackProjectSynced(isCreating ? name : project.name);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
-      setDriftReport({ drifted: false, agents: [] });
-      setDriftByProject((prev) => ({ ...prev, [name]: false }));
-      setDriftCheckError(null);
+      markSynced(name);
       notifyProjectUpdated();
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
@@ -2969,9 +3189,7 @@ export function ProjectEditor({
       await invoke("rebuild_project", { name });
       await reloadProject(name);
       setDirty(false);
-      setDriftReport({ drifted: false, agents: [] });
-      setDriftByProject((prev) => ({ ...prev, [name]: false }));
-      setDriftCheckError(null);
+      markSynced(name);
       notifyProjectUpdated();
       setRebuildPreview(null);
       setSyncStatus("Rebuilt project state");
@@ -3104,7 +3322,7 @@ export function ProjectEditor({
                       </span>
                     )}
                     {openInDropdownOpen && (
-                      <div className="absolute right-0 top-full mt-1 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
+                      <DropdownMenu className="absolute right-0 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
                         {installedEditors.filter((e) => e.installed).map((editor) => (
                           <button
                             key={editor.id}
@@ -3123,7 +3341,7 @@ export function ProjectEditor({
                           <Copy size={13} />
                           Copy path
                         </button>
-                      </div>
+                      </DropdownMenu>
                     )}
                   </div>
                 )}
@@ -3186,6 +3404,14 @@ export function ProjectEditor({
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
+                    </button>
+                  ) : driftCheckError !== null ? (
+                    <button
+                      onClick={handleSync}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-danger/10 text-danger rounded text-[12px] font-medium transition-colors"
+                      title="Could not check for changes. Click to sync."
+                    >
+                      <AlertCircle size={12} /> Check failed
                     </button>
                   ) : (
                     /* driftReport === null: not yet checked */
@@ -3403,16 +3629,20 @@ export function ProjectEditor({
               </div>
             )}
 
-            {/* ── Drift check failure ──────────────────────────────── */}
-            {driftCheckError && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-danger/25 bg-danger/10">
-                <div className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
-                  <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                  <span>
-                    <span className="font-medium">Could not check this project for changes.</span>{" "}
-                    {driftCheckError}
-                  </span>
-                </div>
+            {/* ── Drift or problems check failure ──────────────────── */}
+            {/* Not gated on `dirty`: the user can still edit and save, but
+                must be able to see that the checks are not running. */}
+            {(driftCheckError !== null || problemsCheckError !== null) && !isCreating && project.directory && project.agents.length > 0 && (
+              <div role="alert" className="border-b border-danger/25 bg-danger/10">
+                {checkFailureNotices(driftCheckError, problemsCheckError).map((notice) => (
+                  <div key={notice.title} className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
+                    <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                    <span>
+                      <span className="font-medium">{notice.title}</span>{" "}
+                      {notice.error}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -3558,19 +3788,22 @@ export function ProjectEditor({
               </div>
             )}
 
-            {/* ── New project wizard (3 steps) ─────────────────────── */}
+            {/* ── New project wizard (7 steps) ─────────────────────── */}
             {isCreating && (
               <div className="flex-1 flex flex-col items-center justify-center p-8">
                 <div className="w-full max-w-md relative">
 
-                  {/* Cancel wizard button */}
-                  <button
-                    onClick={cancelCreate}
-                    className="absolute -top-2 right-0 flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
-                    title="Cancel project creation"
-                  >
-                    <X size={13} /> Cancel
-                  </button>
+                  {/* Cancel wizard button. On its own row: the seven-step
+                      indicator is nearly as wide as the wizard and would sit under it. */}
+                  <div className="flex justify-end mb-4">
+                    <button
+                      onClick={cancelCreate}
+                      className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                      title="Cancel project creation"
+                    >
+                      <X size={13} /> Cancel
+                    </button>
+                  </div>
 
                   {/* Template source badge */}
                   {wizardSourceTemplates.length > 0 && (
@@ -3583,10 +3816,10 @@ export function ProjectEditor({
                   )}
 
                   {/* Step indicator */}
-                  <div className="flex items-center justify-center gap-2 mb-8">
-                    {([1, 2, 3] as const).map((s) => (
-                      <div key={s} className="flex items-center gap-2">
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
+                  <div className="flex items-center justify-center gap-1.5 mb-2">
+                    {WIZARD_STEPS.map((s) => (
+                      <div key={s} className="flex items-center gap-1.5">
+                        <div title={WIZARD_STEP_LABELS[s]} className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
                           wizardStep === s
                             ? "bg-brand text-white"
                             : wizardStep > s
@@ -3595,12 +3828,15 @@ export function ProjectEditor({
                         }`}>
                           {wizardStep > s ? <Check size={11} /> : s}
                         </div>
-                        {s < 3 && (
-                          <div className={`w-8 h-px ${wizardStep > s ? "bg-brand/50" : "bg-surface"}`} />
+                        {s < WIZARD_STEPS.length && (
+                          <div className={`w-4 h-px ${wizardStep > s ? "bg-brand/50" : "bg-surface"}`} />
                         )}
                       </div>
                     ))}
                   </div>
+                  <p className="text-center text-[11px] text-text-muted mb-8">
+                    Step {wizardStep} of {WIZARD_STEPS.length}: {WIZARD_STEP_LABELS[wizardStep]}
+                  </p>
 
                   {/* ── Step 1: Directory ──────────────────────────────── */}
                   {wizardStep === 1 && (
@@ -3859,8 +4095,32 @@ export function ProjectEditor({
                     </>
                   )}
 
-                  {/* ── Step 3: Templates ─────────────────────────────── */}
+                  {/* ── Step 3: Group ─────────────────────────────────── */}
                   {wizardStep === 3 && (
+                    <WizardGroupStep
+                      groups={allGroups}
+                      loading={wizardGroupsLoading}
+                      selected={wizardGroups}
+                      onChange={setWizardGroups}
+                      onBack={() => setWizardStep(2)}
+                      onNext={() => setWizardStep(4)}
+                    />
+                  )}
+
+                  {/* ── Step 4: Profile ───────────────────────────────── */}
+                  {wizardStep === 4 && (
+                    <WizardProfileStep
+                      profiles={availableProfileData}
+                      providedByGroup={profilesProvidedByGroups(wizardGroups, wizardGroupProfiles)}
+                      selected={wizardProfiles}
+                      onChange={setWizardProfiles}
+                      onBack={() => setWizardStep(3)}
+                      onNext={() => setWizardStep(5)}
+                    />
+                  )}
+
+                  {/* ── Step 5: Templates ─────────────────────────────── */}
+                  {wizardStep === 5 && (
                     <>
                       <div className="mb-6 text-center">
                         <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
@@ -3931,21 +4191,39 @@ export function ProjectEditor({
                         </button>
                       )}
 
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setWizardStep(2)}
-                          className="flex-1 px-4 py-2.5 bg-bg-sidebar hover:bg-surface text-text-muted hover:text-text-base text-[13px] font-medium rounded transition-colors"
-                        >
-                          Back
-                        </button>
-                        <button
-                          onClick={handleSave}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-                        >
-                          <Check size={13} /> Create Project
-                        </button>
-                      </div>
+                      <WizardNav
+                        onBack={() => setWizardStep(4)}
+                        onNext={() => setWizardStep(6)}
+                        nextLabel={continueLabel(selectedProjectTemplates.length)}
+                      />
                     </>
+                  )}
+
+                  {/* ── Step 6: Tools ─────────────────────────────────── */}
+                  {wizardStep === 6 && (
+                    <WizardToolsStep
+                      entries={toolEntries}
+                      loading={toolEntriesLoading}
+                      detected={wizardDetectedTools}
+                      selected={project.tools ?? []}
+                      onChange={(tools) => setProject({ ...project, tools })}
+                      onBack={() => setWizardStep(5)}
+                      onNext={() => setWizardStep(7)}
+                    />
+                  )}
+
+                  {/* ── Step 7: Settings ──────────────────────────────── */}
+                  {wizardStep === 7 && (
+                    <WizardSettingsStep
+                      settings={{
+                        mode: project.mode,
+                        manage_gitignore: project.manage_gitignore,
+                        read_only: project.read_only,
+                      }}
+                      onChange={(patch) => setProject({ ...project, ...patch })}
+                      onBack={() => setWizardStep(6)}
+                      onCreate={handleSave}
+                    />
                   )}
 
                 </div>
@@ -4222,7 +4500,7 @@ export function ProjectEditor({
                   <SummaryPanel
                     project={project}
                     isCreating={isCreating}
-                    memories={memories}
+                    memories={selectedMemories ?? {}}
                     projectFiles={projectFiles}
                     linkDocEntries={linkDocEntries}
                     recsDisplayCount={recsDisplayCount}
@@ -4259,8 +4537,7 @@ export function ProjectEditor({
                     setDirty={markDirty}
                     setSyncStatus={setSyncStatus}
                     setError={setError}
-                    setDriftReport={setDriftReport}
-                    setDriftByProject={setDriftByProject}
+                    markSynced={markSynced}
                     customSkillEditingIdx={customSkillEditingIdx}
                     setCustomSkillEditingIdx={setCustomSkillEditingIdx}
                     customSkillEditName={customSkillEditName}
@@ -4382,7 +4659,7 @@ export function ProjectEditor({
                   <MemoryPanel
                     projectKey={selectedKey}
                     project={project}
-                    memories={memories}
+                    memories={selectedMemories}
                     loadingMemories={loadingMemories}
                     reloadMemories={loadMemories}
                     onError={setError}

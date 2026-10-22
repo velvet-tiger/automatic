@@ -128,7 +128,7 @@ export default function Profiles({
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
   const labels = useMemo(() => projectLabels(allProjects), [allProjects]);
   const [showAttachPicker, setShowAttachPicker] = useState(false);
-  const [attachTarget, setAttachTarget] = useState<string | null>(null);
+  const [attachTargets, setAttachTargets] = useState<string[]>([]);
   const [attachStatus, setAttachStatus] = useState<string | null>(null);
 
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -399,20 +399,30 @@ export default function Profiles({
     }
   };
 
-  const attachToProject = async (projectKey: string) => {
-    if (!selectedName) return;
-    const projectName = projectLabelText(projectLabelFor(labels, projectKey));
-    try {
-      await invoke("attach_profile_to_project", { projectName: projectKey, profileName: selectedName });
-      await loadReferencingProjects(selectedName);
-      setShowAttachPicker(false);
-      setError(null);
-      notifyProfilesUpdated();
-      setAttachStatus(`Attached to "${projectName}"`);
-      setTimeout(() => setAttachStatus(null), 3000);
-    } catch (err) {
-      setError(`Failed to attach profile: ${err}`);
+  const attachToProjects = async (projectKeys: string[]) => {
+    if (!selectedName || projectKeys.length === 0) return;
+    const labelOfKey = (key: string) => projectLabelText(projectLabelFor(labels, key));
+    const attached: string[] = [];
+    const failures: string[] = [];
+    // One failing project must not stop the rest, so each attach is reported on its own.
+    for (const key of projectKeys) {
+      try {
+        await invoke("attach_profile_to_project", { projectName: key, profileName: selectedName });
+        attached.push(key);
+      } catch (err) {
+        failures.push(`"${labelOfKey(key)}" (${err})`);
+      }
     }
+    setShowAttachPicker(false);
+    if (attached.length > 0) {
+      await loadReferencingProjects(selectedName);
+      notifyProfilesUpdated();
+      setAttachStatus(
+        attached.length === 1 ? `Attached to "${labelOfKey(attached[0])}"` : `Attached to ${attached.length} projects`,
+      );
+      setTimeout(() => setAttachStatus(null), 3000);
+    }
+    setError(failures.length > 0 ? `Failed to attach profile to ${failures.join(", ")}` : null);
   };
 
   const startCreate = () => {
@@ -714,7 +724,7 @@ export default function Profiles({
                     </button>
                     <button
                       onClick={() => {
-                        setAttachTarget(null);
+                        setAttachTargets([]);
                         setShowAttachPicker(true);
                       }}
                       className="flex h-[26px] items-center gap-1.5 px-2.5 bg-brand hover:bg-brand-hover text-white rounded text-[11px] font-medium transition-colors shadow-sm"
@@ -937,17 +947,17 @@ export default function Profiles({
           projects={allProjects}
           attachedProjectKeys={referencingProjects.map(refKey)}
           labels={labels}
-          selected={attachTarget}
-          onSelect={setAttachTarget}
+          selected={attachTargets}
+          onSelectionChange={setAttachTargets}
           onCancel={() => {
             setShowAttachPicker(false);
-            setAttachTarget(null);
+            setAttachTargets([]);
           }}
           onConfirm={() => {
-            if (!attachTarget) return;
-            const target = attachTarget;
-            setAttachTarget(null);
-            attachToProject(target);
+            if (attachTargets.length === 0) return;
+            const targets = attachTargets;
+            setAttachTargets([]);
+            attachToProjects(targets);
           }}
         />
       )}
@@ -960,7 +970,7 @@ function AttachToProjectModal({
   attachedProjectKeys,
   labels,
   selected,
-  onSelect,
+  onSelectionChange,
   onCancel,
   onConfirm,
 }: {
@@ -969,9 +979,9 @@ function AttachToProjectModal({
   attachedProjectKeys: string[];
   /** Display labels keyed by local_key, so duplicated names show their folder. */
   labels: ReadonlyMap<string, ProjectLabel>;
-  /** local_key of the chosen project. */
-  selected: string | null;
-  onSelect: (projectKey: string) => void;
+  /** local_keys of the chosen projects. */
+  selected: string[];
+  onSelectionChange: (projectKeys: string[]) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -981,6 +991,16 @@ function AttachToProjectModal({
   const visible = trimmed
     ? projects.filter((p) => projectLabelText(labelOf(p)).toLowerCase().includes(trimmed))
     : projects;
+  // Select all and Clear act on the visible rows only, so they follow the filter.
+  const visibleSelectableKeys = visible.map(projectKeyOf).filter((key) => !attachedProjectKeys.includes(key));
+  const allVisibleSelected =
+    visibleSelectableKeys.length > 0 && visibleSelectableKeys.every((key) => selected.includes(key));
+
+  const toggle = (key: string) =>
+    onSelectionChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
+  const selectAllVisible = () =>
+    onSelectionChange([...selected, ...visibleSelectableKeys.filter((key) => !selected.includes(key))]);
+  const clearVisible = () => onSelectionChange(selected.filter((key) => !visibleSelectableKeys.includes(key)));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -998,8 +1018,8 @@ function AttachToProjectModal({
 
         <div className="px-5 pt-3 pb-2 flex-shrink-0">
           <p className="text-[12px] text-text-muted leading-relaxed mb-3">
-            Select a project. The profile's entries are added now and kept in step whenever the profile is saved.
-            Anything the project already has stays its own.
+            Select one or more projects. The profile's entries are added now and kept in step whenever the profile is
+            saved. Anything a project already has stays its own.
           </p>
           {projects.length > 0 && (
             <div className="flex items-center gap-2 px-3 py-2 bg-bg-base border border-border-strong/40 rounded-md">
@@ -1019,6 +1039,17 @@ function AttachToProjectModal({
               )}
             </div>
           )}
+          {visibleSelectableKeys.length > 0 && (
+            <div className="flex items-center justify-between mt-2 text-[11px] text-text-muted">
+              <span>{selected.length} selected</span>
+              <button
+                onClick={allVisibleSelected ? clearVisible : selectAllVisible}
+                className="hover:text-text-base transition-colors"
+              >
+                {allVisibleSelected ? "Clear" : "Select all"}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-3 min-h-0">
@@ -1034,20 +1065,28 @@ function AttachToProjectModal({
             <ul className="space-y-1">
               {visible.map((p) => {
                 const key = projectKeyOf(p);
-                const isSelected = selected === key;
+                const isSelected = selected.includes(key);
                 const alreadyAttached = attachedProjectKeys.includes(key);
                 return (
                   <li key={key}>
                     <button
-                      onClick={() => { if (!alreadyAttached) onSelect(key); }}
-                      onDoubleClick={() => { if (!alreadyAttached) { onSelect(key); onConfirm(); } }}
+                      onClick={() => { if (!alreadyAttached) toggle(key); }}
                       disabled={alreadyAttached}
+                      role="checkbox"
+                      aria-checked={isSelected}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isSelected
                           ? "bg-brand/15 border border-brand/40"
                           : "border border-transparent hover:bg-bg-sidebar"
                       } disabled:cursor-default disabled:hover:bg-transparent`}
                     >
+                      <span
+                        className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
+                          isSelected ? "bg-brand border-brand text-white" : "border-border-strong"
+                        } ${alreadyAttached ? "opacity-40" : ""}`}
+                      >
+                        {(isSelected || alreadyAttached) && <Check size={11} />}
+                      </span>
                       <Folder size={14} className={isSelected ? "text-brand flex-shrink-0" : "text-text-muted flex-shrink-0"} />
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-medium text-text-base truncate"><ProjectNameLabel label={labelOf(p)} /></div>
@@ -1077,10 +1116,10 @@ function AttachToProjectModal({
           </button>
           <button
             onClick={onConfirm}
-            disabled={!selected}
+            disabled={selected.length === 0}
             className="flex h-[28px] items-center gap-1.5 px-3 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
           >
-            <Check size={12} /> Attach
+            <Check size={12} /> {selected.length > 1 ? `Attach (${selected.length})` : "Attach"}
           </button>
         </div>
       </div>

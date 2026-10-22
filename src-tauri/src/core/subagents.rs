@@ -95,6 +95,7 @@ pub fn list_subagents() -> Result<Vec<SubagentEntry>, String> {
 
     let mut agents = Vec::new();
     let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    let provenance = super::remote_sources::read_display_provenance();
 
     for entry in entries {
         if let Ok(entry) = entry {
@@ -105,9 +106,7 @@ pub fn list_subagents() -> Result<Vec<SubagentEntry>, String> {
                         if let Ok(raw) = fs::read_to_string(&path) {
                             let name = extract_name_from_frontmatter(&raw)
                                 .unwrap_or_else(|| stem.to_string());
-                            let remote_repo = super::remote_sources::get_provenance("agent", stem)
-                                .ok()
-                                .flatten();
+                            let remote_repo = provenance.source_of("agent", stem);
                             let (source, author, source_repo) = if is_bundled_agent(stem) {
                                 ("automatic".to_string(), "Automatic".to_string(), None)
                             } else if let Some(repo) = remote_repo {
@@ -398,7 +397,7 @@ pub fn delete_subagent(machine_name: &str) -> Result<(), String> {
 
 /// Compose the compound machine name the app uses for a library subagent
 /// (`{pack}-{id}`, e.g. `automatic-code-reviewer`).
-fn subagent_machine_name(entry: &super::bundled_library::SubagentEntry) -> String {
+pub(crate) fn subagent_machine_name(entry: &super::bundled_library::SubagentEntry) -> String {
     format!("{}-{}", entry.pack, entry.id)
 }
 

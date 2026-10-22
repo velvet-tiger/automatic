@@ -1,9 +1,10 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import { AlertTriangle, Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from "lucide-react";
+import { DropdownMenu } from "../../../../../components/DropdownMenu";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
-import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import { InheritedBadge, LockedRemoveButton } from "../../../../../components/ProtectionBadge";
 import type { CustomRule, ProfileLockMap, Project } from "../../types";
 
 interface RulesPanelProps {
@@ -287,7 +288,7 @@ export function RulesPanel({
                 <Plus size={12} /> Add from Library
               </button>
               {globalRuleAdding && (
-                <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+                <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                   <div className="p-2 border-b border-border-strong/40">
                     <input
                       type="text"
@@ -331,7 +332,7 @@ export function RulesPanel({
                       ))
                     )}
                   </div>
-                </div>
+                </DropdownMenu>
               )}
             </div>
           </div>
@@ -382,6 +383,7 @@ export function RulesPanel({
                     <X size={12} />
                   </button>
                   )}
+                  {isRuleLocked(ruleId) && <LockedRemoveButton profile={profileLocks.rules[ruleId]} />}
                 </div>
               );
             })}

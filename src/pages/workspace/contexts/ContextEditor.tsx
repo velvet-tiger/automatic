@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DropdownMenu } from "../../../components/DropdownMenu";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Cloud, Eye, MoreHorizontal, Trash2 } from "lucide-react";
@@ -176,7 +177,7 @@ export function ContextEditor({
               <MoreHorizontal size={16} />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full mt-1 w-48 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 py-1">
+              <DropdownMenu className="absolute right-0 w-48 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 py-1">
                 <button
                   onClick={() => { setMenuOpen(false); setChangingId(true); }}
                   className="w-full text-left px-3 py-2 text-[12px] text-text-base hover:bg-bg-input transition-colors"
@@ -186,7 +187,7 @@ export function ContextEditor({
                 <button onClick={() => void handleDelete()} className="w-full flex items-center gap-2 text-left px-3 py-2 text-[12px] text-danger hover:bg-bg-input transition-colors">
                   <Trash2 size={12} /> Delete context
                 </button>
-              </div>
+              </DropdownMenu>
             )}
           </div>
         </div>

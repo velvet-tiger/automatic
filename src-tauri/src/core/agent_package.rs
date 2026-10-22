@@ -566,7 +566,7 @@ fn check_skill_dir(
     if !dir.is_dir() {
         return Ok(None);
     }
-    super::remote_sources::ensure_resource_name("skill", name)?;
+    super::remote_sources::ensure_skill_name(name)?;
     if !is_agent_skill_name(name) {
         return Err(
             "the folder name is not a valid Agent Skills name (lowercase letters, digits and single hyphens, up to 64 characters)"
@@ -1303,9 +1303,27 @@ enum SkillWriteError {
     Failed(String),
 }
 
+impl From<String> for SkillWriteError {
+    fn from(message: String) -> Self {
+        SkillWriteError::Failed(message)
+    }
+}
+
+impl std::fmt::Display for SkillWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkillWriteError::Conflict => f.write_str(&conflict_reason()),
+            SkillWriteError::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
 fn import_one_skill(root: &Path, skill: &AgentPackageSkill, result: &mut AgentPackageImportResult) {
     let kind = AgentPackageItemKind::Skill;
-    match import_skill_files(root, skill) {
+    // An import is the user's write, so no source owns the new skill.
+    match super::remote_sources::as_user_write("skill", &skill.name, || {
+        import_skill_files(root, skill)
+    }) {
         Ok(()) => result.imported_skills.push(skill.name.clone()),
         Err(SkillWriteError::Conflict) => {
             result
@@ -1370,7 +1388,7 @@ fn remove_partial_skill(target: &Path, name: &str, error: String) -> String {
 
 fn import_one_server(server: &AgentPackageMcpServer, result: &mut AgentPackageImportResult) {
     let kind = AgentPackageItemKind::McpServer;
-    match save_server(server) {
+    match super::remote_sources::as_user_write("mcp_server", &server.name, || save_server(server)) {
         Ok(()) => result.imported_mcp_servers.push(server.name.clone()),
         Err(e) => result.invalid.push(skipped(kind, &server.name, e)),
     }
@@ -1580,6 +1598,47 @@ mod tests {
     }
 
     #[test]
+    fn an_import_takes_its_names_away_from_a_source() {
+        with_package(|root| {
+            write_full_package(root);
+            // Stale records, as a source leaves them for names it no longer
+            // has files under.
+            crate::core::remote_sources::record_provenance("skill", "alpha", "acme/tools").unwrap();
+            crate::core::remote_sources::record_provenance("mcp_server", "local", "acme/tools")
+                .unwrap();
+
+            let result = import(root).unwrap();
+
+            assert!(result.imported_skills.contains(&"alpha".to_string()));
+            assert_eq!(
+                crate::core::remote_sources::get_provenance("skill", "alpha"),
+                Ok(None)
+            );
+            assert_eq!(
+                crate::core::remote_sources::get_provenance("mcp_server", "local"),
+                Ok(None)
+            );
+        });
+    }
+
+    #[test]
+    fn an_import_that_conflicts_keeps_the_sources_record() {
+        with_package(|root| {
+            write_full_package(root);
+            crate::core::skills::save_skill("alpha", "---\nname: alpha\n---\nsource\n").unwrap();
+            crate::core::remote_sources::record_provenance("skill", "alpha", "acme/tools").unwrap();
+
+            let result = import(root).unwrap();
+
+            assert!(!result.imported_skills.contains(&"alpha".to_string()));
+            assert_eq!(
+                crate::core::remote_sources::get_provenance("skill", "alpha"),
+                Ok(Some("acme/tools".to_string()))
+            );
+        });
+    }
+
+    #[test]
     fn import_adds_skills_and_servers_and_creates_data_dir() {
         with_package(|root| {
             write_full_package(root);
@@ -1596,6 +1655,32 @@ mod tests {
             )
             .unwrap();
             assert_eq!(saved["env"]["PLUGIN_ROOT"], root.to_str().unwrap());
+        });
+    }
+
+    #[test]
+    fn an_imported_server_with_a_ciphertext_like_env_value_is_stored_readably() {
+        with_package(|root| {
+            write_plugin(root, &plugin_json("demo"));
+            write_mcp(
+                root,
+                json!({"planted": {"type": "stdio", "command": "npx", "env": {"API_KEY": "enc:v1:AAAA", "REGION": "eu"}}}),
+            );
+            let result = import(root).unwrap();
+            assert_eq!(
+                result.imported_mcp_servers,
+                vec!["planted"],
+                "{:?}",
+                result.invalid
+            );
+
+            let saved: Value = serde_json::from_str(
+                &crate::core::mcp_servers::read_mcp_server_config("planted")
+                    .expect("the imported entry must be readable"),
+            )
+            .unwrap();
+            assert_eq!(saved["env"]["API_KEY"], "");
+            assert_eq!(saved["env"]["REGION"], "eu");
         });
     }
 

@@ -12,8 +12,11 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
-import type { Project, ProjectTemplate, DriftReport, ProjectSummary } from "./projects/types";
-import { trackProjectSynced } from "../../lib/analytics";
+import type { Project, ProjectTemplate, DriftReport, ProjectDriftState, ProjectSummary } from "./projects/types";
+import { driftChecked, driftCheckFailed, isDrifted } from "./projects/helpers";
+import { trackProjectCreated, trackProjectSynced } from "../../lib/analytics";
+import { ProjectDiscoveryDialog } from "../../components/ProjectDiscoveryDialog";
+import { announceAddedProjects, type AddedProject } from "../../components/ProjectDiscovery";
 import { loadProjectSummaries, projectKeyOf, resolveProjectKey } from "../../lib/projectIdentity";
 import { PROJECT_ORDER_STORAGE_KEY, SELECTED_PROJECT_STORAGE_KEY } from "../../lib/projectStorageMigration";
 
@@ -46,6 +49,27 @@ interface ProjectsProps {
 const LAST_PROJECT_KEY = SELECTED_PROJECT_STORAGE_KEY;
 const PROJECT_ORDER_KEY = PROJECT_ORDER_STORAGE_KEY;
 
+/**
+ * Add several projects to a group in one write, then sync each member once.
+ * Every member's peer list changes when the group does. Throws when the
+ * group cannot be read or saved.
+ */
+async function addProjectsToGroup(groupName: string, projectKeys: string[]): Promise<void> {
+  const raw: string = await invoke("read_group", { name: groupName });
+  const group = JSON.parse(raw) as { projects: string[]; updated_at?: string };
+  const fresh = projectKeys.filter((k) => !group.projects.includes(k));
+  if (fresh.length === 0) return;
+  group.projects.push(...fresh);
+  group.updated_at = new Date().toISOString();
+  await invoke("save_group", { name: groupName, data: JSON.stringify(group) });
+  for (const name of group.projects) {
+    invoke("sync_project", { name }).catch((e: unknown) => {
+      console.warn(`Group sync: could not sync project '${name}':`, e);
+    });
+  }
+  window.dispatchEvent(new CustomEvent("groups-updated"));
+}
+
 export default function Projects({
   resetKey,
   initialProject = null,
@@ -71,7 +95,7 @@ export default function Projects({
   const [projects, setProjects] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectDetailsMap, setProjectDetailsMap] = useState<Map<string, Project>>(new Map());
-  const [driftByProject, setDriftByProject] = useState<Record<string, boolean>>({});
+  const [driftByProject, setDriftByProject] = useState<Record<string, ProjectDriftState>>({});
   const [syncAllStatus, setSyncAllStatus] = useState<"idle" | "syncing">("idle");
 
   // ── Selection / wizard state ─────────────────────────────────────────────
@@ -79,6 +103,8 @@ export default function Projects({
   const [isCreating, setIsCreating] = useState(false);
   /** Resolved templates seeded into the wizard via initialCreateWithTemplate. */
   const [createFromTemplates, setCreateFromTemplates] = useState<ProjectTemplate[] | null>(null);
+  /** The group the user was viewing when they clicked Add Project, so the wizard can start with it. */
+  const [createInGroup, setCreateInGroup] = useState<string | null>(null);
 
   // Report the currently open project up to the parent (drives sidebar highlighting).
   useEffect(() => {
@@ -175,18 +201,14 @@ export default function Projects({
           const raw: string = await invoke("check_project_drift", { name: key });
           const report = JSON.parse(raw) as DriftReport;
           if (!cancelled) {
-            setDriftByProject((prev) => ({ ...prev, [key]: report.drifted }));
+            setDriftByProject((prev) => ({ ...prev, [key]: driftChecked(report.drifted) }));
           }
         } catch (e) {
           // The check could not run, so the last answer may be out of date.
-          // Drop it: the project then shows as not yet checked, never as in
-          // sync. The project's own page shows the reason.
-          console.error(`check_project_drift failed for ${key}:`, e);
+          // Replace it with the failure: the card then says the check failed
+          // and why, never "in sync".
           if (!cancelled) {
-            setDriftByProject((prev) => {
-              const { [key]: _stale, ...rest } = prev;
-              return rest;
-            });
+            setDriftByProject((prev) => ({ ...prev, [key]: driftCheckFailed(e) }));
           }
         }
         await new Promise((res) => setTimeout(res, 200));
@@ -207,6 +229,7 @@ export default function Projects({
   useEffect(() => {
     const handler = () => {
       setCreateFromTemplates(null);
+      setCreateInGroup(null);
       setSelectedKey(null);
       setIsCreating(true);
     };
@@ -270,6 +293,7 @@ export default function Projects({
         const tmpl = JSON.parse(raw) as ProjectTemplate;
         if (cancelled) return;
         setCreateFromTemplates([tmpl]);
+        setCreateInGroup(null);
         setSelectedKey(null);
         setIsCreating(true);
         onInitialCreateWithTemplateConsumed?.();
@@ -285,7 +309,7 @@ export default function Projects({
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleSyncAll = async () => {
-    const driftedProjects = projects.filter((n) => driftByProject[n] === true && !readOnlyKeys.has(n));
+    const driftedProjects = projects.filter((n) => isDrifted(driftByProject[n]) && !readOnlyKeys.has(n));
     if (driftedProjects.length === 0) return;
     setSyncAllStatus("syncing");
     try {
@@ -294,7 +318,7 @@ export default function Projects({
           const result: string = await invoke("sync_project", { name: key });
           const files: string[] = JSON.parse(result);
           trackProjectSynced(projectDetailsMap.get(key)?.name ?? key);
-          setDriftByProject((prev) => ({ ...prev, [key]: false }));
+          setDriftByProject((prev) => ({ ...prev, [key]: driftChecked(false) }));
           void files;
         } catch {
           // continue
@@ -305,10 +329,31 @@ export default function Projects({
     }
   };
 
+  const [showDiscovery, setShowDiscovery] = useState(false);
+
+  // "__ungrouped__" is the Other Projects view, not a group.
+  const activeGroup = filterGroup && filterGroup !== "__ungrouped__" ? filterGroup : null;
+
+  const handleDiscoveredAdded = async (added: AddedProject[]): Promise<string | null> => {
+    for (const p of added) trackProjectCreated(p.name);
+    let problem: string | null = null;
+    if (activeGroup) {
+      try {
+        await addProjectsToGroup(activeGroup, added.map((p) => p.localKey));
+      } catch (err: unknown) {
+        problem = `The projects were added, but could not join the group ${activeGroup}: ${String(err)}`;
+      }
+    }
+    // The project-updated event this sends reloads the list.
+    announceAddedProjects(added);
+    return problem;
+  };
+
   const handleBackToOverview = () => {
     setSelectedKey(null);
     setIsCreating(false);
     setCreateFromTemplates(null);
+    setCreateInGroup(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
   };
 
@@ -325,11 +370,20 @@ export default function Projects({
           onSelect={(key) => setSelectedKey(key)}
           onCreate={() => {
             setCreateFromTemplates(null);
+            // "__ungrouped__" is the Other Projects view, not a group.
+            setCreateInGroup(filterGroup && filterGroup !== "__ungrouped__" ? filterGroup : null);
             setIsCreating(true);
           }}
+          onFindProjects={() => setShowDiscovery(true)}
           onSyncAll={handleSyncAll}
           syncAllStatus={syncAllStatus}
           filterGroup={filterGroup}
+        />
+        <ProjectDiscoveryDialog
+          isOpen={showDiscovery}
+          groupName={activeGroup}
+          onClose={() => setShowDiscovery(false)}
+          onAdded={handleDiscoveredAdded}
         />
       </div>
     );
@@ -350,6 +404,7 @@ export default function Projects({
       onInitialProjectTabConsumed={onInitialProjectTabConsumed}
       createFromTemplates={createFromTemplates}
       onCreateFromTemplatesConsumed={() => setCreateFromTemplates(null)}
+      createInGroup={createInGroup}
       onNavigateToSkill={onNavigateToSkill}
       onNavigateToMcpServer={onNavigateToMcpServer}
       onNavigateToSkillStore={onNavigateToSkillStore}

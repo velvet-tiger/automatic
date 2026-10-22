@@ -93,7 +93,7 @@ fn pack_library() {
     let zip_path = out_dir.join("library.zip");
     let file = File::create(&zip_path).expect("create library.zip");
     let mut zip = zip::ZipWriter::new(file);
-    let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+    let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
 

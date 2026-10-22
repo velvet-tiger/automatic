@@ -119,7 +119,10 @@ pub fn read_file(archive_path: &str) -> Result<Vec<u8>, String> {
             if !file.is_file() {
                 continue;
             }
-            let name = file.name().to_string();
+            let name = file
+                .name()
+                .expect("bundled library archive entry name unreadable")
+                .into_owned();
             let mut buf = Vec::with_capacity(file.size() as usize);
             file.read_to_end(&mut buf)
                 .expect("bundled library archive entry read failed");

@@ -12,24 +12,34 @@ Global MCP discovery paths were corrected 2026-08-26.
 
 | Agent | Last checked | Findings |
 |---|---|---|
-| Claude Code | 2026-10-11 | No breaking change. 2.1.293–2.1.296 (Oct 7–9): subagent frontmatter `autoCompactWindow` (gap, minor), hook `onFailure: "block"`, MCP tool-description limits raised, claude.ai connectors negotiate MCP 2026-07-28. `.mcp.json`/`CLAUDE.md`/skills unchanged. 2.1.293 notes truncated. |
-| Codex CLI | 2026-10-11 | Inconclusive. 0.162.1 (Oct 9) has no release notes in the API listing. No change confirmed. |
-| Cursor | 2026-10-11 | No relevant change. Only Oct 6 entry: iOS remote control for local agents. |
-| Kiro | 2026-10-11 | **Behavioral — VEL-177 (new).** CLI 2.28.0 (Oct 5): switch Classic to 3.0 upgrades agent configs; category-based hook matching. IDE 1.2.56 (Oct 8): hook matching. VEL-175 remains. Summarised fetch only; unverified. |
-| Gemini CLI | 2026-10-11 | No relevant change. v0.63.0 stable (Oct 6), v0.64.0-preview.1 (Oct 9), v0.65.0 nightlies: read-only workspace settings in untrusted folders (behavioral, nightly only), a2a-server V1→V2 settings migration. Watch. |
-| GitHub Copilot | 2026-10-11 | No breaking change. VS Code MCP docs now document portable `.mcp.json`/`~/.copilot/mcp-config.json` (`mcpServers`) alongside `servers`; comment added to VEL-163. Oct 9 weekly changelog body not read. |
-| Cline | 2026-10-11 | No relevant change. CLI v3.0.69/.70, SDK v0.0.91/.92, Desktop v0.0.44/.45 (Oct 7–8): stdio startup timeout 10s, EPIPE fixes, rules loading exports. |
-| Kilo Code | 2026-10-11 | No relevant change found. v7.8.8 (Oct 7); release notes not in listing. |
-| Junie | 2026-10-11 | No relevant change. MCP page updated 8 Oct 2026; still `mcpServers`, no paths on page. |
-| Kimi Code | 2026-10-11 | No relevant change. MCP docs match `.kimi-code/mcp.json`/`mcpServers`; new experimental `deferred`; project servers in untrusted folders shown in trust prompt. Changelog after 2.1.0 not reachable. |
-| Warp | 2026-10-11 | Inconclusive. Changelog last updated Oct 9; fetch returned no entry detail. |
-| Goose | 2026-10-11 | No config-shape change. v1.54.0 (Oct 8): extension leases, MCP protocol version in initialize. Extensions YAML unchanged. |
-| OpenCode | 2026-10-11 | **Behavioral — VEL-176 (new).** v1.19.0 (Oct 11): `opencode upgrade --major` to OpenCode 2 (beta). Docs say V1 config is read in memory; breaking only for server and plugin APIs. v1.18.35 (Oct 6) notes truncated. |
-| Droid | 2026-10-11 | No relevant change. CLI v0.234.0 (Oct 6), v0.236.0 (Oct 8): hook can block submitted message, plugin install keeps MCP and droid files. `.factory/mcp.json` unchanged. |
-| Antigravity | 2026-10-11 | **Gap — VEL-164 comment.** CLI 1.2.17–1.3.3 (Oct 5–10): plugin system (`.antigravity-plugin/`, `.gemini-plugin/`, `agents.json`, `skills.json`), custom-agent relative paths, BOM-tolerant `mcp_config.json`. No breaking change. |
-| Z Code | 2026-10-11 | No relevant change. v3.14.5 (Oct 9): reset display fix only. |
-| Pi | 2026-10-11 | No relevant change. `pi-mcp-adapter` v5.1.0 (Oct 6, `openUi` entry key), v5.2.0 (Oct 9, redirects not followed, trust doctor). Paths unchanged; keep `.pi/mcp.json`. |
-| Zed | 2026-10-11 | No relevant change. v1.23.2 (Oct 7): MCP optional-field fix for OpenAI tool calls. `context_servers` unchanged. |
+| Claude Code | 2026-10-18 | No breaking change. Through v2.1.302 (Oct 16): empty `.mcp.json` no longer flagged, MCP 2026-07-28 tool-list fix, skill arg-name limits, 12-hook cap per event. MCP docs list `ws`, `sse` deprecated, `url` without `type` is an error (undated; confirm we write `type`). |
+| Codex CLI | 2026-10-18 | No relevant change. Through rust-v0.163.0 (Oct 15): zsh backend removed, plugin default activation policy configurable. Docs not fetched. |
+| Cursor | 2026-10-18 | No relevant change. Oct 13 and Oct 16 entries do not touch MCP, rules, skills, subagents or hooks. |
+| Kiro | 2026-10-18 | **Breaking (probable) — VEL-400 (new).** CLI 2.30.0 (Oct 12) V3 upgrade prompt, V3 default end of Oct: Markdown agents, PascalCase hook arrays, `permissions.yaml`. CLI 2.31.0 `KIRO_HOME` covers V3 state. V3 agent path unconfirmed. MCP docs unchanged. |
+| Gemini CLI | 2026-10-18 | No relevant change. No new stable after v0.64.0 (Oct 13). |
+| GitHub Copilot | 2026-10-18 | No relevant change confirmed. VS Code MCP docs match baseline. Oct 13 enterprise managed settings article body not read. |
+| Cline | 2026-10-18 | **Behavioral — VEL-401 (new).** v4.1.24 / CLI 3.0.71 (Oct 13): discovers `.claude/skills`, possible duplicates with `.cline/skills`. Through v4.1.25, CLI 3.0.73 (Oct 17). Global MCP location unchanged. |
+| Kilo Code | 2026-10-18 | No relevant change. Through v7.8.14 (Oct 16): MCP OAuth refresh fixes. Code already reads `kilo.jsonc` as well as `kilo.json`. |
+| Junie | 2026-10-18 | Inconclusive. MCP page dated 15 Oct 2026, still `mcpServers`, no paths. Release notes not reachable. |
+| Kimi Code | 2026-10-18 | No relevant change. CLI 2.2.0 (Oct 14) removed `executor = "kaos"` from MCP stdio config; Automatic never writes it. Desktop changelog not checked. |
+| Warp | 2026-10-18 | No relevant change. 2026.10.15 only: cloud agents no longer wait on path approval for MCP config edits. Page truncated. |
+| Goose | 2026-10-18 | No relevant change. v1.55.0 (Oct 16): provider and trace-context work. Notes truncated. |
+| OpenCode | 2026-10-18 | No relevant change. v1.19.1–1.19.3 (Oct 15–16): session sharing removed, 1.x stays on 1.x, reasoning variants. Config docs not re-fetched. VEL-176 unchanged. |
+| Droid | 2026-10-18 | No relevant change. Through CLI v0.244.0 (Oct 16): hooks, MCP servers and commands no longer inherit runtime settings file. `.factory/mcp.json` unchanged. |
+| Antigravity | 2026-10-18 | No breaking change. CLI 1.3.4–1.4.2 (Oct 13–18): unquoted colon in `description:` now loads (quote anyway), `agy plugin validate` documents plugin layout, plugin MCP header variable expansion. Comment candidate for VEL-164. |
+| Z Code | 2026-10-18 | No relevant change. v3.15.1 (Oct 12): UI plugins (MCP App), per-sub-agent models in workflows (gaps). MCP docs not re-fetched. |
+| Pi | 2026-10-18 | No relevant change. `pi-mcp-adapter` v5.3.0–v5.3.2 (Oct 13–17): Windows secret syntax, `gh auth token` preset. `.pi/mcp.json` shape unchanged. |
+| Zed | 2026-10-18 | No relevant change. v1.23.3, v1.24.2, v1.25.0-pre (Oct 12–14): ACP compaction notices. `context_servers` unchanged. |
+## Run 2026-10-18 (window 2026-10-11 to 2026-10-18)
+
+Tickets: **VEL-400** (new, Kiro CLI 3.0, High), **VEL-401** (new, Cline `.claude/skills` discovery, Low). VEL-177 was closed on thin detail and is superseded by VEL-400.
+
+## Sources unreachable or limited, 2026-10-18
+
+- Research used GitHub releases via `gh api` plus WebFetch. Truncated pages: Goose 1.55.0 notes, Zed notes, Warp changelog, Droid release notes, Antigravity changelog (100K of 382K read), Claude Code MCP docs (100K of 123K).
+- Not read: Junie release notes, Copilot Oct 13 article body, Codex docs, Kimi Desktop changelog, Kiro V3 config reference pages.
+- Droid docs host is docs.factory.com.
+
 ## Run 2026-10-11 (window 2026-10-04 to 2026-10-11)
 
 Tickets: **VEL-176** (new, OpenCode 2, Low), **VEL-177** (new, Kiro 3.0, Low). Comments: **VEL-164** (Antigravity plugins), **VEL-163** (Copilot portable MCP format).

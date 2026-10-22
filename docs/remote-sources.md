@@ -100,7 +100,7 @@ The JSON Schema is at [`docs/schemas/automatic.schema.json`](schemas/automatic.s
 | `repository` | No | Object with `type` (`"git"`) and `url`. |
 | `homepage` | No | Documentation or landing page URL. |
 | `keywords` | No | Array of search/filter terms. |
-| `pinning` | No | Version pinning configuration (see below). |
+| `pinning` | No | Ignored by the installer. Kept for manifests that set it (see below). |
 | `collections` | No | Array of collection file references (see below). |
 | `skills` | No | Skills section (see below). |
 | `mcp_servers` | No | Array of MCP server resource entries. |
@@ -114,7 +114,7 @@ Every resource section is optional. A source can provide just skills, just rules
 
 ## Pinning
 
-Controls how Automatic tracks the git ref for this source.
+**Automatic ignores the manifest's `pinning` field.** A repository cannot choose the ref it is tracked at. The pin is the ref the user fetched.
 
 ```json
 "pinning": {
@@ -126,10 +126,12 @@ Controls how Automatic tracks the git ref for this source.
 | Strategy | Behaviour |
 |----------|-----------|
 | `branch` | Tracks a branch. `update` pulls latest. Default if omitted. |
-| `tag` | Pins to a git tag. Only updates when the user changes the pin. |
-| `commit` | Pins to a specific SHA. Only updates when the user changes the pin. |
+| `tag` | Pins to a git tag. An update clones the tag again. |
+| `commit` | Pins to a specific SHA. An update clones the commit again. |
 
-When `pinning` is omitted, defaults to `{ "strategy": "branch", "ref": "main" }`.
+The install reads the pin from the clone: a commit when the user fetched one by its SHA (even if a tag names it too), else the branch the clone is on, else a tag that names its commit, else the commit. A fetch with no ref clones branch `main`. A `ref` of 40 hex characters is fetched as a commit; any other `ref` is passed to `git clone --branch`.
+
+Every ref is checked before git sees it. A commit must be 7 to 40 hex digits. A branch or tag must follow the `git check-ref-format` rules and may not start with `-`, so it can never be read as a git option. Refs are passed after `--end-of-options` or `--`. An update refuses a stored pin that fails the check, as older versions could store one taken from the manifest.
 
 ## Skills
 
@@ -404,28 +406,53 @@ Used for conflict detection (two sources providing the same resource name) and c
 ## Updating a Source
 
 - **Branch-tracking sources**: `update_remote_source` runs `git pull --ff-only`. If fast-forward fails (force push upstream), the clone is deleted and re-created.
-- **Tag/commit-pinned sources**: cannot be updated without changing the pin. The user must explicitly set a new ref.
+- **Tag/commit-pinned sources**: the clone is deleted and re-created at the stored ref. A shallow clone at a tag or commit is on a detached HEAD, which `git pull` cannot fast-forward.
 
-On update, the manifest is re-parsed and resources are diffed against the previous install. Added resources are installed, changed resources are overwritten, and removed resources are deleted.
+On update, the manifest is re-parsed with its `skill_json` resolved. Then:
+
+- **Reinstalled**: each resource the source installed before, still owns, and the new manifest still lists.
+- **Not installed**: a resource the new manifest adds, or one the user did not select. These are returned in `new_available`. An install with a selection adds them.
+- **Left alone**: a resource the user has since saved as their own, or another source took over.
+- **Kept on failure**: a resource whose reinstall fails keeps its installed copy and its provenance. The failure is a warning. A skill is copied into a hidden staging folder in `skills/` first, and the installed folder is swapped only once the copy is complete. The skill scan skips dot-folders, so a staging folder left by a crash is never listed as a skill. No skill name may start with a dot, so no write can create a skill the scan hides.
+- **Env values kept**: when an MCP server the source owns is reinstalled and nothing but its env changed, each env value the user filled in is kept for every key the new config declares. If the source changed any other field (command, args, URL, headers), added or dropped an env key, or gave a value to a key whose stored value is empty (a new `NODE_OPTIONS`, a changed `API_BASE_URL`), and the stored server has a non-empty env value, the server is left as it was and the update warns that the source changed how it runs. The user reviews the new config and installs it again, so a filled-in secret never goes to an endpoint they have not seen. A server whose env values are all empty is replaced. Automatic does not record which values the user typed, so every non-empty stored value counts as the user's and is kept. A source cannot change a non-empty default through an update; the user reinstalls the server to take it.
+- **Collections**: the collections the source installed before are reinstalled. New ones are listed in `new_available`.
+- **Removed**: a resource the manifest no longer lists, and only while this source still owns it.
 
 ## Conflict Resolution
 
-When a resource name already exists:
+A source may replace or delete only the entries whose provenance names that source. Names are compared without regard to letter case or Unicode form (NFKC, lowercased), because APFS and NTFS treat such names as one file.
 
-1. **Same source owns it** — overwritten silently (this is an update).
-2. **Different source owns it** — conflict is surfaced to the user. Options: replace, skip.
-3. **No provenance record (user-created)** — treated as "local". Default: skip with warning.
+When a selected resource matches an existing library entry:
 
-Conflicts are checked before install begins and presented in the confirmation UI.
+1. **Same source owns it, same name** — replaced (this is an update).
+2. **Different source owns it** — a conflict the user may confirm.
+3. **No provenance record (user-created)** — a "local" conflict the user may confirm.
+4. **Built-in, bundled, plugin-owned, required or Codex entry** — blocked. It can never be replaced. Bundled includes the default rules and the bundled sub-agents.
+5. **Name differs only in letter case or form** — blocked. The write would land in the other entry's file.
+6. **A skill in another skill folder** (`~/.agents/skills`, `~/.claude/skills`, or an agent's own folder) — a "local" conflict the user may confirm, as the library copy would shadow it. Removing the source later deletes only the library copy. Projects, profiles and the skill's own records keep the name, because it still resolves to the user's skill.
+
+Collections follow the same rules, keyed `collection:{slug}`. Confirming the replacement of another source's collection moves it to the installing source: the other source stops listing it, so removing either source acts on the current owner only. A bundled collection is blocked. A collection in Discover that no source lists is local. A collections file that does not parse fails the collection rather than being overwritten.
+
+An install with any unconfirmed conflict installs nothing and returns the conflicts. The install dialog calls `check_source_conflicts` after the fetch. A resource with a conflict starts unselected. Selecting it confirms the replacement; a group's "select all" never does. Every write that is not a confirmed or owned replacement is create-only, so it fails rather than replace a file. A replacement never writes through a symlink.
+
+Provenance for an install is written once at the end, then the source is registered. If either write fails, the entries the install created are deleted again. Entries it replaced keep the new content and their old ownership, and the error names them.
+
+### User writes
+
+Every user save, import and delete clears the source's provenance for that name: the editors (skills, MCP servers, rules, templates, sub-agents, commands), the MCP rule tools, skill imports from skills.sh, a repository, a local folder, a package or an agent package, and every delete command. The user owns the name from then on, and a resource made later under it is not the source's. If the write fails, the provenance is put back.
+
+One exception: an MCP server save that changes only env values keeps the source's ownership, so filling in an API key does not take the server over. Both configs are compared in the form the editor saves: a missing `type` counts as `stdio`, as every agent reads it (so the editor adding `"type":"http"` to a url-only server is a change), empty `command`, `args`, `env`, `cwd`, `url`, `headers` and `oauth` are ignored, as are `_`-prefixed fields, `enabled: true` and a non-positive `timeout`. A field the editor drops that could change how the server runs (an unknown field, or one of the other transport's fields) still counts as a change.
+
+A source's own install and a cloud pull do not clear provenance. Provenance lives in `~/.automatic/source-provenance.json` on each machine and is not synced. An edit or delete on one machine therefore does not release the source's claim on another machine. There, an update of the source can still replace a version the user pulled from the cloud, and a removal can delete it.
 
 ## Tauri Commands
 
 | Command | Description |
 |---------|-------------|
 | `fetch_remote_source(repo, git_ref?, dir?)` | Clone repo and return parsed manifest as JSON. `dir` for monorepo subdirectory. |
-| `install_remote_source(repo, selected?, dir?)` | Install resources from a fetched source. `dir` must match fetch. |
-| `update_remote_source(repo)` | Pull latest and re-install changed resources. Uses stored `directory`. |
+| `install_remote_source(repo, selected?, dir?, overrides?)` | Install resources from a fetched source. `dir` must match fetch. `overrides` lists the `type:name` key of each confirmed conflict. |
+| `update_remote_source(repo)` | Bring the clone up to date and reinstall what the source owns. Uses stored `directory`. |
 | `remove_remote_source(repo)` | Remove source and all resources it provided. |
 | `list_remote_sources()` | List all registered sources. |
-| `check_source_conflicts(repo, dir?)` | Pre-flight conflict check. `dir` for monorepo subdirectory. |
+| `check_source_conflicts(repo, dir?, selected?)` | Pre-flight conflict check. `dir` for monorepo subdirectory. Without `selected`, every resource is checked. |
 | `handle_install_uri(uri)` | Parse an `automatic://install?...` URI. Returns `repo`, `ref`, `dir`. |

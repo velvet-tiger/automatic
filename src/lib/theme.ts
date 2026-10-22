@@ -80,3 +80,37 @@ export function applyTheme(theme: string) {
     document.documentElement.setAttribute("data-theme", theme);
   }
 }
+
+const THEME_STORAGE_KEY = "automatic.theme";
+const THEME_CHANGED_EVENT = "automatic:theme-changed";
+
+const LEGACY_THEME_IDS: Record<string, Theme> = {
+  "sleek-hacker": "corporate-dark",
+  sleek: "corporate-dark",
+  "neon-cyberpunk": "cyberpunk",
+  "minimalist-coral": "coral",
+};
+
+/** The saved theme id, with renamed legacy ids mapped forward. Defaults to "system". */
+export function getStoredTheme(): Theme {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (!saved) return "system";
+  return LEGACY_THEME_IDS[saved] ?? (saved as Theme);
+}
+
+/**
+ * Save, apply and announce a theme. Every theme change goes through here so
+ * components that show the current theme (sidebar switcher, Settings) stay in step.
+ */
+export function setStoredTheme(theme: Theme): void {
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  applyTheme(theme);
+  window.dispatchEvent(new CustomEvent<Theme>(THEME_CHANGED_EVENT, { detail: theme }));
+}
+
+/** Subscribe to theme changes made through `setStoredTheme`. Returns an unsubscribe function. */
+export function onThemeChanged(listener: (theme: Theme) => void): () => void {
+  const handler = (e: Event) => listener((e as CustomEvent<Theme>).detail);
+  window.addEventListener(THEME_CHANGED_EVENT, handler);
+  return () => window.removeEventListener(THEME_CHANGED_EVENT, handler);
+}

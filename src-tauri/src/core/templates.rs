@@ -112,7 +112,7 @@ pub fn read_template(name: &str) -> Result<String, String> {
         let mut template: ProjectTemplate =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
         if template._author.is_none() {
-            template._author = super::remote_sources::get_provenance_author("template", name)?;
+            template._author = super::remote_sources::get_provenance_author("template", name);
         }
         serde_json::to_string(&template).map_err(|e| e.to_string())
     } else {
@@ -405,7 +405,7 @@ async fn install_community_skills(template: &BundledProjectTemplate) {
 
         match fetch_remote_skill_content(source, skill_name).await {
             Ok(content) => {
-                if let Err(e) = save_skill(skill_name, &content) {
+                if let Err(e) = super::user_writes::save_skill(skill_name, &content) {
                     eprintln!(
                         "[automatic] template import: failed to save community skill '{}': {}",
                         skill_name, e

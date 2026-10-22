@@ -1,8 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "../lib/analytics";
-import { applyTheme, type Theme } from "../lib/theme";
+import { setStoredTheme, type Theme } from "../lib/theme";
 import { ChevronRight, Check } from "lucide-react";
+import {
+  ProjectDiscoveryPanel,
+  announceAddedProjects,
+  useProjectDiscovery,
+  type ProjectDiscoveryState,
+} from "../components/ProjectDiscovery";
 
 import graphLogo from "../../logos/graph_5.svg";
 
@@ -118,7 +124,14 @@ const AGENT_OPTIONS = [
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "AI features", "Preferences"];
+const STEPS = ["Your role", "AI workflow", "Your agents", "Your projects", "Stay in touch", "AI features", "Preferences"];
+
+// Step positions used by the shell. Keep in step with STEPS.
+const AGENTS_STEP = 2;
+const PROJECTS_STEP = 3;
+const EMAIL_STEP = 4;
+const API_KEY_STEP = 5;
+const PREFERENCES_STEP = 6;
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -141,17 +154,12 @@ function StepIndicator({ current }: { current: number }) {
               >
                 {done ? <Check size={10} strokeWidth={3} /> : i + 1}
               </div>
-              <span
-                className={`text-[12px] whitespace-nowrap hidden sm:inline ${
-                  active
-                    ? "text-text-base font-medium"
-                    : done
-                      ? "text-text-base"
-                      : "text-text-muted"
-                }`}
-              >
-                {label}
-              </span>
+              {/* Only the current step is labelled: seven labels do not fit. */}
+              {active && (
+                <span className="text-[12px] whitespace-nowrap hidden sm:inline text-text-base font-medium">
+                  {label}
+                </span>
+              )}
             </div>
             {/* Connector line between steps */}
             {i < STEPS.length - 1 && (
@@ -435,6 +443,22 @@ function StepAgents({
   );
 }
 
+function StepProjects({ discovery }: { discovery: ProjectDiscoveryState }) {
+  return (
+    <div>
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
+        Add the projects you already have
+      </h2>
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
+        Automatic can search a folder for projects that already use your agents, then set them up for
+        you. Tick the ones to add. Adding a project writes Automatic's files into its folder. You can
+        skip this and add projects later.
+      </p>
+      <ProjectDiscoveryPanel state={discovery} scrollList />
+    </div>
+  );
+}
+
 function StepEmail({
   value,
   onChange,
@@ -694,6 +718,8 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   // The full key stored in the keychain (for hint display only — never re-saved unless changed).
   const [existingApiKey, setExistingApiKey] = useState<string | null>(null);
   const [apiKeyReadError, setApiKeyReadError] = useState<string | null>(null);
+  // Lives in the shell, not the step, so results survive Back and Continue.
+  const discovery = useProjectDiscovery(true);
 
   // Pre-populate answers from any previously saved onboarding data.
   // On a fresh first run (no saved agents) also auto-detect installed agents.
@@ -778,15 +804,23 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     if (step === 0) return answers.role !== "";
     if (step === 1) return answers.aiUsage !== "";
     // agents step: allow skipping (zero selection)
+    if (step === PROJECTS_STEP) return !discovery.busy;
     return true;
   };
 
   const handleNext = async () => {
     if (isLast) {
       await finish();
-    } else {
-      setStep((s) => s + 1);
+      return;
     }
+    if (step === PROJECTS_STEP && discovery.selectedAddable.length > 0) {
+      // No analytics here: the user has not yet chosen whether to share
+      // usage data (Preferences is the last step).
+      const result = await discovery.addSelected(announceAddedProjects);
+      // Stay so the user can see what failed, then retry or untick it.
+      if (!result || result.failedCount > 0) return;
+    }
+    setStep((s) => s + 1);
   };
 
   const finish = async () => {
@@ -873,9 +907,11 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base">
-      {/* Drag region — covers the full-screen overlay so the window remains draggable during setup */}
-      <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-bg-base">
+      {/* Drag region — pinned to the top of the window so it stays put while the overlay scrolls */}
+      <div data-tauri-drag-region className="fixed top-0 inset-x-0 h-11 select-none z-10" />
+      {/* Centred while it fits; scrolls when a long step outgrows a short window. */}
+      <div className="min-h-full flex items-center justify-center">
       <div className="w-full max-w-xl px-6 py-10">
         {/* Logo */}
         <div className="flex items-center gap-2 mb-8">
@@ -902,7 +938,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               onChange={(v) => setAnswers((a) => ({ ...a, aiUsage: v }))}
             />
           )}
-          {step === 2 && (
+          {step === AGENTS_STEP && (
             <StepAgents
               value={answers.agents}
               onChange={(v) => setAnswers((a) => ({ ...a, agents: v }))}
@@ -911,13 +947,14 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               autoDetectedIds={autoDetectedIds}
             />
           )}
-          {step === 3 && (
+          {step === PROJECTS_STEP && <StepProjects discovery={discovery} />}
+          {step === EMAIL_STEP && (
             <StepEmail
               value={answers.email}
               onChange={(v) => setAnswers((a) => ({ ...a, email: v }))}
             />
           )}
-          {step === 4 && (
+          {step === API_KEY_STEP && (
             <StepApiKey
               value={answers.anthropicApiKey}
               onChange={(v) => setAnswers((a) => ({ ...a, anthropicApiKey: v }))}
@@ -925,7 +962,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               keyReadError={apiKeyReadError}
             />
           )}
-          {step === 5 && (
+          {step === PREFERENCES_STEP && (
             <StepPreferences
               analyticsEnabled={answers.analyticsEnabled}
               onToggleAnalytics={() =>
@@ -938,8 +975,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               onToggleTheme={() => {
                 // Toggle off -> always fall back to dark (default manual theme)
                 const next: Theme = answers.theme === "system" ? "dark" : "system";
-                localStorage.setItem("automatic.theme", next);
-                applyTheme(next);
+                setStoredTheme(next);
                 setAnswers((a) => ({ ...a, theme: next }));
               }}
             />
@@ -966,7 +1002,8 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             {step > 0 ? (
               <button
                 onClick={() => setStep((s) => s - 1)}
-                className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+                disabled={discovery.adding}
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Back
               </button>
@@ -981,10 +1018,22 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               <div />
             )}
             {/* Allow skipping agent selection */}
-            {step === 2 && answers.agents.length === 0 && (
+            {step === AGENTS_STEP && answers.agents.length === 0 && (
               <button
                 onClick={() => setStep((s) => s + 1)}
                 className="text-[13px] text-text-muted hover:text-text-muted transition-colors"
+              >
+                Skip for now
+              </button>
+            )}
+            {step === PROJECTS_STEP && (
+              <button
+                onClick={() => {
+                  discovery.cancelScan();
+                  setStep((s) => s + 1);
+                }}
+                disabled={discovery.adding}
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors disabled:opacity-40"
               >
                 Skip for now
               </button>
@@ -999,6 +1048,13 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
           >
             {saving ? (
               "Saving..."
+            ) : discovery.adding ? (
+              "Adding projects…"
+            ) : step === PROJECTS_STEP && discovery.selectedAddable.length > 0 ? (
+              <>
+                Add {discovery.selectedAddable.length} project{discovery.selectedAddable.length === 1 ? "" : "s"} and continue
+                <ChevronRight size={14} />
+              </>
             ) : isLast ? (
               "Get started"
             ) : (
@@ -1009,6 +1065,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             )}
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

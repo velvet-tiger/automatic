@@ -13,6 +13,7 @@ import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { nextAvailableName } from "../../lib/uniqueName";
+import { encryptedPrefixMessage, envKeysWithEncryptedPrefix } from "../../lib/encryptedEnvValues";
 import { McpConfigFindings } from "../../components/McpConfigFindings";
 import {
   fixMcpDockerArgs,
@@ -696,6 +697,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
+  // Parts of a rename that did not complete, such as moving the server's
+  // source ownership. The rename itself worked, so these are not errors.
+  const [renameWarnings, setRenameWarnings] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -773,6 +777,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   }, [configToValidate]);
 
   const saveBlockedByErrors = hasMcpConfigErrors(validation) && !saveDespiteErrors;
+  // The backend refuses these values. Checking here too stops a rename from
+  // going through before a save that would then fail. "Save anyway" does not
+  // override it, because the backend would still refuse.
+  const encryptedPrefixKey = envKeysWithEncryptedPrefix(config?.env)[0];
+  const envPrefixError =
+    encryptedPrefixKey !== undefined ? encryptedPrefixMessage(encryptedPrefixKey) : null;
 
   const applyDockerFix = async () => {
     if (!config) return;
@@ -827,6 +837,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       setDirty(false);
       setIsCreating(false);
       setError(null);
+      setRenameWarnings([]);
       resetInlineState();
     } catch (err: any) {
       setError(`Failed to read server: ${err}`);
@@ -839,6 +850,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const closeDrawer = () => {
     setSelectedName(null);
+    setRenameWarnings([]);
     setConfig(null);
     setDirty(false);
     setIsCreating(false);
@@ -859,15 +871,25 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
     if (saveBlockedByErrors) return;
+    if (envPrefixError) {
+      setError(envPrefixError);
+      return;
+    }
+    let renamed = false;
     try {
       // Rename first when the user changed the name of an existing server.
       // The backend rewrites project + template references and re-syncs, so
       // we only need to save the config under the new name afterwards.
       if (!isCreating && selectedName && name !== selectedName) {
-        await invoke("rename_mcp_server_config", {
+        const warnings = await invoke<string[]>("rename_mcp_server_config", {
           oldName: selectedName,
           newName: name,
         });
+        renamed = true;
+        setRenameWarnings(warnings);
+        // The server now lives under the new name, even if the save below
+        // fails, so the editor must not keep pointing at the old one.
+        setSelectedName(name);
       }
 
       await invoke("save_mcp_server_config", {
@@ -895,6 +917,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       }
       setError(null);
     } catch (err: any) {
+      // A rename that worked must still show in the sidebar when the save
+      // after it fails. The list loads first because a successful load
+      // clears the error, and the save error must stay visible.
+      if (renamed) await loadServers();
       setError(`Failed to save server: ${err}`);
     }
   };
@@ -1183,6 +1209,16 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         </div>
       )}
 
+      {renameWarnings.length > 0 && (
+        <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3 shrink-0">
+          <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+          <div className="flex-1 whitespace-pre-wrap">{renameWarnings.join("\n")}</div>
+          <button type="button" aria-label="Dismiss" onClick={() => setRenameWarnings([])}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {opencodeWarning.length > 0 && (
         <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3 shrink-0">
           <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
@@ -1310,9 +1346,13 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     disabled={
                       (isCreating && !newName.trim()) ||
                       (!isCreating && !editName.trim()) ||
-                      saveBlockedByErrors
+                      saveBlockedByErrors ||
+                      envPrefixError !== null
                     }
-                    title={saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined}
+                    title={
+                      envPrefixError ??
+                      (saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined)
+                    }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
@@ -1601,6 +1641,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       colorKey
                       maskValue
                     />
+                    {envPrefixError && (
+                      <p className="mt-2 text-[11px] text-danger">{envPrefixError}</p>
+                    )}
                     <p className="mt-2 text-[11px] text-text-muted leading-relaxed">
                       Values are encrypted at rest but{" "}
                       <strong className="font-semibold text-text-base">written as plaintext to your project</strong>.

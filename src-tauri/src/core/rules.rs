@@ -184,7 +184,7 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
         let mut rule: Rule =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid rule data: {}", e))?;
         if rule._author.is_none() {
-            rule._author = super::remote_sources::get_provenance_author("rule", machine_name)?;
+            rule._author = super::remote_sources::get_provenance_author("rule", machine_name);
         }
         serde_json::to_string(&rule).map_err(|e| e.to_string())
     } else {
@@ -352,6 +352,17 @@ fn default_rules() -> Vec<(String, String, String)> {
     }
 
     rules
+}
+
+/// Whether `machine_name` is one of the default rules Automatic installs
+/// from its bundled library or ships itself.
+pub fn is_bundled_rule(machine_name: &str) -> bool {
+    super::bundled_library::rules()
+        .iter()
+        .any(|entry| library_rule_machine_name(&entry.pack, &entry.id) == machine_name)
+        || APP_BUNDLED_RULES
+            .iter()
+            .any(|(name, _, _)| *name == machine_name)
 }
 
 /// Compose the compound machine name the app uses for a library rule

@@ -12,8 +12,71 @@ import {
   RefreshCw,
   History,
 } from "lucide-react";
-import type { Project, ProjectProfile, ProjectToolEntry, ProfileLockMap } from "./types";
+import type { Project, ProjectDriftState, ProjectProfile, ProjectToolEntry, ProfileLockMap } from "./types";
 import { PROFILE_RESOURCE_KINDS } from "./types";
+
+/**
+ * The text of a rejected `invoke`. Tauri commands reject with the backend's
+ * message as a plain string; anything else is shown as best it can be.
+ */
+export function checkErrorText(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+/** A drift check that ran and found the files in sync (`false`) or drifted. */
+export function driftChecked(drifted: boolean): ProjectDriftState {
+  return { status: "checked", drifted };
+}
+
+/** A drift check that could not run, with the reason the backend gave. */
+export function driftCheckFailed(err: unknown): ProjectDriftState {
+  return { status: "failed", error: checkErrorText(err) };
+}
+
+/** True only for a check that ran and found drift. */
+export function isDrifted(state: ProjectDriftState | undefined): boolean {
+  return state?.status === "checked" && state.drifted;
+}
+
+/** True only for a check that ran and found no drift. */
+export function isInSync(state: ProjectDriftState | undefined): boolean {
+  return state?.status === "checked" && !state.drifted;
+}
+
+/** True when the last check could not run. */
+export function isCheckFailed(state: ProjectDriftState | undefined): state is { status: "failed"; error: string } {
+  return state?.status === "failed";
+}
+
+/** One line of the editor's "check failed" banner. */
+export interface CheckFailureNotice {
+  title: string;
+  error: string;
+}
+
+/**
+ * The lines to show when the drift check, the problems check, or both could
+ * not run. Both checks read the same server configs, so they often fail for
+ * the same reason. The same message is then shown once.
+ */
+export function checkFailureNotices(
+  driftError: string | null,
+  problemsError: string | null,
+): CheckFailureNotice[] {
+  if (driftError !== null && driftError === problemsError) {
+    return [{ title: "Could not check this project for changes or problems.", error: driftError }];
+  }
+  const notices: CheckFailureNotice[] = [];
+  if (driftError !== null) {
+    notices.push({ title: "Could not check this project for changes.", error: driftError });
+  }
+  if (problemsError !== null) {
+    notices.push({ title: "Could not check this project for problems.", error: problemsError });
+  }
+  return notices;
+}
 
 export function parseInvokeResult<T>(value: unknown): T {
   if (typeof value === "string") {

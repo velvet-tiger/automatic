@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useId } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   BookOpen,
@@ -7,6 +7,8 @@ import {
   ArrowUpRight,
   RefreshCw,
   Plus,
+  Check,
+  X,
 } from "lucide-react";
 import { handleExternalLinkClick } from "../lib/externalLinks";
 
@@ -23,13 +25,95 @@ interface ClaudeMemoryContent {
   topic_files: ClaudeMemoryTopicFile[];
 }
 
+/** The part of an Automatic memory entry the panel compares against. */
+interface StoredMemory {
+  value: string;
+}
+
+/** Automatic's memory entries for this project, by key. */
+type StoredMemories = Record<string, StoredMemory>;
+
+/**
+ * Whether `record` has `key` as its own property. This is `Object.hasOwn`,
+ * which the project's ES2020 lib target does not declare. It stops a key
+ * such as "constructor" or "__proto__" matching an inherited property.
+ */
+function hasOwnKey(record: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/** What the user promoted a file as: the key they saved under, and the file content at that moment. */
+export interface Promotion {
+  key: string;
+  content: string;
+}
+
+/**
+ * How a Claude memory file relates to Automatic's memory store.
+ * - "promoted": stored and up to date.
+ * - "changed": promoted in this session, and the file has changed since.
+ * - "differs": the suggested key is stored, but its value is not the file's
+ *   content. The user may have edited it on promotion, or the file changed.
+ */
+export type PromotionStatus = "none" | "promoted" | "changed" | "differs";
+
+/**
+ * The status of a file with `content`. A promotion recorded this session
+ * wins, because the user may have saved under another key or edited the
+ * value. Otherwise the suggested key is compared with the file's trimmed
+ * content, which is what PromoteModal saves by default.
+ */
+export function promotionStatus(
+  stored: StoredMemories,
+  suggestedKey: string,
+  content: string,
+  promotion?: Promotion,
+): PromotionStatus {
+  if (promotion) {
+    if (!hasOwnKey(stored, promotion.key)) return "none";
+    return content === promotion.content ? "promoted" : "changed";
+  }
+  if (!hasOwnKey(stored, suggestedKey)) return "none";
+  return stored[suggestedKey].value === content.trim() ? "promoted" : "differs";
+}
+
+function PromotionBadge({ status }: { status: PromotionStatus }) {
+  if (status === "none") return null;
+  if (status === "promoted") {
+    return (
+      <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-success/10 text-success border border-success/30 shrink-0">
+        <Check size={10} /> Promoted
+      </span>
+    );
+  }
+  const changed = status === "changed";
+  return (
+    <span
+      className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/30 shrink-0"
+      title={
+        changed
+          ? "This file has changed since it was promoted. Promote it again to update the Automatic memory."
+          : "Automatic has a memory under this file's suggested key with a different value."
+      }
+    >
+      {changed ? "Changed since promoted" : "Differs from Automatic memory"}
+    </span>
+  );
+}
+
 interface PromoteModalProps {
   initialKey: string;
   initialValue: string;
   /** The project's local_key. */
   projectKey: string;
+  /**
+   * Automatic's existing memories, used to warn before replacing one.
+   * Undefined while they are not known for this project: no warning shows.
+   */
+  storedMemories: StoredMemories | undefined;
   onClose: () => void;
-  onPromoted: () => void;
+  /** Called with the key the entry was saved under. */
+  onPromoted: (key: string) => void;
 }
 
 // ── Promote to Automatic Modal ───────────────────────────────────────────────
@@ -38,6 +122,7 @@ function PromoteModal({
   initialKey,
   initialValue,
   projectKey,
+  storedMemories,
   onClose,
   onPromoted,
 }: PromoteModalProps) {
@@ -45,6 +130,8 @@ function PromoteModal({
   const [value, setValue] = useState(initialValue);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const keyInputId = useId();
+  const valueInputId = useId();
 
   const handleSave = async () => {
     const trimmedKey = key.trim();
@@ -59,17 +146,24 @@ function PromoteModal({
         value: trimmedValue,
         source: "claude-auto-memory",
       });
-      onPromoted();
+      onPromoted(trimmedKey);
       onClose();
-    } catch (err: any) {
-      setError(`Failed to promote: ${err}`);
+    } catch (err: unknown) {
+      setError(`Failed to promote: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSaving(false);
     }
   };
 
+  const replacesExisting = storedMemories !== undefined && hasOwnKey(storedMemories, key.trim());
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Promote to Automatic Memory"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
       <div className="bg-bg-input border border-border-strong/40 rounded-xl shadow-xl w-full max-w-lg mx-4 p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -87,10 +181,11 @@ function PromoteModal({
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1 block">
+            <label htmlFor={keyInputId} className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1 block">
               Key
             </label>
             <input
+              id={keyInputId}
               type="text"
               value={key}
               onChange={(e) => setKey(e.target.value)}
@@ -100,18 +195,24 @@ function PromoteModal({
             />
           </div>
           <div>
-            <label className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1 block">
+            <label htmlFor={valueInputId} className="text-[11px] font-medium text-text-muted uppercase tracking-wide mb-1 block">
               Value
             </label>
             <textarea
+              id={valueInputId}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               rows={6}
               className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand resize-none custom-scrollbar"
             />
           </div>
+          {replacesExisting && (
+            <p className="text-[12px] text-warning">
+              A memory with this key already exists. Promoting replaces its value.
+            </p>
+          )}
           {error && (
-            <p className="text-[12px] text-danger">{error}</p>
+            <p role="alert" className="text-[12px] text-danger">{error}</p>
           )}
         </div>
         <div className="flex items-center justify-end gap-2 mt-4">
@@ -126,7 +227,7 @@ function PromoteModal({
             onClick={handleSave}
             className="px-3 py-1.5 text-[12px] font-medium bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
           >
-            {saving ? "Saving…" : "Promote"}
+            {saving ? "Saving…" : replacesExisting ? "Replace" : "Promote"}
           </button>
         </div>
       </div>
@@ -139,14 +240,20 @@ function PromoteModal({
 interface TopicFileSectionProps {
   file: ClaudeMemoryTopicFile;
   projectKey: string;
-  onPromoted: () => void;
+  storedMemories: StoredMemories | undefined;
+  /** What this file was promoted as in this session, if it was. */
+  promotion: Promotion | undefined;
+  onPromoted: (key: string) => void;
 }
 
-function TopicFileSection({ file, projectKey, onPromoted }: TopicFileSectionProps) {
+function TopicFileSection({ file, projectKey, storedMemories, promotion, onPromoted }: TopicFileSectionProps) {
   const [expanded, setExpanded] = useState(false);
   const [promoteModal, setPromoteModal] = useState<{ key: string; value: string } | null>(null);
 
   const suggestedKey = `claude-memory/${file.name.replace(/\.md$/, "")}`;
+  const status: PromotionStatus = storedMemories
+    ? promotionStatus(storedMemories, suggestedKey, file.content, promotion)
+    : "none";
 
   return (
     <div className="border border-border-strong/40 rounded-lg overflow-hidden">
@@ -160,6 +267,7 @@ function TopicFileSection({ file, projectKey, onPromoted }: TopicFileSectionProp
         <span className="text-[12px] font-semibold text-text-base font-mono flex-1 truncate">
           {file.name}
         </span>
+        <PromotionBadge status={status} />
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -183,6 +291,7 @@ function TopicFileSection({ file, projectKey, onPromoted }: TopicFileSectionProp
           initialKey={promoteModal.key}
           initialValue={promoteModal.value}
           projectKey={projectKey}
+          storedMemories={storedMemories}
           onClose={() => setPromoteModal(null)}
           onPromoted={onPromoted}
         />
@@ -193,11 +302,21 @@ function TopicFileSection({ file, projectKey, onPromoted }: TopicFileSectionProp
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+/** The key MEMORY.md is suggested to be promoted under. */
+const MEMORY_MD_KEY = "claude-memory/MEMORY";
+const MEMORY_MD_FILE = "MEMORY.md";
+
 interface ClaudeMemoryPanelProps {
-  /** Automatic project name (used as key for store_memory calls). */
+  /** The project's local_key (used as the project for store_memory calls). */
   projectKey: string;
   /** Absolute path to the project directory (used to derive the Claude memory path). */
   projectDirectory: string;
+  /**
+   * Automatic's memories for this project, used to mark files already
+   * promoted. Undefined while they are not known for this project: no file
+   * is marked and no replace warning shows.
+   */
+  storedMemories?: StoredMemories;
   /** Called when a memory entry has been successfully promoted. */
   onPromoted: () => void;
 }
@@ -205,6 +324,7 @@ interface ClaudeMemoryPanelProps {
 export function ClaudeMemoryPanel({
   projectKey,
   projectDirectory,
+  storedMemories,
   onPromoted,
 }: ClaudeMemoryPanelProps) {
   const [content, setContent] = useState<ClaudeMemoryContent | null>(null);
@@ -212,6 +332,21 @@ export function ClaudeMemoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [memoryMdExpanded, setMemoryMdExpanded] = useState(true);
   const [promoteMemoryMd, setPromoteMemoryMd] = useState(false);
+  // The key of the last successful promotion. The new entry is listed in the
+  // Agent Memory list at the top of the tab, usually out of view, so the
+  // panel confirms the save itself.
+  const [lastPromotedKey, setLastPromotedKey] = useState<string | null>(null);
+  // What each file (by name) was promoted as in this session.
+  const [promotions, setPromotions] = useState<Record<string, Promotion>>({});
+
+  const handlePromoted = useCallback(
+    (fileName: string, content: string) => (key: string) => {
+      setLastPromotedKey(key);
+      setPromotions((prev) => ({ ...prev, [fileName]: { key, content } }));
+      onPromoted();
+    },
+    [onPromoted],
+  );
 
   const load = useCallback(async () => {
     if (!projectDirectory) return;
@@ -222,8 +357,8 @@ export function ClaudeMemoryPanel({
         project: projectKey,
       });
       setContent(result);
-    } catch (err: any) {
-      setError(`${err}`);
+    } catch (err: unknown) {
+      setError(`Failed to read Claude auto-memory: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -269,6 +404,27 @@ export function ClaudeMemoryPanel({
         </p>
       )}
 
+      {/* Promotion confirmation */}
+      {lastPromotedKey && (
+        <div
+          role="status"
+          className="flex items-start gap-2 text-[12px] text-text-base bg-success/10 border border-success/30 rounded p-3 mb-3"
+        >
+          <Check size={13} className="text-success shrink-0 mt-0.5" />
+          <span className="flex-1">
+            Promoted to Automatic memory as{" "}
+            <span className="font-mono">{lastPromotedKey}</span>. It is listed under Agent Memory at the top of this tab.
+          </span>
+          <button
+            onClick={() => setLastPromotedKey(null)}
+            className="text-text-muted hover:text-text-base p-0.5 rounded transition-colors shrink-0"
+            aria-label="Dismiss"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {/* Loading */}
       {loading && (
         <div className="text-[13px] text-text-muted text-center py-6">Loading…</div>
@@ -311,6 +467,18 @@ export function ClaudeMemoryPanel({
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40 shrink-0">
                   index · loaded every session
                 </span>
+                <PromotionBadge
+                  status={
+                    storedMemories
+                      ? promotionStatus(
+                          storedMemories,
+                          MEMORY_MD_KEY,
+                          content.memory_md,
+                          hasOwnKey(promotions, MEMORY_MD_FILE) ? promotions[MEMORY_MD_FILE] : undefined,
+                        )
+                      : "none"
+                  }
+                />
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -338,7 +506,9 @@ export function ClaudeMemoryPanel({
               key={file.name}
               file={file}
               projectKey={projectKey}
-              onPromoted={onPromoted}
+              storedMemories={storedMemories}
+              promotion={hasOwnKey(promotions, file.name) ? promotions[file.name] : undefined}
+              onPromoted={handlePromoted(file.name, file.content)}
             />
           ))}
 
@@ -360,11 +530,12 @@ export function ClaudeMemoryPanel({
       {/* Promote MEMORY.md modal */}
       {promoteMemoryMd && content?.memory_md != null && (
         <PromoteModal
-          initialKey="claude-memory/MEMORY"
+          initialKey={MEMORY_MD_KEY}
           initialValue={content.memory_md}
           projectKey={projectKey}
+          storedMemories={storedMemories}
           onClose={() => setPromoteMemoryMd(false)}
-          onPromoted={onPromoted}
+          onPromoted={handlePromoted(MEMORY_MD_FILE, content.memory_md)}
         />
       )}
     </section>

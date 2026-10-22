@@ -5,7 +5,7 @@ import { Check, Code, Edit2, Plus, RefreshCw, Search, Sparkles, Trash2, Upload, 
 import { SkillSelector } from "../../../../../components/SkillSelector";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { SkillAddButton } from "../SkillAddButton";
-import type { CustomSkill, DriftReport, ProfileLockMap, Project, ProjectRecommendation } from "../../types";
+import type { CustomSkill, ProfileLockMap, Project, ProjectRecommendation } from "../../types";
 
 interface SkillsPanelProps {
   project: Project;
@@ -16,8 +16,8 @@ interface SkillsPanelProps {
   setDirty: (v: boolean) => void;
   setSyncStatus: (v: string | null) => void;
   setError: (v: string | null) => void;
-  setDriftReport: React.Dispatch<React.SetStateAction<DriftReport | null>>;
-  setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  /** Records that the project's files were just written, so nothing has drifted. */
+  markSynced: (projectKey: string) => void;
   customSkillEditingIdx: number | null;
   setCustomSkillEditingIdx: (v: number | null) => void;
   customSkillEditName: string;
@@ -44,7 +44,7 @@ interface SkillsPanelProps {
 export function SkillsPanel(props: SkillsPanelProps) {
   const {
     project, setProject, selectedKey, setProjectDetailsMap, setDirty,
-    setSyncStatus, setError, setDriftReport, setDriftByProject,
+    setSyncStatus, setError, markSynced,
     customSkillEditingIdx, setCustomSkillEditingIdx,
     customSkillEditName, setCustomSkillEditName,
     customSkillEditContent, setCustomSkillEditContent,
@@ -72,8 +72,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
       setDirty(false);
       setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
-        setDriftReport({ drifted: false, agents: [] });
-        setDriftByProject((prev) => ({ ...prev, [selectedKey]: false }));
+        markSynced(selectedKey);
       }
     } catch (err: unknown) {
       setError(`Save failed: ${err}`);

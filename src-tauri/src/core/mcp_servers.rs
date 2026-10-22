@@ -119,7 +119,7 @@ pub fn read_mcp_server_config_if_present(name: &str) -> Result<Option<String>, S
     }
 
     if config.get("_author").is_none() {
-        if let Some(repo) = super::remote_sources::get_provenance("mcp_server", name)? {
+        if let Some(repo) = super::remote_sources::get_display_provenance("mcp_server", name) {
             if let Some(obj) = config.as_object_mut() {
                 obj.insert(
                     "_author".to_string(),
@@ -159,12 +159,17 @@ pub(crate) fn write_undecryptable_mcp_server_config(name: &str) -> PathBuf {
 /// Persist a single MCP server config.  Env values are **encrypted** before
 /// writing so that API keys are never stored in plaintext on disk.
 ///
-/// The `data` parameter is the raw JSON string from the frontend (env values
-/// are plaintext at this point — the frontend never sees the encrypted form).
+/// This is the raw writer, for configs this install trusts: ones compiled
+/// into the app, such as plugin servers and the built-in `automatic` entry,
+/// and the two entry points below. A value that already carries the
+/// encryption prefix is stored as it is. A config the user wrote goes
+/// through [`save_user_mcp_server_config`], and one from anywhere else
+/// through [`save_untrusted_mcp_server_config`], so neither can store an
+/// entry that fails to decrypt.
 ///
 /// A save that changes the server's `url` deletes the OAuth secrets it stops
 /// using, as [`tidy_oauth_secrets_on_url_change`] describes.
-pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+pub(crate) fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
@@ -192,6 +197,76 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
         record_recently_added("mcp_servers", name);
     }
 
+    Ok(())
+}
+
+/// Store a config that did not come from this install's registry: one read
+/// from an agent's own config file, one a remote source provides, or one a
+/// cloud sync pull delivers.
+///
+/// Env values with the encryption prefix are stored empty first, as
+/// [`blank_ciphertext_like_env_values`] describes. Every writer of outside
+/// config goes through here, or through that same blanking step, so no such
+/// writer can store an entry that fails to decrypt. Otherwise this stores the
+/// config as [`save_mcp_server_config`] does, and replaces any existing entry.
+pub fn save_untrusted_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
+    save_mcp_server_config(name, &blank_ciphertext_like_env_values(config_json))
+}
+
+/// Store a config the user wrote, in the editor or a catalogue install.
+/// A pasted snippet also lands here, but the import dialog blanks prefixed
+/// env values before it calls the save.
+///
+/// The editor loads env values decrypted, so it sends plain text. A plain
+/// value with the encryption prefix would be stored as it is and could never
+/// be decrypted. The save is refused instead, with a message that names the
+/// env key. Blanking the value would lose what the user typed without a word.
+/// A prefixed value that decrypts with this install's key is real ciphertext
+/// and is accepted, so a config that carries one back unchanged still saves.
+pub fn save_user_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    reject_undecryptable_env_values(data)?;
+    save_mcp_server_config(name, data)
+}
+
+/// Fail on the first `env` string value that carries the encryption prefix
+/// but does not decrypt.
+///
+/// A key that could not be read gets its own message. The value may then be
+/// real ciphertext, and the user should unlock the keychain rather than
+/// retype it. Neither message includes the value.
+///
+/// A config that is not JSON, or has no `env` object, passes. The save that
+/// follows parses it again and reports invalid JSON itself.
+fn reject_undecryptable_env_values(data: &str) -> Result<(), String> {
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(data) else {
+        return Ok(());
+    };
+    let Some(env) = config.get("env").and_then(|env| env.as_object()) else {
+        return Ok(());
+    };
+    for (key, value) in env {
+        let serde_json::Value::String(text) = value else {
+            continue;
+        };
+        if !env_crypto::is_encrypted(text) {
+            continue;
+        }
+        match env_crypto::decrypt_value_reporting(text) {
+            Ok(_) => {}
+            Err(env_crypto::DecryptError::KeyUnreadable(e)) => {
+                return Err(format!(
+                    "Env value for '{}' looks encrypted, but the encryption key could not be read: {}",
+                    key, e
+                ));
+            }
+            Err(env_crypto::DecryptError::Undecryptable(_)) => {
+                return Err(format!(
+                    "Env value for '{}' cannot start with 'enc:v1:'. That prefix is reserved for encrypted values.",
+                    key
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -513,16 +588,16 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
     {
         return Ok(());
     }
-    // Blanked first, so the config that is validated is the one stored.
-    // Validation reads env key names only, and blanking keeps every key.
-    let config_json = blank_ciphertext_like_env_values(config_json);
-    save_mcp_server_config(name, &super::mark_discovered_if_blocked(&config_json))
+    // The guard reads env key names only, and blanking keeps every key, so
+    // the marker is the same whether it is decided before or after blanking.
+    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(config_json))
 }
 
 /// Replace every `env` value that carries the encryption prefix with an
 /// empty string, in a config that did not come from this install's registry:
-/// one discovered in an agent file, or one a remote source provides.  The key
-/// is kept.
+/// one discovered in an agent file, one a remote source or agent package
+/// provides, or one a cloud sync pull delivers.  The key is kept.  Callers
+/// that replace an entry use [`save_untrusted_mcp_server_config`].
 ///
 /// Saving a config leaves a prefixed value as it is, because it is taken for
 /// a value that is already encrypted.  A prefixed value from an agent file is
@@ -603,25 +678,30 @@ pub fn delete_mcp_server_config_reporting(name: &str) -> Result<Vec<String>, Str
 }
 
 /// Rename a local MCP server config on disk. Callers are responsible for
-/// updating any project or template that referenced the old name.
+/// updating any project or template that referenced the old name, and must
+/// do so whenever this returns `Ok`, warnings or not.
 ///
 /// Refuses built-in server names and refuses to overwrite an existing config
 /// under `new_name`. If `old_name == new_name` this is a no-op.
 ///
 /// Any provenance entry recorded against `old_name` is moved to `new_name` so
-/// the GitHub author badge continues to show.
+/// the GitHub author badge continues to show. The provenance moves first, so
+/// a provenance file that cannot be read or written refuses the rename
+/// before the server file moves. If the file then fails to move, the
+/// provenance is moved back. Returns warnings about non-fatal problems,
+/// which is empty today.
 ///
 /// The server's OAuth secrets are filed under its name and URL, so they move
 /// to `new_name` once the file has. Left behind, the renamed server would
 /// look signed out. A failed move is logged and does not fail the rename, as
 /// [`crate::proxy::move_oauth_secrets`] explains. A server with no URL is
 /// renamed without a call to the store.
-pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
+pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
     if !is_valid_name(old_name) || !is_valid_name(new_name) {
         return Err("Invalid server name".into());
     }
     if old_name == new_name {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if is_builtin_mcp_server(old_name) {
         return Err("Built-in servers cannot be renamed".into());
@@ -641,7 +721,25 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
     record_legacy_oauth_urls()?;
     let url = stored_server_url(&old_path)?;
 
-    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+    // Move ownership before the file, so a provenance problem refuses the
+    // rename with nothing moved. Moving it afterwards could leave the source
+    // claiming a name that no longer exists.
+    let moved_provenance = super::remote_sources::move_provenance("mcp_server", old_name, new_name)
+        .map_err(|e| {
+            format!(
+                "MCP server '{}' was not renamed, because its source ownership could not be moved: {}",
+                old_name, e
+            )
+        })?;
+
+    if let Err(rename_error) = fs::rename(&old_path, &new_path) {
+        return Err(undo_provenance_move(
+            old_name,
+            new_name,
+            moved_provenance,
+            rename_error,
+        ));
+    }
 
     if let StoredUrl::Known(Some(url)) = url {
         crate::proxy::move_oauth_secrets(old_name, new_name, &url);
@@ -649,12 +747,35 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
 
     remove_recently_added("mcp_servers", old_name);
 
-    if let Ok(Some(source)) = super::remote_sources::get_provenance("mcp_server", old_name) {
-        let _ = super::remote_sources::record_provenance("mcp_server", new_name, &source);
-        let _ = super::remote_sources::remove_provenance("mcp_server", old_name);
-    }
+    // Nothing after the move is fatal or reported today. The list stays so
+    // the command and RPC result keep one shape if a non-fatal case returns.
+    Ok(Vec::new())
+}
 
-    Ok(())
+/// Put a server's provenance back under `old_name` after its file failed to
+/// move, and build the error for the failed rename. The error names the
+/// undo failure too, when there is one, because the source then claims a
+/// name whose file is still under the old one.
+fn undo_provenance_move(
+    old_name: &str,
+    new_name: &str,
+    moved_provenance: bool,
+    rename_error: std::io::Error,
+) -> String {
+    let rename_failed = format!(
+        "MCP server '{}' could not be renamed to '{}': {}",
+        old_name, new_name, rename_error
+    );
+    if !moved_provenance {
+        return rename_failed;
+    }
+    match super::remote_sources::move_provenance("mcp_server", new_name, old_name) {
+        Ok(_) => rename_failed,
+        Err(undo_error) => format!(
+            "{}. Its source ownership was moved to '{}' and could not be moved back: {}",
+            rename_failed, new_name, undo_error
+        ),
+    }
 }
 
 /// Reported availability of a configured MCP server, shown as a status
@@ -1736,6 +1857,31 @@ mod tests {
         });
     }
 
+    #[test]
+    fn read_config_survives_a_corrupt_provenance_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("plain-server", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save config");
+            // A truncated write, as an interrupted save used to leave behind.
+            let provenance = crate::core::paths::get_automatic_dir()
+                .expect("automatic dir")
+                .join("source-provenance.json");
+            fs::write(&provenance, r#"{"mcp_server:plain-server": "octo"#)
+                .expect("write corrupt provenance");
+
+            let raw = read_mcp_server_config("plain-server").expect("read config");
+            let value: serde_json::Value = serde_json::from_str(&raw).expect("parse config");
+
+            assert_eq!(value["command"].as_str(), Some("npx"));
+            assert!(value.get("_author").is_none());
+            assert!(
+                super::super::remote_sources::get_provenance("mcp_server", "plain-server").is_err(),
+                "the strict lookup must still report the damaged file"
+            );
+        });
+    }
+
     // ── invalid name handling ────────────────────────────────────────────────
 
     #[test]
@@ -1822,6 +1968,33 @@ mod tests {
     }
 
     #[test]
+    fn rename_clears_a_stale_provenance_entry_under_the_new_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("unowned-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            // Left behind by a server once saved under the new name.
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "stale-new",
+                "octocat/old-collection",
+            )
+            .expect("record stale provenance");
+
+            rename_mcp_server_config("unowned-old", "stale-new").expect("rename");
+
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stale-new"),
+                Ok(None)
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "unowned-old"),
+                Ok(None)
+            );
+        });
+    }
+
+    #[test]
     fn rename_migrates_provenance_entry() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
@@ -1845,6 +2018,120 @@ mod tests {
                 super::super::remote_sources::get_provenance("mcp_server", "new-remote")
                     .expect("read new provenance"),
                 Some("octocat/mcp-collection".to_string())
+            );
+        });
+    }
+
+    #[test]
+    fn rename_is_refused_when_provenance_cannot_be_read() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("owned-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            let provenance = crate::core::paths::get_automatic_dir()
+                .expect("automatic dir")
+                .join("source-provenance.json");
+            fs::write(&provenance, r#"{"mcp_server:owned-old": "octo"#)
+                .expect("write corrupt provenance");
+
+            let err = rename_mcp_server_config("owned-old", "owned-new").expect_err("refused");
+
+            assert!(err.contains("was not renamed"), "unexpected error: {err}");
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            assert!(dir.join("owned-old.json").exists());
+            assert!(!dir.join("owned-new.json").exists());
+            assert_eq!(
+                fs::read_to_string(&provenance).expect("read provenance"),
+                r#"{"mcp_server:owned-old": "octo"#
+            );
+        });
+    }
+
+    #[test]
+    fn rename_is_refused_when_provenance_cannot_be_written() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("moving-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "moving-old",
+                "octocat/mcp-collection",
+            )
+            .expect("record provenance");
+
+            super::super::remote_sources::fail_provenance_writes(true);
+            let result = rename_mcp_server_config("moving-old", "moving-new");
+            super::super::remote_sources::fail_provenance_writes(false);
+
+            let err = result.expect_err("refused");
+            assert!(
+                err.contains("'moving-old' was not renamed")
+                    && err.contains("source ownership could not be moved"),
+                "unexpected error: {err}"
+            );
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            assert!(dir.join("moving-old.json").exists());
+            assert!(!dir.join("moving-new.json").exists());
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "moving-old"),
+                Ok(Some("octocat/mcp-collection".to_string()))
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "moving-new"),
+                Ok(None)
+            );
+        });
+    }
+
+    /// A folder the test user cannot write to makes `fs::rename` fail while
+    /// the provenance file, one level up, stays writable.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_file_move_puts_the_provenance_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("stuck-old", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "stuck-old",
+                "octocat/mcp-collection",
+            )
+            .expect("record provenance");
+            let dir = get_mcp_servers_dir().expect("servers dir");
+            let writable = fs::metadata(&dir).expect("stat dir").permissions();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).expect("lock dir");
+            // Root ignores the mode, so the rename would succeed. Probe the
+            // folder and skip when it is still writable.
+            let probe = dir.join(".write-probe");
+            if fs::write(&probe, "").is_ok() {
+                let _ = fs::remove_file(&probe);
+                fs::set_permissions(&dir, writable).expect("unlock dir");
+                eprintln!(
+                    "skipped: the servers folder stays writable at mode 0o555, as it does for root"
+                );
+                return;
+            }
+
+            let result = rename_mcp_server_config("stuck-old", "stuck-new");
+            fs::set_permissions(&dir, writable).expect("unlock dir");
+
+            let err = result.expect_err("the file move fails");
+            assert!(
+                err.contains("could not be renamed to 'stuck-new'")
+                    && !err.contains("could not be moved back"),
+                "unexpected error: {err}"
+            );
+            assert!(dir.join("stuck-old.json").exists());
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stuck-old"),
+                Ok(Some("octocat/mcp-collection".to_string()))
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "stuck-new"),
+                Ok(None)
             );
         });
     }
@@ -2503,6 +2790,153 @@ mod tests {
             assert_eq!(stored["env"]["API_KEY"], "");
             assert_eq!(stored["env"]["REGION"], "eu");
             assert_eq!(stored["command"], "npx");
+        });
+    }
+
+    // ── untrusted and user-written configs: prefixed env values ──────────────
+
+    #[test]
+    fn an_untrusted_config_with_a_ciphertext_like_env_value_replaces_an_entry_readably() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("untrusted-planted", r#"{"command":"old"}"#).expect("seed");
+
+            let incoming = r#"{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}"#;
+            save_untrusted_mcp_server_config("untrusted-planted", incoming).expect("save");
+
+            let raw = read_mcp_server_config("untrusted-planted")
+                .expect("the stored entry must be readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["command"], "npx", "the existing entry is replaced");
+            assert_eq!(stored["env"]["API_KEY"], "");
+            assert_eq!(stored["env"]["REGION"], "eu");
+        });
+    }
+
+    #[test]
+    fn a_user_config_with_a_plain_prefixed_env_value_is_refused_and_names_the_key() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let path = get_mcp_servers_dir().expect("dir").join("user-typed.json");
+            save_mcp_server_config("user-typed", r#"{"command":"npx","env":{"TOKEN":"kept"}}"#)
+                .expect("seed");
+            let before = fs::read(&path).expect("read before");
+
+            let err = save_user_mcp_server_config(
+                "user-typed",
+                r#"{"command":"npx","env":{"TOKEN":"enc:v1:typed-by-hand","REGION":"eu"}}"#,
+            )
+            .expect_err("a plain value with the prefix is refused");
+            assert_eq!(
+                err,
+                "Env value for 'TOKEN' cannot start with 'enc:v1:'. That prefix is reserved for encrypted values."
+            );
+            assert_eq!(
+                fs::read(&path).expect("read after"),
+                before,
+                "nothing is written"
+            );
+
+            let err = save_user_mcp_server_config(
+                "user-typed-new",
+                r#"{"command":"npx","env":{"TOKEN":"enc:v1:"}}"#,
+            )
+            .expect_err("the bare prefix is refused too");
+            assert!(err.contains("'TOKEN'"), "{err}");
+            assert!(!get_mcp_servers_dir()
+                .expect("dir")
+                .join("user-typed-new.json")
+                .exists());
+        });
+    }
+
+    #[test]
+    fn a_user_config_that_carries_real_ciphertext_back_is_accepted() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let ciphertext = env_crypto::encrypt_value("secret").expect("encrypt");
+            let config = serde_json::json!({
+                "command": "npx",
+                "env": { "TOKEN": ciphertext, "PLAIN": "value", "MENTION": "see enc:v1: later" },
+            });
+            save_user_mcp_server_config("user-roundtrip", &config.to_string()).expect("save");
+
+            let raw = read_mcp_server_config("user-roundtrip").expect("readable");
+            let stored: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(stored["env"]["TOKEN"], "secret");
+            assert_eq!(stored["env"]["PLAIN"], "value");
+            assert_eq!(stored["env"]["MENTION"], "see enc:v1: later");
+        });
+    }
+
+    #[test]
+    fn a_user_config_with_well_formed_ciphertext_from_another_key_is_refused() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let path = get_mcp_servers_dir()
+                .expect("dir")
+                .join("user-other-key.json");
+            let ciphertext = env_crypto::encrypt_value("secret").expect("encrypt");
+            let config =
+                serde_json::json!({ "command": "npx", "env": { "TOKEN": ciphertext } }).to_string();
+
+            // Another key: the value parses, and fails GCM authentication.
+            env_crypto::set_test_key(Some([9u8; 32]));
+            let err = save_user_mcp_server_config("user-other-key", &config)
+                .expect_err("ciphertext this install cannot read is refused");
+            assert_eq!(
+                err,
+                "Env value for 'TOKEN' cannot start with 'enc:v1:'. That prefix is reserved for encrypted values."
+            );
+            assert!(!path.exists(), "nothing is written");
+
+            // No key at all.
+            env_crypto::set_test_key(None);
+            let err = save_user_mcp_server_config("user-other-key", &config)
+                .expect_err("ciphertext with no key is refused");
+            assert!(err.contains("reserved for encrypted values"), "{err}");
+            assert!(!path.exists(), "nothing is written");
+        });
+    }
+
+    #[test]
+    fn a_user_config_is_refused_with_its_own_message_when_the_key_cannot_be_read() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let path = get_mcp_servers_dir()
+                .expect("dir")
+                .join("user-locked-key.json");
+            let ciphertext = env_crypto::encrypt_value("secret-value").expect("encrypt");
+            let config =
+                serde_json::json!({ "command": "npx", "env": { "TOKEN": ciphertext } }).to_string();
+
+            env_crypto::fail_key_reads_in_test(true);
+            let result = save_user_mcp_server_config("user-locked-key", &config);
+            env_crypto::fail_key_reads_in_test(false);
+
+            let err = result.expect_err("an unreadable key refuses the save");
+            assert!(
+                err.starts_with(
+                    "Env value for 'TOKEN' looks encrypted, but the encryption key could not be read: "
+                ),
+                "{err}"
+            );
+            assert!(err.contains("the test keychain is locked"), "{err}");
+            assert!(
+                !err.contains(&ciphertext),
+                "the value is never echoed: {err}"
+            );
+            assert!(!path.exists(), "nothing is written");
+        });
+    }
+
+    #[test]
+    fn a_user_config_that_is_not_json_is_reported_by_the_save() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            let err = save_user_mcp_server_config("user-bad-json", "{not json")
+                .expect_err("invalid JSON");
+            assert!(err.starts_with("Invalid JSON"), "{err}");
         });
     }
 }

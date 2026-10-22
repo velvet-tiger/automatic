@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { DropdownMenu } from "../../components/DropdownMenu";
 import { invoke } from "@tauri-apps/api/core";
 import { Send, Trash2, AlertCircle, ChevronDown, ChevronUp, Bot, Check, FolderOpen } from "lucide-react";
 import { flag } from "../../lib/flags";
@@ -62,7 +63,7 @@ function ModelPicker({
         <ChevronDown size={11} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-[220px] max-h-72 overflow-y-auto rounded-md bg-bg-input border border-border-strong/40 shadow-lg custom-scrollbar">
+        <DropdownMenu className="absolute left-0 z-50 min-w-[220px] max-h-72 overflow-y-auto rounded-md bg-bg-input border border-border-strong/40 shadow-lg custom-scrollbar">
           {models.map((m) => (
             <button
               key={m}
@@ -77,7 +78,7 @@ function ModelPicker({
               {m}
             </button>
           ))}
-        </div>
+        </DropdownMenu>
       )}
     </div>
   );
@@ -132,7 +133,7 @@ function ProjectPicker({
         <ChevronDown size={11} className={`text-text-muted transition-transform shrink-0 ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 min-w-[260px] max-w-[340px] rounded-md bg-bg-input border border-border-strong/40 shadow-lg overflow-hidden">
+        <DropdownMenu className="absolute right-0 z-50 min-w-[260px] max-w-[340px] rounded-md bg-bg-input border border-border-strong/40 shadow-lg overflow-hidden">
           {projects.map((p) => (
             <button
               key={p.key}
@@ -152,7 +153,7 @@ function ProjectPicker({
               </span>
             </button>
           ))}
-        </div>
+        </DropdownMenu>
       )}
     </div>
   );
