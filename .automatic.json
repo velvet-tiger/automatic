@@ -133,7 +133,6 @@
     "automatic-security-review",
     "git-commit",
     "release-prep",
-    "hooks-automation",
     "skill-builder",
     "automatic-refactoring",
     "brandfetch",
