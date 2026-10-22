@@ -17,15 +17,17 @@ Use the Automatic MCP tools when you need to:
 - Load a skill's instructions and discover its companion resources
 - Search the community skills.sh registry for relevant skills
 - Find MCP server configurations to suggest or apply
-- Inspect, list, or register the user's projects
+- Inspect, list, or register the user's projects, and find a project's related projects
+- Manage the rules, hooks, and profiles attached to a project
 - Check which Claude Code sessions are currently active
+- Retrieve a stored API key for an LLM provider
 - Sync a project's configurations to its directory
 - **Store, retrieve, or search long-term memory across sessions for a specific project**
 - Read reference material from the contexts attached to a project
 
 ## Available MCP Tools
 
-Automatic exposes the following tools via the `nexus` MCP server (configured as `nexus mcp-serve`):
+Automatic exposes the following tools via the `automatic` MCP server (configured as `automatic mcp-serve`):
 
 **The current project.** The server knows which project you are working in. Every tool that takes a `project` (or `name` on `automatic_read_project` and `automatic_sync_project`) uses that project when you omit it. Pass it only to act on another project. It accepts a project's `name`, `local_key` or `id` from `automatic_list_projects`. When a name or id matches several folders, the error lists each one with its `local_key`; pass that key.
 
@@ -64,7 +66,7 @@ query: string  — skill name, topic, or keyword, e.g. "react", "laravel", "dock
 
 ### `automatic_list_mcp_servers`
 
-Return all MCP server configurations stored in the Automatic registry (`~/.automatic/mcp_servers/`).
+Return all MCP server configurations stored in the Automatic registry (`~/.automatic/library/mcp_servers/`).
 
 **When to use:** When the user asks about available MCP servers, or when you need to reference server configs before syncing a project.
 
@@ -91,6 +93,18 @@ The call is refused for a server that is not attached to the project, for the `a
 List every project registered in Automatic. Each entry has `name`, `local_key` (one folder on this machine), `id` (the project, shared by every folder of it, such as git worktrees), `directory`, and `current`. `current` marks the project you are working in.
 
 **When to use:** When you need to find out which projects the user has configured, or to act on a project other than the current one.
+
+---
+
+### `automatic_get_related_projects`
+
+Return the peer projects of every Project Group this project belongs to. Each peer has its name, description, directory, and the relative path from this project's directory.
+
+```
+project?: string  — defaults to the current project
+```
+
+**When to use:** Before searching the filesystem or asking the user for sibling projects. This is the authoritative source. Related projects are not written into the instruction file.
 
 ---
 
@@ -137,6 +151,95 @@ profile: string   — the profile name
 With `group`, every member project receives the profile, and the call syncs the members that changed. A profile a group provides cannot be detached from a member project. Detach it from the group.
 
 **When to use:** After the user asks for a project or a group to follow a profile. On a project, neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
+
+---
+
+### `automatic_list_rules` / `automatic_read_rule`
+
+A rule is a Markdown instruction block that sync writes into a project's instruction files (`CLAUDE.md`, `AGENTS.md` and similar). `automatic_list_rules` lists every rule in the library with its `id` (machine name), `name` (display name) and, for plugin-provided rules, `plugin_id`. `automatic_read_rule` returns one rule's `name`, `content` and optional `plugin_id`.
+
+```
+machine_name: string  — read: the rule's machine name
+```
+
+**When to use:** To see which rules exist before attaching one, or to read a rule's full text.
+
+---
+
+### `automatic_create_rule` / `automatic_update_rule` / `automatic_delete_rule`
+
+Add, edit or remove a rule in the library.
+
+```
+machine_name: string  — lowercase letters, digits and hyphens, starting with a letter
+name: string          — create: the display name; update: optional
+content: string       — create: the Markdown body; update: optional
+```
+
+`automatic_create_rule` fails when the machine name is taken. `automatic_update_rule` needs at least one of `name` or `content`, and refuses plugin-provided rules. `automatic_delete_rule` refuses mandatory rules (such as `automatic-service`) and plugin-provided rules. Deleting a rule does not detach it from projects. They skip it on their next sync.
+
+**When to use:** Only when the user asks for a rule to be added, changed or removed.
+
+---
+
+### `automatic_attach_rule` / `automatic_detach_rule`
+
+Attach a library rule to a project's instruction file, or detach it. Both calls are idempotent.
+
+```
+project?: string      — defaults to the current project
+machine_name: string  — the rule's machine name
+file?: string         — "CLAUDE.md", "AGENTS.md" and so on for one agent's file, or "_project" for every agent file
+```
+
+Omit `file` when the project is in unified instruction mode. Per-agent mode requires it. Mandatory rules cannot be detached. A rule an attached profile provides is re-attached on the next save, so detach the profile instead.
+
+**When to use:** When the user wants a rule added to or removed from a project. Neither call syncs to disk — call `automatic_sync_project` afterwards.
+
+---
+
+### `automatic_list_hooks` / `automatic_read_hook`
+
+A hook is a handler that an agent runs on a lifecycle event, such as `SessionStart` or `PreToolUse`. `automatic_list_hooks` lists every hook in the library with its `id`, `name`, `agent`, `event` and optional `plugin_id`. `automatic_read_hook` returns one hook's full definition: `name`, `agent`, `event`, `matcher`, `handler`, `timeout_sec` and optional `plugin_id`.
+
+```
+machine_name: string  — read: the hook's machine name
+```
+
+---
+
+### `automatic_create_hook` / `automatic_update_hook` / `automatic_delete_hook`
+
+Add, edit or remove a hook in the library.
+
+```
+machine_name: string  — the hook's machine name
+name: string          — the display name (optional on update)
+agent: string         — the target agent id, e.g. "claude" or "codex" (optional on update)
+event: string         — the lifecycle event; accepted values depend on the agent (optional on update)
+matcher?: string      — e.g. a tool-name regex for PreToolUse / PostToolUse; on update, null clears it
+handler: object       — {"kind":"command","command":"..."} or {"kind":"script","interpreter":"bash","script":"..."} (optional on update)
+timeout_sec?: number  — on update, null clears it
+```
+
+`automatic_create_hook` fails when the machine name is taken. `automatic_update_hook` changes only the fields you pass, and refuses plugin-provided hooks. `automatic_delete_hook` refuses plugin-provided hooks. Deleting a hook does not detach it from projects. They skip it on their next sync.
+
+**When to use:** Only when the user asks for a hook to be added, changed or removed.
+
+---
+
+### `automatic_attach_hook` / `automatic_detach_hook`
+
+Attach a library hook to a project, or detach it. The target agent comes from the hook's library record. Both calls are idempotent.
+
+```
+project?: string      — defaults to the current project
+machine_name: string  — the hook's machine name
+```
+
+A hook an attached profile provides is re-attached on the next save, so detach the profile instead.
+
+**When to use:** When the user wants a hook added to or removed from a project. Neither call syncs to disk — call `automatic_sync_project` afterwards.
 
 ---
 
@@ -258,9 +361,21 @@ name?: string  — defaults to the current project
 
 ### `automatic_list_sessions`
 
-List active Claude Code sessions tracked by the Nexus hooks. Each entry includes session id, working directory (`cwd`), model, and `started_at` timestamp.
+List active Claude Code sessions tracked by Automatic's hooks. Each entry includes session id, working directory (`cwd`), model, and `started_at` timestamp.
 
 **When to use:** When you want to know what other Claude Code sessions are currently active — useful for awareness of parallel work or cross-session context.
+
+---
+
+### `automatic_get_credential`
+
+Return the API key stored in Automatic for an LLM provider. Only recognised provider ids are accepted.
+
+```
+provider: string  — e.g. "anthropic", "openai", "gemini"
+```
+
+**When to use:** When a task needs a provider API key that the user keeps in Automatic. Never print the key or write it into a file.
 
 ---
 
@@ -276,6 +391,7 @@ Every memory tool takes an optional `project`, which defaults to the current pro
 - **`automatic_search_memories`**: Searches both keys and values for a `query` string.
 - **`automatic_delete_memory`**: Deletes a specific memory entry by `key`.
 - **`automatic_clear_memories`**: Clears all memories (requires `confirm: true` and optional `pattern`).
+- **`automatic_read_claude_memory`**: Reads Claude Code's own auto-memory files for the project (`MEMORY.md` and any topic files under `~/.claude/projects/<encoded-path>/memory/`). Use it to see what Claude has learned, then promote durable entries with `automatic_store_memory`.
 
 **When to use:** Proactively store memory when you learn a significant project-specific rule, a user preference, or architectural decision that you (or other agents) will need in future sessions. Search memories at the start of complex tasks to see if previous guidance applies.
 
@@ -289,11 +405,15 @@ The `automatic_*_feature` tools track work items on a project's Build board. The
 
 ## Recommended Workflow
 
-1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
+1. **On session start** — make these four calls:
+   - `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources.
+   - `automatic_search_memories` with relevant keywords to retrieve past learnings for the current project.
+   - `automatic_read_project` to load the current project's configured skills, MCP servers, agents, and directory. To work on another project, find it with `automatic_list_projects` first.
+   - `automatic_list_contexts` to see the reference material attached to the project.
 
-2. **Check the project's contexts** — call `automatic_list_contexts`, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
+2. **Before project-specific decisions** — consult the relevant contexts before deciding on conventions, architecture, product behaviour, or wording. For sibling projects, call `automatic_get_related_projects` before searching the filesystem.
 
-3. **For project configuration** — call `automatic_read_project` to load the current project's configured skills, MCP servers, agents, and directory. To work on another project, find it with `automatic_list_projects` first.
+3. **For rules, hooks, and profiles** — attach or detach them only when the user asks, then call `automatic_sync_project`. Edit or detach a profile instead of removing an entry the profile provides.
 
 4. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 
@@ -310,12 +430,15 @@ Automatic's MCP server is configured in the agent tool's MCP settings:
 ```json
 {
   "mcpServers": {
-    "nexus": {
-      "command": "nexus",
-      "args": ["mcp-serve"]
+    "automatic": {
+      "command": "automatic",
+      "args": ["mcp-serve"],
+      "env": {
+        "AUTOMATIC_PROJECT": "my-project"
+      }
     }
   }
 }
 ```
 
-The `nexus` binary is the Automatic desktop app binary. When invoked with `mcp-serve`, it starts the MCP server on stdio and does not open any UI.
+The `automatic` binary is the Automatic desktop app binary. When invoked with `mcp-serve`, it starts the MCP server on stdio and does not open any UI. Project sync writes this entry for you, with the binary's full path as `command`. `AUTOMATIC_PROJECT` tells the server which project it is working in. Without it, the server matches the working directory against registered projects.

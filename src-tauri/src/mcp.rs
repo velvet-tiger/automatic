@@ -4229,4 +4229,25 @@ mod tests {
             assert!(saved.disabled_mcp_servers.is_empty(), "a refusal saves nothing");
         });
     }
+
+    /// The bundled `automatic` skill is the agent-facing reference for this
+    /// server, so a tool it does not name is a tool agents never learn about.
+    /// Feature tools are exempt: the skill defers to the `automatic-features`
+    /// skill, which the Build plugin installs alongside them.
+    #[test]
+    fn automatic_skill_documents_every_tool() {
+        let skill = include_str!("../assets/skills/automatic/SKILL.md");
+        let mut missing: Vec<String> = AutomaticMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .filter(|name| !name.contains("_feature"))
+            .filter(|name| !skill.contains(&format!("`{name}`")))
+            .collect();
+        missing.sort();
+        assert!(
+            missing.is_empty(),
+            "assets/skills/automatic/SKILL.md does not document: {missing:?}"
+        );
+    }
 }
