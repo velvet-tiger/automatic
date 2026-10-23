@@ -58,6 +58,16 @@ export function EditorIcon({ id, iconPath }: { id: string; iconPath?: string }) 
           <ellipse cx="32" cy="35" rx="2" ry="1.5" fill="#DDD"/>
         </svg>
       );
+    case "terminal":
+      // macOS Terminal — dark window with a prompt
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="64" height="64" rx="14" fill="#2B2B2B"/>
+          <rect x="6" y="8" width="52" height="48" rx="6" fill="#111"/>
+          <path d="M14 22 L24 30 L14 38" stroke="#E6E6E6" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+          <rect x="28" y="36" width="16" height="4" rx="2" fill="#E6E6E6"/>
+        </svg>
+      );
     case "vscode":
       // Real VS Code icon from opencode (MIT)
       return (

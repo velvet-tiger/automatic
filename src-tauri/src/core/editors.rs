@@ -39,6 +39,12 @@ pub fn check_installed_editors() -> Vec<EditorInfo> {
             // Finder is always available on macOS
             installed: cfg!(target_os = "macos"),
         },
+        EditorInfo {
+            id: "terminal".into(),
+            label: "Terminal".into(),
+            // Terminal ships with macOS under /System/Applications/Utilities
+            installed: cfg!(target_os = "macos"),
+        },
         // ── AI Coding Agents (desktop apps) ─────────────────────────────
         EditorInfo {
             id: "claude".into(),
@@ -145,6 +151,14 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
                 .arg(path)
                 .spawn()
                 .map_err(|e| format!("Failed to open Finder: {}", e))?;
+            return Ok(());
+        }
+        "terminal" => {
+            // `open -a Terminal <dir>` opens a new Terminal window in that directory
+            std::process::Command::new("open")
+                .args(["-a", "Terminal", path])
+                .spawn()
+                .map_err(|e| format!("Failed to open Terminal: {}", e))?;
             return Ok(());
         }
         // ── AI Coding Agents (desktop apps) ─────────────────────────────
@@ -311,6 +325,7 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
 pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
     let icns_path: &str = match editor_id {
         "finder" => "/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns",
+        "terminal" => "/System/Applications/Utilities/Terminal.app/Contents/Resources/Terminal.icns",
         "claude" => "/Applications/Claude.app/Contents/Resources/electron.icns",
         "codex" => "/Applications/Codex.app/Contents/Resources/electron.icns",
         "vscode" => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
