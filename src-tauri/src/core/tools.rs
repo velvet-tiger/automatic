@@ -265,6 +265,28 @@ pub(crate) fn find_binary_on_path(binary: &str) -> Option<PathBuf> {
         .and_then(|o| parse_command_lookup_output(&o.stdout))
 }
 
+/// [`find_binary_on_path`], but on a miss ask the login shell for its
+/// `PATH` again and retry once. Covers a startup probe that timed out, which
+/// leaves the app with the minimal launchd `PATH`. Can block for several
+/// seconds, so callers must not be on the UI thread.
+pub(crate) fn find_binary_on_path_or_reprobe(binary: &str) -> Option<PathBuf> {
+    find_or_reprobe(binary, find_binary_on_path, crate::path_env::reprobe_login_shell_path)
+}
+
+/// Look up, and on a miss re-probe and look up again. The second lookup
+/// runs even when the re-probe did nothing, because a concurrent caller may
+/// have fixed `PATH` while this one waited for the probe lock.
+fn find_or_reprobe(
+    binary: &str,
+    lookup: impl Fn(&str) -> Option<PathBuf>,
+    reprobe: impl FnOnce(),
+) -> Option<PathBuf> {
+    lookup(binary).or_else(|| {
+        reprobe();
+        lookup(binary)
+    })
+}
+
 /// Check whether `binary` exists somewhere on `$PATH`.
 pub(crate) fn which_binary(binary: &str) -> bool {
     find_binary_on_path(binary).is_some()
@@ -341,6 +363,33 @@ mod tests {
 
     fn tmp() -> TempDir {
         tempfile::tempdir().expect("tempdir")
+    }
+
+    #[test]
+    fn find_or_reprobe_skips_the_reprobe_on_a_hit() {
+        let found = find_or_reprobe(
+            "pnpm",
+            |_| Some(PathBuf::from("/bin/pnpm")),
+            || panic!("must not re-probe"),
+        );
+        assert_eq!(found, Some(PathBuf::from("/bin/pnpm")));
+    }
+
+    #[test]
+    fn find_or_reprobe_looks_again_after_the_reprobe() {
+        // The second lookup succeeds even though this caller's re-probe did
+        // nothing, as when a concurrent caller already fixed PATH.
+        let calls = std::cell::Cell::new(0);
+        let found = find_or_reprobe(
+            "pnpm",
+            |_| {
+                calls.set(calls.get() + 1);
+                (calls.get() > 1).then(|| PathBuf::from("/opt/homebrew/bin/pnpm"))
+            },
+            || {},
+        );
+        assert_eq!(found, Some(PathBuf::from("/opt/homebrew/bin/pnpm")));
+        assert_eq!(calls.get(), 2);
     }
 
     fn make_tool(name: &str) -> String {

@@ -130,7 +130,7 @@ fn status_from_running(running: &mut RunningMaildev) -> MaildevStatus {
 /// Start Maildev with `--mcp`. Fails if it is already running, or if the
 /// `maildev` binary cannot be found on `$PATH`.
 pub fn start() -> Result<MaildevStatus, String> {
-    if crate::core::tools::find_binary_on_path("maildev").is_none() {
+    if crate::core::tools::find_binary_on_path_or_reprobe("maildev").is_none() {
         return Err("'maildev' was not found on $PATH. Install it with: npm install -g maildev".into());
     }
 

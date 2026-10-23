@@ -316,7 +316,7 @@ fn start_with_grace(
         NodeSelection::NotRequested | NodeSelection::System(_) => None,
     };
     let in_nvm_bin = nvm_bin.is_some_and(|dir| dir.join(binary).is_file());
-    if !in_nvm_bin && crate::core::tools::find_binary_on_path(binary).is_none() {
+    if !in_nvm_bin && crate::core::tools::find_binary_on_path_or_reprobe(binary).is_none() {
         return Err(format!("'{}' was not found on $PATH", binary));
     }
 
