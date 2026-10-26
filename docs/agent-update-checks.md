@@ -12,24 +12,33 @@ Global MCP discovery paths were corrected 2026-08-26.
 
 | Agent | Last checked | Findings |
 |---|---|---|
-| Claude Code | 2026-10-18 | No breaking change. Through v2.1.302 (Oct 16): empty `.mcp.json` no longer flagged, MCP 2026-07-28 tool-list fix, skill arg-name limits, 12-hook cap per event. MCP docs list `ws`, `sse` deprecated, `url` without `type` is an error (undated; confirm we write `type`). |
-| Codex CLI | 2026-10-18 | No relevant change. Through rust-v0.163.0 (Oct 15): zsh backend removed, plugin default activation policy configurable. Docs not fetched. |
-| Cursor | 2026-10-18 | No relevant change. Oct 13 and Oct 16 entries do not touch MCP, rules, skills, subagents or hooks. |
-| Kiro | 2026-10-18 | **Breaking (probable) — VEL-400 (new).** CLI 2.30.0 (Oct 12) V3 upgrade prompt, V3 default end of Oct: Markdown agents, PascalCase hook arrays, `permissions.yaml`. CLI 2.31.0 `KIRO_HOME` covers V3 state. V3 agent path unconfirmed. MCP docs unchanged. |
-| Gemini CLI | 2026-10-18 | No relevant change. No new stable after v0.64.0 (Oct 13). |
-| GitHub Copilot | 2026-10-18 | No relevant change confirmed. VS Code MCP docs match baseline. Oct 13 enterprise managed settings article body not read. |
-| Cline | 2026-10-18 | **Behavioral — VEL-401 (new).** v4.1.24 / CLI 3.0.71 (Oct 13): discovers `.claude/skills`, possible duplicates with `.cline/skills`. Through v4.1.25, CLI 3.0.73 (Oct 17). Global MCP location unchanged. |
-| Kilo Code | 2026-10-18 | No relevant change. Through v7.8.14 (Oct 16): MCP OAuth refresh fixes. Code already reads `kilo.jsonc` as well as `kilo.json`. |
-| Junie | 2026-10-18 | Inconclusive. MCP page dated 15 Oct 2026, still `mcpServers`, no paths. Release notes not reachable. |
-| Kimi Code | 2026-10-18 | No relevant change. CLI 2.2.0 (Oct 14) removed `executor = "kaos"` from MCP stdio config; Automatic never writes it. Desktop changelog not checked. |
-| Warp | 2026-10-18 | No relevant change. 2026.10.15 only: cloud agents no longer wait on path approval for MCP config edits. Page truncated. |
-| Goose | 2026-10-18 | No relevant change. v1.55.0 (Oct 16): provider and trace-context work. Notes truncated. |
-| OpenCode | 2026-10-18 | No relevant change. v1.19.1–1.19.3 (Oct 15–16): session sharing removed, 1.x stays on 1.x, reasoning variants. Config docs not re-fetched. VEL-176 unchanged. |
-| Droid | 2026-10-18 | No relevant change. Through CLI v0.244.0 (Oct 16): hooks, MCP servers and commands no longer inherit runtime settings file. `.factory/mcp.json` unchanged. |
-| Antigravity | 2026-10-18 | No breaking change. CLI 1.3.4–1.4.2 (Oct 13–18): unquoted colon in `description:` now loads (quote anyway), `agy plugin validate` documents plugin layout, plugin MCP header variable expansion. Comment candidate for VEL-164. |
-| Z Code | 2026-10-18 | No relevant change. v3.15.1 (Oct 12): UI plugins (MCP App), per-sub-agent models in workflows (gaps). MCP docs not re-fetched. |
-| Pi | 2026-10-18 | No relevant change. `pi-mcp-adapter` v5.3.0–v5.3.2 (Oct 13–17): Windows secret syntax, `gh auth token` preset. `.pi/mcp.json` shape unchanged. |
-| Zed | 2026-10-18 | No relevant change. v1.23.3, v1.24.2, v1.25.0-pre (Oct 12–14): ACP compaction notices. `context_servers` unchanged. |
+| Claude Code | 2026-10-25 | Through v2.1.310 (Oct 23): MCP reliability fixes, hook fixes on Windows. No relevant change.
+| Codex CLI | 2026-10-25 | Through rust-v0.164.0 (Oct 23): enterprise MCP auth via account grants. No file-format change. Docs not fetched.
+| Cursor | 2026-10-25 | Changelog newest entry still Oct 16. No relevant change.
+| Kiro | 2026-10-25 | **Behavioral (comment on VEL-400).** CLI 2.33.0 (Oct 20) workspace trust prompt gates project hooks, agents, MCP, steering in V3; stored in `~/.kiro/workspace-roots/`. 2.33.1, 2.34.0 (Oct 23): MCP fixes/forms. V3 agent path still unconfirmed.
+| Gemini CLI | 2026-10-25 | v0.65.0 stable (Oct 20), v0.66.0-preview.0. No relevant change.
+| GitHub Copilot | 2026-10-25 | No relevant change. Oct 22 usage metrics API for custom skills/agents/MCP only.
+| Cline | 2026-10-25 | No release after Oct 17 (v4.1.25, CLI 3.0.73). VEL-401 unchanged.
+| Kilo Code | 2026-10-25 | Through v7.8.17 (Oct 23): MCP OAuth URL restriction, MCP prompt shell expressions now literal. No relevant change.
+| Junie | 2026-10-25 | Inconclusive. MCP page updated 23 Oct 2026, still `mcpServers`, no paths given. Release notes not reachable.
+| Kimi Code | 2026-10-25 | Docs index only, no changelog content readable. Not checked in depth.
+| Warp | 2026-10-25 | No relevant change. Newest entry 2026.10.15.
+| Goose | 2026-10-25 | v1.56.0 (Oct 23): subagent resume, concurrency limit, Boa runtime replaces PCTX code mode. No relevant change.
+| OpenCode | 2026-10-25 | v1.19.4 (Oct 22): Bun upgrade only. No relevant change.
+| Droid | 2026-10-25 | Through CLI v0.249.0 (Oct 24): reserved MCP name error, plugin MCP fixes, custom Droids in symlinked folders reload. No relevant change.
+| Antigravity | 2026-10-25 | App v2.25.0 (Oct 20) fixes unquoted colon in skill/rule `description:`; v2.26.0 (Oct 22) plugin MCP variable fixes. Comment candidate for VEL-164 only. Page truncated at 100K.
+| Z Code | 2026-10-25 | Docs confirm `.zcode/config.json` under `mcp.servers` (matches code). Changelog not checked.
+| Pi | 2026-10-25 | `pi-mcp-adapter` v5.4.0 (Oct 20), v6.0.0 (Oct 22): `mcpScript` removed, Executor approvals. `.pi/mcp.json` unchanged. v5.4.0: official filesystem server args replaced by session dir unless `"roots": false`.
+| Zed | 2026-10-25 | v1.25.3 (Oct 23), v1.26.2-pre: dependency updates. No relevant change.
+## Run 2026-10-25 (window 2026-10-18 to 2026-10-25)
+
+Tickets: none new. Comment: **VEL-400** (Kiro workspace trust, CLI 2.33.0).
+
+## Sources unreachable or limited, 2026-10-25
+
+- Research used `gh api` releases plus WebFetch summaries. Truncated: Antigravity docs changelog (100K of 391K), Droid CLI updates, Warp changelog index.
+- Not read: Kiro `/docs/cli/v3/`, Junie release notes, Kimi changelogs, Z Code changelog, Codex docs, Copilot article bodies.
+
 ## Run 2026-10-18 (window 2026-10-11 to 2026-10-18)
 
 Tickets: **VEL-400** (new, Kiro CLI 3.0, High), **VEL-401** (new, Cline `.claude/skills` discovery, Low). VEL-177 was closed on thin detail and is superseded by VEL-400.

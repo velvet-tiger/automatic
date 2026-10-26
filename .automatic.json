@@ -30,16 +30,17 @@
       "thinking-effort",
       "automatic-code",
       "local-git-rules",
-      "automatic-workflow"
+      "automatic-workflow",
+      "local-rules"
     ]
   },
   "id": "4afb60f2-72af-4cac-9a12-20f001816a51",
   "instruction_mode": "unified",
   "instructions_index_mode": false,
-  "manage_gitignore": false,
+  "manage_gitignore": true,
   "mcp_servers": [
     "automatic",
-    "sentry",
+    "sentry-aura",
     "linear-vt",
     "github"
   ],
@@ -63,7 +64,8 @@
         "automatic-prose",
         "local-git-rules",
         "thinking-effort",
-        "automatic-workflow"
+        "automatic-workflow",
+        "local-rules"
       ]
     }
   },

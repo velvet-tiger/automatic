@@ -66,3 +66,17 @@ Thumbs.db
 !/src/plugins/build/
 
 /tsconfig.node.tsbuildinfo
+
+# BEGIN Automatic-managed
+# Files generated and managed by Automatic. Regenerated on sync; do not edit inside this block.
+/.agents/
+/.automatic/
+/.claude/
+/.codex/
+/.cursor/
+/.mcp.json
+/.opencode/
+/AGENTS.md
+/CLAUDE.md
+/opencode.json
+# END Automatic-managed
