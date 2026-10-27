@@ -2,6 +2,23 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.37.0] - 2026-10-27
+
+### Added
+
+- The Open in menu on a project can open the project folder in Terminal. ([eacffae](https://github.com/velvet-tiger/automatic/commit/eacffae))
+
+### Changed
+
+- The MCP server uses rmcp 3.6. A test now compares every tool name, description and schema with a stored list, so a dependency update cannot change the tool contract unnoticed. ([0c01d41](https://github.com/velvet-tiger/automatic/commit/0c01d41)), ([acbc4c5](https://github.com/velvet-tiger/automatic/commit/acbc4c5))
+
+### Fixed
+
+- After a restart, a slow shell profile no longer leaves Automatic with a minimal PATH. The app now falls back to common install folders and tries again when a tool such as `pnpm` is missing. ([3d50b2d](https://github.com/velvet-tiger/automatic/commit/3d50b2d))
+- Only LLM provider ids can read credentials from the secret store. The secret store also holds MCP OAuth tokens and cloud account tokens. ([f9c75f0](https://github.com/velvet-tiger/automatic/commit/f9c75f0))
+- The zip library is upgraded to version 9. This fixes RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369. ([4d1feb3](https://github.com/velvet-tiger/automatic/commit/4d1feb3))
+- The bundled `automatic` skill now matches the MCP server. It names the right server and lists the rule, hook, credential and related-project tools. ([5d3b191](https://github.com/velvet-tiger/automatic/commit/5d3b191))
+
 ## [1.36.0] - 2026-10-20
 
 ### Added
