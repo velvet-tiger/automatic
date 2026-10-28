@@ -52,6 +52,20 @@ accepted = ["MPL-2.0"]
 [foldhash]
 accepted = ["Zlib"]
 
+# zip's deflate support, through flate2.
+[zlib-rs]
+accepted = ["Zlib"]
+
+# A Rust port of bzip2, used by zip. It carries bzip2's own licence, which
+# asks that the notice stays with the source and binaries.
+[libbz2-rs-sys]
+accepted = ["bzip2-1.0.6"]
+
+# PPMd support in zip. Public-domain dedication, with a fallback licence that
+# needs no notice.
+[ppmd-rust]
+accepted = ["CC0-1.0"]
+
 # Linux only. A dependency of system-deps, which the GTK crates' build scripts
 # use to find system libraries. The LLVM exception removes Apache-2.0's
 # notice requirement for compiled code, but the text is shipped anyway.
@@ -87,39 +101,23 @@ accepted = ["CC0-1.0"]
 # libdbus is not here. The app links the system's copy, so libdbus-sys
 # builds none of it in. The Linux AppImage carries the system's libdbus.
 # THIRD_PARTY_NOTICES.md covers the AppImage's system libraries.
-# SQLite (in libsqlite3-sys) and liblzma (in lzma-sys) are public domain.
-# THIRD_PARTY_NOTICES.md names them.
+# SQLite (in libsqlite3-sys) is public domain.
+# THIRD_PARTY_NOTICES.md names it.
 
-# zstd, on every platform.
+# zstd, on every platform. Since 2.1 the crate's own code is BSD-3-Clause too,
+# so both files carry the same licence. Each has its own copyright line.
 [zstd-sys.clarify]
-license = "(MIT OR Apache-2.0) AND BSD-3-Clause"
+license = "BSD-3-Clause"
 
 [[zstd-sys.clarify.files]]
-path = "LICENSE.Mit"
-license = "MIT"
-checksum = "129e8edef29e9abcd2ebabe252f4ef1b1289cdca356bf0040284a2fbccfb96c8"
+path = "LICENSE"
+license = "BSD-3-Clause"
+checksum = "ce4868c8e4ebe47a7d4b3c93dbf6b802033e5ae2fa7638098173f80836daac60"
 
 [[zstd-sys.clarify.files]]
 path = "zstd/LICENSE"
 license = "BSD-3-Clause"
 checksum = "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
-
-# bzip2, on every platform.
-[bzip2-sys]
-accepted = ["bzip2-1.0.6"]
-
-[bzip2-sys.clarify]
-license = "(MIT OR Apache-2.0) AND bzip2-1.0.6"
-
-[[bzip2-sys.clarify.files]]
-path = "LICENSE-MIT"
-license = "MIT"
-checksum = "c8c6324cf2f0f076e3ed5dea4a21f00bd4dd6fce44f72b110bc52e7fe06f6e1e"
-
-[[bzip2-sys.clarify.files]]
-path = "bzip2-1.0.8/LICENSE"
-license = "bzip2-1.0.6"
-checksum = "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3"
 
 # ── Data bundled inside a crate ───────────────────────────────────────────────
 

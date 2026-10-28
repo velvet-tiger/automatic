@@ -66,9 +66,7 @@ The MIT and Apache-2.0 texts are at the end of this file.
 Some Rust crates compile a C library from source they carry and link it into the app.
 
 - zstd, in `zstd-sys`: BSD-3-Clause. Its text is in `rust-crates.txt`, under `zstd-sys`.
-- bzip2, in `bzip2-sys`: the bzip2 licence. Its text is in `rust-crates.txt`, under `bzip2-sys`.
 - SQLite, in `libsqlite3-sys`: public domain.
-- liblzma from XZ Utils, in `lzma-sys`: public domain.
 
 The app uses the system's libdbus and does not build it in. The Linux AppImage carries a copy of the system's libdbus, covered below.
 
