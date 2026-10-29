@@ -9,7 +9,7 @@ use crate::core::{self, Project, ProjectMode};
 use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents, clean_project_file,
-    collect_custom_asset_conflicts, conflicting_names, extract_agent_machine_name,
+    collect_custom_asset_conflicts, conflicting_names,
     load_mcp_server_configs, read_project_text, sync_custom_agents, sync_user_agents,
     CustomAssetKind,
 };
@@ -706,13 +706,10 @@ fn sync_agent_configs_step(
                     )?;
                     written_files.extend(agent_files);
 
-                    let custom_agent_names: Vec<String> = custom_agents
+                    let custom_agent_names = custom_agents
                         .iter()
-                        .map(|a| {
-                            extract_agent_machine_name(&a.content)
-                                .unwrap_or_else(|| a.name.to_lowercase().replace(' ', "-"))
-                        })
-                        .collect();
+                        .map(crate::core::custom_agent_machine_name)
+                        .collect::<Result<Vec<_>, _>>()?;
 
                     let user_agent_files = sync_user_agents(
                         &agents_dir,
@@ -990,14 +987,7 @@ fn sync_instruction_target_file(
         .filter(|r| !r.content.trim().is_empty())
         .map(|r| {
             if skip_custom_rules.contains(&r.name) {
-                let slug = r.name.to_lowercase()
-                    .chars()
-                    .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                    .collect::<String>()
-                    .split('-')
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("-");
+                let slug = crate::core::custom_rule_slug(&r.name);
                 let root = std::path::Path::new(&project.directory);
                 let path = root
                     .join(".automatic")

@@ -121,8 +121,15 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
                 .and_then(|value| value.to_str())
                 .unwrap_or("custom-agent");
             if let Some(custom_agent) = parse_custom_agent(agent_instance, &raw, fallback_id) {
-                let custom_id = extract_agent_machine_name(&custom_agent.content)
-                    .unwrap_or_else(|| fallback_id.to_string());
+                // A cloned repo controls the frontmatter. Adopting a name that
+                // cannot be a file name would leave a project that fails to load.
+                let custom_id = match crate::core::custom_agent_machine_name(&custom_agent) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("[automatic] rebuild: not adopting {}: {e}", path.display());
+                        continue;
+                    }
+                };
                 if seen_custom_agent_ids.insert(custom_id) {
                     custom_agents.push(custom_agent);
                 }
@@ -194,6 +201,14 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
                 .and_then(|value| value.to_str())
                 .unwrap_or("custom-command")
                 .to_string();
+
+            if !crate::core::is_valid_asset_name(&fallback_name) {
+                eprintln!(
+                    "[automatic] rebuild: not adopting {}: its name cannot be used as a file name",
+                    path.display()
+                );
+                continue;
+            }
 
             // Strip the agent-specific rendering to recover canonical content.
             // For most agents the content is already canonical Markdown.
@@ -316,10 +331,6 @@ fn extract_frontmatter_value(content: &str, key: &str) -> Option<String> {
     None
 }
 
-fn extract_agent_machine_name(content: &str) -> Option<String> {
-    extract_frontmatter_value(content, "name").map(|value| value.to_lowercase().replace(' ', "-"))
-}
-
 fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<String> {
     let value = toml::from_str::<toml::Value>(content).ok()?;
     let table = value.as_table()?;
@@ -438,6 +449,25 @@ mod tests {
         assert_eq!(custom_cmds.len(), 1);
         assert_eq!(custom_cmds[0].name, "my-command");
         assert_eq!(custom_cmds[0].content, content);
+    }
+
+    #[test]
+    fn discover_agents_skips_a_traversal_frontmatter_name() {
+        let project_dir = tempdir().unwrap();
+        let agents_dir = ClaudeCode.agents_dir(project_dir.path()).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("evil.md"),
+            "---\nname: ../../../evil\n---\nEscape.\n",
+        )
+        .unwrap();
+        fs::write(agents_dir.join("good.md"), "---\nname: Good\n---\nFine.\n").unwrap();
+
+        let project = make_project(project_dir.path());
+        let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+
+        let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Good"]);
     }
 
     #[test]

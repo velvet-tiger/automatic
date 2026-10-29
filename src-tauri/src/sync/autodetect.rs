@@ -121,7 +121,7 @@ pub(super) fn autodetect_inner(
                     continue;
                 };
                 let skill_file = path.join("SKILL.md");
-                if !skill_file.exists() || !crate::core::is_valid_name(name) {
+                if !skill_file.exists() || !crate::core::is_valid_asset_name(name) {
                     continue;
                 }
 

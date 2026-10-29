@@ -15,10 +15,7 @@ pub use drift::{
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };
-pub use helpers::{
-    extract_agent_machine_name as extract_agent_machine_name_pub, CustomAssetConflict,
-    CustomAssetKind, McpConfigSyncNotes, McpServerNote,
-};
+pub use helpers::{CustomAssetConflict, CustomAssetKind, McpConfigSyncNotes, McpServerNote};
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(

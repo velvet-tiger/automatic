@@ -68,7 +68,15 @@ pub fn get_projects_referencing_subagent(
     let mut referencing = Vec::new();
 
     for ident in projects {
-        let raw = core::read_project(&ident)?;
+        // One project that fails to load, for example over an invalid custom
+        // asset name, must not hide the projects that do load.
+        let raw = match core::read_project(&ident) {
+            Ok(raw) => raw,
+            Err(e) => {
+                eprintln!("get_projects_referencing_subagent: skipping '{ident}': {e}");
+                continue;
+            }
+        };
         if let Ok(project) = serde_json::from_str::<core::Project>(&raw) {
             let has_agent = project
                 .custom_agents

@@ -994,6 +994,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    validate_custom_asset_names(&project)?;
     // directory_missing and read_only_owner are computed at read time —
     // never persist them.
     project.directory_missing = false;
@@ -2031,6 +2032,30 @@ mod tests {
     }
 
     // ── create guards (Add Project must not overwrite) ───────────────────
+
+    #[test]
+    fn save_refuses_a_custom_skill_traversal_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("work").join("site");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = Project {
+                name: "site".to_string(),
+                directory: dir.to_str().unwrap().to_string(),
+                custom_skills: Some(vec![CustomSkill {
+                    name: "../../evil".into(),
+                    content: "x".into(),
+                }]),
+                ..Default::default()
+            };
+            let err = save_project("site", &serde_json::to_string(&project).unwrap())
+                .expect_err("a traversal name must not save");
+            assert!(err.contains("Custom skill"), "{err}");
+            assert!(!dir.join(".automatic.json").exists(), "nothing is written");
+        });
+    }
 
     #[test]
     fn assert_can_create_allows_a_name_another_project_uses() {
