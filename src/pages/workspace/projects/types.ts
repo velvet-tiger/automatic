@@ -169,9 +169,9 @@ export interface HookEntry {
 export interface DriftedFile {
   path: string;
   reason: "missing" | "modified" | "stale" | "unreadable";
-  /** Content Automatic would generate. Present only when reason === "modified". */
+  /** Content Automatic would generate. Present when reason === "modified", and on every .gitignore entry. */
   expected?: string;
-  /** Content currently on disk. Present only when reason === "modified". */
+  /** Content currently on disk. Present when `expected` is. */
   actual?: string;
 }
 
@@ -248,6 +248,8 @@ export interface DriftReport {
   instruction_conflicts?: InstructionFileConflict[];
   /** Project-scoped custom assets whose on-disk files differ from stored content. */
   custom_conflicts?: CustomAssetConflict[];
+  /** The project-root .gitignore, when its managed block differs from what a sync would write. */
+  gitignore?: DriftedFile;
 }
 
 /**

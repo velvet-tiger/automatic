@@ -181,8 +181,8 @@ export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolv
               )}
               {file.reason === "unreadable" && (
                 <>
-                  <p className="text-[13px] font-medium text-text-base mb-2">File could not be read</p>
-                  <p className="text-[12px]">Check file permissions and try again.</p>
+                  <p className="text-[13px] font-medium text-text-base mb-2">File could not be read or edited</p>
+                  <p className="text-[12px]">Check file permissions and try again. For .gitignore, sync the project to see why.</p>
                 </>
               )}
             </div>

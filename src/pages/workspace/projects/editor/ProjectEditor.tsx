@@ -3712,8 +3712,8 @@ export function ProjectEditor({
                     <AlertCircle size={13} />
                     <span>
                       {readOnly
-                        ? "Agent config files in this folder differ from its Automatic settings. Read-only mode leaves them as they are."
-                        : "Configuration has drifted — agent config files no longer match Automatic settings."}
+                        ? "Files Automatic manages in this folder differ from its Automatic settings. Read-only mode leaves them as they are."
+                        : "Configuration has drifted. Files Automatic manages no longer match its settings."}
                     </span>
                   </div>
                   {!readOnly && (
@@ -3746,6 +3746,23 @@ export function ProjectEditor({
                       </div>
                     </div>
                   ))}
+                  {/* Managed .gitignore block. It belongs to the project, not to one
+                      agent, and only the block is compared, never the whole file. */}
+                  {driftReport.gitignore && (
+                    <div>
+                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Managed .gitignore block</div>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                        <button
+                          onClick={() => driftReport.gitignore && setDriftDiffFile({ file: driftReport.gitignore, agentLabel: "Managed block" })}
+                          className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
+                          title="View diff"
+                        >
+                          {driftReport.gitignore.path}
+                          <span className="text-warning/50 font-sans ml-0.5">({driftReport.gitignore.reason})</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {/* Instruction file conflicts within the drift banner */}
                   {(driftReport.instruction_conflicts ?? []).length > 0 && (
                     <div>

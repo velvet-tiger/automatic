@@ -543,15 +543,7 @@ fn sync_gitignore_step(dir: &std::path::Path, project: &Project) -> Result<(), S
         return core::gitignore::remove_managed_block(dir);
     }
 
-    let mut managed_paths = Vec::new();
-    for agent_id in &project.agents {
-        if let Some(agent_instance) = agent::from_id(agent_id) {
-            managed_paths.extend(agent_instance.managed_gitignore_paths(dir));
-        }
-    }
-
-    let silent = matches!(project.mode, ProjectMode::Silent);
-    let patterns = core::gitignore::build_patterns(dir, &managed_paths, silent);
+    let patterns = core::gitignore::project_patterns(dir, project);
     core::gitignore::write_managed_block(dir, &patterns)?;
     Ok(())
 }

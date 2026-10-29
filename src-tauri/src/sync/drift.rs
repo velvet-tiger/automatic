@@ -415,10 +415,11 @@ pub struct DriftedFile {
     pub path: String,
     /// Short description of why it's drifted: "missing", "modified", "stale", "unreadable".
     pub reason: String,
-    /// The content Automatic would generate. Present only for "modified" files.
+    /// The content Automatic would generate. Present for "modified" files, and
+    /// for every `.gitignore` block entry (an absent block is an empty string).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
-    /// The content currently on disk. Present only for "modified" files.
+    /// The content currently on disk. Present when `expected` is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actual: Option<String>,
 }
@@ -461,6 +462,10 @@ pub struct DriftReport {
     /// (favoured) or overwrite with Automatic's stored content.
     #[serde(default)]
     pub custom_conflicts: Vec<CustomAssetConflict>,
+    /// The project-root `.gitignore`, when its Automatic-managed block differs
+    /// from what the next sync would leave there.  Not tied to any one agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitignore: Option<DriftedFile>,
 }
 
 /// Check whether the on-disk agent configs match what Automatic would generate.
@@ -474,6 +479,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             agents: vec![],
             instruction_conflicts: vec![],
             custom_conflicts: vec![],
+            gitignore: None,
         });
     }
 
@@ -484,6 +490,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             agents: vec![],
             instruction_conflicts: vec![],
             custom_conflicts: vec![],
+            gitignore: None,
         });
     }
 
@@ -639,14 +646,65 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         &effective_dir,
     ));
 
+    // The block lives at the project root even in Silent mode.
+    let gitignore = collect_gitignore_drift(project, &dir);
+
     let drifted = !agent_drifts.is_empty()
         || !instruction_conflicts.is_empty()
-        || !custom_conflicts.is_empty();
+        || !custom_conflicts.is_empty()
+        || gitignore.is_some();
     Ok(DriftReport {
         drifted,
         agents: agent_drifts,
         instruction_conflicts,
         custom_conflicts,
+        gitignore,
+    })
+}
+
+/// Compare the managed `.gitignore` block on disk with what the next sync
+/// would leave there.
+///
+/// With `manage_gitignore` on, a missing or edited block is drift, and so is a
+/// `.gitignore` Automatic will not edit (the sync would fail on it).  With the
+/// setting off, a leftover block is drift, because the next sync removes it;
+/// a file Automatic will not edit is ignored, as the sync ignores it.  Both
+/// `expected` and `actual` are filled for a comparable block (an absent block
+/// is an empty string) so the diff view shows exactly what a sync would change.
+/// `.gitignore` itself stays out of `written_files`; only the block is checked.
+fn collect_gitignore_drift(project: &Project, dir: &std::path::Path) -> Option<DriftedFile> {
+    use crate::core::gitignore::{project_patterns, read_managed_block, render_block, BlockOnDisk};
+
+    let unreadable = |why: &str| {
+        eprintln!("[automatic] drift: {why}");
+        Some(DriftedFile {
+            path: ".gitignore".to_string(),
+            reason: "unreadable".to_string(),
+            expected: None,
+            actual: None,
+        })
+    };
+    let actual = match read_managed_block(dir) {
+        Ok(BlockOnDisk::Absent) => None,
+        Ok(BlockOnDisk::Present(block)) => Some(block),
+        Ok(BlockOnDisk::Unmanageable(reason)) if project.manage_gitignore => {
+            return unreadable(&reason)
+        }
+        Ok(BlockOnDisk::Unmanageable(_)) => return None,
+        Err(e) => return unreadable(&e),
+    };
+    let expected = project
+        .manage_gitignore
+        .then(|| render_block(&project_patterns(dir, project)));
+    if expected == actual {
+        return None;
+    }
+    let reason = if actual.is_none() { "missing" } else { "modified" };
+    Some(DriftedFile {
+        path: ".gitignore".to_string(),
+        reason: reason.to_string(),
+        expected: Some(expected.unwrap_or_default()),
+        actual: Some(actual.unwrap_or_default()),
     })
 }
 
@@ -2258,6 +2316,143 @@ mod tests {
                     .map(|f| format!("{} ({})", f.path, f.reason))
                     .collect::<Vec<_>>()
             );
+        });
+    }
+
+    /// The managed `.gitignore` block is drift when it is missing or edited
+    /// while the setting is on, and when it is left behind after the setting
+    /// is turned off.  A sync clears each case.
+    #[test]
+    fn gitignore_block_drift_tracks_the_manage_gitignore_setting() {
+        use crate::core::{with_test_home, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let gi = project_dir.path().join(".gitignore");
+
+        with_test_home(home.path().to_path_buf(), || {
+            fs::write(&gi, "/target/\n").unwrap();
+            let mut project = Project {
+                name: "gitignore-drift".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                manage_gitignore: true,
+                ..Default::default()
+            };
+
+            // Setting on, block missing (e.g. `git checkout .gitignore`).
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.drifted);
+            let file = report.gitignore.expect("gitignore drift");
+            assert_eq!(file.reason, "missing");
+            assert_eq!(file.actual.as_deref(), Some(""));
+            assert!(file.expected.unwrap().contains("/.claude/"));
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.gitignore.is_none(), "{:?}", report.gitignore);
+            assert!(!report.drifted);
+
+            // Setting on, block edited by hand.
+            let synced = fs::read_to_string(&gi).unwrap();
+            fs::write(&gi, synced.replace("/.claude/\n", "")).unwrap();
+            let file = check_project_drift(&project)
+                .expect("drift")
+                .gitignore
+                .expect("gitignore drift");
+            assert_eq!(file.reason, "modified");
+            assert!(!file.actual.unwrap().contains("/.claude/"));
+
+            // Setting off, block still present until the next sync.
+            sync_project_without_autodetect(&mut project).expect("sync");
+            project.manage_gitignore = false;
+            let file = check_project_drift(&project)
+                .expect("drift")
+                .gitignore
+                .expect("gitignore drift");
+            assert_eq!(file.reason, "modified");
+            assert_eq!(file.expected.as_deref(), Some(""));
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+            assert!(check_project_drift(&project).expect("drift").gitignore.is_none());
+            assert_eq!(fs::read_to_string(&gi).unwrap(), "/target/\n");
+        });
+    }
+
+    /// A `.gitignore` symlinked out of the project cannot be edited.  With the
+    /// setting on, drift says so ("unreadable"), matching the failing sync;
+    /// with it off, drift ignores the file, as the sync does.
+    #[cfg(unix)]
+    #[test]
+    fn gitignore_symlinked_out_of_project_is_unreadable_only_when_managed() {
+        use crate::core::{with_test_home, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("gitignore");
+        fs::write(&target, "/target/\n").unwrap();
+        std::os::unix::fs::symlink(&target, project_dir.path().join(".gitignore")).unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = Project {
+                name: "gitignore-symlink".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                manage_gitignore: true,
+                ..Default::default()
+            };
+
+            let file = check_project_drift(&project)
+                .expect("drift")
+                .gitignore
+                .expect("gitignore drift");
+            assert_eq!(file.reason, "unreadable");
+            let err = sync_project_without_autodetect(&mut project).unwrap_err();
+            assert!(err.contains("symlink"), "{err}");
+
+            project.manage_gitignore = false;
+            assert!(check_project_drift(&project).expect("drift").gitignore.is_none());
+            sync_project_without_autodetect(&mut project).expect("sync with setting off");
+            assert_eq!(fs::read_to_string(&target).unwrap(), "/target/\n");
+        });
+    }
+
+    /// In Silent mode the block still lives in the project-root `.gitignore`
+    /// (not under `.automatic/silent/`) and lists only `/.automatic/`.
+    #[test]
+    fn gitignore_block_drift_reads_project_root_in_silent_mode() {
+        use crate::core::{with_test_home, Project, ProjectMode};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = Project {
+                name: "gitignore-silent".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                manage_gitignore: true,
+                mode: ProjectMode::Silent,
+                ..Default::default()
+            };
+
+            let file = check_project_drift(&project)
+                .expect("drift")
+                .gitignore
+                .expect("gitignore drift");
+            assert_eq!(file.reason, "missing");
+            assert_eq!(
+                file.expected.as_deref(),
+                Some(crate::core::gitignore::render_block(&["/.automatic/".to_string()]).as_str())
+            );
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+            assert!(project_dir.path().join(".gitignore").is_file());
+            assert!(check_project_drift(&project).expect("drift").gitignore.is_none());
         });
     }
 
