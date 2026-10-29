@@ -734,6 +734,27 @@ pub fn from_id(id: &str) -> Option<&'static dyn Agent> {
 // Utility functions used by multiple agent implementations.  Kept here so
 // that each agent file stays focused on its own format logic.
 
+/// `true` when `name` is one plain path component, so joining it to a
+/// directory names an entry in that directory.  Names come from the
+/// committed project config and from agent frontmatter: `../..` or an
+/// absolute path would point a remove or a write outside the project.
+pub(crate) fn is_plain_file_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!(
+        (parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
+
+/// Log and report a name [`is_plain_file_name`] rejects.
+fn skip_unsafe_name(kind: &str, name: &str) -> bool {
+    if is_plain_file_name(name) {
+        return false;
+    }
+    eprintln!("[automatic] sync: not syncing {kind} '{name}': the name is not a plain file name");
+    true
+}
+
 /// Sync individual skill files under `<base_dir>/<name>/SKILL.md` by:
 /// 1) removing directories not in the selected skill list (preserving local skills)
 /// 2) writing the currently selected skills
@@ -753,6 +774,11 @@ pub(crate) fn sync_individual_skills(
     cleanup_skill_dir(base_dir, selected_skill_names, preserve_names)?;
 
     for (name, content) in skills {
+        // Drift writes the expected state into a tempdir through here, and
+        // an absolute or `../` name would land outside it.
+        if skip_unsafe_name("skill", name) {
+            continue;
+        }
         let skill_dir = base_dir.join(name);
         fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {}", e))?;
         let skill_path = skill_dir.join("SKILL.md");
@@ -784,6 +810,9 @@ pub(crate) fn copy_skills_to_project(
     cleanup_skill_dir(project_skills_dir, selected_skill_names, preserve_names)?;
 
     for (name, content) in skills {
+        if skip_unsafe_name("skill", name) {
+            continue;
+        }
         let target_dir = project_skills_dir.join(name);
 
         // Remove existing entry so we get a clean copy
@@ -837,6 +866,9 @@ pub(crate) fn symlink_skills_from_project(
     let use_symlink = settings.sync_mode == "symlink";
 
     for (name, content) in skills {
+        if skip_unsafe_name("skill", name) {
+            continue;
+        }
         let link_path = agent_skills_dir.join(name);
         let target_dir = project_skills_dir.join(name);
 
@@ -1084,6 +1116,7 @@ pub(crate) fn is_managed_agent_content(path: &Path, content: &str) -> bool {
 }
 
 pub(crate) fn copy_commands_to_project(
+    root: &Path,
     project_commands_dir: &Path,
     workspace_commands: &[(String, String)],
     custom_commands: &[crate::core::CustomCommand],
@@ -1094,23 +1127,20 @@ pub(crate) fn copy_commands_to_project(
     let mut index_entries = Vec::new();
 
     let total_commands = workspace_commands.len() + custom_commands.len();
-    if total_commands > 0 && !project_commands_dir.exists() {
-        fs::create_dir_all(project_commands_dir).map_err(|e| {
-            format!(
-                "Failed to create commands dir '{}': {}",
-                project_commands_dir.display(),
-                e
-            )
-        })?;
+    if total_commands > 0 {
+        crate::sync::create_project_dir(root, project_commands_dir)?;
     }
 
     for (name, content) in workspace_commands {
+        if skip_unsafe_name("command", name) {
+            continue;
+        }
         let file_name = format!("{name}.md");
         expected.insert(file_name.clone());
         let path = project_commands_dir.join(&file_name);
-        fs::write(&path, render_markdown_command(content))
-            .map_err(|e| format!("Failed to write command '{}': {}", name, e))?;
-        written.push(path.display().to_string());
+        if crate::sync::write_project_file_or_skip(root, &path, render_markdown_command(content))? {
+            written.push(path.display().to_string());
+        }
         let (frontmatter, _) = parse_frontmatter(content);
         index_entries.push(CommandIndexEntry {
             name: name.clone(),
@@ -1119,6 +1149,9 @@ pub(crate) fn copy_commands_to_project(
     }
 
     for command in custom_commands {
+        if skip_unsafe_name("command", &command.name) {
+            continue;
+        }
         let file_name = format!("{}.md", command.name);
         expected.insert(file_name.clone());
         // Keep conflicting custom commands in `expected` so cleanup does not
@@ -1132,9 +1165,13 @@ pub(crate) fn copy_commands_to_project(
             continue;
         }
         let path = project_commands_dir.join(&file_name);
-        fs::write(&path, render_markdown_command(&command.content))
-            .map_err(|e| format!("Failed to write command '{}': {}", command.name, e))?;
-        written.push(path.display().to_string());
+        if crate::sync::write_project_file_or_skip(
+            root,
+            &path,
+            render_markdown_command(&command.content),
+        )? {
+            written.push(path.display().to_string());
+        }
         let (frontmatter, _) = parse_frontmatter(&command.content);
         index_entries.push(CommandIndexEntry {
             name: command.name.clone(),
@@ -1145,7 +1182,7 @@ pub(crate) fn copy_commands_to_project(
     cleanup_stale_managed_command_files(project_commands_dir, &expected, &mut written)?;
 
     if !index_entries.is_empty() {
-        let index_path = write_commands_index(project_commands_dir, &index_entries)?;
+        let index_path = write_commands_index(root, project_commands_dir, &index_entries)?;
         written.push(index_path.display().to_string());
     } else if let Some(index_path) = cleanup_commands_index(project_commands_dir)? {
         written.push(index_path.display().to_string());
@@ -1155,6 +1192,7 @@ pub(crate) fn copy_commands_to_project(
 }
 
 pub(crate) fn symlink_commands_from_project(
+    root: &Path,
     agent_commands_dir: &Path,
     project_commands_dir: &Path,
     workspace_commands: &[(String, String)],
@@ -1165,36 +1203,36 @@ pub(crate) fn symlink_commands_from_project(
     let mut expected: HashSet<String> = HashSet::new();
     let settings = crate::core::read_settings().unwrap_or_default();
     let use_symlink = settings.sync_mode == "symlink";
-    // The hub is always `<project>/.agents/commands`.
-    let project_root = project_commands_dir.parent().and_then(Path::parent);
 
     let total_commands = workspace_commands.len() + custom_commands.len();
-    if total_commands > 0 && !agent_commands_dir.exists() {
-        fs::create_dir_all(agent_commands_dir).map_err(|e| {
-            format!(
-                "Failed to create commands dir '{}': {}",
-                agent_commands_dir.display(),
-                e
-            )
-        })?;
+    if total_commands > 0 {
+        crate::sync::create_project_dir(root, agent_commands_dir)?;
     }
 
     for (name, _) in workspace_commands {
+        if skip_unsafe_name("command", name) {
+            continue;
+        }
         let file_name = agent_instance.command_file_name(name);
         expected.insert(file_name.clone());
         let link_path = agent_commands_dir.join(&file_name);
         let target_path = project_commands_dir.join(format!("{name}.md"));
-        sync_command_link(&link_path, &target_path, project_root, use_symlink)?;
-        written.push(link_path.display().to_string());
+        if sync_command_link(&link_path, &target_path, root, use_symlink)? {
+            written.push(link_path.display().to_string());
+        }
     }
 
     for command in custom_commands {
+        if skip_unsafe_name("command", &command.name) {
+            continue;
+        }
         let file_name = agent_instance.command_file_name(&command.name);
         expected.insert(file_name.clone());
         let link_path = agent_commands_dir.join(&file_name);
         let target_path = project_commands_dir.join(format!("{}.md", command.name));
-        sync_command_link(&link_path, &target_path, project_root, use_symlink)?;
-        written.push(link_path.display().to_string());
+        if sync_command_link(&link_path, &target_path, root, use_symlink)? {
+            written.push(link_path.display().to_string());
+        }
     }
 
     cleanup_stale_managed_command_files(agent_commands_dir, &expected, &mut written)?;
@@ -1205,8 +1243,8 @@ pub(crate) fn symlink_commands_from_project(
 /// `true` when `path` resolves, through every link along it, to a regular
 /// file inside `root` and outside any `.git` directory (a clone's
 /// `.git/config` can carry a token in its remote URL).
-fn is_regular_file_in(root: Option<&Path>, path: &Path) -> bool {
-    let (Some(root), Ok(target)) = (root, fs::canonicalize(path)) else {
+fn is_regular_file_in(root: &Path, path: &Path) -> bool {
+    let Ok(target) = fs::canonicalize(path) else {
         return false;
     };
     let inside = fs::canonicalize(root).is_ok_and(|root| {
@@ -1219,6 +1257,7 @@ fn is_regular_file_in(root: Option<&Path>, path: &Path) -> bool {
 }
 
 pub(crate) fn sync_commands_to_dir(
+    root: &Path,
     commands_dir: &Path,
     workspace_commands: &[(String, String)],
     custom_commands: &[crate::core::CustomCommand],
@@ -1229,27 +1268,27 @@ pub(crate) fn sync_commands_to_dir(
     let mut expected: HashSet<String> = HashSet::new();
 
     let total_commands = workspace_commands.len() + custom_commands.len();
-    if total_commands > 0 && !commands_dir.exists() {
-        fs::create_dir_all(commands_dir).map_err(|e| {
-            format!(
-                "Failed to create commands dir '{}': {}",
-                commands_dir.display(),
-                e
-            )
-        })?;
+    if total_commands > 0 {
+        crate::sync::create_project_dir(root, commands_dir)?;
     }
 
     for (name, content) in workspace_commands {
+        if skip_unsafe_name("command", name) {
+            continue;
+        }
         let file_name = agent_instance.command_file_name(name);
         expected.insert(file_name.clone());
         let path = commands_dir.join(&file_name);
         let rendered = agent_instance.convert_command_content(content, name);
-        fs::write(&path, rendered)
-            .map_err(|e| format!("Failed to write command '{}': {}", name, e))?;
-        written.push(path.display().to_string());
+        if crate::sync::write_project_file_or_skip(root, &path, rendered)? {
+            written.push(path.display().to_string());
+        }
     }
 
     for command in custom_commands {
+        if skip_unsafe_name("command", &command.name) {
+            continue;
+        }
         let file_name = agent_instance.command_file_name(&command.name);
         expected.insert(file_name.clone());
         if skip_custom_names.contains(&command.name) {
@@ -1257,9 +1296,9 @@ pub(crate) fn sync_commands_to_dir(
         }
         let path = commands_dir.join(&file_name);
         let rendered = agent_instance.convert_command_content(&command.content, &command.name);
-        fs::write(&path, rendered)
-            .map_err(|e| format!("Failed to write command '{}': {}", command.name, e))?;
-        written.push(path.display().to_string());
+        if crate::sync::write_project_file_or_skip(root, &path, rendered)? {
+            written.push(path.display().to_string());
+        }
     }
 
     cleanup_stale_managed_command_files(commands_dir, &expected, &mut written)?;
@@ -1267,12 +1306,14 @@ pub(crate) fn sync_commands_to_dir(
     Ok(written)
 }
 
+/// Link or copy one hub command into an agent's commands directory.
+/// Returns whether it did; a refused entry is skipped with a log line.
 fn sync_command_link(
     link_path: &Path,
     target_path: &Path,
-    project_root: Option<&Path>,
+    project_root: &Path,
     use_symlink: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if let Ok(meta) = link_path.symlink_metadata() {
         if meta.file_type().is_symlink() || meta.is_file() {
             fs::remove_file(link_path).map_err(|e| {
@@ -1282,6 +1323,13 @@ fn sync_command_link(
                     e
                 )
             })?;
+        } else {
+            // A FIFO would block the copy, and a directory is not ours.
+            eprintln!(
+                "[automatic] sync: not replacing command '{}': it is not a regular file",
+                link_path.display()
+            );
+            return Ok(false);
         }
     }
 
@@ -1320,7 +1368,7 @@ fn sync_command_link(
                 "[automatic] sync: not copying command '{}': it is not a regular file inside the project",
                 target_path.display()
             );
-            return Ok(());
+            return Ok(false);
         }
         fs::copy(target_path, link_path).map_err(|e| {
             format!(
@@ -1332,7 +1380,7 @@ fn sync_command_link(
         })?;
     }
 
-    Ok(())
+    Ok(true)
 }
 
 fn cleanup_stale_managed_command_files(
@@ -1383,6 +1431,7 @@ struct CommandIndexEntry {
 }
 
 fn write_commands_index(
+    root: &Path,
     commands_dir: &Path,
     entries: &[CommandIndexEntry],
 ) -> Result<std::path::PathBuf, String> {
@@ -1402,13 +1451,7 @@ fn write_commands_index(
     }
 
     let index_path = commands_index_path(commands_dir);
-    fs::write(&index_path, content).map_err(|e| {
-        format!(
-            "Failed to write command index '{}': {}",
-            index_path.display(),
-            e
-        )
-    })?;
+    crate::sync::write_project_file(root, &index_path, content)?;
 
     Ok(index_path)
 }
@@ -2433,6 +2476,7 @@ pub(crate) fn hook_annotate_managed_script(body: &str) -> String {
 /// Write a script-handler body to `<scripts_dir>/<slug>.<ext>` with shebang,
 /// managed marker, and 0755 permissions.  Returns the written path.
 pub(crate) fn write_managed_hook_script(
+    project_dir: &Path,
     scripts_dir: &Path,
     hook: &crate::core::Hook,
     interpreter: &str,
@@ -2441,8 +2485,11 @@ pub(crate) fn write_managed_hook_script(
     let ext = hook_script_extension(interpreter);
     let path = scripts_dir.join(format!("{}.{}", hook_slug(hook), ext));
     let body = hook_annotate_managed_script(&hook_ensure_shebang(script, interpreter));
-    fs::write(&path, body)
-        .map_err(|e| format!("Failed to write hook script '{}': {}", path.display(), e))?;
+    // A committed link at the script's name, or at its directory, would
+    // otherwise get this body written, and made executable, elsewhere.  A
+    // refusal is an error rather than a skip: the hook config written next
+    // would still run whatever the link points at.
+    crate::sync::write_project_file(project_dir, &path, body)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2554,6 +2601,8 @@ pub(crate) struct HookWriteSpec {
     /// of which entry point they call, since it is true information about
     /// the vendor even when this particular writer doesn't act on it.
     pub supported_events: &'static [&'static str],
+    /// The project root.  Script bodies must resolve inside it.
+    pub project_dir: PathBuf,
     /// Directory script-handler bodies are written into (e.g.
     /// `<project>/.codex/hooks`).
     pub scripts_dir: PathBuf,
@@ -2632,6 +2681,7 @@ fn build_tagged_handler(hook: &crate::core::Hook, spec: &HookWriteSpec) -> Value
 /// (also appended to `written`) so the caller can pass them as the keep-list
 /// to a later [`cleanup_managed_hook_scripts`] call.
 fn write_script_handler_bodies(
+    project_dir: &Path,
     scripts_dir: &Path,
     hooks: &[&crate::core::Hook],
     written: &mut Vec<String>,
@@ -2641,8 +2691,7 @@ fn write_script_handler_bodies(
         .iter()
         .any(|h| matches!(h.handler, crate::core::HookHandler::Script { .. }));
     if needs_scripts_dir {
-        fs::create_dir_all(scripts_dir)
-            .map_err(|e| format!("Failed to create {}: {}", scripts_dir.display(), e))?;
+        crate::sync::create_project_dir(project_dir, scripts_dir)?;
     }
     for hook in hooks {
         if let crate::core::HookHandler::Script {
@@ -2650,7 +2699,8 @@ fn write_script_handler_bodies(
             script,
         } = &hook.handler
         {
-            let path = write_managed_hook_script(scripts_dir, hook, interpreter, script)?;
+            let path =
+                write_managed_hook_script(project_dir, scripts_dir, hook, interpreter, script)?;
             managed_script_paths.push(path.clone());
             written.push(path.display().to_string());
         }
@@ -2859,7 +2909,12 @@ pub(crate) fn write_owned_hooks_file(
     }
 
     let managed_script_paths =
-        write_script_handler_bodies(&spec.scripts_dir, &usable_hooks, &mut written)?;
+        write_script_handler_bodies(
+            &spec.project_dir,
+            &spec.scripts_dir,
+            &usable_hooks,
+            &mut written,
+        )?;
 
     let grouped = group_hooks_by_event_and_matcher(usable_hooks.into_iter(), |h| {
         build_plain_handler(h, spec)
@@ -2904,7 +2959,12 @@ pub(crate) fn merge_hooks_into_json_settings(
 
     let hook_refs: Vec<&crate::core::Hook> = hooks.iter().collect();
     let managed_script_paths =
-        write_script_handler_bodies(&spec.scripts_dir, &hook_refs, &mut written)?;
+        write_script_handler_bodies(
+            &spec.project_dir,
+            &spec.scripts_dir,
+            &hook_refs,
+            &mut written,
+        )?;
 
     let mut root = read_mergeable_json_object(settings_path)?;
 
@@ -2993,7 +3053,7 @@ mod tests {
         fs::create_dir_all(&agent_dir).unwrap();
         std::os::unix::fs::symlink(&secret, hub.join("x.md")).unwrap();
 
-        let root = Some(project.path());
+        let root = project.path();
         sync_command_link(&agent_dir.join("x.md"), &hub.join("x.md"), root, false)
             .expect("skip is not an error");
         assert!(!agent_dir.join("x.md").exists());
@@ -3027,7 +3087,7 @@ mod tests {
         sync_command_link(
             &agent_dir.join("x.md"),
             &project.path().join(".agents/commands/x.md"),
-            Some(project.path()),
+            project.path(),
             false,
         )
         .expect("skip is not an error");
@@ -3261,6 +3321,7 @@ mod tests {
         .expect("write unmanaged command");
 
         let written = sync_commands_to_dir(
+            dir.path(),
             &commands_dir,
             &[(
                 "workspace-cmd".to_string(),
@@ -3306,6 +3367,7 @@ mod tests {
         .expect("write unmanaged command");
 
         let written = copy_commands_to_project(
+            dir.path(),
             &commands_dir,
             &[(
                 "workspace-cmd".to_string(),
@@ -3348,6 +3410,7 @@ mod tests {
         fs::create_dir_all(&commands_dir).expect("create commands dir");
 
         copy_commands_to_project(
+            dir.path(),
             &commands_dir,
             &[(
                 "workspace-cmd".to_string(),
@@ -3360,7 +3423,7 @@ mod tests {
 
         assert!(dir.path().join("commands-index.md").exists());
 
-        let written = copy_commands_to_project(&commands_dir, &[], &[], &HashSet::new())
+        let written = copy_commands_to_project(dir.path(), &commands_dir, &[], &[], &HashSet::new())
             .expect("clear commands");
 
         assert!(written.iter().any(|p| p.ends_with("commands-index.md")));
@@ -3375,6 +3438,7 @@ mod tests {
         fs::create_dir_all(&project_commands_dir).expect("create project commands dir");
 
         copy_commands_to_project(
+            dir.path(),
             &project_commands_dir,
             &[(
                 "workspace-cmd".to_string(),
@@ -3402,6 +3466,7 @@ mod tests {
         .expect("write unmanaged command");
 
         let written = symlink_commands_from_project(
+            dir.path(),
             &agent_commands_dir,
             &project_commands_dir,
             &[("workspace-cmd".to_string(), String::new())],
@@ -3467,5 +3532,134 @@ mod tests {
         assert!(skills_dir.join("fresh-skill").join("SKILL.md").exists());
         assert!(!skills_dir.join("stale-skill").exists());
         assert!(skills_dir.join("local-skill").exists());
+    }
+
+    /// Case (c): Gemini's `.toml` commands are written through the contained
+    /// writer, so a committed link at a command's name is skipped.
+    #[cfg(unix)]
+    #[test]
+    fn sync_commands_to_dir_skips_a_command_that_links_out_of_the_project() {
+        let project = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret = outside.path().join("secret");
+        fs::write(&secret, "OUTSIDE").unwrap();
+        let commands_dir = GeminiCli.commands_dir(project.path()).expect("gemini commands dir");
+        fs::create_dir_all(&commands_dir).unwrap();
+        std::os::unix::fs::symlink(&secret, commands_dir.join("deploy.toml")).unwrap();
+        let commands = [
+            CustomCommand {
+                name: "deploy".into(),
+                content: "Ship it.\n".into(),
+            },
+            CustomCommand {
+                name: "review".into(),
+                content: "Look hard.\n".into(),
+            },
+        ];
+
+        let written = sync_commands_to_dir(
+            project.path(),
+            &commands_dir,
+            &[],
+            &commands,
+            &GeminiCli,
+            &HashSet::new(),
+        )
+        .expect("sync");
+
+        assert_eq!(fs::read_to_string(&secret).unwrap(), "OUTSIDE");
+        assert!(commands_dir.join("review.toml").is_file());
+        assert!(!written.iter().any(|p| p.ends_with("deploy.toml")), "{written:?}");
+    }
+
+    /// Case (d): copy mode checks the hub against the root it is given, the
+    /// directory being synced, not the hub's grandparent.  A hub reached
+    /// through a link out of that root is not copied.
+    #[cfg(unix)]
+    #[test]
+    fn copy_mode_checks_the_hub_against_the_given_root() {
+        let project = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let silent = project.path().join(".automatic").join("silent");
+        fs::create_dir_all(&silent).unwrap();
+        // The hub's grandparent is `outside`, which contains it.
+        let hub = outside.path().join(".agents").join("commands");
+        fs::create_dir_all(&hub).unwrap();
+        fs::write(hub.join("x.md"), "OUTSIDE").unwrap();
+        std::os::unix::fs::symlink(outside.path().join(".agents"), silent.join(".agents")).unwrap();
+        let agent_dir = silent.join(".claude").join("commands");
+        fs::create_dir_all(&agent_dir).unwrap();
+
+        sync_command_link(
+            &agent_dir.join("x.md"),
+            &silent.join(".agents/commands/x.md"),
+            &silent,
+            false,
+        )
+        .expect("skip is not an error");
+
+        assert!(!agent_dir.join("x.md").exists());
+    }
+
+    /// Names come from the committed config and from frontmatter.  A name
+    /// that is not one plain component never reaches a remove or a write,
+    /// so `../..` cannot delete the project's parent and an absolute name
+    /// cannot replace an outside file.
+    #[cfg(unix)]
+    #[test]
+    fn unsafe_skill_and_command_names_are_skipped() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let skills_dir = project.join(".agents").join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        // `<name>.md` for the absolute name below is exactly this file.
+        let precious = base.path().join("precious.md");
+        fs::write(&precious, "KEEP").unwrap();
+
+        let mut written = Vec::new();
+        copy_skills_to_project(
+            &skills_dir,
+            &[("../..".to_string(), "x".to_string())],
+            &["../..".to_string()],
+            &[],
+            &mut written,
+        )
+        .expect("skip is not an error");
+        assert!(precious.exists(), "the project's parent must survive");
+        assert!(written.is_empty());
+
+        let agent_dir = project.join(".claude").join("commands");
+        let hub = project.join(".agents").join("commands");
+        fs::create_dir_all(&hub).unwrap();
+        let absolute = precious.with_extension("");
+        let commands = [CustomCommand {
+            name: absolute.display().to_string(),
+            content: "x".into(),
+        }];
+        let written = symlink_commands_from_project(
+            &project,
+            &agent_dir,
+            &hub,
+            &[],
+            &commands,
+            &ClaudeCode,
+        )
+        .expect("skip is not an error");
+        assert_eq!(fs::read_to_string(&precious).unwrap(), "KEEP");
+        assert!(written.is_empty(), "{written:?}");
+        assert!(is_plain_file_name("deploy") && !is_plain_file_name("a/b"));
+
+        // Drift's tempdir writer: an absolute name must not escape it.
+        let escape = base.path().join("escape");
+        let mut written = Vec::new();
+        sync_individual_skills(
+            &skills_dir,
+            &[(escape.display().to_string(), "x".to_string())],
+            &[],
+            &[],
+            &mut written,
+        )
+        .expect("skip is not an error");
+        assert!(!escape.exists());
     }
 }

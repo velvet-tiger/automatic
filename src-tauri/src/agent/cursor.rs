@@ -54,8 +54,14 @@ impl Agent for Cursor {
 
     /// The hook manifest records what Automatic wrote into
     /// `.cursor/hooks.json`.  It is stale once `.cursor/` is gone.
+    /// The hook manifest, and `.cursor/hooks.json`, which no
+    /// `hook_config_target` names (Cursor's hooks use the manifest instead).
+    /// Listing it here puts it through the sync gate.
     fn owned_extra_files(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(CURSOR_HOOKS_MANIFEST)]
+        vec![
+            dir.join(CURSOR_HOOKS_MANIFEST),
+            dir.join(".cursor").join("hooks.json"),
+        ]
     }
 
     fn sync_instruction_rules(
@@ -420,8 +426,7 @@ fn sync_cursor_hooks(
         .iter()
         .any(|h| matches!(h.handler, crate::core::HookHandler::Script { .. }))
     {
-        fs::create_dir_all(&scripts_dir)
-            .map_err(|e| format!("Failed to create .cursor/hooks/: {}", e))?;
+        crate::sync::create_project_dir(project_dir, &scripts_dir)?;
     }
     for hook in &usable_hooks {
         if let crate::core::HookHandler::Script {
@@ -429,7 +434,13 @@ fn sync_cursor_hooks(
             script,
         } = &hook.handler
         {
-            let path = super::write_managed_hook_script(&scripts_dir, hook, interpreter, script)?;
+            let path = super::write_managed_hook_script(
+                project_dir,
+                &scripts_dir,
+                hook,
+                interpreter,
+                script,
+            )?;
             managed_script_paths.push(path.clone());
             written.push(path.display().to_string());
         }

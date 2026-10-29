@@ -294,19 +294,20 @@ fn sync_cline_hooks(
     }
 
     if !by_event.is_empty() {
-        fs::create_dir_all(&hooks_dir)
-            .map_err(|e| format!("Failed to create .cline/hooks/: {}", e))?;
+        crate::sync::create_project_dir(project_dir, &hooks_dir)?;
     }
 
     let mut managed_paths: Vec<PathBuf> = Vec::new();
     for (event, hook) in &by_event {
         let (ext, body) = render_cline_hook_body(hook, event);
         let path = hooks_dir.join(format!("{}.{}", event, ext));
-        fs::write(&path, body)
-            .map_err(|e| format!("Failed to write '{}': {}", path.display(), e))?;
-        set_executable(&path);
         managed_paths.push(path.clone());
-        written.push(path.display().to_string());
+        // A committed link at the hook's name must not get this body
+        // written, and made executable, outside the project.
+        if crate::sync::write_project_file_or_skip(project_dir, &path, body)? {
+            set_executable(&path);
+            written.push(path.display().to_string());
+        }
     }
 
     super::cleanup_managed_hook_scripts(&hooks_dir, &managed_paths)?;

@@ -1085,12 +1085,31 @@ pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 
 /// Resolve the effective project directory used for skill/command sync (Silent
 /// mode writes under `.automatic/silent/`).
-fn effective_project_dir(project: &core::Project) -> std::path::PathBuf {
+fn effective_project_dir(project: &core::Project) -> Result<std::path::PathBuf, String> {
     let dir = std::path::PathBuf::from(&project.directory);
     match project.mode {
-        core::ProjectMode::Silent => dir.join(".automatic").join("silent"),
-        core::ProjectMode::Normal => dir,
+        core::ProjectMode::Silent => {
+            let silent = dir.join(".automatic").join("silent");
+            // A committed `.automatic/silent` link would send adopt reads and
+            // overwrite writes outside the project.
+            match sync::escaped_silent_dir(&dir, &silent) {
+                Some(reason) => Err(format!("Refused to use the Silent-mode directory: {reason}")),
+                None => Ok(silent),
+            }
+        }
+        core::ProjectMode::Normal => Ok(dir),
     }
+}
+
+/// Read a custom asset's on-disk file for adoption.  Adopted content is
+/// stored in the project's committed config, so a file that links out of
+/// the project (or a FIFO) is refused rather than imported.
+fn read_adoptable_file(
+    project_dir: &std::path::Path,
+    path: &std::path::Path,
+) -> Result<String, String> {
+    sync::read_project_text(project_dir, path)?
+        .ok_or_else(|| format!("Failed to read {}: it does not exist", path.display()))
 }
 
 fn custom_rule_slug(name: &str) -> String {
@@ -1128,7 +1147,8 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
         return Err("Project has no directory configured".into());
     }
 
-    let effective = effective_project_dir(&project);
+    let effective = effective_project_dir(&project)?;
+    let project_dir = std::path::PathBuf::from(&project.directory);
 
     match kind {
         "skill" => {
@@ -1137,9 +1157,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
                 .join("skills")
                 .join(asset_name)
                 .join("SKILL.md");
-            let disk_content = std::fs::read_to_string(&skill_md).map_err(|e| {
-                format!("Failed to read {}: {}", skill_md.display(), e)
-            })?;
+            let disk_content = read_adoptable_file(&project_dir, &skill_md)?;
             let custom = project.custom_skills.get_or_insert_with(Vec::new);
             let Some(entry) = custom.iter_mut().find(|cs| cs.name == asset_name) else {
                 return Err(format!(
@@ -1154,8 +1172,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
                 .join(".automatic")
                 .join("instructions")
                 .join(format!("custom-{}.md", custom_rule_slug(asset_name)));
-            let raw_disk = std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            let raw_disk = read_adoptable_file(&project_dir, &path)?;
             let disk_body = strip_instructions_header(&raw_disk);
             let Some(entry) = project
                 .custom_rules
@@ -1185,11 +1202,9 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
                         };
                         let ext = agent_instance.agents_file_ext();
                         let path = agents_dir.join(format!("{}.{}", machine_name, ext));
-                        if path.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                found = Some(content);
-                                break;
-                            }
+                        if let Ok(Some(content)) = sync::read_project_text(&project_dir, &path) {
+                            found = Some(content);
+                            break;
                         }
                     }
                 }
@@ -1214,8 +1229,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
                 .join(".agents")
                 .join("commands")
                 .join(format!("{}.md", asset_name));
-            let disk_content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            let disk_content = read_adoptable_file(&project_dir, &path)?;
             let custom = project.custom_commands.get_or_insert_with(Vec::new);
             let Some(entry) = custom.iter_mut().find(|c| c.name == asset_name) else {
                 return Err(format!(
@@ -1256,7 +1270,8 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
         return Err("Project has no directory configured".into());
     }
 
-    let effective = effective_project_dir(&project);
+    let effective = effective_project_dir(&project)?;
+    let project_dir = std::path::PathBuf::from(&project.directory);
 
     match kind {
         "skill" => {
@@ -1276,10 +1291,7 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
                 .join(".agents")
                 .join("skills")
                 .join(asset_name);
-            std::fs::create_dir_all(&hub_dir)
-                .map_err(|e| format!("Failed to create {}: {}", hub_dir.display(), e))?;
-            std::fs::write(hub_dir.join("SKILL.md"), &stored)
-                .map_err(|e| format!("Failed to write skill: {}", e))?;
+            sync::write_project_file(&effective, &hub_dir.join("SKILL.md"), &stored)?;
         }
         "rule" => {
             let stored = project
@@ -1297,15 +1309,12 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
             let instructions_dir = std::path::Path::new(&project.directory)
                 .join(".automatic")
                 .join("instructions");
-            std::fs::create_dir_all(&instructions_dir)
-                .map_err(|e| format!("Failed to create {}: {}", instructions_dir.display(), e))?;
             let path = instructions_dir.join(format!("custom-{}.md", custom_rule_slug(asset_name)));
             let file_content = format!(
                 "<!-- managed by Automatic — do not edit by hand -->\n\n{}\n",
                 stored.trim_end()
             );
-            std::fs::write(&path, file_content)
-                .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+            sync::write_project_file(&project_dir, &path, file_content)?;
         }
         "agent" => {
             let custom = project.custom_agents.clone().unwrap_or_default();
@@ -1323,6 +1332,7 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
                     continue;
                 };
                 let _ = sync::sync_custom_agents_force(
+                    &effective,
                     &agents_dir,
                     std::slice::from_ref(ca),
                     agent_instance,
@@ -1343,11 +1353,12 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
                 .content
                 .clone();
             let hub_dir = effective.join(".agents").join("commands");
-            std::fs::create_dir_all(&hub_dir)
-                .map_err(|e| format!("Failed to create {}: {}", hub_dir.display(), e))?;
             let rendered = crate::agent::render_markdown_command(&stored);
-            std::fs::write(hub_dir.join(format!("{}.md", asset_name)), rendered)
-                .map_err(|e| format!("Failed to write command: {}", e))?;
+            sync::write_project_file(
+                &effective,
+                &hub_dir.join(format!("{}.md", asset_name)),
+                rendered,
+            )?;
         }
         other => return Err(format!("Unknown custom asset kind '{}'", other)),
     }
@@ -2894,6 +2905,36 @@ fn detach_profile_from_projects_removes_provided_entries() {
 /// Commands accept a `local_key` or a name (stage 3b step 1), and each
 /// store receives its key: `id` for memory, features and groups, `local_key`
 /// for activity, recommendations and dev servers (stage 3b step 2).
+/// Case (d): adopt and overwrite refuse a Silent-mode directory that links
+/// out of the project.
+#[cfg(all(test, unix))]
+mod silent_dir_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn effective_project_dir_refuses_a_linked_silent_directory() {
+        let dir = tempdir().expect("tempdir");
+        let outside = tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".automatic")).expect("mkdir");
+        std::os::unix::fs::symlink(outside.path(), dir.path().join(".automatic/silent"))
+            .expect("link");
+        let mut project = core::Project {
+            directory: dir.path().display().to_string(),
+            mode: core::ProjectMode::Silent,
+            ..Default::default()
+        };
+
+        assert!(effective_project_dir(&project).is_err());
+
+        project.mode = core::ProjectMode::Normal;
+        assert_eq!(
+            effective_project_dir(&project).expect("normal mode"),
+            dir.path().to_path_buf()
+        );
+    }
+}
+
 #[cfg(test)]
 mod identifier_tests {
     use super::*;

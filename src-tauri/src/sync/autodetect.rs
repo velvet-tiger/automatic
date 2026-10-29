@@ -142,8 +142,16 @@ pub(super) fn autodetect_inner(
                 // Project-scoped skill: read SKILL.md content from disk and
                 // promote it to a `custom_skill` so the content is portable in
                 // the project JSON and surfaces in the Skills UI.
-                let Ok(content) = fs::read_to_string(&skill_file) else {
-                    continue;
+                // Contained read: the content lands in the committed project
+                // config, so a link out of the project must not be imported,
+                // and a FIFO must not hang autodetect.
+                let content = match super::helpers::read_project_text(&dir, &skill_file) {
+                    Ok(Some(content)) => content,
+                    Ok(None) => continue,
+                    Err(reason) => {
+                        eprintln!("[automatic] autodetect: not importing skill '{name}': {reason}");
+                        continue;
+                    }
                 };
                 let custom = CustomSkill {
                     name: name.to_string(),
@@ -162,6 +170,13 @@ pub(super) fn autodetect_inner(
     // to the global MCP registry from this read-only function.
     let registry_names = crate::core::list_mcp_server_configs().unwrap_or_default();
     for a in &selected_agents {
+        // Discovery reads without containment, and a committed FIFO would
+        // hang it.  Skip an agent whose root MCP files are refused; drift
+        // reports them.
+        if let Some(reason) = super::helpers::refused_root_mcp_file(*a, &dir) {
+            eprintln!("[automatic] autodetect: not reading MCP servers: {reason}");
+            continue;
+        }
         let servers = a.discover_mcp_servers(&dir);
         for (name, config) in servers {
             if let Ok(config_str) = serde_json::to_string_pretty(&config) {
@@ -490,5 +505,74 @@ mod tests {
             .map(|s| s.iter().filter(|s| s.name == "dup").count())
             .unwrap_or(0);
         assert_eq!(count, 1, "duplicate skill should only be added once");
+    }
+
+    /// Case (f): autodetect does not read a root MCP config that is a FIFO
+    /// (it would hang) and does not import a skill that links out of the
+    /// project into the committed project config.
+    #[cfg(unix)]
+    #[test]
+    fn autodetect_skips_refused_mcp_configs_and_skills() {
+        let dir = tempdir().expect("tempdir");
+        let outside = tempdir().expect("tempdir");
+        let status = std::process::Command::new("mkfifo")
+            .arg(dir.path().join(".mcp.json"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+        let secret = outside.path().join("SKILL.md");
+        fs::write(&secret, "---\nname: evil\n---\nSECRET\n").expect("write secret");
+        let skill_dir = dir.path().join(".claude").join("skills").join("evil");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        std::os::unix::fs::symlink(&secret, skill_dir.join("SKILL.md")).expect("link");
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into()],
+            ..Default::default()
+        };
+
+        let (updated, discovered) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
+
+        assert!(discovered.is_empty());
+        assert!(updated
+            .custom_skills
+            .unwrap_or_default()
+            .iter()
+            .all(|s| s.name != "evil" && !s.content.contains("SECRET")));
+    }
+
+    /// Case (f) for agents whose project MCP file sits below an owned
+    /// directory (Kiro) or is read by discovery alone (OpenCode's legacy
+    /// `.opencode.json`): a link out of the project is not read.
+    #[cfg(unix)]
+    #[test]
+    fn autodetect_does_not_read_linked_kiro_or_opencode_configs() {
+        let dir = tempdir().expect("tempdir");
+        let outside = tempdir().expect("tempdir");
+        let kiro = outside.path().join("kiro.json");
+        fs::write(&kiro, r#"{"mcpServers":{"leaked-kiro":{"command":"x"}}}"#).expect("write");
+        let opencode = outside.path().join("opencode.json");
+        fs::write(&opencode, r#"{"mcp":{"leaked-opencode":{"type":"local","command":["x"]}}}"#)
+            .expect("write");
+        fs::create_dir_all(dir.path().join(".kiro/settings")).expect("mkdir");
+        std::os::unix::fs::symlink(&kiro, dir.path().join(".kiro/settings/mcp.json"))
+            .expect("link");
+        std::os::unix::fs::symlink(&opencode, dir.path().join(".opencode.json")).expect("link");
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["kiro".into(), "opencode".into()],
+            ..Default::default()
+        };
+
+        let (_, discovered) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
+
+        assert!(
+            discovered.iter().all(|(name, _)| !name.starts_with("leaked")),
+            "{discovered:?}"
+        );
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::*;
 
@@ -148,6 +148,27 @@ pub fn is_file_rules_current_with_custom(
     Ok(raw.contains(&expected_section))
 }
 
+/// Write one Automatic-managed rule file when its content changed.  A file
+/// the contained reader or writer refuses (a FIFO, a link out of the
+/// project) is skipped with a log line.  Returns whether it was written.
+fn write_managed_rule_file(
+    root: &Path,
+    file_path: &Path,
+    file_content: &str,
+) -> Result<bool, String> {
+    let existing = match crate::sync::read_project_text(root, file_path) {
+        Ok(existing) => existing.unwrap_or_default(),
+        Err(reason) => {
+            eprintln!("[automatic] sync: not writing {}: {reason}", file_path.display());
+            return Ok(false);
+        }
+    };
+    if existing == file_content {
+        return Ok(false);
+    }
+    crate::sync::write_project_file_or_skip(root, file_path, file_content)
+}
+
 // ── .claude/rules/ directory-based rules ────────────────────────────────────
 
 /// Write rules as individual Markdown files under `<project_dir>/.claude/rules/`.
@@ -164,8 +185,8 @@ pub fn sync_rules_to_dot_claude_rules(
     rule_names: &[String],
 ) -> Result<Vec<String>, String> {
     let rules_dir = PathBuf::from(project_dir).join(".claude").join("rules");
-    fs::create_dir_all(&rules_dir)
-        .map_err(|e| format!("Failed to create .claude/rules/: {}", e))?;
+    let root = Path::new(project_dir);
+    crate::sync::create_project_dir(root, &rules_dir)?;
 
     let mut touched: Vec<String> = Vec::new();
 
@@ -189,7 +210,7 @@ pub fn sync_rules_to_dot_claude_rules(
                 continue; // Will be (re-)written below — leave it for now.
             }
             // Only remove files that carry our managed header.
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(Some(content)) = crate::sync::read_project_text(root, &path) {
                 if content.starts_with(CLAUDE_RULES_MANAGED_HEADER) {
                     if fs::remove_file(&path).is_ok() {
                         touched.push(path.display().to_string());
@@ -210,10 +231,7 @@ pub fn sync_rules_to_dot_claude_rules(
         let file_content = format!("{}{}\n", CLAUDE_RULES_MANAGED_HEADER, content.trim_end());
 
         // Only write if different from what is already on disk.
-        let existing = fs::read_to_string(&file_path).unwrap_or_default();
-        if existing != file_content {
-            fs::write(&file_path, &file_content)
-                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+        if write_managed_rule_file(root, &file_path, &file_content)? {
             touched.push(file_path.display().to_string());
         }
     }
@@ -347,8 +365,8 @@ pub fn sync_rules_to_cursor_mdc_rules(
     rule_names: &[String],
 ) -> Result<Vec<String>, String> {
     let rules_dir = PathBuf::from(project_dir).join(".cursor").join("rules");
-    fs::create_dir_all(&rules_dir)
-        .map_err(|e| format!("Failed to create .cursor/rules/: {}", e))?;
+    let root = Path::new(project_dir);
+    crate::sync::create_project_dir(root, &rules_dir)?;
 
     let mut touched: Vec<String> = Vec::new();
     let intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.mdc", n)).collect();
@@ -367,7 +385,7 @@ pub fn sync_rules_to_cursor_mdc_rules(
             if intended.contains(&file_name) {
                 continue; // Will be (re-)written below.
             }
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(Some(content)) = crate::sync::read_project_text(root, &path) {
                 if is_managed_mdc_content(&content) && fs::remove_file(&path).is_ok() {
                     touched.push(path.display().to_string());
                 }
@@ -384,10 +402,7 @@ pub fn sync_rules_to_cursor_mdc_rules(
         let file_path = rules_dir.join(format!("{}.mdc", machine_name));
         let file_content = render_cursor_mdc_rule(&display, &content);
 
-        let existing = fs::read_to_string(&file_path).unwrap_or_default();
-        if existing != file_content {
-            fs::write(&file_path, &file_content)
-                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+        if write_managed_rule_file(root, &file_path, &file_content)? {
             touched.push(file_path.display().to_string());
         }
     }
@@ -480,8 +495,8 @@ pub fn sync_rules_to_automatic_instructions(
     skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let instructions_dir = PathBuf::from(project_dir).join(AUTOMATIC_INSTRUCTIONS_DIR);
-    fs::create_dir_all(&instructions_dir)
-        .map_err(|e| format!("Failed to create .automatic/instructions/: {}", e))?;
+    let root = Path::new(project_dir);
+    crate::sync::create_project_dir(root, &instructions_dir)?;
 
     let mut touched: Vec<String> = Vec::new();
 
@@ -505,7 +520,7 @@ pub fn sync_rules_to_automatic_instructions(
             if intended.contains(&file_name) {
                 continue;
             }
-            if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(Some(content)) = crate::sync::read_project_text(root, &path) {
                 if content.starts_with(AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER) {
                     if fs::remove_file(&path).is_ok() {
                         touched.push(path.display().to_string());
@@ -529,10 +544,7 @@ pub fn sync_rules_to_automatic_instructions(
             content.trim_end()
         );
 
-        let existing = fs::read_to_string(&file_path).unwrap_or_default();
-        if existing != file_content {
-            fs::write(&file_path, &file_content)
-                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+        if write_managed_rule_file(root, &file_path, &file_content)? {
             touched.push(file_path.display().to_string());
         }
     }
@@ -553,10 +565,7 @@ pub fn sync_rules_to_automatic_instructions(
             cr.content.trim_end()
         );
 
-        let existing = fs::read_to_string(&file_path).unwrap_or_default();
-        if existing != file_content {
-            fs::write(&file_path, &file_content)
-                .map_err(|e| format!("Failed to write custom rule '{}': {}", cr.name, e))?;
+        if write_managed_rule_file(root, &file_path, &file_content)? {
             touched.push(file_path.display().to_string());
         }
     }
@@ -653,7 +662,9 @@ pub fn inject_index_into_project_file(
         return Ok(false);
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let Some(raw) = crate::sync::read_project_text(Path::new(directory), &path)? else {
+        return Ok(false);
+    };
 
     // Strip all managed sections to isolate user content.
     let user_content = strip_index_section(&strip_groups_section(&strip_rules_section(
@@ -669,7 +680,7 @@ pub fn inject_index_into_project_file(
     let full_content = assemble_file_with_index(&user_content, &groups_section, &index_section);
 
     if full_content != raw {
-        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        crate::sync::write_project_file(Path::new(directory), &path, full_content)?;
         Ok(true)
     } else {
         Ok(false)
@@ -752,7 +763,9 @@ pub fn inject_rules_into_project_file_with_custom(
         return Ok(false);
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let Some(raw) = crate::sync::read_project_text(Path::new(directory), &path)? else {
+        return Ok(false);
+    };
     // Strip all managed sections so we start from pure user content.
     // Also strip the index section so switching from index mode to inline mode
     // cleanly removes the old index block.
@@ -772,7 +785,7 @@ pub fn inject_rules_into_project_file_with_custom(
 
     // Only write if content actually changed
     if full_content != raw {
-        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        crate::sync::write_project_file(Path::new(directory), &path, full_content)?;
         Ok(true)
     } else {
         Ok(false)
@@ -910,7 +923,9 @@ pub fn inject_groups_into_project_file(
         return Ok(false);
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let Some(raw) = crate::sync::read_project_text(Path::new(directory), &path)? else {
+        return Ok(false);
+    };
 
     // Decompose the current file into its three layers, stripping the index
     // section from user content so it doesn't accumulate if the mode changes.
@@ -930,7 +945,7 @@ pub fn inject_groups_into_project_file(
     };
 
     if full_content != raw {
-        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        crate::sync::write_project_file(Path::new(directory), &path, full_content)?;
         Ok(true)
     } else {
         Ok(false)

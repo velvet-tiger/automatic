@@ -19,14 +19,22 @@ pub use helpers::{
     extract_agent_machine_name as extract_agent_machine_name_pub, CustomAssetConflict,
     CustomAssetKind, McpConfigSyncNotes, McpServerNote,
 };
+// Contained project reads and writes, shared with the agent writers and the
+// core instruction and rule writers.
+pub(crate) use helpers::{
+    create_project_dir, escaped_silent_dir, project_write_refusal, read_project_text,
+    write_project_file, write_project_file_or_skip,
+};
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(
+    root: &std::path::Path,
     agents_dir: &std::path::Path,
     custom_agents: &[crate::core::CustomAgent],
     agent: &dyn crate::agent::Agent,
 ) -> Result<Vec<String>, String> {
     helpers::sync_custom_agents(
+        root,
         agents_dir,
         custom_agents,
         agent,
