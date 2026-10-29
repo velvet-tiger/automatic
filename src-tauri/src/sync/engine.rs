@@ -10,7 +10,8 @@ use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents, clean_project_file,
     collect_custom_asset_conflicts, conflicting_names, extract_agent_machine_name,
-    load_mcp_server_configs, sync_custom_agents, sync_user_agents, CustomAssetKind,
+    load_mcp_server_configs, read_project_text, sync_custom_agents, sync_user_agents,
+    CustomAssetKind,
 };
 
 struct InstructionTarget {
@@ -229,11 +230,14 @@ fn sync_to_directory_inner(
     // Custom assets whose on-disk files differ from the stored snapshot are
     // excluded from writes: sync favours on-disk and the conflict UI asks the
     // user to adopt or overwrite explicitly.
-    let custom_conflicts = collect_custom_asset_conflicts(project, &effective_dir);
-    let conflicting_skills = conflicting_names(&custom_conflicts, CustomAssetKind::Skill);
-    let conflicting_commands = conflicting_names(&custom_conflicts, CustomAssetKind::Command);
-    let conflicting_agents = conflicting_names(&custom_conflicts, CustomAssetKind::Agent);
-    let conflicting_rules = conflicting_names(&custom_conflicts, CustomAssetKind::Rule);
+    // Unreadable ones are excluded too, so a write never follows a symlink
+    // out of the project.
+    let custom_scan = collect_custom_asset_conflicts(project, &effective_dir);
+    let conflicting_skills = conflicting_names(&custom_scan, CustomAssetKind::Skill);
+    let conflicting_commands = conflicting_names(&custom_scan, CustomAssetKind::Command);
+    let conflicting_agents = conflicting_names(&custom_scan, CustomAssetKind::Agent);
+    let conflicting_rules = conflicting_names(&custom_scan, CustomAssetKind::Rule);
+    let custom_conflicts = custom_scan.conflicts;
 
     let skills_to_write: Vec<(String, String)> = skill_contents
         .iter()
@@ -994,11 +998,15 @@ fn sync_instruction_target_file(
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
                     .join("-");
-                let path = std::path::Path::new(&project.directory)
+                let root = std::path::Path::new(&project.directory);
+                let path = root
                     .join(".automatic")
                     .join("instructions")
                     .join(format!("custom-{}.md", slug));
-                if let Ok(raw) = fs::read_to_string(&path) {
+                // The skip set also holds rules whose file was refused (a
+                // link out of the project, a FIFO); those fall back to the
+                // stored content rather than being read here.
+                if let Ok(Some(raw)) = read_project_text(root, &path) {
                     let body = raw
                         .strip_prefix("<!-- managed by Automatic — do not edit by hand -->\n\n")
                         .unwrap_or(&raw)

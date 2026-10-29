@@ -2,10 +2,112 @@ use std::collections::HashSet;
 
 use serde_json::{json, Map, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use crate::core::store_reads::StoreRead;
 use crate::core::Project;
+
+/// Largest project file [`read_project_text`] reads, in bytes.
+pub(crate) const MAX_PROJECT_READ_BYTES: u64 = 1024 * 1024;
+
+/// Read a project file that drift detection compares, refusing anything that
+/// is not plain project text.
+///
+/// Drift runs on a timer against cloned repositories, so a committed
+/// symlink to `/dev/zero`, a FIFO, or a huge file must not hang or exhaust
+/// the check, and nothing outside the project may reach the drift diff.
+///
+/// - The path is resolved in full, so a symlink anywhere along it (the file
+///   itself or a parent such as `.claude -> ~/.claude`) counts.  It must end
+///   at a regular file inside `root` and outside any `.git` directory.
+///   Automatic's own links (`.claude/skills/x` -> `.agents/skills/x`) stay
+///   inside the project, so they pass.
+/// - Anything else (FIFO, socket, device, a dangling link, a link that
+///   leaves the project) is refused.  Callers that treat a dangling link as
+///   absent check `exists()` or `is_file()` first.
+/// - At most [`MAX_PROJECT_READ_BYTES`] are read, and a larger file is
+///   refused.  Non-UTF-8 content is refused too, as `read_to_string` does.
+///
+/// Returns `Ok(None)` when nothing exists at `path`, and `Err(reason)` when
+/// the file is refused or cannot be read.  The type check uses `stat`, so a
+/// FIFO is never opened.  A file swapped for a FIFO between that check and
+/// the open can still block the open; closing that race needs `O_NONBLOCK`,
+/// which std does not expose portably.  A swap to any other file is caught
+/// by comparing the opened file with the checked one.
+pub(crate) fn read_project_text(root: &Path, path: &Path) -> Result<Option<String>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Failed to inspect {}: {e}", path.display())),
+    }
+    let target = project_file_target(root, path)?;
+    let checked = fs::metadata(&target)
+        .map_err(|e| format!("Failed to inspect {}: {e}", path.display()))?;
+    if !checked.is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+
+    let file =
+        fs::File::open(&target).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if !same_file(&checked, &opened) {
+        return Err(format!("{} changed while it was being read", path.display()));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_PROJECT_READ_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    if bytes.len() as u64 > MAX_PROJECT_READ_BYTES {
+        return Err(format!(
+            "{} is larger than {MAX_PROJECT_READ_BYTES} bytes",
+            path.display()
+        ));
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| format!("{} is not UTF-8 text", path.display()))
+}
+
+/// The fully resolved `path`, when it lies inside `root` and outside any
+/// `.git` directory.  A `.git/config` target could carry credentials in a
+/// remote URL, and drift shows file contents.
+fn project_file_target(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let outside = || {
+        format!(
+            "{} resolves to something other than a file inside the project",
+            path.display()
+        )
+    };
+    let (Ok(target), Ok(root)) = (fs::canonicalize(path), fs::canonicalize(root)) else {
+        return Err(outside());
+    };
+    let inside = target.strip_prefix(&root).is_ok_and(|rel| {
+        !rel.components()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    });
+    if inside {
+        Ok(target)
+    } else {
+        Err(outside())
+    }
+}
+
+/// `true` when `a` and `b` describe the same file.  Off unix there is no
+/// stable file id in std, so only the type is compared.
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev() && a.ino() == b.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        a.is_file() == b.is_file()
+    }
+}
 
 /// Load the configs of the named MCP servers from the Automatic registry.
 ///
@@ -152,30 +254,73 @@ fn custom_rule_slug(name: &str) -> String {
         .join("-")
 }
 
+/// A project-scoped custom asset whose on-disk file [`read_project_text`]
+/// refused or could not read.
+#[derive(Debug, Clone)]
+pub(crate) struct UnreadableCustomAsset {
+    pub kind: CustomAssetKind,
+    pub name: String,
+    /// Relative path of the on-disk file from the project (or silent) root.
+    pub path: String,
+    /// The agent whose directory holds the file, or `None` for a file in a
+    /// location every agent shares (`.agents/`, `.automatic/instructions/`).
+    pub agent_id: Option<String>,
+    pub reason: String,
+}
+
+/// What [`collect_custom_asset_conflicts`] found on disk.
+///
+/// An unreadable file has no content to adopt, so it is not a conflict, but
+/// sync must still leave it alone: writing would follow a symlink out of the
+/// project.  [`conflicting_names`] therefore counts both lists.
+#[derive(Debug, Default)]
+pub(crate) struct CustomAssetScan {
+    pub conflicts: Vec<CustomAssetConflict>,
+    pub unreadable: Vec<UnreadableCustomAsset>,
+}
+
+impl CustomAssetScan {
+    fn extend(&mut self, other: CustomAssetScan) {
+        self.conflicts.extend(other.conflicts);
+        self.unreadable.extend(other.unreadable);
+    }
+
+    fn push_unreadable(
+        &mut self,
+        kind: CustomAssetKind,
+        name: &str,
+        path: String,
+        agent_id: Option<&str>,
+        reason: String,
+    ) {
+        self.unreadable.push(UnreadableCustomAsset {
+            kind,
+            name: name.to_string(),
+            path,
+            agent_id: agent_id.map(str::to_string),
+            reason,
+        });
+    }
+}
+
 /// Collect conflicts for all project-scoped custom assets (skills, rules,
 /// agents, commands). Missing on-disk files are not conflicts — sync creates
 /// them from the stored snapshot.
-pub(crate) fn collect_custom_asset_conflicts(
-    project: &Project,
-    dir: &std::path::Path,
-) -> Vec<CustomAssetConflict> {
-    let mut conflicts = Vec::new();
-    conflicts.extend(collect_custom_skill_conflicts(project, dir));
-    conflicts.extend(collect_custom_rule_conflicts(project, dir));
-    conflicts.extend(collect_custom_agent_conflicts(project, dir));
-    conflicts.extend(collect_custom_command_conflicts(project, dir));
-    conflicts
+pub(crate) fn collect_custom_asset_conflicts(project: &Project, dir: &Path) -> CustomAssetScan {
+    let mut scan = CustomAssetScan::default();
+    scan.extend(collect_custom_skill_conflicts(project, dir));
+    scan.extend(collect_custom_rule_conflicts(project, dir));
+    scan.extend(collect_custom_agent_conflicts(project, dir));
+    scan.extend(collect_custom_command_conflicts(project, dir));
+    scan
 }
 
 /// Compare each non-library `custom_skills` entry against
 /// `.agents/skills/<name>/SKILL.md` under `dir`.
-pub(crate) fn collect_custom_skill_conflicts(
-    project: &Project,
-    dir: &std::path::Path,
-) -> Vec<CustomAssetConflict> {
+pub(crate) fn collect_custom_skill_conflicts(project: &Project, dir: &Path) -> CustomAssetScan {
     let library_names: HashSet<&str> = project.skills.iter().map(|s| s.as_str()).collect();
     let custom = project.custom_skills.as_deref().unwrap_or(&[]);
-    let mut conflicts = Vec::new();
+    let mut scan = CustomAssetScan::default();
 
     for cs in custom {
         if library_names.contains(cs.name.as_str()) {
@@ -186,80 +331,78 @@ pub(crate) fn collect_custom_skill_conflicts(
             .join("skills")
             .join(&cs.name)
             .join("SKILL.md");
-        if !skill_md.exists() {
-            continue;
-        }
-        let disk_content = match fs::read_to_string(&skill_md) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let path = format!(".agents/skills/{}/SKILL.md", cs.name);
+        let disk_content = match read_project_text(dir, &skill_md) {
+            Ok(Some(c)) => c,
+            Ok(None) => continue,
+            Err(reason) => {
+                scan.push_unreadable(CustomAssetKind::Skill, &cs.name, path, None, reason);
+                continue;
+            }
         };
         if disk_content == cs.content {
             continue;
         }
-        conflicts.push(CustomAssetConflict {
+        scan.conflicts.push(CustomAssetConflict {
             kind: CustomAssetKind::Skill,
             name: cs.name.clone(),
-            path: format!(".agents/skills/{}/SKILL.md", cs.name),
+            path,
             disk_content,
             automatic_content: cs.content.clone(),
         });
     }
 
-    conflicts
+    scan
 }
 
 /// Compare each `custom_rules` entry against
 /// `.automatic/instructions/custom-<slug>.md` under the real project directory
 /// (instructions always live at the project root, even in Silent mode).
-pub(crate) fn collect_custom_rule_conflicts(
-    project: &Project,
-    _dir: &std::path::Path,
-) -> Vec<CustomAssetConflict> {
+pub(crate) fn collect_custom_rule_conflicts(project: &Project, _dir: &Path) -> CustomAssetScan {
     // Custom rule files always live under the real project directory.
-    let root = std::path::Path::new(&project.directory);
-    let mut conflicts = Vec::new();
+    let root = Path::new(&project.directory);
+    let mut scan = CustomAssetScan::default();
 
     for cr in &project.custom_rules {
         if cr.content.trim().is_empty() {
             continue;
         }
         let slug = custom_rule_slug(&cr.name);
-        let path = root
+        let file = root
             .join(".automatic")
             .join("instructions")
             .join(format!("custom-{}.md", slug));
-        if !path.exists() {
-            continue;
-        }
-        let raw = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let path = format!(".automatic/instructions/custom-{}.md", slug);
+        let raw = match read_project_text(root, &file) {
+            Ok(Some(c)) => c,
+            Ok(None) => continue,
+            Err(reason) => {
+                scan.push_unreadable(CustomAssetKind::Rule, &cr.name, path, None, reason);
+                continue;
+            }
         };
         let disk_body = strip_instructions_managed_header(&raw);
         let stored_body = cr.content.trim_end().to_string();
         if disk_body == stored_body {
             continue;
         }
-        conflicts.push(CustomAssetConflict {
+        scan.conflicts.push(CustomAssetConflict {
             kind: CustomAssetKind::Rule,
             name: cr.name.clone(),
-            path: format!(".automatic/instructions/custom-{}.md", slug),
+            path,
             disk_content: disk_body,
             automatic_content: stored_body,
         });
     }
 
-    conflicts
+    scan
 }
 
 /// Compare each `custom_agents` entry against the first on-disk agent file
 /// found under any configured agent's `agents_dir`.
-pub(crate) fn collect_custom_agent_conflicts(
-    project: &Project,
-    dir: &std::path::Path,
-) -> Vec<CustomAssetConflict> {
+pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> CustomAssetScan {
     let custom = project.custom_agents.as_deref().unwrap_or(&[]);
-    let mut conflicts = Vec::new();
+    let mut scan = CustomAssetScan::default();
 
     for ca in custom {
         let machine_name = extract_agent_machine_name(&ca.content)
@@ -274,23 +417,30 @@ pub(crate) fn collect_custom_agent_conflicts(
             };
             let ext = agent_instance.agents_file_ext();
             let file_path = agents_dir.join(format!("{}.{}", machine_name, ext));
-            if !file_path.exists() {
-                continue;
-            }
-            let disk_content = match fs::read_to_string(&file_path) {
-                Ok(c) => c,
-                Err(_) => continue,
+            let relative = file_path
+                .strip_prefix(dir)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| file_path.display().to_string());
+            let disk_content = match read_project_text(dir, &file_path) {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
+                Err(reason) => {
+                    scan.push_unreadable(
+                        CustomAssetKind::Agent,
+                        &ca.name,
+                        relative,
+                        Some(agent_id),
+                        reason,
+                    );
+                    break; // one entry per custom agent
+                }
             };
             let expected =
                 agent_instance.convert_agent_content(&ca.content, &machine_name);
             if disk_content == expected {
                 break; // matches this agent dir — no conflict
             }
-            let relative = file_path
-                .strip_prefix(dir)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| file_path.display().to_string());
-            conflicts.push(CustomAssetConflict {
+            scan.conflicts.push(CustomAssetConflict {
                 kind: CustomAssetKind::Agent,
                 name: ca.name.clone(),
                 path: relative,
@@ -301,54 +451,57 @@ pub(crate) fn collect_custom_agent_conflicts(
         }
     }
 
-    conflicts
+    scan
 }
 
 /// Compare each `custom_commands` entry against `.agents/commands/<name>.md`.
-pub(crate) fn collect_custom_command_conflicts(
-    project: &Project,
-    dir: &std::path::Path,
-) -> Vec<CustomAssetConflict> {
+pub(crate) fn collect_custom_command_conflicts(project: &Project, dir: &Path) -> CustomAssetScan {
     let custom = project.custom_commands.as_deref().unwrap_or(&[]);
-    let mut conflicts = Vec::new();
+    let mut scan = CustomAssetScan::default();
 
     for cc in custom {
         let cmd_path = dir
             .join(".agents")
             .join("commands")
             .join(format!("{}.md", cc.name));
-        if !cmd_path.exists() {
-            continue;
-        }
-        let disk_content = match fs::read_to_string(&cmd_path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let path = format!(".agents/commands/{}.md", cc.name);
+        let disk_content = match read_project_text(dir, &cmd_path) {
+            Ok(Some(c)) => c,
+            Ok(None) => continue,
+            Err(reason) => {
+                scan.push_unreadable(CustomAssetKind::Command, &cc.name, path, None, reason);
+                continue;
+            }
         };
         let expected = crate::agent::render_markdown_command(&cc.content);
         if disk_content == expected {
             continue;
         }
-        conflicts.push(CustomAssetConflict {
+        scan.conflicts.push(CustomAssetConflict {
             kind: CustomAssetKind::Command,
             name: cc.name.clone(),
-            path: format!(".agents/commands/{}.md", cc.name),
+            path,
             disk_content,
             automatic_content: expected,
         });
     }
 
-    conflicts
+    scan
 }
 
-/// Names of conflicting assets of a given kind.
-pub(crate) fn conflicting_names(
-    conflicts: &[CustomAssetConflict],
-    kind: CustomAssetKind,
-) -> HashSet<String> {
-    conflicts
+/// Names of assets of a given kind that sync must not write: those that
+/// conflict with disk and those whose disk file is unreadable.
+pub(crate) fn conflicting_names(scan: &CustomAssetScan, kind: CustomAssetKind) -> HashSet<String> {
+    scan.conflicts
         .iter()
         .filter(|c| c.kind == kind)
         .map(|c| c.name.clone())
+        .chain(
+            scan.unreadable
+                .iter()
+                .filter(|u| u.kind == kind)
+                .map(|u| u.name.clone()),
+        )
         .collect()
 }
 
@@ -795,6 +948,127 @@ mod tests {
     use crate::core::{save_subagent, CustomAgent};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
+
+    // ── read_project_text ──────────────────────────────────────────────────
+
+    #[test]
+    fn read_project_text_reads_files_and_links_inside_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let file = project.path().join("AGENTS.md");
+        fs::write(&file, "hello\n").unwrap();
+        assert_eq!(
+            read_project_text(project.path(), &file).unwrap().as_deref(),
+            Some("hello\n")
+        );
+        assert_eq!(
+            read_project_text(project.path(), &project.path().join("absent.md")).unwrap(),
+            None
+        );
+
+        #[cfg(unix)]
+        {
+            let link = project.path().join("CLAUDE.md");
+            std::os::unix::fs::symlink(&file, &link).unwrap();
+            assert_eq!(
+                read_project_text(project.path(), &link).unwrap().as_deref(),
+                Some("hello\n")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_project_text_refuses_a_symlink_that_leaves_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secret.json");
+        fs::write(&secret, "{}").unwrap();
+        let link = project.path().join(".mcp.json");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        let err = read_project_text(project.path(), &link).unwrap_err();
+        assert!(err.contains("inside the project"), "{err}");
+
+        let dev_zero = project.path().join("zero.json");
+        std::os::unix::fs::symlink("/dev/zero", &dev_zero).unwrap();
+        assert!(read_project_text(project.path(), &dev_zero).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_project_text_refuses_a_symlink_into_dot_git() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join(".git")).unwrap();
+        let config = project.path().join(".git").join("config");
+        fs::write(&config, "[remote]\n").unwrap();
+        let link = project.path().join("AGENTS.md");
+        std::os::unix::fs::symlink(&config, &link).unwrap();
+
+        assert!(read_project_text(project.path(), &link).is_err());
+    }
+
+    /// A FIFO would block `read_to_string` until a writer appears.  The
+    /// refusal comes from its file type, so the read never opens it.
+    #[cfg(unix)]
+    #[test]
+    fn read_project_text_refuses_a_fifo_without_blocking() {
+        let project = tempfile::tempdir().unwrap();
+        let fifo = project.path().join(".mcp.json");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let root = project.path().to_path_buf();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_project_text(&root, &fifo));
+        });
+        let err = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("read blocked on the FIFO")
+            .unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    /// A parent directory linked out of the project counts, not only a link
+    /// at the file itself.
+    #[cfg(unix)]
+    #[test]
+    fn read_project_text_refuses_a_parent_directory_that_leaves_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("x.md"), "SECRET").unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.path().join(".claude")).unwrap();
+
+        let err = read_project_text(project.path(), &project.path().join(".claude/x.md"))
+            .unwrap_err();
+        assert!(err.contains("inside the project"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_project_text_refuses_a_dangling_symlink() {
+        let project = tempfile::tempdir().unwrap();
+        let link = project.path().join("AGENTS.md");
+        std::os::unix::fs::symlink(project.path().join("gone.md"), &link).unwrap();
+
+        assert!(read_project_text(project.path(), &link).is_err());
+    }
+
+    #[test]
+    fn read_project_text_refuses_an_oversized_file() {
+        let project = tempfile::tempdir().unwrap();
+        let file = project.path().join("big.md");
+        fs::write(&file, vec![b'a'; MAX_PROJECT_READ_BYTES as usize + 1]).unwrap();
+
+        let err = read_project_text(project.path(), &file).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+
+        fs::write(&file, vec![b'a'; MAX_PROJECT_READ_BYTES as usize]).unwrap();
+        assert!(read_project_text(project.path(), &file).unwrap().is_some());
+    }
 
     fn tmp() -> TempDir {
         tempfile::tempdir().expect("tempdir")

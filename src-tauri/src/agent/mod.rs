@@ -42,6 +42,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::core::Project;
@@ -1020,17 +1021,20 @@ pub(crate) fn render_markdown_command(content: &str) -> String {
 }
 
 pub(crate) fn is_managed_command_file(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
-        return false;
-    };
+    fs::read_to_string(path).is_ok_and(|content| is_managed_command_content(path, &content))
+}
 
-    let Ok(content) = fs::read_to_string(path) else {
+/// [`is_managed_command_file`] for text already read from `path`, so a
+/// caller that read the file through a guarded reader need not read it
+/// again.  `path` supplies only the extension.
+pub(crate) fn is_managed_command_content(path: &Path, content: &str) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
     };
 
     match ext {
         "md" => {
-            let (frontmatter, _) = parse_frontmatter(&content);
+            let (frontmatter, _) = parse_frontmatter(content);
             frontmatter
                 .get("automatic-managed")
                 .map(|value| value == "true")
@@ -1050,17 +1054,19 @@ pub(crate) fn is_managed_command_file(path: &Path) -> bool {
 /// snake_case TOML, camelCase JSON — rather than a single spelling forced
 /// across three different serialisations.
 pub(crate) fn is_managed_agent_file(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
-        return false;
-    };
+    fs::read_to_string(path).is_ok_and(|content| is_managed_agent_content(path, &content))
+}
 
-    let Ok(content) = fs::read_to_string(path) else {
+/// [`is_managed_agent_file`] for text already read from `path`.  `path`
+/// supplies only the extension.
+pub(crate) fn is_managed_agent_content(path: &Path, content: &str) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
     };
 
     match ext {
         "md" => {
-            let (frontmatter, _) = parse_frontmatter(&content);
+            let (frontmatter, _) = parse_frontmatter(content);
             frontmatter
                 .get("automatic-managed")
                 .map(|value| value == "true")
@@ -1069,7 +1075,7 @@ pub(crate) fn is_managed_agent_file(path: &Path) -> bool {
         "toml" => content
             .lines()
             .any(|line| line.trim() == "automatic_managed = true"),
-        "json" => serde_json::from_str::<Value>(&content)
+        "json" => serde_json::from_str::<Value>(content)
             .ok()
             .and_then(|v| v.get("automaticManaged").and_then(|m| m.as_bool()))
             .unwrap_or(false),
@@ -1159,6 +1165,8 @@ pub(crate) fn symlink_commands_from_project(
     let mut expected: HashSet<String> = HashSet::new();
     let settings = crate::core::read_settings().unwrap_or_default();
     let use_symlink = settings.sync_mode == "symlink";
+    // The hub is always `<project>/.agents/commands`.
+    let project_root = project_commands_dir.parent().and_then(Path::parent);
 
     let total_commands = workspace_commands.len() + custom_commands.len();
     if total_commands > 0 && !agent_commands_dir.exists() {
@@ -1176,7 +1184,7 @@ pub(crate) fn symlink_commands_from_project(
         expected.insert(file_name.clone());
         let link_path = agent_commands_dir.join(&file_name);
         let target_path = project_commands_dir.join(format!("{name}.md"));
-        sync_command_link(&link_path, &target_path, use_symlink)?;
+        sync_command_link(&link_path, &target_path, project_root, use_symlink)?;
         written.push(link_path.display().to_string());
     }
 
@@ -1185,13 +1193,29 @@ pub(crate) fn symlink_commands_from_project(
         expected.insert(file_name.clone());
         let link_path = agent_commands_dir.join(&file_name);
         let target_path = project_commands_dir.join(format!("{}.md", command.name));
-        sync_command_link(&link_path, &target_path, use_symlink)?;
+        sync_command_link(&link_path, &target_path, project_root, use_symlink)?;
         written.push(link_path.display().to_string());
     }
 
     cleanup_stale_managed_command_files(agent_commands_dir, &expected, &mut written)?;
 
     Ok(written)
+}
+
+/// `true` when `path` resolves, through every link along it, to a regular
+/// file inside `root` and outside any `.git` directory (a clone's
+/// `.git/config` can carry a token in its remote URL).
+fn is_regular_file_in(root: Option<&Path>, path: &Path) -> bool {
+    let (Some(root), Ok(target)) = (root, fs::canonicalize(path)) else {
+        return false;
+    };
+    let inside = fs::canonicalize(root).is_ok_and(|root| {
+        target.strip_prefix(&root).is_ok_and(|rel| {
+            !rel.components()
+                .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+        })
+    });
+    inside && fs::metadata(&target).is_ok_and(|m| m.is_file())
 }
 
 pub(crate) fn sync_commands_to_dir(
@@ -1246,6 +1270,7 @@ pub(crate) fn sync_commands_to_dir(
 fn sync_command_link(
     link_path: &Path,
     target_path: &Path,
+    project_root: Option<&Path>,
     use_symlink: bool,
 ) -> Result<(), String> {
     if let Ok(meta) = link_path.symlink_metadata() {
@@ -1284,6 +1309,19 @@ fn sync_command_link(
             })?;
         }
     } else {
+        // Automatic writes every hub entry as a regular file inside the
+        // project.  Anything else was placed there by hand or by a cloned
+        // repo (a FIFO, a link at the file or at `.agents/`), and copying it
+        // would block or bring outside content into the project.
+        if target_path.symlink_metadata().is_ok()
+            && !is_regular_file_in(project_root, target_path)
+        {
+            eprintln!(
+                "[automatic] sync: not copying command '{}': it is not a regular file inside the project",
+                target_path.display()
+            );
+            return Ok(());
+        }
         fs::copy(target_path, link_path).map_err(|e| {
             format!(
                 "Failed to copy command '{}' -> '{}': {}",
@@ -1800,6 +1838,36 @@ pub(crate) fn discover_mcp_servers_from_json(
     discover_mcp_servers_from_json_at(path, &[root_key], normalise)
 }
 
+/// Largest MCP config [`read_discovery_file`] reads.  Far above any real
+/// project config, but user-level files such as `~/.claude.json` hold more
+/// than MCP servers and can grow to several megabytes.
+const MAX_DISCOVERY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Read an MCP config for discovery, or `None` when it is absent, not a
+/// regular file, too large, or not UTF-8.  Project discovery runs on a timer
+/// against cloned repos, so a config that is a FIFO or a link to `/dev/zero`
+/// must not block or exhaust memory.  `stat` follows links without opening
+/// the file, so a FIFO is never opened.
+fn read_discovery_file(path: &Path) -> Option<String> {
+    if !fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(MAX_DISCOVERY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_DISCOVERY_BYTES {
+        eprintln!(
+            "[automatic] skipping MCP discovery: {} is larger than {MAX_DISCOVERY_BYTES} bytes",
+            path.display()
+        );
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
 /// Same as [`discover_mcp_servers_from_json`], but walks a nested key path to
 /// the servers map (e.g. `["mcp", "servers"]` for Z Code's CLI config).
 pub(crate) fn discover_mcp_servers_from_json_at(
@@ -1809,9 +1877,8 @@ pub(crate) fn discover_mcp_servers_from_json_at(
 ) -> Map<String, Value> {
     let mut result = Map::new();
 
-    let content = match fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return result,
+    let Some(content) = read_discovery_file(path) else {
+        return result;
     };
 
     let root: Value = match serde_json::from_str::<Value>(&content) {
@@ -2881,6 +2948,91 @@ mod tests {
     use std::collections::HashSet;
     use std::fs;
     use tempfile::tempdir;
+
+    /// Discovery runs on a timer against cloned repos.  A config that is a
+    /// FIFO or a link to `/dev/zero` yields nothing and does not block.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_skips_a_config_that_is_not_a_regular_file() {
+        let dir = tempdir().unwrap();
+        let fifo = dir.path().join("fifo.json");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+        let zero = dir.path().join("zero.json");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let found = [fifo, zero]
+                .iter()
+                .map(|p| discover_mcp_servers_from_json(p, "mcpServers", |v| v).len())
+                .sum::<usize>();
+            let _ = tx.send(found);
+        });
+        let found = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("discovery blocked");
+        assert_eq!(found, 0);
+    }
+
+    /// Copy mode must not follow a hub entry that is a link out of the
+    /// project: the copy is skipped and the outside file is never read.
+    #[cfg(unix)]
+    #[test]
+    fn copy_mode_skips_a_hub_command_that_is_not_a_regular_file() {
+        let project = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret = outside.path().join("secret.md");
+        fs::write(&secret, "OUTSIDE").unwrap();
+        let hub = project.path().join(".agents/commands");
+        let agent_dir = project.path().join(".claude/commands");
+        fs::create_dir_all(&hub).unwrap();
+        fs::create_dir_all(&agent_dir).unwrap();
+        std::os::unix::fs::symlink(&secret, hub.join("x.md")).unwrap();
+
+        let root = Some(project.path());
+        sync_command_link(&agent_dir.join("x.md"), &hub.join("x.md"), root, false)
+            .expect("skip is not an error");
+        assert!(!agent_dir.join("x.md").exists());
+
+        fs::create_dir_all(project.path().join(".git")).unwrap();
+        fs::write(project.path().join(".git/config"), "[remote]").unwrap();
+        std::os::unix::fs::symlink(project.path().join(".git/config"), hub.join("g.md")).unwrap();
+        sync_command_link(&agent_dir.join("g.md"), &hub.join("g.md"), root, false)
+            .expect("skip is not an error");
+        assert!(!agent_dir.join("g.md").exists());
+
+        fs::write(hub.join("y.md"), "inside").unwrap();
+        sync_command_link(&agent_dir.join("y.md"), &hub.join("y.md"), root, false)
+            .expect("copy");
+        assert_eq!(fs::read_to_string(agent_dir.join("y.md")).unwrap(), "inside");
+    }
+
+    /// A linked `.agents` directory is caught too, not only a link at the
+    /// command file itself.
+    #[cfg(unix)]
+    #[test]
+    fn copy_mode_skips_a_hub_reached_through_a_linked_parent() {
+        let project = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::create_dir_all(outside.path().join("commands")).unwrap();
+        fs::write(outside.path().join("commands/x.md"), "OUTSIDE").unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.path().join(".agents")).unwrap();
+        let agent_dir = project.path().join(".claude/commands");
+        fs::create_dir_all(&agent_dir).unwrap();
+
+        sync_command_link(
+            &agent_dir.join("x.md"),
+            &project.path().join(".agents/commands/x.md"),
+            Some(project.path()),
+            false,
+        )
+        .expect("skip is not an error");
+        assert!(!agent_dir.join("x.md").exists());
+    }
 
     #[test]
     fn test_from_id_roundtrips() {

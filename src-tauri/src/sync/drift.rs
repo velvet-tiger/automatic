@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent;
 use crate::core::store_reads::StoreRead;
@@ -10,8 +10,9 @@ use crate::core::{Project, ProjectMode, ProjectSummary};
 
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
-    collect_custom_asset_conflicts, collect_mcp_config_notes, extract_agent_machine_name,
-    load_mcp_server_configs, McpConfigSyncNotes, McpServerNote,
+    collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
+    extract_agent_machine_name, load_mcp_server_configs, read_project_text,
+    McpConfigSyncNotes, McpServerNote, MAX_PROJECT_READ_BYTES,
     CustomAssetConflict, CustomAssetKind,
 };
 
@@ -308,6 +309,12 @@ fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Op
         if !agent_instance.capabilities().mcp_servers {
             continue;
         }
+        // Discovery reads the root files with plain reads, so check them
+        // first: this runs on a timer against a cloned repo.
+        if let Some(reason) = refused_root_mcp_file(agent_instance, dir) {
+            eprintln!("[automatic] problems: skipping root MCP check: {reason}");
+            continue;
+        }
         let mut stale: Vec<String> = agent_instance
             .discover_mcp_servers(dir)
             .keys()
@@ -369,6 +376,19 @@ fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Op
     })
 }
 
+/// Why one of `agent`'s root MCP config files must not be read, or `None`
+/// when every one that exists passes [`read_project_text`].
+fn refused_root_mcp_file(agent: &dyn agent::Agent, dir: &std::path::Path) -> Option<String> {
+    agent
+        .mcp_merge_inputs(dir)
+        .into_iter()
+        .chain(agent.owned_config_paths(dir))
+        // Absent and dangling paths fail discovery's own read harmlessly;
+        // a FIFO or device must reach the check.
+        .filter(|p| fs::metadata(p).is_ok_and(|m| !m.is_dir()))
+        .find_map(|p| read_project_text(dir, &p).err())
+}
+
 /// The first existing root MCP config file for `agent`, relative to `dir`.
 fn root_mcp_file(agent: &dyn agent::Agent, dir: &std::path::Path) -> Option<String> {
     agent
@@ -409,7 +429,7 @@ fn join_words(items: &[String]) -> String {
 // ── Drift types ───────────────────────────────────────────────────────────────
 
 /// A single file that is out of sync, with a human-readable reason.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftedFile {
     /// Relative path from the project directory (e.g. `.mcp.json`).
     pub path: String,
@@ -501,6 +521,25 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         ProjectMode::Silent => dir.join(".automatic").join("silent"),
         ProjectMode::Normal => dir.clone(),
     };
+    if let Some(reason) = escaped_silent_dir(&dir, &effective_dir) {
+        let entry = unreadable_entry(".automatic/silent".to_string(), &reason);
+        return Ok(DriftReport {
+            drifted: true,
+            agents: project
+                .agents
+                .iter()
+                .filter_map(|id| agent::from_id(id).map(|a| (id, a)))
+                .map(|(id, a)| AgentDrift {
+                    agent_id: id.clone(),
+                    agent_label: a.label().to_string(),
+                    files: vec![entry.clone()],
+                })
+                .collect(),
+            instruction_conflicts: vec![],
+            custom_conflicts: vec![],
+            gitignore: collect_gitignore_drift(project, &dir),
+        });
+    }
 
     // Build the MCP server map using the same logic as the sync engine
     // (strips internal `_` fields, substitutes OAuth proxy configs).
@@ -555,17 +594,12 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         .as_deref()
         .unwrap_or(&empty_custom_commands);
 
-    let custom_conflicts = collect_custom_asset_conflicts(project, &effective_dir);
-    let conflicting_agents: HashSet<String> = custom_conflicts
-        .iter()
-        .filter(|c| c.kind == CustomAssetKind::Agent)
-        .map(|c| c.name.clone())
-        .collect();
-    let conflicting_commands: HashSet<String> = custom_conflicts
-        .iter()
-        .filter(|c| c.kind == CustomAssetKind::Command)
-        .map(|c| c.name.clone())
-        .collect();
+    let custom_scan = collect_custom_asset_conflicts(project, &effective_dir);
+    // Unreadable custom assets are reported once, below, so the per-agent
+    // collectors skip them like conflicts.
+    let conflicting_agents = conflicting_names(&custom_scan, CustomAssetKind::Agent);
+    let conflicting_commands = conflicting_names(&custom_scan, CustomAssetKind::Command);
+    let custom_conflicts = custom_scan.conflicts;
 
     // Group attached hooks by target agent, mirroring
     // `sync::engine::sync_project_hooks_step`. A hook that fails to read from
@@ -582,6 +616,48 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         }
     }
     let no_hooks: Vec<crate::core::Hook> = Vec::new();
+
+    // Files no single collector owns but which an agent reads: refused
+    // custom-asset and instruction files.  Each is listed under every agent
+    // it affects, the way a drifted `.agents/skills/` hub skill already is.
+    let mut instruction_unreadable: Vec<DriftedFile> = Vec::new();
+    let mut instruction_conflicts =
+        collect_instruction_file_conflicts(project, &effective_dir, &mut instruction_unreadable);
+    let mut agent_unreadable: Vec<(String, DriftedFile)> = Vec::new();
+    instruction_conflicts.extend(collect_shadowing_legacy_instruction_conflicts(
+        project,
+        &effective_dir,
+        &mut agent_unreadable,
+    ));
+    for asset in custom_scan.unreadable {
+        let entry = unreadable_entry(asset.path, &asset.reason);
+        match asset.agent_id {
+            Some(agent_id) => agent_unreadable.push((agent_id, entry)),
+            None => agent_unreadable.extend(
+                project
+                    .agents
+                    .iter()
+                    .filter(|id| {
+                        agent::from_id(id)
+                            .is_some_and(|a| uses_shared_asset(a, &asset.kind, &effective_dir))
+                    })
+                    .map(|id| (id.clone(), entry.clone())),
+            ),
+        }
+    }
+    for entry in instruction_unreadable {
+        agent_unreadable.extend(
+            project
+                .agents
+                .iter()
+                .filter(|id| {
+                    agent::from_id(id).is_some_and(|a| {
+                        a.capabilities().instructions && a.project_file_name() == entry.path
+                    })
+                })
+                .map(|id| (id.clone(), entry.clone())),
+        );
+    }
 
     let mut agent_drifts: Vec<AgentDrift> = Vec::new();
 
@@ -629,6 +705,16 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 hooks_by_agent.get(agent_id).unwrap_or(&no_hooks),
                 &mut files,
             );
+            files.extend(
+                agent_unreadable
+                    .iter()
+                    .filter(|(id, _)| id == agent_id)
+                    .map(|(_, entry)| entry.clone()),
+            );
+            // One file can feed two collectors (Gemini's settings.json holds
+            // both MCP servers and hooks), so a refused file is listed once.
+            let mut seen: HashSet<(String, String)> = HashSet::new();
+            files.retain(|f| seen.insert((f.path.clone(), f.reason.clone())));
 
             if !files.is_empty() {
                 agent_drifts.push(AgentDrift {
@@ -639,12 +725,6 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             }
         }
     }
-
-    let mut instruction_conflicts = collect_instruction_file_conflicts(project, &effective_dir);
-    instruction_conflicts.extend(collect_shadowing_legacy_instruction_conflicts(
-        project,
-        &effective_dir,
-    ));
 
     // The block lives at the project root even in Silent mode.
     let gitignore = collect_gitignore_drift(project, &dir);
@@ -675,15 +755,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
 fn collect_gitignore_drift(project: &Project, dir: &std::path::Path) -> Option<DriftedFile> {
     use crate::core::gitignore::{project_patterns, read_managed_block, render_block, BlockOnDisk};
 
-    let unreadable = |why: &str| {
-        eprintln!("[automatic] drift: {why}");
-        Some(DriftedFile {
-            path: ".gitignore".to_string(),
-            reason: "unreadable".to_string(),
-            expected: None,
-            actual: None,
-        })
-    };
+    let unreadable = |why: &str| Some(unreadable_entry(".gitignore".to_string(), why));
     let actual = match read_managed_block(dir) {
         Ok(BlockOnDisk::Absent) => None,
         Ok(BlockOnDisk::Present(block)) => Some(block),
@@ -708,6 +780,51 @@ fn collect_gitignore_drift(project: &Project, dir: &std::path::Path) -> Option<D
     })
 }
 
+/// Why the Silent-mode directory must not be used, or `None` when it is
+/// absent or resolves inside the project.  It is committed with the repo, so
+/// a `.automatic/silent` symlink could otherwise move the whole check (and
+/// the containment root of every read) outside the project.
+fn escaped_silent_dir(dir: &Path, effective_dir: &Path) -> Option<String> {
+    if effective_dir == dir || fs::symlink_metadata(effective_dir).is_err() {
+        return None;
+    }
+    let inside = match (fs::canonicalize(effective_dir), fs::canonicalize(dir)) {
+        (Ok(silent), Ok(root)) => silent.starts_with(&root),
+        _ => false,
+    };
+    (!inside).then(|| {
+        format!(
+            "{} resolves to somewhere outside the project",
+            effective_dir.display()
+        )
+    })
+}
+
+/// Whether `agent` reads a custom asset of `kind` kept in a location every
+/// agent shares (`.agents/skills/`, `.agents/commands/`,
+/// `.automatic/instructions/`).
+fn uses_shared_asset(agent: &dyn agent::Agent, kind: &CustomAssetKind, dir: &Path) -> bool {
+    let caps = agent.capabilities();
+    match kind {
+        CustomAssetKind::Skill => caps.skills,
+        CustomAssetKind::Command => agent.commands_dir(dir).is_some(),
+        CustomAssetKind::Rule => caps.instructions,
+        CustomAssetKind::Agent => caps.agents,
+    }
+}
+
+/// An "unreadable" drift entry for `path`, logging why so the reason is not
+/// lost (the UI shows only the path and the reason word).
+fn unreadable_entry(path: String, why: &str) -> DriftedFile {
+    eprintln!("[automatic] drift: {why}");
+    DriftedFile {
+        path,
+        reason: "unreadable".to_string(),
+        expected: None,
+        actual: None,
+    }
+}
+
 /// Public wrapper for use by the `commands` layer (backs the
 /// `get_instruction_file_conflicts` Tauri command, a standalone check
 /// independent of the full drift report).
@@ -720,10 +837,17 @@ pub fn collect_instruction_conflicts_pub(
         ProjectMode::Silent => dir.join(".automatic").join("silent"),
         ProjectMode::Normal => dir.clone(),
     };
-    let mut conflicts = collect_instruction_file_conflicts(project, &effective_dir);
+    if let Some(reason) = escaped_silent_dir(dir, &effective_dir) {
+        eprintln!("[automatic] drift: {reason}");
+        return Vec::new();
+    }
+    // Unreadable files are logged and reported by the full drift check; this
+    // standalone check returns conflicts only.
+    let mut conflicts = collect_instruction_file_conflicts(project, &effective_dir, &mut Vec::new());
     conflicts.extend(collect_shadowing_legacy_instruction_conflicts(
         project,
         &effective_dir,
+        &mut Vec::new(),
     ));
     conflicts
 }
@@ -741,9 +865,13 @@ pub fn collect_instruction_conflicts_pub(
 /// In unified mode, additionally checks whether the instruction files are
 /// inconsistent with each other (different user content), even if no
 /// individual hash is stored yet.
+///
+/// A file [`read_project_text`] refuses is pushed to `unreadable`, keyed by
+/// its filename in `path`, rather than compared.
 fn collect_instruction_file_conflicts(
     project: &Project,
     dir: &PathBuf,
+    unreadable: &mut Vec<DriftedFile>,
 ) -> Vec<InstructionFileConflict> {
     let mut conflicts: Vec<InstructionFileConflict> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -772,16 +900,16 @@ fn collect_instruction_file_conflicts(
             continue;
         }
 
-        let raw_disk = match fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let raw_disk = match read_project_text(dir, &file_path) {
+            Ok(Some(c)) => c,
+            Ok(None) => continue,
+            Err(reason) => {
+                unreadable.push(unreadable_entry(filename, &reason));
+                continue;
+            }
         };
 
-        let disk_user_content = crate::core::strip_index_section(
-            &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
-                &crate::core::strip_managed_section_pub(&raw_disk),
-            )),
-        );
+        let disk_user_content = user_instruction_content(&raw_disk);
 
         // Skip files with no user content.
         if disk_user_content.trim().is_empty() {
@@ -837,13 +965,9 @@ fn collect_instruction_file_conflicts(
             if !file_path.exists() {
                 continue;
             }
-            if let Ok(raw) = fs::read_to_string(&file_path) {
-                let user_content = crate::core::strip_index_section(
-                    &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
-                        &crate::core::strip_managed_section_pub(&raw),
-                    )),
-                );
-                all_contents.push((filename, user_content));
+            // A refused file was already reported by the first pass.
+            if let Ok(Some(raw)) = read_project_text(dir, &file_path) {
+                all_contents.push((filename, user_instruction_content(&raw)));
             }
         }
 
@@ -912,9 +1036,13 @@ fn collect_instruction_file_conflicts(
 /// so it reaches the UI on the very next drift check — including on every
 /// check after that, for as long as the legacy file remains, which is
 /// exactly the "still shadowing" signal this function looks for.
+///
+/// A legacy file [`read_project_text`] refuses is pushed to `unreadable`
+/// under its agent's id.
 fn collect_shadowing_legacy_instruction_conflicts(
     project: &Project,
     dir: &PathBuf,
+    unreadable: &mut Vec<(String, DriftedFile)>,
 ) -> Vec<InstructionFileConflict> {
     let mut conflicts = Vec::new();
 
@@ -926,21 +1054,32 @@ fn collect_shadowing_legacy_instruction_conflicts(
             continue;
         }
 
+        // Not a file the vendor's tool can read (absent, dangling, a FIFO),
+        // so it shadows nothing.
         let legacy_path = dir.join(spec.legacy);
         if !legacy_path.is_file() {
             continue;
         }
-
-        let Some(dir_str) = dir.to_str() else {
-            continue;
+        let legacy_content = match read_project_text(dir, &legacy_path) {
+            Ok(Some(raw)) => user_instruction_content(&raw),
+            Ok(None) => continue,
+            Err(reason) => {
+                unreadable.push((
+                    spec.agent_id.to_string(),
+                    unreadable_entry(spec.legacy.to_string(), &reason),
+                ));
+                continue;
+            }
         };
-        let legacy_content =
-            crate::core::read_project_file(dir_str, spec.legacy).unwrap_or_default();
         if legacy_content.trim().is_empty() {
             continue;
         }
-        let current_content =
-            crate::core::read_project_file(dir_str, spec.current).unwrap_or_default();
+        // A refused current file is reported by the instruction-file check,
+        // which covers this agent's `spec.current`.
+        let current_content = match read_project_text(dir, &dir.join(spec.current)) {
+            Ok(raw) => raw.map(|raw| user_instruction_content(&raw)).unwrap_or_default(),
+            Err(_) => continue,
+        };
         if legacy_content.trim() == current_content.trim() {
             // Nothing actually diverges — the legacy file just hasn't been
             // deleted yet (e.g. its removal failed and was logged), not a
@@ -967,6 +1106,14 @@ fn collect_shadowing_legacy_instruction_conflicts(
     }
 
     conflicts
+}
+
+/// The user-authored part of an instruction file: `raw` with every
+/// Automatic-managed section stripped, as `core::read_project_file` returns.
+fn user_instruction_content(raw: &str) -> String {
+    crate::core::strip_index_section(&crate::core::strip_groups_section(
+        &crate::core::strip_rules_section_pub(&crate::core::strip_managed_section_pub(raw)),
+    ))
 }
 
 /// `AUTOMATIC_PROJECT` values other than the project `id` that `mcp-serve`
@@ -1042,13 +1189,22 @@ fn collect_mcp_drift(
         if !input.is_file() {
             continue;
         }
+        let content = match read_project_text(dir, &input) {
+            Ok(Some(content)) => content,
+            Ok(None) => continue,
+            // Without the real file there is no expectation to compare.
+            Err(reason) => {
+                out.push(unreadable_entry(relative.display().to_string(), &reason));
+                return;
+            }
+        };
         let seeded = tmp.path().join(relative);
         if let Some(parent) = seeded.parent() {
             if fs::create_dir_all(parent).is_err() {
                 return;
             }
         }
-        if fs::copy(&input, &seeded).is_err() {
+        if fs::write(&seeded, content).is_err() {
             return;
         }
     }
@@ -1091,15 +1247,19 @@ fn collect_mcp_drift(
             Ok(c) => c,
             Err(_) => continue,
         };
-        let actual = match fs::read_to_string(&disk_path) {
-            Ok(c) => c,
-            Err(_) => {
+        let actual = match read_project_text(dir, &disk_path) {
+            Ok(Some(c)) => c,
+            Ok(None) => {
                 out.push(DriftedFile {
                     path: filename,
-                    reason: "unreadable".into(),
+                    reason: "missing".into(),
                     expected: None,
                     actual: None,
                 });
+                continue;
+            }
+            Err(reason) => {
+                out.push(unreadable_entry(filename, &reason));
                 continue;
             }
         };
@@ -1187,15 +1347,19 @@ fn collect_skills_drift(
                         Ok(c) => c,
                         Err(_) => continue,
                     };
-                    let actual = match fs::read_to_string(&disk_file) {
-                        Ok(c) => c,
-                        Err(_) => {
+                    let actual = match read_project_text(dir, &disk_file) {
+                        Ok(Some(c)) => c,
+                        Ok(None) => {
                             out.push(DriftedFile {
                                 path: rel_path,
-                                reason: "unreadable".into(),
+                                reason: "missing".into(),
                                 expected: None,
                                 actual: None,
                             });
+                            continue;
+                        }
+                        Err(reason) => {
+                            out.push(unreadable_entry(rel_path, &reason));
                             continue;
                         }
                     };
@@ -1230,7 +1394,7 @@ fn collect_skills_drift(
                             // Read the on-disk SKILL.md so the UI can preview
                             // what the user is adopting or removing.
                             let skill_md = disk_path.join("SKILL.md");
-                            let actual = fs::read_to_string(&skill_md).ok();
+                            let actual = preview_text(dir, &skill_md);
 
                             out.push(DriftedFile {
                                 path: format!("{}/{}", relative.display(), name),
@@ -1344,8 +1508,16 @@ fn collect_commands_drift(
                 continue;
             }
 
-            match fs::read_to_string(&disk_path) {
-                Ok(actual) => {
+            match read_project_text(dir, &disk_path) {
+                Ok(None) => {
+                    out.push(DriftedFile {
+                        path: rel_path,
+                        reason: "missing".into(),
+                        expected: Some(expected),
+                        actual: None,
+                    });
+                }
+                Ok(Some(actual)) => {
                     if actual != expected {
                         // Conflicting custom commands surface via custom_conflicts.
                         let stem = file_name
@@ -1364,12 +1536,10 @@ fn collect_commands_drift(
                         });
                     }
                 }
-                Err(_) => {
+                Err(reason) => {
                     out.push(DriftedFile {
-                        path: rel_path,
-                        reason: "unreadable".into(),
                         expected: Some(expected),
-                        actual: None,
+                        ..unreadable_entry(rel_path, &reason)
                     });
                 }
             }
@@ -1385,13 +1555,16 @@ fn collect_commands_drift(
                     Some(n) => n.to_string(),
                     None => continue,
                 };
-                if expected_names.contains(&file_name) {
+                if expected_names.contains(&file_name) || disk_path.is_dir() {
                     continue;
                 }
-                if !agent::is_managed_command_file(&disk_path) {
+                let Some(actual) = stale_candidate_text(dir, &disk_path) else {
+                    continue;
+                };
+                if !agent::is_managed_command_content(&disk_path, &actual) {
                     continue;
                 }
-                let actual = fs::read_to_string(&disk_path).ok();
+                let actual = Some(actual);
                 out.push(DriftedFile {
                     path: format!("{}/{}", relative.display(), file_name),
                     reason: "stale".into(),
@@ -1465,16 +1638,8 @@ fn collect_agents_drift(
                 expected: Some(converted_content),
                 actual: None,
             });
-        } else if let Ok(disk_content) = fs::read_to_string(&agent_path) {
-            if disk_content != converted_content {
-                let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
-                out.push(DriftedFile {
-                    path: relative.display().to_string(),
-                    reason: "modified".into(),
-                    expected: Some(converted_content),
-                    actual: Some(disk_content),
-                });
-            }
+        } else {
+            push_agent_file_drift(dir, &agent_path, converted_content, out);
         }
     }
 
@@ -1496,16 +1661,8 @@ fn collect_agents_drift(
                         expected: Some(converted_content),
                         actual: None,
                     });
-                } else if let Ok(disk_content) = fs::read_to_string(&agent_path) {
-                    if disk_content != converted_content {
-                        let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
-                        out.push(DriftedFile {
-                            path: relative.display().to_string(),
-                            reason: "modified".into(),
-                            expected: Some(converted_content),
-                            actual: Some(disk_content),
-                        });
-                    }
+                } else {
+                    push_agent_file_drift(dir, &agent_path, converted_content, out);
                 }
             }
         }
@@ -1526,11 +1683,17 @@ fn collect_agents_drift(
                 let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                if expected_file_names.contains(file_name) || !agent::is_managed_agent_file(&path) {
+                if expected_file_names.contains(file_name) {
+                    continue;
+                }
+                let Some(actual) = stale_candidate_text(dir, &path) else {
+                    continue;
+                };
+                if !agent::is_managed_agent_content(&path, &actual) {
                     continue;
                 }
                 let relative = path.strip_prefix(dir).unwrap_or(&path);
-                let actual = fs::read_to_string(&path).ok();
+                let actual = Some(actual);
                 out.push(DriftedFile {
                     path: relative.display().to_string(),
                     reason: "stale".into(),
@@ -1540,6 +1703,56 @@ fn collect_agents_drift(
             }
         }
     }
+}
+
+/// Compare one expected agent file on disk with `expected`, pushing a
+/// "modified" or "unreadable" entry.  The caller has checked it exists.
+fn push_agent_file_drift(dir: &Path, agent_path: &Path, expected: String, out: &mut Vec<DriftedFile>) {
+    let relative = agent_path.strip_prefix(dir).unwrap_or(agent_path).display().to_string();
+    match read_project_text(dir, agent_path) {
+        Ok(Some(disk_content)) if disk_content != expected => out.push(DriftedFile {
+            path: relative,
+            reason: "modified".into(),
+            expected: Some(expected),
+            actual: Some(disk_content),
+        }),
+        // Deleted since the caller's existence check.
+        Ok(_) => {}
+        Err(reason) => out.push(unreadable_entry(relative, &reason)),
+    }
+}
+
+/// The text of a file that may be a stale managed file, or `None` when it
+/// cannot be one.  Automatic only ever writes regular files (or links inside
+/// the project), so a file [`read_project_text`] refuses is not Automatic's
+/// and is left out of the stale scan rather than reported as an entry the
+/// user could never clear by syncing.
+///
+/// A small regular file refused only for its location is a user's own link
+/// (`foo.md -> ~/dotfiles/foo.md` is common), so it is skipped quietly
+/// instead of logging on every drift tick.  Other refusals are logged.
+fn stale_candidate_text(dir: &Path, path: &Path) -> Option<String> {
+    match read_project_text(dir, path) {
+        Ok(text) => text,
+        Err(reason) => {
+            let users_own_link = fs::metadata(path)
+                .is_ok_and(|m| m.is_file() && m.len() <= MAX_PROJECT_READ_BYTES);
+            if !users_own_link {
+                eprintln!("[automatic] drift: skipping stale check: {reason}");
+            }
+            None
+        }
+    }
+}
+
+/// The text of a stale entry's file, for the UI preview.  The entry is
+/// reported either way, so a refused file only loses its preview; the
+/// reason is logged.
+fn preview_text(dir: &Path, path: &Path) -> Option<String> {
+    read_project_text(dir, path).unwrap_or_else(|reason| {
+        eprintln!("[automatic] drift: no preview: {reason}");
+        None
+    })
 }
 
 /// Collect hook drift entries for one agent into `out`. Two flavours, driven
@@ -1595,7 +1808,7 @@ fn collect_owned_hooks_drift(
 
     if hooks_for_agent.is_empty() {
         if expected_path.exists() {
-            let actual = fs::read_to_string(expected_path).ok();
+            let actual = preview_text(dir, expected_path);
             out.push(DriftedFile {
                 path: filename,
                 reason: "stale".into(),
@@ -1634,15 +1847,19 @@ fn collect_owned_hooks_drift(
     let Ok(expected) = fs::read_to_string(&tmp_path) else {
         return;
     };
-    let actual = match fs::read_to_string(expected_path) {
-        Ok(c) => c,
-        Err(_) => {
+    let actual = match read_project_text(dir, expected_path) {
+        Ok(Some(c)) => c,
+        Ok(None) => {
             out.push(DriftedFile {
                 path: filename,
-                reason: "unreadable".into(),
+                reason: "missing".into(),
                 expected: None,
                 actual: None,
             });
+            return;
+        }
+        Err(reason) => {
+            out.push(unreadable_entry(filename, &reason));
             return;
         }
     };
@@ -1687,8 +1904,19 @@ fn collect_merged_hooks_drift(
     };
     let tmp_path = tmp.path().join(relative);
 
-    let expected_subset = read_managed_hook_subset(&tmp_path, settings_key);
-    let actual_subset = read_managed_hook_subset(settings_path, settings_key);
+    let actual_raw = match read_project_text(dir, settings_path) {
+        Ok(raw) => raw,
+        Err(reason) => {
+            out.push(unreadable_entry(filename, &reason));
+            return;
+        }
+    };
+    let expected_subset = fs::read_to_string(&tmp_path)
+        .map(|raw| managed_hook_subset(&raw, settings_key))
+        .unwrap_or_default();
+    let actual_subset = actual_raw
+        .map(|raw| managed_hook_subset(&raw, settings_key))
+        .unwrap_or_default();
 
     if expected_subset != actual_subset {
         out.push(DriftedFile {
@@ -1700,16 +1928,13 @@ fn collect_merged_hooks_drift(
     }
 }
 
-/// Read `path`, extract the tagged-managed handlers under `key`, and return
-/// them as a normalised map. Absent or unparseable files yield an empty map
-/// — drift detection is read-only and best-effort, matching every other
+/// Extract the tagged-managed handlers under `key` from the settings JSON in
+/// `raw`, as a normalised map. Unparseable settings yield an empty map —
+/// drift detection is read-only and best-effort, matching every other
 /// collector in this file, and an unparseable settings file is the merge
 /// writer's problem to surface as a sync error, not this one's.
-fn read_managed_hook_subset(path: &PathBuf, key: &str) -> Map<String, Value> {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Map::new();
-    };
-    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&raw) else {
+fn managed_hook_subset(raw: &str, key: &str) -> Map<String, Value> {
+    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(raw) else {
         return Map::new();
     };
     let Some(Value::Object(hooks_obj)) = root.get(key).cloned() else {
@@ -2490,7 +2715,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let conflicts = collect_custom_skill_conflicts(&project, project_dir.path());
+            let conflicts = collect_custom_skill_conflicts(&project, project_dir.path()).conflicts;
             assert_eq!(conflicts.len(), 1);
             assert_eq!(conflicts[0].name, "local-rule");
             assert_eq!(conflicts[0].disk_content, disk_content);
@@ -2559,11 +2784,11 @@ mod tests {
                 ..Default::default()
             };
 
-            let cmd_conflicts = collect_custom_command_conflicts(&project, project_dir.path());
+            let cmd_conflicts = collect_custom_command_conflicts(&project, project_dir.path()).conflicts;
             assert_eq!(cmd_conflicts.len(), 1);
             assert_eq!(cmd_conflicts[0].kind, CustomAssetKind::Command);
 
-            let rule_conflicts = collect_custom_rule_conflicts(&project, project_dir.path());
+            let rule_conflicts = collect_custom_rule_conflicts(&project, project_dir.path()).conflicts;
             assert_eq!(rule_conflicts.len(), 1);
             assert_eq!(rule_conflicts[0].kind, CustomAssetKind::Rule);
             assert_eq!(rule_conflicts[0].disk_content, "# Disk rule");
@@ -3533,5 +3758,360 @@ mod tests {
             vec![project.local_key.clone(), "site".to_string()],
             "another checkout of the same project does not make the name ambiguous"
         );
+    }
+
+    // ── Refused project files ───────────────────────────────────────────────
+
+    /// Run `f` on another thread and fail, rather than hang, if it blocks.
+    #[cfg(unix)]
+    fn within_seconds<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("drift check blocked")
+    }
+
+    fn reasons(files: &[DriftedFile]) -> Vec<(String, String)> {
+        files
+            .iter()
+            .map(|f| (f.path.clone(), f.reason.clone()))
+            .collect()
+    }
+
+    fn automatic_servers() -> Map<String, Value> {
+        let mut servers = Map::new();
+        servers.insert(
+            "automatic".to_string(),
+            serde_json::json!({ "command": "/usr/local/bin/automatic", "args": ["mcp-serve"] }),
+        );
+        servers
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_config_symlinked_out_of_the_project_is_unreadable() {
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let servers = automatic_servers();
+        ClaudeCode
+            .write_mcp_config(outside.path(), &servers)
+            .expect("write outside config");
+        std::os::unix::fs::symlink(
+            outside.path().join(".mcp.json"),
+            project_dir.path().join(".mcp.json"),
+        )
+        .unwrap();
+
+        let mut files = Vec::new();
+        collect_mcp_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+        assert_eq!(
+            reasons(&files),
+            vec![(".mcp.json".to_string(), "unreadable".to_string())]
+        );
+        assert!(files[0].actual.is_none(), "outside content must not be shown");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_config_fifo_is_unreadable_and_does_not_block() {
+        let project_dir = tempdir().unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(project_dir.path().join(".mcp.json"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let dir = project_dir.path().to_path_buf();
+        let files = within_seconds(move || {
+            let mut files = Vec::new();
+            collect_mcp_drift(&ClaudeCode, &dir, &automatic_servers(), &mut files);
+            files
+        });
+        assert_eq!(
+            reasons(&files),
+            vec![(".mcp.json".to_string(), "unreadable".to_string())]
+        );
+    }
+
+    #[test]
+    fn oversized_skill_file_is_unreadable() {
+        let project_dir = tempdir().unwrap();
+        let dir = project_dir.path().to_path_buf();
+        let skill_dir = dir.join(".claude").join("skills").join("big");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            vec![b'a'; crate::sync::helpers::MAX_PROJECT_READ_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        let skill_contents = vec![("big".to_string(), "# Big\n".to_string())];
+        let selected = vec!["big".to_string()];
+        let mut files = Vec::new();
+        collect_skills_drift(&ClaudeCode, &dir, &skill_contents, &selected, &[], &mut files);
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.path.ends_with("big/SKILL.md") && f.reason == "unreadable"),
+            "got {:?}",
+            reasons(&files)
+        );
+    }
+
+    /// A custom asset linked out of the project is reported under the agent
+    /// and is not written through by a sync.
+    #[cfg(unix)]
+    #[test]
+    fn custom_command_symlinked_out_of_the_project_is_unreadable_and_kept() {
+        use crate::core::{with_test_home, CustomCommand, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("my-cmd.md");
+        fs::write(&target, "outside\n").unwrap();
+        let hub = project_dir.path().join(".agents").join("commands");
+        fs::create_dir_all(&hub).unwrap();
+        std::os::unix::fs::symlink(&target, hub.join("my-cmd.md")).unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = Project {
+                name: "custom-symlink".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                custom_commands: Some(vec![CustomCommand {
+                    name: "my-cmd".to_string(),
+                    content: "# Stored command\n".to_string(),
+                }]),
+                ..Default::default()
+            };
+
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.custom_conflicts.is_empty());
+            let claude = report
+                .agents
+                .iter()
+                .find(|a| a.agent_id == "claude")
+                .expect("claude drift");
+            assert!(
+                claude
+                    .files
+                    .iter()
+                    .any(|f| f.path == ".agents/commands/my-cmd.md" && f.reason == "unreadable"),
+                "got {:?}",
+                reasons(&claude.files)
+            );
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+            assert_eq!(fs::read_to_string(&target).unwrap(), "outside\n");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instruction_file_fifo_is_unreadable_and_does_not_block() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(project_dir.path().join("CLAUDE.md"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let home_path = home.path().to_path_buf();
+        let directory = project_dir.path().display().to_string();
+        let report = within_seconds(move || {
+            with_test_home(home_path, || {
+                let project = Project {
+                    name: "instruction-fifo".to_string(),
+                    directory,
+                    agents: vec!["claude".to_string()],
+                    ..Default::default()
+                };
+                check_project_drift(&project).expect("drift")
+            })
+        });
+        let claude = report
+            .agents
+            .iter()
+            .find(|a| a.agent_id == "claude")
+            .expect("claude drift");
+        assert!(
+            claude
+                .files
+                .iter()
+                .any(|f| f.path == "CLAUDE.md" && f.reason == "unreadable"),
+            "got {:?}",
+            reasons(&claude.files)
+        );
+    }
+
+    /// A `.automatic/silent` link out of the project must not move the
+    /// check, and the containment root of every read, outside it.
+    #[cfg(unix)]
+    #[test]
+    fn silent_dir_linked_out_of_the_project_is_unreadable() {
+        use crate::core::{with_test_home, Project, ProjectMode};
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(outside.path().join("CLAUDE.md"), "outside\n").unwrap();
+        fs::create_dir_all(project_dir.path().join(".automatic")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project_dir.path().join(".automatic/silent"))
+            .unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "silent-escape".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                mode: ProjectMode::Silent,
+                ..Default::default()
+            };
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.drifted);
+            assert_eq!(report.agents.len(), 1);
+            assert_eq!(
+                reasons(&report.agents[0].files),
+                vec![(".automatic/silent".to_string(), "unreadable".to_string())]
+            );
+            assert!(report.instruction_conflicts.is_empty());
+        });
+    }
+
+    /// A FIFO in a commands directory cannot be a stale managed file.  It is
+    /// skipped, not reported, and does not block the scan.
+    #[cfg(unix)]
+    #[test]
+    fn stale_scan_skips_a_refused_candidate() {
+        let project_dir = tempdir().unwrap();
+        let dir = project_dir.path().to_path_buf();
+        let commands = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
+        fs::create_dir_all(&commands).unwrap();
+        let status = std::process::Command::new("mkfifo")
+            .arg(commands.join("pipe.md"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        let files = within_seconds(move || {
+            let mut files = Vec::new();
+            collect_commands_drift(&ClaudeCode, &dir, &[], &[], &HashSet::new(), &mut files);
+            files
+        });
+        assert!(files.is_empty(), "got {:?}", reasons(&files));
+    }
+
+    /// A custom agent file linked out of the project is listed exactly once,
+    /// and its outside content is never shown.
+    #[cfg(unix)]
+    #[test]
+    fn custom_agent_linked_out_of_the_project_is_listed_once() {
+        use crate::core::{with_test_home, CustomAgent, Project};
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("helper.md");
+        fs::write(&target, "outside\n").unwrap();
+        let agents_dir = ClaudeCode
+            .agents_dir(project_dir.path())
+            .expect("claude agents dir");
+        fs::create_dir_all(&agents_dir).unwrap();
+        std::os::unix::fs::symlink(&target, agents_dir.join("helper.md")).unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "agent-symlink".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                custom_agents: Some(vec![CustomAgent {
+                    name: "helper".to_string(),
+                    content: "---\nname: helper\n---\nStored.\n".to_string(),
+                }]),
+                ..Default::default()
+            };
+            let report = check_project_drift(&project).expect("drift");
+            let claude = report
+                .agents
+                .iter()
+                .find(|a| a.agent_id == "claude")
+                .expect("claude drift");
+            let entries: Vec<_> = claude
+                .files
+                .iter()
+                .filter(|f| f.path.ends_with("helper.md"))
+                .collect();
+            assert_eq!(entries.len(), 1, "got {:?}", reasons(&claude.files));
+            assert_eq!(entries[0].reason, "unreadable");
+            assert!(entries[0].actual.is_none());
+        });
+    }
+
+    /// A custom rule whose file is linked out of the project falls back to
+    /// the stored rule.  Sync must not copy the outside text into the
+    /// instruction file.
+    #[cfg(unix)]
+    #[test]
+    fn custom_rule_linked_out_of_the_project_is_not_copied_by_sync() {
+        use crate::core::{with_test_home, CustomRule, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("secret.md");
+        fs::write(&target, "OUTSIDE-SECRET\n").unwrap();
+        let instructions = project_dir.path().join(".automatic").join("instructions");
+        fs::create_dir_all(&instructions).unwrap();
+        std::os::unix::fs::symlink(&target, instructions.join("custom-my-rule.md")).unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = Project {
+                name: "rule-symlink".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                custom_rules: vec![CustomRule {
+                    name: "My Rule".to_string(),
+                    content: "# Stored rule".to_string(),
+                }],
+                ..Default::default()
+            };
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.custom_conflicts.is_empty());
+            assert!(report.agents.iter().any(|a| a
+                .files
+                .iter()
+                .any(|f| f.path == ".automatic/instructions/custom-my-rule.md"
+                    && f.reason == "unreadable")));
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+            for name in ["CLAUDE.md", "AGENTS.md"] {
+                let path = project_dir.path().join(name);
+                if let Ok(text) = fs::read_to_string(&path) {
+                    assert!(!text.contains("OUTSIDE-SECRET"), "{name} holds outside text");
+                }
+            }
+            let claude_rules = project_dir.path().join(".claude").join("rules");
+            if let Ok(entries) = fs::read_dir(&claude_rules) {
+                for entry in entries.flatten() {
+                    let text = fs::read_to_string(entry.path()).unwrap_or_default();
+                    assert!(!text.contains("OUTSIDE-SECRET"), "{:?}", entry.path());
+                }
+            }
+            assert_eq!(fs::read_to_string(&target).unwrap(), "OUTSIDE-SECRET\n");
+        });
     }
 }
