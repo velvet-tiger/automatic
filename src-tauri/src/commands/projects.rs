@@ -1131,6 +1131,39 @@ fn strip_instructions_header(content: &str) -> String {
         .to_string()
 }
 
+/// Read a custom agent's file from the first configured agent directory that
+/// has one.  The path comes from [`crate::agent::Agent::agent_file_name`],
+/// the name sync writes, so a compound name such as Copilot's
+/// `{name}.agent.md` is found.
+fn read_custom_agent_from_disk(
+    project: &core::Project,
+    effective: &std::path::Path,
+    project_dir: &std::path::Path,
+    asset_name: &str,
+) -> Result<String, String> {
+    let custom = project.custom_agents.as_deref().unwrap_or(&[]);
+    if let Some(ca) = custom.iter().find(|a| a.name == asset_name) {
+        let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
+            .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+        for agent_id in &project.agents {
+            let Some(agent_instance) = crate::agent::from_id(agent_id) else {
+                continue;
+            };
+            let Some(agents_dir) = agent_instance.agents_dir(effective) else {
+                continue;
+            };
+            let path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
+            if let Ok(Some(content)) = sync::read_project_text(project_dir, &path) {
+                return Ok(content);
+            }
+        }
+    }
+    Err(format!(
+        "On-disk agent '{}' was not found in any agent directory",
+        asset_name
+    ))
+}
+
 /// Adopt on-disk custom asset content into the project's stored snapshot.
 ///
 /// `kind` is one of `"skill"`, `"rule"`, `"agent"`, `"command"`.
@@ -1187,34 +1220,8 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
             entry.content = disk_body;
         }
         "agent" => {
-            // Prefer the first matching on-disk file under any agent dir.
-            let mut found: Option<String> = None;
-            if let Some(agents) = project.custom_agents.as_ref() {
-                if let Some(ca) = agents.iter().find(|a| a.name == asset_name) {
-                    let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
-                        .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
-                    for agent_id in &project.agents {
-                        let Some(agent_instance) = crate::agent::from_id(agent_id) else {
-                            continue;
-                        };
-                        let Some(agents_dir) = agent_instance.agents_dir(&effective) else {
-                            continue;
-                        };
-                        let ext = agent_instance.agents_file_ext();
-                        let path = agents_dir.join(format!("{}.{}", machine_name, ext));
-                        if let Ok(Some(content)) = sync::read_project_text(&project_dir, &path) {
-                            found = Some(content);
-                            break;
-                        }
-                    }
-                }
-            }
-            let disk_content = found.ok_or_else(|| {
-                format!(
-                    "On-disk agent '{}' was not found in any agent directory",
-                    asset_name
-                )
-            })?;
+            let disk_content =
+                read_custom_agent_from_disk(&project, &effective, &project_dir, asset_name)?;
             let custom = project.custom_agents.get_or_insert_with(Vec::new);
             let Some(entry) = custom.iter_mut().find(|a| a.name == asset_name) else {
                 return Err(format!(
@@ -3491,6 +3498,39 @@ mod read_only_tests {
             set_project_read_only("rw", false).expect("off");
             sync_project("rw").expect("sync after turning read only off");
             assert!(dir.join("CLAUDE.md").exists() || dir.join(".claude").exists());
+        });
+    }
+}
+
+#[cfg(test)]
+mod adopt_custom_asset_tests {
+    use super::propagation_tests::{make_project, with_temp_home};
+    use super::*;
+
+    /// Copilot names sub-agent files `{name}.agent.md`.  Adopting must read
+    /// that file, not `{name}.md`.
+    #[test]
+    fn adopt_reads_copilot_agent_md_file() {
+        with_temp_home(|_| {
+            let stored = "---\nname: planner\ndescription: Plans\n---\nStored.\n";
+            let (_keep, dir) = make_project("copilot-adopt", |p| {
+                p.agents = vec!["copilot".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: stored.into(),
+                }]);
+            });
+            let agents_dir = dir.join(".github").join("agents");
+            std::fs::create_dir_all(&agents_dir).expect("mkdir");
+            let edited = "---\nname: planner\ndescription: Plans\n---\nEdited on disk.\n";
+            std::fs::write(agents_dir.join("planner.agent.md"), edited).expect("write");
+
+            adopt_custom_asset("copilot-adopt", "agent", "Planner").expect("adopt");
+
+            let raw = core::read_project("copilot-adopt").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let agents = project.custom_agents.expect("custom agents");
+            assert_eq!(agents[0].content, edited);
         });
     }
 }

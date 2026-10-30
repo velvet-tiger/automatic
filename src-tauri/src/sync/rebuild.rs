@@ -92,7 +92,6 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
             continue;
         }
 
-        let ext = agent_instance.agents_file_ext();
         let entries = match fs::read_dir(&agents_dir) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -100,9 +99,19 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() || !path.extension().is_some_and(|value| value == ext) {
+            if !path.is_file() {
                 continue;
             }
+            // Match the agent's whole file-name suffix, not only the last
+            // extension: Copilot loads `*.agent.md`, so a `README.md` in
+            // `.github/agents/` is not a sub-agent.
+            let Some(fallback_id) = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .and_then(|name| agent::agent_machine_name_from_file_name(agent_instance, name))
+            else {
+                continue;
+            };
 
             let raw = match fs::read_to_string(&path) {
                 Ok(raw) => raw,
@@ -116,10 +125,6 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
                 continue;
             }
 
-            let fallback_id = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("custom-agent");
             if let Some(custom_agent) = parse_custom_agent(agent_instance, &raw, fallback_id) {
                 let custom_id = extract_agent_machine_name(&custom_agent.content)
                     .unwrap_or_else(|| fallback_id.to_string());
@@ -561,6 +566,34 @@ Inspect the repo carefully.\n\
             };
             let rebuilt = rebuild_project_state(&no_agents).unwrap();
             assert!(rebuilt.agents.is_empty(), "rebuild must not adopt detected agents");
+        });
+    }
+
+    /// Copilot loads `*.agent.md` from `.github/agents/`.  Discovery must
+    /// skip other Markdown there, and name a file without a `name:` field
+    /// `planner`, not `planner.agent`.
+    #[test]
+    fn discover_agents_uses_copilot_agent_md_suffix() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let agents_dir = project_dir.path().join(".github").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("README.md"), "# Our agents\n").unwrap();
+        fs::write(
+            agents_dir.join("planner.agent.md"),
+            "---\ndescription: Plans\n---\nPlan.\n",
+        )
+        .unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["copilot".into()],
+                ..make_project(project_dir.path())
+            };
+            let (user_agents, custom_agents) = discover_sub_agents(&project).unwrap();
+            assert!(user_agents.is_empty());
+            let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
+            assert_eq!(names, vec!["planner"]);
         });
     }
 }

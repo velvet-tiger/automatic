@@ -746,6 +746,22 @@ pub(crate) fn is_plain_file_name(name: &str) -> bool {
     )
 }
 
+/// Recover the machine name from a sub-agent file name: the reverse of
+/// [`Agent::agent_file_name`].  `Path::file_stem` only strips the last
+/// dot-segment, so it turns Copilot's `planner.agent.md` into
+/// `planner.agent`.  This strips the agent's whole suffix instead.
+/// Returns `None` when `file_name` is not one of this agent's sub-agent
+/// files, or has nothing before the suffix.
+pub(crate) fn agent_machine_name_from_file_name<'a>(
+    agent: &dyn Agent,
+    file_name: &'a str,
+) -> Option<&'a str> {
+    let suffix = agent.agent_file_name("");
+    file_name
+        .strip_suffix(suffix.as_str())
+        .filter(|stem| !stem.is_empty())
+}
+
 /// Log and report a name [`is_plain_file_name`] rejects.
 fn skip_unsafe_name(kind: &str, name: &str) -> bool {
     if is_plain_file_name(name) {

@@ -590,8 +590,10 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
             let Some(agents_dir) = agent_instance.agents_dir(dir) else {
                 continue;
             };
-            let ext = agent_instance.agents_file_ext();
-            let file_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+            // Read the file sync writes.  A compound name such as Copilot's
+            // `{name}.agent.md` is not `{name}.{ext}`, and a scan that misses
+            // the file lets the next sync overwrite a hand edit.
+            let file_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
             let relative = file_path
                 .strip_prefix(dir)
                 .map(|p| p.display().to_string())
@@ -1741,5 +1743,32 @@ mod tests {
             conflicting_names(&scan, CustomAssetKind::Agent).contains("Planner"),
             "the linked file under .codex/agents must hold the agent back"
         );
+    }
+
+    /// The scan reads Copilot's `{name}.agent.md`, so a hand edit there is
+    /// reported as a conflict and sync leaves it alone.
+    #[test]
+    fn custom_agent_scan_reads_copilot_agent_md_file() {
+        let dir = tmp();
+        let content = "---\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let project = Project {
+            name: "scan".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["copilot".into()],
+            custom_agents: Some(vec![CustomAgent {
+                name: "Planner".into(),
+                content: content.into(),
+            }]),
+            ..Default::default()
+        };
+        let agents_dir = dir.path().join(".github").join("agents");
+        fs::create_dir_all(&agents_dir).expect("mkdir");
+        fs::write(agents_dir.join("planner.agent.md"), "hand edited\n").expect("write");
+
+        let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+        assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
+        assert_eq!(scan.conflicts[0].path, ".github/agents/planner.agent.md");
+        assert_eq!(scan.conflicts[0].disk_content, "hand edited\n");
     }
 }

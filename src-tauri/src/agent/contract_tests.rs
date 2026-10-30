@@ -121,6 +121,21 @@ fn sub_agent_filenames_round_trip() {
             "{}: Path::extension() of \"{file_name}\" does not recover agents_file_ext() \"{ext}\"",
             agent.id(),
         );
+        // `agent_machine_name_from_file_name` reverses the name by stripping
+        // `agent_file_name("")`, which only works if the name is the machine
+        // name followed by one fixed suffix.
+        assert_eq!(
+            file_name,
+            format!("my-agent{}", agent.agent_file_name("")),
+            "{}: agent_file_name is not the machine name plus a fixed suffix",
+            agent.id(),
+        );
+        assert_eq!(
+            agent_machine_name_from_file_name(agent, &file_name),
+            Some("my-agent"),
+            "{}: agent_machine_name_from_file_name does not reverse \"{file_name}\"",
+            agent.id(),
+        );
     }
 }
 
