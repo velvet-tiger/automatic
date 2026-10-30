@@ -1145,10 +1145,9 @@ struct AdoptedCustomAgent {
 /// What holds afterwards: the adopted file no longer conflicts, and any other
 /// agent's file that matched the stored copy still matches once
 /// `other_files` are rewritten.  Another agent's file that really differs
-/// stays a conflict, and so the next scan can still report one.  A rename
-/// through the file's `name` is the exception: `other_files` is empty, and
-/// the next sync writes those agents' files under the new name.  What the
-/// file cannot represent is refused with both copies untouched.
+/// stays a conflict, and so the next scan can still report one.  What the
+/// file cannot represent, including a change of name, is refused with both
+/// copies untouched.
 fn adoptable_custom_agent_content(
     project: &core::Project,
     effective: &std::path::Path,
@@ -1176,38 +1175,18 @@ fn adoptable_custom_agent_content(
     });
     let content = sync::adopted_agent_markdown(agent, ca, &conflict.disk_content, shared).map_err(
         |refusal| {
-            let reason = match refusal {
-                sync::AdoptRefusal::CannotConvert => format!(
-                    "Automatic cannot convert this {} file back to Markdown",
-                    agent.label()
-                ),
-                sync::AdoptRefusal::CannotKeep(settings) => format!(
-                    "Automatic cannot keep these {} settings: {}. Restore them in the file, or overwrite it with Automatic's copy.",
-                    agent.label(),
-                    settings.join(", ")
-                ),
-                sync::AdoptRefusal::SharedSettings(settings) => format!(
-                    "changing {} would apply to every agent in this project. Use Overwrite, or change it per agent by hand.",
-                    settings.join(", ")
-                ),
-                sync::AdoptRefusal::NotAPlainName(name) => {
-                    format!("the name '{name}' is not a plain file name")
-                }
-            };
-            format!("Cannot adopt agent '{}' from {}: {}", ca.name, conflict.path, reason)
+            format!(
+                "Cannot adopt agent '{}' from {}: {}",
+                ca.name,
+                conflict.path,
+                refusal.message(agent.label())
+            )
         },
     )?;
 
-    let renamed = sync::custom_agent_machine_name(&content, &ca.name)
-        != sync::custom_agent_machine_name(&ca.content, &ca.name);
-    let other_files = if renamed {
-        Vec::new()
-    } else {
-        sync::other_agent_files_matching(project, effective, ca, agent)
-    };
     Ok(AdoptedCustomAgent {
         content,
-        other_files,
+        other_files: sync::other_agent_files_matching(project, effective, ca, agent),
     })
 }
 
@@ -3759,7 +3738,7 @@ mod adopt_custom_asset_tests {
             write(&path, &disk);
 
             let err = adopt_custom_asset("codex-comment", "agent", "Planner").unwrap_err();
-            assert!(err.contains("settings: comments."), "{err}");
+            assert!(err.contains("changes: comments."), "{err}");
             assert_eq!(stored_planner("codex-comment"), STORED);
 
             sync_project("codex-comment").expect("sync");
@@ -3783,7 +3762,7 @@ mod adopt_custom_asset_tests {
 
                 let err = adopt_custom_asset("codex-lossy", "agent", "Planner").unwrap_err();
 
-                assert!(err.contains(&format!("settings: {key}.")), "{err}");
+                assert!(err.contains(&format!("changes: {key}.")), "{err}");
                 assert!(err.contains("Codex"), "{err}");
                 assert_eq!(stored_planner("codex-lossy"), STORED);
                 assert_eq!(std::fs::read_to_string(&path).expect("read"), disk);
@@ -3937,7 +3916,7 @@ mod adopt_custom_asset_tests {
 
             let err = adopt_custom_asset("turns-refused", "agent", "Planner").unwrap_err();
 
-            assert!(err.contains("settings: max_turns."), "{err}");
+            assert!(err.contains("changes: max_turns."), "{err}");
             assert_eq!(stored_planner("turns-refused"), STORED);
             assert_eq!(std::fs::read_to_string(&path).expect("read"), disk);
         });
@@ -4075,7 +4054,7 @@ mod adopt_custom_asset_tests {
 
             let err = adopt_custom_asset("shared-model", "agent", "Planner").unwrap_err();
 
-            assert!(err.contains("changing model would apply to every agent"), "{err}");
+            assert!(err.contains("stores one model for every agent"), "{err}");
             assert!(err.contains("Overwrite"), "{err}");
             assert_eq!(stored_planner("shared-model"), SHARED);
             assert_eq!(std::fs::read_to_string(&codex).expect("read"), disk);
@@ -4158,6 +4137,29 @@ mod adopt_custom_asset_tests {
                 .expect("read")
                 .contains("Edited body."));
             assert!(!dir.join(".claude").exists());
+            assert_no_conflict("silent", &silent);
+        });
+    }
+
+    #[test]
+    fn adopt_refuses_a_rename_and_changes_nothing() {
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("rename", &["claude", "codex"]);
+            let claude = dir.join(".claude/agents/planner.md");
+            let edited = claude_render(SHARED).replace("name: planner", "name: reviewer");
+            write(&claude, &edited);
+            let codex = dir.join(".codex/agents/planner.toml");
+            write(&codex, &codex_render(SHARED));
+
+            let err = adopt_custom_asset("rename", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains("Adopting cannot rename an agent."), "{err}");
+            assert_eq!(stored_planner("rename"), SHARED);
+            assert_eq!(std::fs::read_to_string(&claude).expect("read"), edited);
+            assert_eq!(
+                std::fs::read_to_string(&codex).expect("read"),
+                codex_render(SHARED)
+            );
         });
     }
 

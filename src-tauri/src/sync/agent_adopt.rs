@@ -7,21 +7,52 @@ use std::path::{Path, PathBuf};
 use crate::agent::{self, Agent};
 use crate::core::{CustomAgent, Project};
 
-use super::helpers::{custom_agent_machine_name, read_project_text, write_project_file};
+use super::helpers::{
+    agent_machine_slug, custom_agent_machine_name, read_project_text, write_project_file,
+};
 
-/// Why a file cannot be adopted.  The caller words the message.
+/// Why a file cannot be adopted.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AdoptRefusal {
     /// The format has no conversion back to Markdown, or the file does not
     /// parse.
     CannotConvert,
-    /// Settings that would not survive being stored and rendered again.
+    /// Changes that would not survive being stored and rendered again.
     CannotKeep(Vec<String>),
     /// Settings stored once for every agent, while other agents are
     /// configured.
     SharedSettings(Vec<String>),
-    /// The resulting file name would not be one path component.
-    NotAPlainName(String),
+    /// Removing `sandbox_mode` would lose a real tool list.
+    WouldDropTools,
+    /// The file would sync under a different name.
+    NameChanged,
+}
+
+impl AdoptRefusal {
+    /// The reason to show the user.  `agent_label` names the file's agent.
+    pub(crate) fn message(&self, agent_label: &str) -> String {
+        match self {
+            Self::CannotConvert => {
+                format!("Automatic cannot convert this {agent_label} file back to Markdown")
+            }
+            Self::CannotKeep(changes) => format!(
+                "Automatic's copy cannot hold these {agent_label} changes: {}. Undo them in the file and adopt again, or use Overwrite to replace the file with Automatic's copy.",
+                changes.join(", ")
+            ),
+            Self::SharedSettings(settings) => format!(
+                "Automatic stores one {} for every agent in this project. Change it in Automatic's agent editor, or use Overwrite to discard this edit.",
+                settings.join(" and ")
+            ),
+            Self::WouldDropTools => {
+                "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted."
+                    .to_string()
+            }
+            Self::NameChanged => {
+                "Adopting cannot rename an agent. Rename it in Automatic's agent editor, or restore the name in the file."
+                    .to_string()
+            }
+        }
+    }
 }
 
 /// The Markdown to store when adopting `disk`, or why it cannot be adopted.
@@ -31,7 +62,8 @@ pub(crate) enum AdoptRefusal {
 /// `model: sonnet` as `gpt-5.4`), so the stored Markdown is kept and only
 /// what the user changed is applied.  Either way the result is rendered back
 /// and compared with `disk`.  What passes leaves no difference in this file
-/// on the next scan.
+/// on the next scan.  The machine name never changes here: a rename moves
+/// files and can collide with another agent, so adopting refuses it.
 ///
 /// `shared_with_other_agents` says another configured agent reads the same
 /// stored copy.
@@ -41,25 +73,23 @@ pub(crate) fn adopted_agent_markdown(
     disk: &str,
     shared_with_other_agents: bool,
 ) -> Result<String, AdoptRefusal> {
-    let old_name = custom_agent_machine_name(&stored.content, &stored.name);
+    let machine_name = custom_agent_machine_name(&stored.content, &stored.name);
     let markdown = match adopting.agents_file_ext() {
+        "md" if custom_agent_machine_name(disk, &stored.name) != machine_name => {
+            return Err(AdoptRefusal::NameChanged);
+        }
         "md" => disk.to_string(),
         "toml" => merge_edit_into_stored(
             adopting,
             &stored.content,
             disk,
-            &old_name,
+            &machine_name,
             shared_with_other_agents,
         )?,
         _ => return Err(AdoptRefusal::CannotConvert),
     };
 
-    let new_name = custom_agent_machine_name(&markdown, &stored.name);
-    if !agent::is_plain_file_name(&new_name) {
-        return Err(AdoptRefusal::NotAPlainName(new_name));
-    }
-
-    let rendered = adopting.convert_agent_content(&markdown, &new_name);
+    let rendered = adopting.convert_agent_content(&markdown, &machine_name);
     let lost = adopting.agent_file_differences(disk, &rendered);
     if lost.is_empty() {
         Ok(markdown)
@@ -68,9 +98,28 @@ pub(crate) fn adopted_agent_markdown(
     }
 }
 
+/// What the user changed in a Codex file.
+struct CodexEdit {
+    table: toml::Table,
+    changed: BTreeSet<String>,
+}
+
+impl CodexEdit {
+    fn changed(&self, field: &str) -> bool {
+        self.changed.contains(field)
+    }
+
+    fn removes_sandbox(&self) -> bool {
+        self.changed("sandbox_mode") && !self.table.contains_key("sandbox_mode")
+    }
+
+    fn sets_read_only(&self) -> bool {
+        self.changed("sandbox_mode")
+            && self.table.get("sandbox_mode").and_then(toml::Value::as_str) == Some("read-only")
+    }
+}
+
 /// Apply the fields the user changed in a Codex file to the stored Markdown.
-/// A field that is not a value this can apply (`max_turns = "many"`) is left
-/// for the round-trip check in [`adopted_agent_markdown`] to refuse.
 fn merge_edit_into_stored(
     adopting: &dyn Agent,
     stored: &str,
@@ -80,50 +129,71 @@ fn merge_edit_into_stored(
 ) -> Result<String, AdoptRefusal> {
     let table = toml::from_str::<toml::Table>(disk).map_err(|_| AdoptRefusal::CannotConvert)?;
     let old_render = adopting.convert_agent_content(stored, machine_name);
-    let changed: BTreeSet<String> = adopting
+    let changed = adopting
         .agent_file_differences(disk, &old_render)
         .into_iter()
         .collect();
+    let edit = CodexEdit { table, changed };
 
-    let sandbox_changed = changed.contains("sandbox_mode");
-    let sandbox = table.get("sandbox_mode");
-    let read_only = sandbox.and_then(toml::Value::as_str) == Some("read-only");
-    let stored_tools = agent::top_level_frontmatter_value(stored, "tools");
+    refuse_unsupported_edit(&edit, stored, machine_name, shared_with_other_agents)?;
+    apply_edit(&edit, stored)
+}
+
+/// Refuse an edit that cannot be applied at all, before touching the copy.
+fn refuse_unsupported_edit(
+    edit: &CodexEdit,
+    stored: &str,
+    machine_name: &str,
+    shared_with_other_agents: bool,
+) -> Result<(), AdoptRefusal> {
+    // A missing name is filled in from the stored copy, so it is no rename.
+    if let Some(toml::Value::String(name)) = edit.table.get("name") {
+        if agent_machine_slug(name) != machine_name {
+            return Err(AdoptRefusal::NameChanged);
+        }
+    }
 
     // Codex can only express "read-only or not", so dropping it would drop a
     // real tool list the other agents depend on.
-    if sandbox_changed && sandbox.is_none() && stored_tools.is_some_and(|t| t != "inherit") {
-        return Err(AdoptRefusal::CannotKeep(vec!["tools".to_string()]));
+    let tools = agent::top_level_frontmatter_value(stored, "tools");
+    if edit.removes_sandbox() && tools.is_some_and(|tools| tools != "inherit") {
+        return Err(AdoptRefusal::WouldDropTools);
     }
 
     if shared_with_other_agents {
         let mut shared = Vec::new();
-        if changed.contains("model") {
+        if edit.changed("model") {
             shared.push("model".to_string());
         }
         // Another sandbox value cannot be stored at all, which the
         // round-trip check reports more accurately.
-        if sandbox_changed && (sandbox.is_none() || read_only) {
+        if edit.removes_sandbox() || edit.sets_read_only() {
             shared.push("sandbox_mode".to_string());
         }
         if !shared.is_empty() {
             return Err(AdoptRefusal::SharedSettings(shared));
         }
     }
+    Ok(())
+}
 
+/// Write each changed field into the stored Markdown.  A field that is not a
+/// value this can apply (`max_turns = "many"`) is left for the round-trip
+/// check in [`adopted_agent_markdown`] to refuse.
+fn apply_edit(edit: &CodexEdit, stored: &str) -> Result<String, AdoptRefusal> {
     let mut merged = stored.to_string();
-    for (toml_key, frontmatter_key) in [
+    for (field, frontmatter_key) in [
         ("description", "description"),
         ("model_reasoning_effort", "modelReasoningEffort"),
         ("name", "name"),
     ] {
-        if changed.contains(toml_key) {
-            merged = apply_text_field(merged, table.get(toml_key), toml_key, frontmatter_key)?;
+        if edit.changed(field) {
+            merged = apply_text_field(merged, edit.table.get(field), field, frontmatter_key)?;
         }
     }
 
-    if changed.contains("max_turns") {
-        merged = match table.get("max_turns") {
+    if edit.changed("max_turns") {
+        merged = match edit.table.get("max_turns") {
             None => apply_field(&merged, "max_turns", "maxTurns", None)?,
             Some(toml::Value::Integer(turns)) => {
                 apply_field(&merged, "max_turns", "maxTurns", Some(&turns.to_string()))?
@@ -132,23 +202,22 @@ fn merge_edit_into_stored(
         };
     }
 
-    if changed.contains("model") {
+    if edit.changed("model") {
         // Codex reads a missing `model` as `inherit`.
         let inherit = toml::Value::String("inherit".to_string());
-        let model = table.get("model").unwrap_or(&inherit);
+        let model = edit.table.get("model").unwrap_or(&inherit);
         merged = apply_text_field(merged, Some(model), "model", "model")?;
     }
 
-    if sandbox_changed {
-        if read_only && stored_tools.is_none() {
-            merged = apply_field(&merged, "sandbox_mode", "tools", Some("inherit"))?;
-        } else if sandbox.is_none() {
-            merged = apply_field(&merged, "sandbox_mode", "tools", None)?;
-        }
+    let tools = agent::top_level_frontmatter_value(stored, "tools");
+    if edit.sets_read_only() && tools.is_none() {
+        merged = apply_field(&merged, "sandbox_mode", "tools", Some("inherit"))?;
+    } else if edit.removes_sandbox() {
+        merged = apply_field(&merged, "sandbox_mode", "tools", None)?;
     }
 
-    if changed.contains("developer_instructions") {
-        merged = match table.get("developer_instructions") {
+    if edit.changed("developer_instructions") {
+        merged = match edit.table.get("developer_instructions") {
             None => agent::replace_markdown_body(&merged, ""),
             Some(toml::Value::String(text)) => agent::replace_markdown_body(&merged, text.trim()),
             Some(_) => merged,
@@ -233,7 +302,9 @@ pub(crate) fn rewrite_other_agent_files(
 ) -> Result<(), String> {
     let machine_name = custom_agent_machine_name(&adopted.content, &adopted.name);
     for file in files {
-        let rendered = file.agent.convert_agent_content(&adopted.content, &machine_name);
+        let rendered = file
+            .agent
+            .convert_agent_content(&adopted.content, &machine_name);
         write_project_file(dir, &file.path, rendered)?;
     }
     Ok(())
@@ -284,12 +355,18 @@ mod tests {
 
         let merged = adopt(STORED, &disk, true).unwrap();
 
-        assert_eq!(merged, STORED.replace("description: Plans", "description: Reviews"));
+        assert_eq!(
+            merged,
+            STORED.replace("description: Plans", "description: Reviews")
+        );
     }
 
     #[test]
     fn a_new_setting_goes_at_the_end_of_the_frontmatter() {
-        let disk = format!("max_turns = 5\nmodel_reasoning_effort = \"high\"\n{}", rendered(STORED));
+        let disk = format!(
+            "max_turns = 5\nmodel_reasoning_effort = \"high\"\n{}",
+            rendered(STORED)
+        );
 
         let merged = adopt(STORED, &disk, true).unwrap();
 
@@ -361,7 +438,9 @@ mod tests {
 
         assert_eq!(
             adopt(PLAIN, &disk, true),
-            Err(AdoptRefusal::SharedSettings(vec!["sandbox_mode".to_string()]))
+            Err(AdoptRefusal::SharedSettings(vec![
+                "sandbox_mode".to_string()
+            ]))
         );
     }
 
@@ -373,13 +452,19 @@ mod tests {
 
         assert_eq!(
             merged,
-            PLAIN.replace("description: Plans\n", "description: Plans\ntools: inherit\n")
+            PLAIN.replace(
+                "description: Plans\n",
+                "description: Plans\ntools: inherit\n"
+            )
         );
     }
 
     #[test]
     fn removing_the_sandbox_removes_tools_inherit_when_codex_is_alone() {
-        let with_tools = PLAIN.replace("description: Plans\n", "description: Plans\ntools: inherit\n");
+        let with_tools = PLAIN.replace(
+            "description: Plans\n",
+            "description: Plans\ntools: inherit\n",
+        );
         let disk = rendered(&with_tools).replace("sandbox_mode = \"read-only\"\n", "");
 
         assert_eq!(adopt(&with_tools, &disk, false).unwrap(), PLAIN);
@@ -390,8 +475,14 @@ mod tests {
     fn removing_the_sandbox_cannot_lose_a_stored_tool_list() {
         let disk = rendered(STORED).replace("sandbox_mode = \"read-only\"\n", "");
 
-        assert_eq!(adopt(STORED, &disk, false), Err(cannot_keep("tools")));
-        assert_eq!(adopt(STORED, &disk, true), Err(cannot_keep("tools")));
+        assert_eq!(
+            adopt(STORED, &disk, false),
+            Err(AdoptRefusal::WouldDropTools)
+        );
+        assert_eq!(
+            adopt(STORED, &disk, true),
+            Err(AdoptRefusal::WouldDropTools)
+        );
     }
 
     /// Any other sandbox value cannot be stored at all, so "use another
@@ -413,25 +504,77 @@ mod tests {
 
     #[test]
     fn a_file_that_does_not_parse_cannot_be_converted() {
-        assert_eq!(adopt(STORED, "not = = toml", false), Err(AdoptRefusal::CannotConvert));
+        assert_eq!(
+            adopt(STORED, "not = = toml", false),
+            Err(AdoptRefusal::CannotConvert)
+        );
+    }
+
+    /// A rename moves files and can collide with another agent, so adopting
+    /// refuses it for every format, whatever else the file changes.
+    #[test]
+    fn adopting_cannot_rename_an_agent() {
+        for name in ["reviewer", "../planner", "", "planner ", "\\\"planner\\\""] {
+            let disk = rendered(PLAIN).replace("name = \"planner\"", &format!("name = \"{name}\""));
+            assert_eq!(
+                adopt(PLAIN, &disk, false),
+                Err(AdoptRefusal::NameChanged),
+                "{name}"
+            );
+        }
+
+        for name in ["reviewer", "../planner"] {
+            assert_eq!(
+                adopted_agent_markdown(
+                    &ClaudeCode,
+                    &stored(PLAIN),
+                    &format!("---\nname: {name}\n---\nPlan.\n"),
+                    false
+                ),
+                Err(AdoptRefusal::NameChanged),
+                "{name}"
+            );
+        }
+    }
+
+    /// The name counts as changed only when the file name would change.
+    #[test]
+    fn a_name_spelled_differently_with_the_same_machine_name_is_kept() {
+        let disk = rendered(PLAIN).replace("name = \"planner\"", "name = \"Planner\"");
+        let merged = adopt(PLAIN, &disk, false).unwrap();
+        assert_eq!(merged, PLAIN.replace("name: planner", "name: Planner"));
+
+        let crlf = "---\r\nname: Planner\r\n---\r\nPlan.\r\n";
+        assert_eq!(
+            adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), crlf, false).unwrap(),
+            crlf
+        );
+    }
+
+    /// A deleted name is filled in from the stored copy, so it is no rename.
+    #[test]
+    fn a_missing_name_in_a_codex_file_is_not_a_rename() {
+        let disk = rendered(PLAIN).replace("name = \"planner\"\n", "");
+        assert_eq!(adopt(PLAIN, &disk, false).unwrap(), PLAIN);
     }
 
     #[test]
-    fn a_name_that_is_not_a_plain_file_name_is_refused() {
-        let disk = rendered(PLAIN).replace("name = \"planner\"", "name = \"../planner\"");
+    fn each_refusal_says_what_to_do() {
         assert_eq!(
-            adopt(PLAIN, &disk, false),
-            Err(AdoptRefusal::NotAPlainName("../planner".to_string()))
+            AdoptRefusal::CannotKeep(vec!["custom".into(), "other".into()]).message("Codex CLI"),
+            "Automatic's copy cannot hold these Codex CLI changes: custom, other. Undo them in the file and adopt again, or use Overwrite to replace the file with Automatic's copy."
         );
-
         assert_eq!(
-            adopted_agent_markdown(
-                &ClaudeCode,
-                &stored(PLAIN),
-                "---\nname: ../planner\n---\nPlan.\n",
-                false
-            ),
-            Err(AdoptRefusal::NotAPlainName("../planner".to_string()))
+            AdoptRefusal::SharedSettings(vec!["model".into()]).message("Codex CLI"),
+            "Automatic stores one model for every agent in this project. Change it in Automatic's agent editor, or use Overwrite to discard this edit."
+        );
+        assert_eq!(
+            AdoptRefusal::WouldDropTools.message("Codex CLI"),
+            "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted."
+        );
+        assert_eq!(
+            AdoptRefusal::NameChanged.message("Codex CLI"),
+            "Adopting cannot rename an agent. Rename it in Automatic's agent editor, or restore the name in the file."
         );
     }
 
@@ -450,13 +593,27 @@ mod tests {
     /// frontmatter block, so it is refused, naming the field.
     #[test]
     fn a_value_that_cannot_stay_on_one_line_is_refused_naming_the_field() {
-        for value in ["x\\n---\\nfoo: bar", "a\\rb", "a\\u0085b", "a\\u2028b", "a\\u2029b", "a\\u0007b"] {
+        for value in [
+            "x\\n---\\nfoo: bar",
+            "a\\rb",
+            "a\\u0085b",
+            "a\\u2028b",
+            "a\\u2029b",
+            "a\\u0007b",
+        ] {
             let disk = rendered(PLAIN).replace("\"Plans\"", &format!("\"{value}\""));
-            assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("description")), "{value}");
+            assert_eq!(
+                adopt(PLAIN, &disk, false),
+                Err(cannot_keep("description")),
+                "{value}"
+            );
         }
 
         let disk = format!("model_reasoning_effort = \"a\\nb\"\n{}", rendered(PLAIN));
-        assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("model_reasoning_effort")));
+        assert_eq!(
+            adopt(PLAIN, &disk, false),
+            Err(cannot_keep("model_reasoning_effort"))
+        );
     }
 
     #[test]
@@ -488,26 +645,39 @@ mod tests {
     /// line, and an indented `tools` under another key is not the tool list.
     #[test]
     fn removing_the_sandbox_reads_only_the_top_level_tools_line() {
-        let listed = PLAIN.replace("description: Plans\n", "description: Plans\ntools:\n  - Read\n");
+        let listed = PLAIN.replace(
+            "description: Plans\n",
+            "description: Plans\ntools:\n  - Read\n",
+        );
         let disk = rendered(&listed).replace("sandbox_mode = \"read-only\"\n", "");
         assert_eq!(
             adopt(&listed, &disk, false),
-            Err(cannot_keep("tools"))
+            Err(AdoptRefusal::WouldDropTools)
         );
 
-        let nested = PLAIN.replace("description: Plans\n", "description: Plans\nhooks:\n  tools: Read\n");
+        let nested = PLAIN.replace(
+            "description: Plans\n",
+            "description: Plans\nhooks:\n  tools: Read\n",
+        );
         let disk = rendered(&nested).replace("sandbox_mode = \"read-only\"\n", "");
-        assert_eq!(adopt(&nested, &disk, false), Err(cannot_keep("sandbox_mode")));
+        assert_eq!(
+            adopt(&nested, &disk, false),
+            Err(cannot_keep("sandbox_mode"))
+        );
     }
 
     #[test]
     fn a_nested_key_is_never_edited() {
-        let nested = "---\nhooks:\n  description: nested\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let nested =
+            "---\nhooks:\n  description: nested\nname: planner\ndescription: Plans\n---\nPlan.\n";
         let disk = rendered(nested).replace("\"Plans\"", "\"Edited\"");
 
         let merged = adopt(nested, &disk, false).unwrap();
 
-        assert_eq!(merged, nested.replace("description: Plans", "description: Edited"));
+        assert_eq!(
+            merged,
+            nested.replace("description: Plans", "description: Edited")
+        );
     }
 
     /// `parse_frontmatter` strips quotes and whitespace, so these must be

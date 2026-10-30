@@ -28,10 +28,9 @@ pub(crate) use helpers::{
 };
 // Adopting a custom agent resolves the conflict the scan reported.
 pub(crate) use agent_adopt::{
-    adopted_agent_markdown, other_agent_files_matching, rewrite_other_agent_files, AdoptRefusal,
-    OtherAgentFile,
+    adopted_agent_markdown, other_agent_files_matching, rewrite_other_agent_files, OtherAgentFile,
 };
-pub(crate) use helpers::{custom_agent_machine_name, scan_custom_agent, CustomAgentFinding};
+pub(crate) use helpers::{scan_custom_agent, CustomAgentFinding};
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(
