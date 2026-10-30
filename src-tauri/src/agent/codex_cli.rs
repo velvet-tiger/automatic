@@ -374,8 +374,7 @@ impl Agent for CodexCli {
     /// Compare by field: a hand-written TOML file never matches the rendered
     /// one byte for byte, so a byte comparison would keep an adopted file in
     /// conflict for ever.  The byte comparison stays first because a match
-    /// needs no parsing, and `convert_md_to_codex_toml` writes some frontmatter
-    /// values raw (`maxTurns`), so a file sync wrote may not parse.
+    /// needs no parsing.
     fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
         if disk == expected {
             return Vec::new();
@@ -573,16 +572,54 @@ fn has_oauth_client(config: &Value) -> bool {
         .is_some_and(|s| !s.is_empty())
 }
 
+/// Escape text for a single-line basic string.  Such a string cannot hold a
+/// raw line break either, so those are escaped along with the control
+/// characters.  Tab is allowed and stays literal.
 fn escape_toml_string(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' => push_toml_unicode_escape(&mut out, c),
+            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut out, c),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `true` for a control character TOML forbids raw in any basic string.
+/// Tab, line feed and carriage return are left to the caller: which of them
+/// are allowed depends on the kind of string.
+fn is_forbidden_toml_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'
+    )
+}
+
+fn push_toml_unicode_escape(out: &mut String, c: char) {
+    out.push_str(&format!("\\u{:04X}", c as u32));
 }
 
 /// Escape text for a `"""` multi-line basic string.  Unlike
-/// [`escape_toml_string`], a quote is escaped only inside a run of three or
-/// more, the only place one can end the string, so ordinary text renders
-/// unchanged.
+/// [`escape_toml_string`], line breaks stay literal, and a quote is escaped
+/// only inside a run of three or more, the only place one can end the
+/// string.  So ordinary text renders unchanged.  A carriage return is
+/// allowed only as part of a CRLF line break.
 fn escape_toml_multiline_string(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\");
+    let mut escaped = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '\r' if chars.peek() != Some(&'\n') => push_toml_unicode_escape(&mut escaped, c),
+            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut escaped, c),
+            c => escaped.push(c),
+        }
+    }
+
     let mut out = String::with_capacity(escaped.len());
     let mut rest = escaped.as_str();
     while let Some(start) = rest.find('"') {
@@ -926,19 +963,30 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
             "opus" => "gpt-5.4",
             other => other,
         };
-        toml.push_str(&format!("model = \"{}\"\n", codex_model));
+        toml.push_str(&format!(
+            "model = \"{}\"\n",
+            escape_toml_string(codex_model)
+        ));
     }
 
     if frontmatter.contains_key("tools") {
         toml.push_str("sandbox_mode = \"read-only\"\n");
     }
 
-    if let Some(max_turns) = frontmatter.get("maxTurns") {
+    // Frontmatter is free text.  Writing a bad value here raw would make the
+    // whole file unloadable, so only an integer is written.
+    if let Some(max_turns) = frontmatter
+        .get("maxTurns")
+        .and_then(|value| value.parse::<i64>().ok())
+    {
         toml.push_str(&format!("max_turns = {}\n", max_turns));
     }
 
     if let Some(reasoning) = frontmatter.get("modelReasoningEffort") {
-        toml.push_str(&format!("model_reasoning_effort = \"{}\"\n", reasoning));
+        toml.push_str(&format!(
+            "model_reasoning_effort = \"{}\"\n",
+            escape_toml_string(reasoning)
+        ));
     }
 
     let body_trimmed = body.trim();
@@ -1091,16 +1139,81 @@ mod tests {
         assert_eq!(differences(RENDERED_AGENT, "not = = toml"), vec!["content"]);
     }
 
-    /// `maxTurns` is written raw, so sync can write a file that does not
-    /// parse.  It still matches itself.
+    /// A byte match is a match, whether or not the file parses.
     #[test]
     fn agent_differences_accept_an_identical_file_that_does_not_parse() {
+        let unparseable = "not = = toml\n";
+        assert_eq!(differences(unparseable, unparseable), Vec::<String>::new());
+    }
+
+    /// A control character in the body must not break the TOML either.
+    #[test]
+    fn agent_body_with_control_characters_renders_valid_toml() {
+        let body = "Ring \u{7}, form \u{c}, escape \u{1b}, delete \u{7f}, bare \r return.\n\tTabbed.";
         let rendered = CodexCli.convert_agent_content(
-            "---\nname: planner\nmaxTurns: many\n---\nPlan.\n",
+            &format!("---\nname: planner\n---\n{body}\n"),
             "planner",
         );
-        assert!(toml::from_str::<toml::Table>(&rendered).is_err(), "{rendered}");
-        assert_eq!(differences(&rendered, &rendered), Vec::<String>::new());
+
+        assert!(rendered.contains("Ring \\u0007,"), "{rendered}");
+        assert!(rendered.contains("\n\tTabbed."), "{rendered}");
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+        let stored = table["developer_instructions"].as_str().expect("string");
+        assert_eq!(stored.trim(), body);
+    }
+
+    /// A CRLF line break is allowed, so it stays literal.
+    #[test]
+    fn agent_body_keeps_crlf_literal() {
+        let body = "First.\r\nSecond.";
+        let rendered = CodexCli.convert_agent_content(
+            &format!("---\nname: planner\n---\n{body}\n"),
+            "planner",
+        );
+
+        assert!(rendered.contains(body), "{rendered:?}");
+        assert!(toml::from_str::<toml::Table>(&rendered).is_ok(), "{rendered:?}");
+    }
+
+    /// Frontmatter is free text.  No value in it may make the file
+    /// unloadable, and a `maxTurns` that is not an integer is left out.
+    #[test]
+    fn agent_frontmatter_values_render_valid_toml() {
+        let content = "---\nname: pla\u{7}nner\ndescription: Say \"hi\" \\ \u{1}\nmodel: gpt\"5\\\u{7}\nmaxTurns: many\nmodelReasoningEffort: hi\"gh\\\u{7}\n---\nPlan.\n";
+
+        let rendered = CodexCli.convert_agent_content(content, "planner");
+
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+        assert_eq!(table["name"].as_str(), Some("pla\u{7}nner"));
+        assert_eq!(table["model"].as_str(), Some("gpt\"5\\\u{7}"));
+        assert_eq!(
+            table["model_reasoning_effort"].as_str(),
+            Some("hi\"gh\\\u{7}")
+        );
+        assert!(!table.contains_key("max_turns"), "{rendered}");
+    }
+
+    #[test]
+    fn agent_max_turns_is_written_when_it_is_an_integer() {
+        let rendered = CodexCli.convert_agent_content(
+            "---\nname: planner\nmaxTurns: 5\n---\nPlan.\n",
+            "planner",
+        );
+
+        assert!(rendered.contains("max_turns = 5\n"), "{rendered}");
+    }
+
+    /// A single-line string cannot hold a raw line break or control
+    /// character, but tab is allowed and stays literal.
+    #[test]
+    fn escape_toml_string_produces_a_valid_single_line_string() {
+        let value = "line\nbreak\r\u{7}\ttab \"quoted\" back\\slash";
+        let escaped = escape_toml_string(value);
+
+        assert!(escaped.contains('\t'), "{escaped}");
+        let table = toml::from_str::<toml::Table>(&format!("value = \"{escaped}\"\n"))
+            .expect("valid TOML");
+        assert_eq!(table["value"].as_str(), Some(value));
     }
 
     /// A backslash or `"""` in the body must not break the TOML, or Codex

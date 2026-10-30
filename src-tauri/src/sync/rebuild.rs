@@ -805,4 +805,17 @@ Inspect the repo carefully.\n\
         let (_, round_tripped) = agent::parse_frontmatter(&markdown);
         assert_eq!(round_tripped.trim(), body);
     }
+
+    /// A control character in the body survives TOML and back unchanged.
+    #[test]
+    fn codex_toml_round_trips_a_control_character() {
+        let body = "Ring \u{7} once.";
+        let content = format!("---\nname: planner\ndescription: Plans\n---\n{body}\n");
+        let rendered = agent::CodexCli.convert_agent_content(&content, "planner");
+
+        let markdown = convert_codex_toml_to_markdown(&rendered, "planner").unwrap();
+
+        let (_, round_tripped) = agent::parse_frontmatter(&markdown);
+        assert_eq!(round_tripped.trim(), body);
+    }
 }

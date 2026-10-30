@@ -3823,6 +3823,96 @@ mod adopt_custom_asset_tests {
         });
     }
 
+    /// Save a project whose stored Codex agent has `maxTurns: many`.  The
+    /// render leaves that value out.
+    fn bad_max_turns_project(name: &str) -> (tempfile::TempDir, std::path::PathBuf, &'static str) {
+        let stored = "---\nname: planner\ndescription: Plans\nmaxTurns: many\n---\nPlan.\n";
+        let (keep, dir) = make_project(name, |p| {
+            p.agents = vec!["codex".into()];
+            p.custom_agents = Some(vec![core::CustomAgent {
+                name: "Planner".into(),
+                content: stored.into(),
+            }]);
+        });
+        (keep, dir, stored)
+    }
+
+    /// The render drops a bad `maxTurns`, so a file sync wrote matches the
+    /// stored copy.  The stored Markdown keeps the bad value.
+    #[test]
+    fn bad_stored_max_turns_is_dropped_from_the_render_without_a_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir, stored) = bad_max_turns_project("turns-render");
+
+            sync_project("turns-render").expect("sync");
+
+            let rendered =
+                std::fs::read_to_string(dir.join(".codex/agents/planner.toml")).expect("read");
+            assert!(!rendered.contains("max_turns"), "{rendered}");
+            assert!(toml::from_str::<toml::Table>(&rendered).is_ok(), "{rendered}");
+            assert_eq!(stored_planner("turns-render"), stored);
+            assert_no_conflict("turns-render", &dir);
+        });
+    }
+
+    /// A valid `max_turns` on disk replaces the bad stored value.
+    #[test]
+    fn adopt_replaces_a_bad_stored_max_turns_with_a_valid_one() {
+        with_temp_home(|_| {
+            let (_keep, dir, _) = bad_max_turns_project("turns-valid");
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                "name = \"planner\"\nmax_turns = 5\ndeveloper_instructions = \"Plan.\"\n",
+            );
+
+            adopt_custom_asset("turns-valid", "agent", "Planner").expect("adopt");
+
+            assert!(stored_planner("turns-valid").contains("maxTurns: 5\n"));
+            assert_no_conflict("turns-valid", &dir);
+        });
+    }
+
+    /// A `max_turns` on disk that is not an integer cannot be kept, so the
+    /// guard refuses it rather than dropping it.
+    #[test]
+    fn adopt_refuses_a_non_integer_max_turns_on_disk() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("turns-refused", &["codex"]);
+            let path = dir.join(".codex/agents/planner.toml");
+            let disk = "name = \"planner\"\nmax_turns = \"many\"\ndeveloper_instructions = \"Edited.\"\n";
+            write(&path, disk);
+
+            let err = adopt_custom_asset("turns-refused", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains("settings: max_turns."), "{err}");
+            assert_eq!(stored_planner("turns-refused"), STORED);
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), disk);
+        });
+    }
+
+    /// An older version wrote `max_turns = many`, which does not parse.  It
+    /// is a conflict, adopt refuses it, and overwrite repairs it.
+    #[test]
+    fn older_raw_max_turns_is_a_conflict_that_overwrite_repairs() {
+        with_temp_home(|_| {
+            let (_keep, dir, stored) = bad_max_turns_project("turns-older");
+            let path = dir.join(".codex/agents/planner.toml");
+            let older = "automatic_managed = true\nname = \"planner\"\ndescription = \"Plans\"\nmax_turns = many\n\ndeveloper_instructions = \"\"\"\nPlan.\n\"\"\"\n";
+            assert!(toml::from_str::<toml::Table>(older).is_err());
+            write(&path, older);
+
+            let err = adopt_custom_asset("turns-older", "agent", "Planner").unwrap_err();
+            assert!(err.contains("cannot convert"), "{err}");
+            assert_eq!(stored_planner("turns-older"), stored);
+
+            overwrite_custom_asset("turns-older", "agent", "Planner").expect("overwrite");
+
+            let repaired = std::fs::read_to_string(&path).expect("read");
+            assert!(toml::from_str::<toml::Table>(&repaired).is_ok(), "{repaired}");
+            assert_no_conflict("turns-older", &dir);
+        });
+    }
+
     /// With no differing file there is nothing to adopt.
     #[test]
     fn adopt_without_a_conflict_is_an_error() {
