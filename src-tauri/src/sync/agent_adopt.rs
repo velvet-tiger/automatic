@@ -8,7 +8,6 @@ use crate::agent::{self, Agent};
 use crate::core::{CustomAgent, Project};
 
 use super::helpers::{custom_agent_machine_name, read_project_text, write_project_file};
-use super::rebuild::agent_file_to_markdown;
 
 /// Why a file cannot be adopted.  The caller words the message.
 #[derive(Debug, PartialEq, Eq)]
@@ -43,12 +42,16 @@ pub(crate) fn adopted_agent_markdown(
     shared_with_other_agents: bool,
 ) -> Result<String, AdoptRefusal> {
     let old_name = custom_agent_machine_name(&stored.content, &stored.name);
-    let converted = agent_file_to_markdown(adopting, disk, &old_name)
-        .ok_or(AdoptRefusal::CannotConvert)?;
-    let markdown = if adopting.agents_file_ext() == "md" {
-        converted
-    } else {
-        merge_edit_into_stored(adopting, &stored.content, disk, &old_name, shared_with_other_agents)?
+    let markdown = match adopting.agents_file_ext() {
+        "md" => disk.to_string(),
+        "toml" => merge_edit_into_stored(
+            adopting,
+            &stored.content,
+            disk,
+            &old_name,
+            shared_with_other_agents,
+        )?,
+        _ => return Err(AdoptRefusal::CannotConvert),
     };
 
     let new_name = custom_agent_machine_name(&markdown, &stored.name);
@@ -85,8 +88,7 @@ fn merge_edit_into_stored(
     let sandbox_changed = changed.contains("sandbox_mode");
     let sandbox = table.get("sandbox_mode");
     let read_only = sandbox.and_then(toml::Value::as_str) == Some("read-only");
-    let (frontmatter, _) = agent::parse_frontmatter(stored);
-    let stored_tools = frontmatter.get("tools").map(String::as_str);
+    let stored_tools = agent::top_level_frontmatter_value(stored, "tools");
 
     // Codex can only express "read-only or not", so dropping it would drop a
     // real tool list the other agents depend on.
@@ -116,15 +118,15 @@ fn merge_edit_into_stored(
         ("name", "name"),
     ] {
         if changed.contains(toml_key) {
-            merged = apply_text_field(merged, table.get(toml_key), frontmatter_key);
+            merged = apply_text_field(merged, table.get(toml_key), toml_key, frontmatter_key)?;
         }
     }
 
     if changed.contains("max_turns") {
         merged = match table.get("max_turns") {
-            None => agent::set_frontmatter_value(&merged, "maxTurns", None),
+            None => apply_field(&merged, "max_turns", "maxTurns", None)?,
             Some(toml::Value::Integer(turns)) => {
-                agent::set_frontmatter_value(&merged, "maxTurns", Some(&turns.to_string()))
+                apply_field(&merged, "max_turns", "maxTurns", Some(&turns.to_string()))?
             }
             Some(_) => merged,
         };
@@ -133,14 +135,15 @@ fn merge_edit_into_stored(
     if changed.contains("model") {
         // Codex reads a missing `model` as `inherit`.
         let inherit = toml::Value::String("inherit".to_string());
-        merged = apply_text_field(merged, Some(table.get("model").unwrap_or(&inherit)), "model");
+        let model = table.get("model").unwrap_or(&inherit);
+        merged = apply_text_field(merged, Some(model), "model", "model")?;
     }
 
     if sandbox_changed {
         if read_only && stored_tools.is_none() {
-            merged = agent::set_frontmatter_value(&merged, "tools", Some("inherit"));
+            merged = apply_field(&merged, "sandbox_mode", "tools", Some("inherit"))?;
         } else if sandbox.is_none() {
-            merged = agent::set_frontmatter_value(&merged, "tools", None);
+            merged = apply_field(&merged, "sandbox_mode", "tools", None)?;
         }
     }
 
@@ -155,15 +158,32 @@ fn merge_edit_into_stored(
     Ok(merged)
 }
 
+/// Set or remove a frontmatter key.  `field` is what the user touched, so a
+/// refusal names that.
+fn apply_field(
+    markdown: &str,
+    field: &str,
+    frontmatter_key: &str,
+    value: Option<&str>,
+) -> Result<String, AdoptRefusal> {
+    agent::set_frontmatter_value(markdown, frontmatter_key, value)
+        .ok_or_else(|| AdoptRefusal::CannotKeep(vec![field.to_string()]))
+}
+
 /// Set a frontmatter key from a TOML text value, or remove it when the value
 /// is absent.  Any other value type is left alone.
-fn apply_text_field(markdown: String, value: Option<&toml::Value>, key: &str) -> String {
+fn apply_text_field(
+    markdown: String,
+    value: Option<&toml::Value>,
+    field: &str,
+    frontmatter_key: &str,
+) -> Result<String, AdoptRefusal> {
     match value {
-        None => agent::set_frontmatter_value(&markdown, key, None),
+        None => apply_field(&markdown, field, frontmatter_key, None),
         Some(toml::Value::String(text)) => {
-            agent::set_frontmatter_value(&markdown, key, Some(text))
+            apply_field(&markdown, field, frontmatter_key, Some(text))
         }
-        Some(_) => markdown,
+        Some(_) => Ok(markdown),
     }
 }
 
@@ -424,6 +444,70 @@ mod tests {
             adopted_agent_markdown(&ClaudeCode, &stored(STORED), disk, true).unwrap(),
             disk
         );
+    }
+
+    /// A value holding a line break could add keys of its own or close the
+    /// frontmatter block, so it is refused, naming the field.
+    #[test]
+    fn a_value_that_cannot_stay_on_one_line_is_refused_naming_the_field() {
+        for value in ["x\\n---\\nfoo: bar", "a\\rb", "a\\u0085b", "a\\u2028b", "a\\u2029b", "a\\u0007b"] {
+            let disk = rendered(PLAIN).replace("\"Plans\"", &format!("\"{value}\""));
+            assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("description")), "{value}");
+        }
+
+        let disk = format!("model_reasoning_effort = \"a\\nb\"\n{}", rendered(PLAIN));
+        assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("model_reasoning_effort")));
+    }
+
+    #[test]
+    fn a_value_with_both_quote_kinds_that_needs_quoting_is_refused() {
+        let disk = rendered(PLAIN).replace("\"Plans\"", "\"a: 'b\\\"c\"");
+        assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("description")));
+    }
+
+    /// Replacing only the first line of a block value would leave the rest
+    /// behind, so the edit is refused, naming what the user changed.
+    #[test]
+    fn editing_a_stored_block_value_is_refused_naming_the_field() {
+        let block = PLAIN.replace("description: Plans\n", "description: |\n  Plans\n  more\n");
+        let disk = rendered(&block).replace("description = \"|\"", "description = \"Edited\"");
+        assert_eq!(adopt(&block, &disk, false), Err(cannot_keep("description")));
+    }
+
+    #[test]
+    fn a_body_edit_leaves_a_stored_block_value_alone() {
+        let block = PLAIN.replace("description: Plans\n", "description: |\n  Plans\n  more\n");
+        let disk = rendered(&block).replace("Plan.", "Edited.");
+
+        let merged = adopt(&block, &disk, false).unwrap();
+
+        assert_eq!(merged, block.replace("Plan.", "Edited."));
+    }
+
+    /// A stored tool list written as a block cannot be removed by its first
+    /// line, and an indented `tools` under another key is not the tool list.
+    #[test]
+    fn removing_the_sandbox_reads_only_the_top_level_tools_line() {
+        let listed = PLAIN.replace("description: Plans\n", "description: Plans\ntools:\n  - Read\n");
+        let disk = rendered(&listed).replace("sandbox_mode = \"read-only\"\n", "");
+        assert_eq!(
+            adopt(&listed, &disk, false),
+            Err(cannot_keep("tools"))
+        );
+
+        let nested = PLAIN.replace("description: Plans\n", "description: Plans\nhooks:\n  tools: Read\n");
+        let disk = rendered(&nested).replace("sandbox_mode = \"read-only\"\n", "");
+        assert_eq!(adopt(&nested, &disk, false), Err(cannot_keep("sandbox_mode")));
+    }
+
+    #[test]
+    fn a_nested_key_is_never_edited() {
+        let nested = "---\nhooks:\n  description: nested\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let disk = rendered(nested).replace("\"Plans\"", "\"Edited\"");
+
+        let merged = adopt(nested, &disk, false).unwrap();
+
+        assert_eq!(merged, nested.replace("description: Plans", "description: Edited"));
     }
 
     /// `parse_frontmatter` strips quotes and whitespace, so these must be

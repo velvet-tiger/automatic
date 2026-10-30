@@ -1106,40 +1106,19 @@ fn cleanup_skill_dir(
 pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str) {
     let mut frontmatter: HashMap<String, String> = HashMap::new();
 
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
-        return (frontmatter, content);
-    }
-
-    let Some((yaml_start, yaml_end)) = frontmatter_span(content) else {
+    let Some(span) = frontmatter_span(content) else {
         return (frontmatter, content);
     };
 
-    let after_first = &content[4..];
-    let end_marker_pos = yaml_end - yaml_start;
-    let yaml_str = &content[yaml_start..yaml_end];
-    let body_start = end_marker_pos + 4;
-    let body = if after_first[body_start..].starts_with('\n')
-        || after_first[body_start..].starts_with("\r\n")
-    {
-        body_start + 1
+    let after_block = &content[span.body_start..];
+    let body = if after_block.starts_with('\n') || after_block.starts_with("\r\n") {
+        &after_block[1..]
     } else {
-        body_start
+        after_block
     };
-    let body = &after_first[body..];
 
-    for line in yaml_str.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(colon_pos) = line.find(':') {
-            let key = line[..colon_pos].trim();
-            let mut value = line[colon_pos + 1..].trim();
-            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                value = &value[1..value.len() - 1];
-            } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
-                value = &value[1..value.len() - 1];
-            }
+    for line in content[span.start..span.end].lines() {
+        if let Some((key, value)) = parse_frontmatter_line(line) {
             frontmatter.insert(key.to_string(), value.to_string());
         }
     }
@@ -1147,90 +1126,240 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str
     (frontmatter, body)
 }
 
-/// The byte range of `content`'s frontmatter lines, between the opening
-/// `---` and the newline before the closing one.  `None` when there is no
-/// complete block.
-fn frontmatter_span(content: &str) -> Option<(usize, usize)> {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+/// Read one frontmatter line as a key and value: both trimmed, with one layer
+/// of matching quotes stripped from the value.  There is no unescaping.
+/// Returns `None` for a comment, a blank line, or a line with no colon.
+fn parse_frontmatter_line(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
         return None;
     }
-    let end = content[4..].find("\n---")?;
-    Some((4, 4 + end))
+    let (key, value) = line.split_once(':')?;
+    let mut value = value.trim();
+    if value.len() >= 2 {
+        for quote in ['"', '\''] {
+            if value.starts_with(quote) && value.ends_with(quote) {
+                value = &value[1..value.len() - 1];
+                break;
+            }
+        }
+    }
+    Some((key.trim(), value))
 }
 
-/// Write `value` so [`parse_frontmatter`] reads back exactly that text.  The
-/// parser trims a value and strips one layer of matching quotes, so a value
-/// that would lose something is quoted.  Single quotes come first because
-/// they are also valid YAML for a value holding a backslash or double quote.
-pub(crate) fn render_frontmatter_value(value: &str) -> String {
-    let wrapped_in = |quote: char| {
-        value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote)
-    };
-    if value == value.trim() && !wrapped_in('"') && !wrapped_in('\'') {
-        value.to_string()
-    } else if value.contains('\'') {
-        format!("\"{value}\"")
+/// Where the frontmatter block sits in a file.
+struct FrontmatterSpan {
+    /// First byte of the frontmatter lines, after the opening line break.
+    start: usize,
+    /// End of the frontmatter lines, before the newline of the closing `---`.
+    end: usize,
+    /// First byte after the closing `---`.
+    body_start: usize,
+}
+
+/// Locate the frontmatter block.  `None` when there is no complete block.
+fn frontmatter_span(content: &str) -> Option<FrontmatterSpan> {
+    let start = if content.starts_with("---\r\n") {
+        5
+    } else if content.starts_with("---\n") {
+        4
     } else {
-        format!("'{value}'")
+        return None;
+    };
+    let rest = &content[start..];
+    if rest.starts_with("---") {
+        return Some(FrontmatterSpan {
+            start,
+            end: start,
+            body_start: start + 3,
+        });
+    }
+    let end = start + rest.find("\n---")?;
+    Some(FrontmatterSpan {
+        start,
+        end,
+        body_start: end + "\n---".len(),
+    })
+}
+
+/// The frontmatter lines of `content`, or `None` when it has no block.
+pub(crate) fn frontmatter_block(content: &str) -> Option<&str> {
+    frontmatter_span(content).map(|span| &content[span.start..span.end])
+}
+
+/// `true` for text a frontmatter value can hold on one line.  A control
+/// character or Unicode line break could end the line in some reader, which
+/// would let a value add keys of its own or close the block.
+fn fits_on_one_frontmatter_line(value: &str) -> bool {
+    !value
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+}
+
+/// `true` when YAML would read a plain `value` as something other than that
+/// text, so it has to be quoted.
+fn frontmatter_value_needs_quotes(value: &str) -> bool {
+    const LEADING_INDICATORS: &[char] = &[
+        '[', ']', '{', '}', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', '#',
+    ];
+    value != value.trim()
+        || value.contains(": ")
+        || value.contains(" #")
+        || value.ends_with(':')
+        || value.starts_with(LEADING_INDICATORS)
+        || value.starts_with("- ")
+        || value.starts_with("? ")
+}
+
+/// Write `value` as one frontmatter value, or return `None` when that cannot
+/// be done safely.  This is the single gate for what reaches frontmatter.
+///
+/// The test for this proves the round trip through [`parse_frontmatter`]
+/// only: no YAML crate is in the tree, so a real YAML reader is not checked.
+/// The quoting rules aim at YAML, but that part is unverified.
+///
+/// [`parse_frontmatter`] strips one layer of quotes and does not unescape, so
+/// a quoted value must not need escaping.  Single quotes hold anything except
+/// a single quote.  Double quotes also cannot hold a backslash, which YAML
+/// would read as an escape.
+pub(crate) fn render_frontmatter_value(value: &str) -> Option<String> {
+    if !fits_on_one_frontmatter_line(value) {
+        return None;
+    }
+    if !frontmatter_value_needs_quotes(value) {
+        return Some(value.to_string());
+    }
+    if !value.contains('\'') {
+        Some(format!("'{value}'"))
+    } else if !value.contains('"') && !value.contains('\\') {
+        Some(format!("\"{value}\""))
+    } else {
+        None
     }
 }
 
-/// `true` when a frontmatter line sets `key`, by [`parse_frontmatter`]'s rule.
+/// `true` when `line` sets `key` at the top level of the block.  An indented
+/// line belongs to a nested value, even though [`parse_frontmatter`] reads
+/// it flat.
 fn frontmatter_line_sets(line: &str, key: &str) -> bool {
-    let line = line.trim();
-    !line.starts_with('#')
-        && line
-            .find(':')
-            .is_some_and(|colon| line[..colon].trim() == key)
+    !line.starts_with([' ', '\t'])
+        && parse_frontmatter_line(line).is_some_and(|(found, _)| found == key)
 }
 
-/// Set or remove one frontmatter key and leave every other byte alone.  An
-/// existing line is replaced where it stands.  [`parse_frontmatter`] keeps
+/// The value of a top-level `key`, read as [`parse_frontmatter`] reads it.
+pub(crate) fn top_level_frontmatter_value<'a>(content: &'a str, key: &str) -> Option<&'a str> {
+    frontmatter_block(content)?
+        .split('\n')
+        .rfind(|line| frontmatter_line_sets(line, key))
+        .and_then(parse_frontmatter_line)
+        .map(|(_, value)| value)
+}
+
+/// `true` when the value on `lines[index]` carries on past that line: a block
+/// scalar, an unclosed quote, or following lines that belong to it.  Editing
+/// only the first line would leave the rest behind.
+fn frontmatter_value_continues(lines: &[&str], index: usize) -> bool {
+    let value = lines[index].split_once(':').map_or("", |(_, value)| value.trim());
+    let unclosed = |quote: char| {
+        value.starts_with(quote) && (value.len() < 2 || !value.ends_with(quote))
+    };
+    if value.starts_with(['|', '>']) || unclosed('"') || unclosed('\'') {
+        return true;
+    }
+    lines[index + 1..]
+        .iter()
+        .map(|line| line.trim_end())
+        .find(|line| !line.is_empty())
+        .is_some_and(|next| {
+            next.starts_with([' ', '\t', '-'])
+                || !(next.starts_with('#') || next.contains(':'))
+        })
+}
+
+/// Set or remove one top-level frontmatter key and leave every other byte
+/// alone.  An existing line is replaced where it stands.  The parser keeps
 /// the last line for a repeated key, so that is the one replaced.  A new key
 /// goes at the end of the block.  `value: None` removes every line for `key`.
-pub(crate) fn set_frontmatter_value(content: &str, key: &str, value: Option<&str>) -> String {
-    let line = value.map(|value| format!("{key}: {}", render_frontmatter_value(value)));
-    let Some((start, end)) = frontmatter_span(content) else {
-        return match line {
+///
+/// Returns `None` when this cannot be done safely: [`render_frontmatter_value`]
+/// refuses the value, or the existing value runs over several lines.
+pub(crate) fn set_frontmatter_value(
+    content: &str,
+    key: &str,
+    value: Option<&str>,
+) -> Option<String> {
+    let line = match value {
+        Some(value) => Some(format!("{key}: {}", render_frontmatter_value(value)?)),
+        None => None,
+    };
+    let Some(span) = frontmatter_span(content) else {
+        return Some(match line {
             Some(line) => format!("---\n{line}\n---\n{content}"),
             None => content.to_string(),
-        };
+        });
     };
 
-    let mut lines: Vec<String> = content[start..end].split('\n').map(str::to_string).collect();
-    let carriage_return = if lines.iter().any(|l| l.ends_with('\r')) {
-        "\r"
-    } else {
-        ""
-    };
-    match line {
-        None => lines.retain(|l| !frontmatter_line_sets(l, key)),
-        Some(line) => match lines.iter().rposition(|l| frontmatter_line_sets(l, key)) {
-            Some(index) => {
-                let indent = lines[index].len() - lines[index].trim_start().len();
-                let ending = if lines[index].ends_with('\r') { "\r" } else { "" };
-                lines[index] = format!("{}{line}{ending}", &lines[index][..indent]);
-            }
-            None if content[start..end].is_empty() => lines = vec![line],
-            None => lines.push(format!("{line}{carriage_return}")),
-        },
+    if span.start == span.end {
+        let Some(line) = line else {
+            return Some(content.to_string());
+        };
+        let line_break = &content[3..span.start];
+        return Some(format!(
+            "{}{line}{line_break}{}",
+            &content[..span.start],
+            &content[span.end..]
+        ));
     }
 
-    format!("{}{}{}", &content[..start], lines.join("\n"), &content[end..])
+    let mut lines: Vec<&str> = content[span.start..span.end].split('\n').collect();
+    let matching: Vec<usize> = (0..lines.len())
+        .filter(|&index| frontmatter_line_sets(lines[index], key))
+        .collect();
+    let affected = match (&line, matching.last()) {
+        (Some(_), Some(last)) => std::slice::from_ref(last),
+        _ => &matching[..],
+    };
+    if affected
+        .iter()
+        .any(|&index| frontmatter_value_continues(&lines, index))
+    {
+        return None;
+    }
+
+    let carriage_return = if content.starts_with("---\r\n") { "\r" } else { "" };
+    let replacement = line.map(|line| format!("{line}{carriage_return}"));
+    match (&replacement, matching.last()) {
+        (None, _) => {
+            let mut index = 0;
+            lines.retain(|_| {
+                index += 1;
+                !matching.contains(&(index - 1))
+            });
+        }
+        (Some(replacement), Some(&last)) => lines[last] = replacement,
+        (Some(replacement), None) => lines.push(replacement),
+    }
+
+    Some(format!(
+        "{}{}{}",
+        &content[..span.start],
+        lines.join("\n"),
+        &content[span.end..]
+    ))
 }
 
 /// Replace the Markdown body and leave the frontmatter and the whitespace
 /// around the body alone.
 pub(crate) fn replace_markdown_body(content: &str, body: &str) -> String {
-    let body_start = frontmatter_span(content).map_or(0, |(_, end)| end + "\n---".len());
+    let body_start = frontmatter_span(content).map_or(0, |span| span.body_start);
     let (head, old_body) = content.split_at(body_start);
-    let trimmed = old_body.trim();
-    if trimmed.is_empty() || body.is_empty() {
-        let separator = if head.is_empty() { "" } else { "\n" };
-        return match body.is_empty() {
-            true => format!("{head}{separator}"),
-            false => format!("{head}{separator}{body}\n"),
-        };
+    let line_break = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let separator = if head.is_empty() { "" } else { line_break };
+    if body.is_empty() {
+        return format!("{head}{separator}");
+    }
+    if old_body.trim().is_empty() {
+        return format!("{head}{separator}{body}{line_break}");
     }
     let leading = old_body.len() - old_body.trim_start().len();
     let trailing = old_body.trim_end().len();
@@ -3243,30 +3372,79 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// This proves the round trip through `parse_frontmatter` only.  No YAML
+    /// crate is in the tree, so a real YAML reader is not checked.
     #[test]
     fn render_frontmatter_value_round_trips_through_the_parser() {
         for value in [
             "plain",
             "with: colon",
+            "ends with colon:",
+            "has # hash",
             "\"double\"",
             "'single'",
-            "\"it's\"",
             "trailing ",
             " leading",
             "\"",
+            "[list]",
+            "{map}",
+            "&anchor",
+            "*alias",
+            "!tag",
+            "|block",
+            ">fold",
+            "%directive",
+            "@at",
+            "`tick",
+            "- dash",
+            "? question",
+            "#hash",
+            "back\\slash: yes",
         ] {
-            let content = format!("---\nkey: {}\n---\n", render_frontmatter_value(value));
+            let rendered = render_frontmatter_value(value).unwrap_or_else(|| panic!("{value}"));
+            let content = format!("---\nkey: {rendered}\n---\n");
             let (frontmatter, _) = parse_frontmatter(&content);
             assert_eq!(frontmatter.get("key").map(String::as_str), Some(value));
         }
-        assert_eq!(render_frontmatter_value("plain"), "plain");
+    }
+
+    #[test]
+    fn render_frontmatter_value_leaves_a_plain_value_alone() {
+        for value in ["plain", "it's fine", "say \"hi\" now", "a:b", "x-y", "a#b", ""] {
+            assert_eq!(render_frontmatter_value(value).as_deref(), Some(value));
+        }
+    }
+
+    #[test]
+    fn render_frontmatter_value_refuses_what_cannot_stay_on_one_line() {
+        for value in [
+            "a\nb",
+            "a\r",
+            "a\tb",
+            "a\u{7}b",
+            "a\u{7f}b",
+            "a\u{85}b",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "x\n---\nfoo: bar",
+        ] {
+            assert_eq!(render_frontmatter_value(value), None, "{value:?}");
+        }
+    }
+
+    /// The parser does not unescape, so these have no safe quoted form.
+    #[test]
+    fn render_frontmatter_value_refuses_a_value_it_cannot_quote() {
+        for value in ["\"it's\"", "'both\"", "both: 'and\"", "it's: back\\slash"] {
+            assert_eq!(render_frontmatter_value(value), None, "{value}");
+        }
     }
 
     #[test]
     fn set_frontmatter_value_replaces_a_line_where_it_stands() {
         let content = "---\nb: 1\na: 2\nc: 3\n---\nBody.\n";
         assert_eq!(
-            set_frontmatter_value(content, "a", Some("9")),
+            set_frontmatter_value(content, "a", Some("9")).unwrap(),
             "---\nb: 1\na: 9\nc: 3\n---\nBody.\n"
         );
     }
@@ -3274,18 +3452,20 @@ mod tests {
     #[test]
     fn set_frontmatter_value_replaces_the_line_the_parser_reads() {
         let content = "---\na: 1\na: 2\n---\n";
-        let updated = set_frontmatter_value(content, "a", Some("9"));
-        assert_eq!(updated, "---\na: 1\na: 9\n---\n");
+        assert_eq!(
+            set_frontmatter_value(content, "a", Some("9")).unwrap(),
+            "---\na: 1\na: 9\n---\n"
+        );
     }
 
     #[test]
     fn set_frontmatter_value_adds_a_new_key_at_the_end_of_the_block() {
         assert_eq!(
-            set_frontmatter_value("---\na: 1\n---\nBody.\n", "b", Some("2")),
+            set_frontmatter_value("---\na: 1\n---\nBody.\n", "b", Some("2")).unwrap(),
             "---\na: 1\nb: 2\n---\nBody.\n"
         );
         assert_eq!(
-            set_frontmatter_value("Body.\n", "b", Some("2")),
+            set_frontmatter_value("Body.\n", "b", Some("2")).unwrap(),
             "---\nb: 2\n---\nBody.\n"
         );
     }
@@ -3293,26 +3473,94 @@ mod tests {
     #[test]
     fn set_frontmatter_value_removes_a_key_and_only_that_key() {
         assert_eq!(
-            set_frontmatter_value("---\na: 1\n# a: comment\nb: 2\n---\n", "a", None),
+            set_frontmatter_value("---\na: 1\n# a: comment\nb: 2\n---\n", "a", None).unwrap(),
             "---\n# a: comment\nb: 2\n---\n"
         );
         assert_eq!(
-            set_frontmatter_value("---\na: 1\nb: 2\n---\n", "b", None),
+            set_frontmatter_value("---\na: 1\nb: 2\n---\n", "b", None).unwrap(),
             "---\na: 1\n---\n"
         );
-        assert_eq!(set_frontmatter_value("Body.\n", "a", None), "Body.\n");
+        assert_eq!(set_frontmatter_value("Body.\n", "a", None).unwrap(), "Body.\n");
     }
 
     #[test]
     fn set_frontmatter_value_keeps_crlf_line_endings() {
         let content = "---\r\na: 1\r\nb: 2\r\n---\r\nBody.\r\n";
         assert_eq!(
-            set_frontmatter_value(content, "a", Some("9")),
+            set_frontmatter_value(content, "a", Some("9")).unwrap(),
             "---\r\na: 9\r\nb: 2\r\n---\r\nBody.\r\n"
         );
         assert_eq!(
-            set_frontmatter_value(content, "c", Some("3")),
+            set_frontmatter_value(content, "c", Some("3")).unwrap(),
             "---\r\na: 1\r\nb: 2\r\nc: 3\r\n---\r\nBody.\r\n"
+        );
+    }
+
+    #[test]
+    fn set_frontmatter_value_ignores_nested_keys() {
+        let content = "---\nhooks:\n  name: inner\n  tools: nested\nname: planner\n---\n";
+        assert_eq!(
+            set_frontmatter_value(content, "name", Some("new")).unwrap(),
+            "---\nhooks:\n  name: inner\n  tools: nested\nname: new\n---\n"
+        );
+        let added = set_frontmatter_value(content, "tools", Some("inherit")).unwrap();
+        assert!(added.contains("  tools: nested\n"), "{added}");
+        assert!(added.ends_with("tools: inherit\n---\n"), "{added}");
+        assert_eq!(top_level_frontmatter_value(content, "tools"), None);
+        assert_eq!(top_level_frontmatter_value(&added, "tools"), Some("inherit"));
+    }
+
+    /// A value over several lines cannot be edited by its first line, or the
+    /// rest stays behind as junk in the block.
+    #[test]
+    fn set_frontmatter_value_refuses_a_multi_line_value() {
+        for block in [
+            "tools: |\n  Read\n  Grep\n",
+            "tools: >-\n  Read\n",
+            "tools: |\n",
+            "tools:\n  - Read\n  - Grep\n",
+            "tools:\n- Read\n- Grep\n",
+            "tools: \"Read,\n  Grep\"\n",
+            "tools: 'Read,\n  Grep'\n",
+            "tools: [Read,\n  Grep]\n",
+            "tools: [Read,\nGrep]\n",
+        ] {
+            let content = format!("---\nname: planner\n{block}after: 1\n---\n");
+            assert_eq!(set_frontmatter_value(&content, "tools", None), None, "{block}");
+            assert_eq!(
+                set_frontmatter_value(&content, "tools", Some("x")),
+                None,
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_frontmatter_value_handles_an_empty_block() {
+        assert_eq!(
+            set_frontmatter_value("---\n---\nBody.\n", "a", Some("1")).unwrap(),
+            "---\na: 1\n---\nBody.\n"
+        );
+        assert_eq!(
+            set_frontmatter_value("---\r\n---\r\nBody.\r\n", "a", Some("1")).unwrap(),
+            "---\r\na: 1\r\n---\r\nBody.\r\n"
+        );
+    }
+
+    #[test]
+    fn parse_frontmatter_reads_an_empty_block() {
+        for content in ["---\n---\nBody.\n", "---\r\n---\r\nBody.\n"] {
+            let (frontmatter, body) = parse_frontmatter(content);
+            assert!(frontmatter.is_empty());
+            assert_eq!(body.trim(), "Body.");
+        }
+    }
+
+    #[test]
+    fn set_frontmatter_value_refuses_a_value_the_gate_refuses() {
+        assert_eq!(
+            set_frontmatter_value("---\na: 1\n---\n", "a", Some("x\ny: 2")),
+            None
         );
     }
 

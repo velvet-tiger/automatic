@@ -593,8 +593,7 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
 /// The file name a custom agent syncs under: the frontmatter `name`, or its
 /// display name.
 pub(crate) fn custom_agent_machine_name(content: &str, display_name: &str) -> String {
-    extract_agent_machine_name(content)
-        .unwrap_or_else(|| display_name.to_lowercase().replace(' ', "-"))
+    extract_agent_machine_name(content).unwrap_or_else(|| agent_machine_slug(display_name))
 }
 
 /// What [`scan_custom_agent`] found for one custom agent.
@@ -1023,24 +1022,28 @@ pub(crate) fn strip_internal_fields(mut value: Value) -> Value {
     value
 }
 
-/// Extract the machine name (slug) from agent frontmatter content.
-/// Returns the `name` field converted to lowercase with spaces replaced by hyphens.
-pub fn extract_agent_machine_name(content: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let end = content[4..].find("\n---")?;
-    let yaml = &content[4..end + 4];
-    for line in yaml.lines() {
-        let line = line.trim();
-        if let Some(name_val) = line.strip_prefix("name:") {
+/// The first non-empty `name` line in agent frontmatter, without quotes.
+pub(crate) fn extract_agent_name(content: &str) -> Option<String> {
+    for line in crate::agent::frontmatter_block(content)?.lines() {
+        if let Some(name_val) = line.trim().strip_prefix("name:") {
             let name = name_val.trim().trim_matches('"').trim_matches('\'');
             if !name.is_empty() {
-                return Some(name.to_lowercase().replace(' ', "-"));
+                return Some(name.to_string());
             }
         }
     }
     None
+}
+
+/// The file-name form of an agent name: lowercase, with hyphens for spaces.
+pub(crate) fn agent_machine_slug(name: &str) -> String {
+    name.to_lowercase().replace(' ', "-")
+}
+
+/// Extract the machine name (slug) from agent frontmatter content.
+/// Returns the `name` field converted to lowercase with spaces replaced by hyphens.
+pub fn extract_agent_machine_name(content: &str) -> Option<String> {
+    extract_agent_name(content).map(|name| agent_machine_slug(&name))
 }
 
 /// Sync project-local custom agents to a project's agents directory.

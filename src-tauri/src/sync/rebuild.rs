@@ -6,6 +6,7 @@ use crate::agent;
 use crate::core::{self, CustomAgent, CustomCommand, Project, Subagent};
 
 use super::autodetect::{autodetect_inner, AgentAdoption};
+use super::helpers::{extract_agent_machine_name, extract_agent_name};
 use super::read_project_text;
 
 struct GlobalUserAgent {
@@ -322,7 +323,7 @@ fn match_global_user_agent(
 /// [`agent::Agent::convert_agent_content`].  `fallback_id` names the agent
 /// when the file does not.  Returns `None` for a format with no reverse
 /// conversion (Kiro's JSON) and for a file that does not parse.
-pub(crate) fn agent_file_to_markdown(
+fn agent_file_to_markdown(
     agent_instance: &dyn agent::Agent,
     raw_disk_content: &str,
     fallback_id: &str,
@@ -341,37 +342,12 @@ fn parse_custom_agent(
 ) -> Option<CustomAgent> {
     let canonical_content = agent_file_to_markdown(agent_instance, raw_disk_content, fallback_id)?;
 
-    let name = extract_frontmatter_value(&canonical_content, "name")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| fallback_id.to_string());
+    let name = extract_agent_name(&canonical_content).unwrap_or_else(|| fallback_id.to_string());
 
     Some(CustomAgent {
         name,
         content: canonical_content,
     })
-}
-
-fn extract_frontmatter_value(content: &str, key: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let end = content[4..].find("\n---")?;
-    let yaml = &content[4..end + 4];
-    for line in yaml.lines() {
-        let line = line.trim();
-        let prefix = format!("{}:", key);
-        if let Some(value) = line.strip_prefix(&prefix) {
-            let value = value.trim().trim_matches('"').trim_matches('\'');
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn extract_agent_machine_name(content: &str) -> Option<String> {
-    extract_frontmatter_value(content, "name").map(|value| value.to_lowercase().replace(' ', "-"))
 }
 
 fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<String> {
@@ -400,14 +376,23 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
         .and_then(|value| value.as_str())
         .unwrap_or("");
 
+    // Rebuild has no round-trip check, so a value the gate refuses skips the
+    // whole file rather than storing something other than it says.
+    let line = |key: &str, value: &str| match agent::render_frontmatter_value(value) {
+        Some(rendered) => Some(format!("{key}: {rendered}")),
+        None => {
+            eprintln!(
+                "[automatic] rebuild: not importing sub-agent '{fallback_id}': its {key} cannot be stored as frontmatter"
+            );
+            None
+        }
+    };
+
     let mut frontmatter = vec![
         "---".to_string(),
-        format!("name: {}", agent::render_frontmatter_value(name)),
-        format!(
-            "description: {}",
-            agent::render_frontmatter_value(description)
-        ),
-        format!("model: {}", agent::render_frontmatter_value(model)),
+        line("name", name)?,
+        line("description", description)?,
+        line("model", model)?,
     ];
 
     // `convert_md_to_codex_toml` writes `sandbox_mode = "read-only"` whenever
@@ -423,10 +408,7 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
         frontmatter.push(format!("maxTurns: {}", max_turns));
     }
     if let Some(reasoning) = reasoning {
-        frontmatter.push(format!(
-            "modelReasoningEffort: {}",
-            agent::render_frontmatter_value(reasoning)
-        ));
+        frontmatter.push(line("modelReasoningEffort", reasoning)?);
     }
     frontmatter.push("---".to_string());
 
@@ -838,5 +820,25 @@ Inspect the repo carefully.\n\
         let (frontmatter, _) = agent::parse_frontmatter(&markdown);
         assert_eq!(frontmatter["description"], "\"Plans\"");
         assert_eq!(frontmatter["model"], "gpt ");
+    }
+
+    /// There is no round-trip check here, so a value that could add keys of
+    /// its own or close the block skips the whole file.
+    #[test]
+    fn codex_toml_with_a_value_the_gate_refuses_is_skipped() {
+        for value in ["x\\n---\\nfoo: bar", "a\\u2028b", "a\\u0085b"] {
+            let toml = format!("name = \"planner\"\ndescription = \"{value}\"\n");
+            assert_eq!(convert_codex_toml_to_markdown(&toml, "planner"), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn name_extraction_reads_a_crlf_block_and_keeps_the_first_name() {
+        let crlf = "---\r\nname: First One\r\nname: second\r\n---\r\nBody.\r\n";
+        assert_eq!(extract_agent_machine_name(crlf).as_deref(), Some("first-one"));
+        assert_eq!(extract_agent_name(crlf).as_deref(), Some("First One"));
+
+        let lf = "---\nname:\nname: \"Second\"\n---\n";
+        assert_eq!(extract_agent_name(lf).as_deref(), Some("Second"));
     }
 }
