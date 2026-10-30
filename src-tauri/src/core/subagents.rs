@@ -237,7 +237,6 @@ fn discover_codex_agents() -> Vec<SubagentEntry> {
             if agents_path.exists() {
                 if let Ok(content) = fs::read_to_string(&agents_path) {
                     if let Some(agent) = parse_codex_openai_yaml(&content) {
-                        // Create machine name from skill directory + "-openai"
                         let skill_name = skill_dir.file_name().to_string_lossy().to_string();
                         let id = format!("codex-{}-openai", skill_name);
                         // `read_subagent` refuses ids that fail this check, so
