@@ -3754,6 +3754,75 @@ mod adopt_custom_asset_tests {
         });
     }
 
+    /// A body with a backslash and `"""` adopts, leaves no conflict, and
+    /// the file the next sync writes still holds the same text.
+    #[test]
+    fn adopted_codex_file_with_special_characters_leaves_no_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-escapes", &["codex"]);
+            let path = dir.join(".codex/agents/planner.toml");
+            let body = "Match \\d and \"\"\"quoted\"\"\".";
+            write(
+                &path,
+                &format!("name = \"planner\"\ndeveloper_instructions = '''{body}'''\n"),
+            );
+
+            adopt_custom_asset("codex-escapes", "agent", "Planner").expect("adopt");
+
+            assert!(stored_planner("codex-escapes").contains(body));
+            assert_no_conflict("codex-escapes", &dir);
+
+            sync_project("codex-escapes").expect("sync");
+            let rewritten = std::fs::read_to_string(&path).expect("read");
+            let table = toml::from_str::<toml::Table>(&rewritten).expect("valid TOML");
+            let instructions = table["developer_instructions"].as_str().expect("string");
+            assert_eq!(instructions.trim(), body);
+        });
+    }
+
+    /// An older version wrote `\d` unescaped, which Codex cannot load.
+    /// After upgrading, that file differs from the new render and does not
+    /// parse: it is a conflict, adopt refuses it, and overwrite repairs it.
+    #[test]
+    fn older_unparseable_codex_file_is_a_conflict_that_overwrite_repairs() {
+        with_temp_home(|_| {
+            let stored = "---\nname: planner\ndescription: Plans\n---\nMatch \\d.\n";
+            let (_keep, dir) = make_project("codex-older", |p| {
+                p.agents = vec!["codex".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: stored.into(),
+                }]);
+            });
+            let path = dir.join(".codex/agents/planner.toml");
+            let rendered = crate::agent::CodexCli.convert_agent_content(stored, "planner");
+            let older = rendered.replace("\\\\d", "\\d");
+            assert!(toml::from_str::<toml::Table>(&older).is_err(), "{older}");
+            write(&path, &older);
+
+            let raw = core::read_project("codex-older").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let agents = project.custom_agents.clone().expect("custom agents");
+            assert!(matches!(
+                sync::scan_custom_agent(&project, &dir, &agents[0]),
+                Some(sync::CustomAgentFinding::Conflict { .. })
+            ));
+
+            let err = adopt_custom_asset("codex-older", "agent", "Planner").unwrap_err();
+            assert!(err.contains("cannot convert"), "{err}");
+            assert_eq!(stored_planner("codex-older"), stored);
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), older);
+
+            overwrite_custom_asset("codex-older", "agent", "Planner").expect("overwrite");
+
+            let repaired = std::fs::read_to_string(&path).expect("read");
+            let table = toml::from_str::<toml::Table>(&repaired).expect("valid TOML");
+            let instructions = table["developer_instructions"].as_str().expect("string");
+            assert_eq!(instructions.trim(), "Match \\d.");
+            assert_no_conflict("codex-older", &dir);
+        });
+    }
+
     /// With no differing file there is nothing to adopt.
     #[test]
     fn adopt_without_a_conflict_is_an_error() {

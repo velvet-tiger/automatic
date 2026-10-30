@@ -373,9 +373,9 @@ impl Agent for CodexCli {
 
     /// Compare by field: a hand-written TOML file never matches the rendered
     /// one byte for byte, so a byte comparison would keep an adopted file in
-    /// conflict for ever.  The byte comparison stays first because
-    /// `convert_md_to_codex_toml` does not escape the body, so a file sync
-    /// wrote may not parse.
+    /// conflict for ever.  The byte comparison stays first because a match
+    /// needs no parsing, and `convert_md_to_codex_toml` writes some frontmatter
+    /// values raw (`maxTurns`), so a file sync wrote may not parse.
     fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
         if disk == expected {
             return Vec::new();
@@ -575,6 +575,29 @@ fn has_oauth_client(config: &Value) -> bool {
 
 fn escape_toml_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Escape text for a `"""` multi-line basic string.  Unlike
+/// [`escape_toml_string`], a quote is escaped only inside a run of three or
+/// more, the only place one can end the string, so ordinary text renders
+/// unchanged.
+fn escape_toml_multiline_string(s: &str) -> String {
+    let escaped = s.replace('\\', "\\\\");
+    let mut out = String::with_capacity(escaped.len());
+    let mut rest = escaped.as_str();
+    while let Some(start) = rest.find('"') {
+        let run = rest[start..].bytes().take_while(|b| *b == b'"').count();
+        let quotes = &rest[start..start + run];
+        out.push_str(&rest[..start]);
+        if run >= 3 {
+            out.push_str(&quotes.replace('"', "\\\""));
+        } else {
+            out.push_str(quotes);
+        }
+        rest = &rest[start + run..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn read_existing_toml(path: &Path) -> String {
@@ -922,7 +945,7 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     if !body_trimmed.is_empty() {
         toml.push_str(&format!(
             "\ndeveloper_instructions = \"\"\"\n{}\n\"\"\"\n",
-            body_trimmed
+            escape_toml_multiline_string(body_trimmed)
         ));
     }
 
@@ -1068,12 +1091,48 @@ mod tests {
         assert_eq!(differences(RENDERED_AGENT, "not = = toml"), vec!["content"]);
     }
 
-    /// `convert_md_to_codex_toml` does not escape the body, so sync can
-    /// write a file that does not parse.  It still matches itself.
+    /// `maxTurns` is written raw, so sync can write a file that does not
+    /// parse.  It still matches itself.
     #[test]
     fn agent_differences_accept_an_identical_file_that_does_not_parse() {
-        let unparseable = "developer_instructions = \"\"\"\nMatch \\d.\n\"\"\"\n";
-        assert_eq!(differences(unparseable, unparseable), Vec::<String>::new());
+        let rendered = CodexCli.convert_agent_content(
+            "---\nname: planner\nmaxTurns: many\n---\nPlan.\n",
+            "planner",
+        );
+        assert!(toml::from_str::<toml::Table>(&rendered).is_err(), "{rendered}");
+        assert_eq!(differences(&rendered, &rendered), Vec::<String>::new());
+    }
+
+    /// A backslash or `"""` in the body must not break the TOML, or Codex
+    /// cannot load the file.
+    #[test]
+    fn agent_body_with_a_backslash_and_triple_quotes_renders_valid_toml() {
+        let body = "Match \\d and \\\"this\\\".\nStop at \"\"\"here\"\"\" or \"\"\"\"\".";
+        let rendered = CodexCli.convert_agent_content(
+            &format!("---\nname: planner\n---\n{body}\n"),
+            "planner",
+        );
+
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+
+        let stored = table["developer_instructions"].as_str().expect("string");
+        assert_eq!(stored.trim(), body);
+    }
+
+    /// Text with neither character renders as it always did, so a file sync
+    /// already wrote stays byte-identical.
+    #[test]
+    fn agent_body_with_plain_quotes_renders_unchanged() {
+        let body = "Say \"hello\" and \"\"empty\"\".\nSecond line.";
+        let rendered = CodexCli.convert_agent_content(
+            &format!("---\nname: planner\n---\n{body}\n"),
+            "planner",
+        );
+
+        assert!(
+            rendered.contains(&format!("\"\"\"\n{body}\n\"\"\"\n")),
+            "{rendered}"
+        );
     }
 
     #[test]

@@ -1871,12 +1871,13 @@ mod tests {
         assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
     }
 
-    /// A body with a backslash renders to TOML that does not parse.  The
-    /// file sync wrote must still match its stored copy.
+    /// An older version wrote the body unescaped, so `\t` parsed as a tab.
+    /// That file means something else than the stored text, so it is a
+    /// conflict naming the same file sync would rewrite.
     #[test]
-    fn custom_agent_scan_accepts_a_codex_file_that_does_not_parse() {
+    fn custom_agent_scan_reports_an_older_unescaped_codex_body() {
         let dir = tmp();
-        let content = "---\nname: planner\ndescription: Plans\n---\nMatch \\d.\n";
+        let content = "---\nname: planner\ndescription: Plans\n---\nSplit on \\t.\n";
         let project = Project {
             name: "scan".into(),
             directory: dir.path().display().to_string(),
@@ -1889,18 +1890,18 @@ mod tests {
         };
         let agents_dir = dir.path().join(".codex").join("agents");
         fs::create_dir_all(&agents_dir).expect("mkdir");
-        fs::write(
-            agents_dir.join("planner.toml"),
-            crate::agent::Agent::convert_agent_content(
-                &crate::agent::CodexCli,
-                content,
-                "planner",
-            ),
-        )
-        .expect("write");
+        let rendered = crate::agent::Agent::convert_agent_content(
+            &crate::agent::CodexCli,
+            content,
+            "planner",
+        );
+        let older = rendered.replace("\\\\t", "\\t");
+        assert_ne!(older, rendered);
+        fs::write(agents_dir.join("planner.toml"), older).expect("write");
 
         let scan = collect_custom_agent_conflicts(&project, dir.path());
 
-        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
+        assert_eq!(scan.conflicts[0].path, ".codex/agents/planner.toml");
     }
 }
