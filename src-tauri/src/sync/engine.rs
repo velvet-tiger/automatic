@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent;
 use crate::core::store_reads::StoreRead;
@@ -9,9 +9,9 @@ use crate::core::{self, Project, ProjectMode};
 use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents, clean_project_file,
-    collect_custom_asset_conflicts, conflicting_names,
-    load_mcp_server_configs, read_project_text, sync_custom_agents, sync_user_agents,
-    CustomAssetKind,
+    collect_custom_asset_conflicts, conflicting_names, create_project_dir, escaped_silent_dir,
+    load_mcp_server_configs, project_write_refusal, read_project_text, sync_custom_agents,
+    sync_user_agents, write_project_file, CustomAssetKind,
 };
 
 struct InstructionTarget {
@@ -38,6 +38,10 @@ pub fn discover_new_agent_mcp_configs(
     let mut discovered = Vec::new();
     for agent_id in agent_ids {
         if let Some(a) = agent::from_id(agent_id) {
+            if let Some(reason) = super::helpers::refused_root_mcp_file(a, dir) {
+                eprintln!("[automatic] not reading MCP servers for {agent_id}: {reason}");
+                continue;
+            }
             for (name, config) in a.discover_mcp_servers(dir) {
                 if let Ok(config_str) = serde_json::to_string_pretty(&config) {
                     discovered.push((name, config_str));
@@ -181,17 +185,26 @@ fn sync_to_directory_inner(
     let effective_dir = match project.mode {
         ProjectMode::Silent => {
             let silent_dir = dir.join(".automatic").join("silent");
-            fs::create_dir_all(&silent_dir).map_err(|e| {
-                format!(
-                    "Failed to create silent sync dir '{}': {}",
-                    silent_dir.display(),
-                    e
-                )
-            })?;
+            if let Some(reason) = escaped_silent_dir(&dir, &silent_dir) {
+                return Err(format!("Sync refused: {reason}"));
+            }
+            create_project_dir(&dir, &silent_dir)?;
             silent_dir
         }
         ProjectMode::Normal => dir.clone(),
     };
+
+    // Nothing below may write through a committed link out of the project,
+    // or block on a FIFO.  Check every fixed path up front, before the
+    // migrations, so a refused project is left exactly as it was.
+    let refused = refused_sync_paths(project, &dir, &effective_dir);
+    if !refused.is_empty() {
+        return Err(format!(
+            "Sync refused. Remove these links or special files, or point them inside the \
+             project, then sync again: {}",
+            refused.join("; ")
+        ));
+    }
 
     // One-time migrations: each vendor below moved its instruction file to
     // AGENTS.md at some point.  Fold any leftover legacy file into the new
@@ -308,6 +321,84 @@ fn sync_to_directory_inner(
     Ok(written_files)
 }
 
+/// Every path sync writes or reads at a fixed location.  Files sync writes
+/// by name inside these directories (skills, commands, sub-agents, rules,
+/// hook scripts) are checked one by one where they are written.
+fn fixed_sync_paths(project: &Project, dir: &Path, effective_dir: &Path) -> Vec<PathBuf> {
+    let ed = effective_dir;
+    let uses = |id: &str| project.agents.iter().any(|a| a == id);
+    let mut paths = vec![
+        ed.join(".agents").join("skills"),
+        ed.join(".agents").join("commands"),
+        dir.join(".automatic").join("snapshots"),
+        dir.join(".automatic").join("instructions"),
+    ];
+    // Only the agents a project uses: a link sync never touches, such as a
+    // monorepo's shared `.cursorrules` in a Claude-only project, is fine.
+    for (agent_id, path) in [
+        ("claude", ed.join(".claude").join("rules")),
+        ("cursor", ed.join(".cursor").join("rules")),
+        ("kilo", ed.join(".kilocode").join("mcp.json")),
+    ] {
+        if uses(agent_id) {
+            paths.push(path);
+        }
+    }
+    paths.extend(
+        LEGACY_INSTRUCTION_MIGRATIONS
+            .iter()
+            .filter(|spec| uses(spec.agent_id))
+            .map(|spec| ed.join(spec.legacy)),
+    );
+    for agent_instance in project.agents.iter().filter_map(|id| agent::from_id(id)) {
+        paths.extend(agent_fixed_paths(agent_instance, ed));
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// The fixed paths one agent's sync, hook sync and removal write or read
+/// under `dir`.
+fn agent_fixed_paths(agent_instance: &dyn agent::Agent, dir: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![dir.join(agent_instance.project_file_name())];
+    paths.extend(agent_instance.mcp_merge_inputs(dir));
+    paths.extend(agent_instance.owned_config_paths(dir));
+    paths.extend(agent_instance.owned_extra_files(dir));
+    paths.extend(agent_instance.hook_config_target(dir).map(|t| match t {
+        agent::HookConfigTarget::Owned { path } | agent::HookConfigTarget::Merged { path, .. } => {
+            path
+        }
+    }));
+    paths.extend(agent_instance.skill_dirs(dir));
+    paths.extend(agent_instance.agents_dir(dir));
+    paths.extend(agent_instance.commands_dir(dir));
+    paths.extend(agent_instance.owned_dirs(dir));
+    paths
+}
+
+/// [`refused_sync_paths`] for removing one agent: its MCP cleanup and hook
+/// cleanup rewrite merged files, which a committed link would redirect.
+pub(super) fn refused_agent_paths(agent_instance: &dyn agent::Agent, dir: &Path) -> Vec<String> {
+    agent_fixed_paths(agent_instance, dir)
+        .into_iter()
+        .filter_map(|path| project_write_refusal(dir, &path))
+        .collect()
+}
+
+/// The fixed sync paths in [`fixed_sync_paths`] that
+/// [`project_write_refusal`] refuses, each with its reason.  In Silent mode a
+/// path under the silent directory must stay inside it.
+fn refused_sync_paths(project: &Project, dir: &Path, effective_dir: &Path) -> Vec<String> {
+    fixed_sync_paths(project, dir, effective_dir)
+        .into_iter()
+        .filter_map(|path| {
+            let root = if path.starts_with(effective_dir) { effective_dir } else { dir };
+            project_write_refusal(root, &path)
+        })
+        .collect()
+}
+
 /// One vendor's move from a legacy instruction filename to the one it has
 /// since standardised on. See [`migrate_legacy_instruction_file`] and
 /// [`LEGACY_INSTRUCTION_MIGRATIONS`].
@@ -405,6 +496,23 @@ fn migrate_legacy_instruction_file(
         None => return,
     };
 
+    // Check both files with the contained reader before anything else: a
+    // FIFO would hang the sync, and a link out of the project must not have
+    // its content moved in.  `legacy_raw` also feeds the conflict branch.
+    let current_path = effective_dir.join(spec.current);
+    let legacy_raw = match read_project_text(effective_dir, &legacy_path) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return,
+        Err(reason) => {
+            eprintln!("[automatic] {} migration skipped: {reason}", spec.legacy);
+            return;
+        }
+    };
+    if let Err(reason) = read_project_text(effective_dir, &current_path) {
+        eprintln!("[automatic] {} migration skipped: {reason}", spec.legacy);
+        return;
+    }
+
     let legacy_user = crate::core::read_project_file(dir_str, spec.legacy).unwrap_or_default();
     let current_user = crate::core::read_project_file(dir_str, spec.current).unwrap_or_default();
 
@@ -441,8 +549,8 @@ fn migrate_legacy_instruction_file(
                 spec.legacy, spec.current, spec.legacy
             );
         }
-        if legacy_user.trim() != fs::read_to_string(&legacy_path).unwrap_or_default().trim() {
-            let _ = fs::write(&legacy_path, &legacy_user);
+        if legacy_user.trim() != legacy_raw.trim() {
+            let _ = write_project_file(effective_dir, &legacy_path, &legacy_user);
         }
         false
     };
@@ -585,6 +693,7 @@ fn sync_project_commands_step(
     let project_commands_dir = dir.join(".agents").join("commands");
     let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
     written_files.extend(agent::copy_commands_to_project(
+        dir,
         &project_commands_dir,
         workspace_command_contents,
         custom_commands,
@@ -699,6 +808,7 @@ fn sync_agent_configs_step(
                 if let Some(agents_dir) = agent_instance.agents_dir(dir) {
                     let custom_agents = project.custom_agents.as_deref().unwrap_or(&[]);
                     let agent_files = sync_custom_agents(
+                        dir,
                         &agents_dir,
                         custom_agents,
                         agent_instance,
@@ -712,6 +822,7 @@ fn sync_agent_configs_step(
                         .collect::<Result<Vec<_>, _>>()?;
 
                     let user_agent_files = sync_user_agents(
+                        dir,
                         &agents_dir,
                         &project.user_agents,
                         &custom_agent_names,
@@ -754,6 +865,7 @@ fn sync_agent_configs_step(
                     let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
                     let command_files = if agent_instance.commands_file_ext() == "md" {
                         agent::symlink_commands_from_project(
+                            dir,
                             &commands_dir,
                             project_commands_dir,
                             workspace_command_contents,
@@ -762,6 +874,7 @@ fn sync_agent_configs_step(
                         )?
                     } else {
                         agent::sync_commands_to_dir(
+                            dir,
                             &commands_dir,
                             workspace_command_contents,
                             custom_commands,
@@ -875,31 +988,40 @@ fn resolve_unified_instruction_content(
     project: &Project,
     instruction_targets: &[InstructionTarget],
 ) -> Option<String> {
-    let mut file_contents: Vec<(String, String)> = Vec::new();
+    // Raw on-disk content per instruction file.  A file the contained
+    // reader refuses (a FIFO, a link out of the project) counts as modified
+    // externally: replication must not copy over or from it.
+    let mut raw_contents: Vec<(String, String)> = Vec::new();
+    let mut any_refused = false;
     for target in instruction_targets {
-        let path = dir.join(&target.filename);
-        if path.exists() {
-            if let Ok(raw) = fs::read_to_string(&path) {
-                let user_content = crate::core::strip_index_section(
-                    &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
-                        &crate::core::strip_managed_section_pub(&raw),
-                    )),
-                );
-                file_contents.push((target.filename.clone(), user_content));
+        match read_project_text(dir, &dir.join(&target.filename)) {
+            Ok(Some(raw)) => raw_contents.push((target.filename.clone(), raw)),
+            Ok(None) => {}
+            Err(reason) => {
+                eprintln!("[automatic] sync: {reason}");
+                any_refused = true;
             }
         }
     }
+    let file_contents: Vec<(String, String)> = raw_contents
+        .iter()
+        .map(|(filename, raw)| {
+            let user_content = crate::core::strip_index_section(
+                &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
+                    &crate::core::strip_managed_section_pub(raw),
+                )),
+            );
+            (filename.clone(), user_content)
+        })
+        .collect();
 
-    let any_externally_modified = file_contents.iter().any(|(filename, _)| {
-        if let Some(stored_hash) = project.instruction_file_hashes.get(filename) {
-            let on_disk_path = dir.join(filename);
-            if let Ok(raw) = fs::read_to_string(&on_disk_path) {
-                let current_hash = crate::core::compute_content_hash(&raw);
-                return &current_hash != stored_hash;
-            }
-        }
-        false
-    });
+    let any_externally_modified = any_refused
+        || raw_contents.iter().any(|(filename, raw)| {
+            project
+                .instruction_file_hashes
+                .get(filename)
+                .is_some_and(|stored| &crate::core::compute_content_hash(raw) != stored)
+        });
 
     let all_consistent = if file_contents.len() > 1 {
         let first_content = &file_contents[0].1;
@@ -918,21 +1040,14 @@ fn resolve_unified_instruction_content(
         return None;
     }
 
-    let source_file = instruction_targets
-        .iter()
-        .find(|target| dir.join(&target.filename).exists())
-        .map(|target| target.filename.clone());
-
-    if let Some(source) = source_file {
-        let raw = fs::read_to_string(dir.join(&source)).unwrap_or_default();
-        Some(crate::core::strip_index_section(
-            &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
-                &crate::core::strip_managed_section_pub(&raw),
-            )),
-        ))
-    } else {
-        Some(String::new())
-    }
+    // The first target that exists is the source; its content was read above.
+    Some(
+        file_contents
+            .into_iter()
+            .next()
+            .map(|(_, user_content)| user_content)
+            .unwrap_or_default(),
+    )
 }
 
 /// Resolve the library rule list that applies to `filename`, including the
@@ -1117,15 +1232,18 @@ fn record_instruction_state_step(
                 continue;
             }
             let path = hash_dir.join(filename);
-            if path.is_file() {
-                if let Ok(content) = fs::read_to_string(&path) {
+            match read_project_text(&hash_dir, &path) {
+                Ok(Some(content)) => {
                     project.instruction_file_hashes.insert(
                         filename.clone(),
                         crate::core::compute_content_hash(&content),
                     );
                 }
-            } else {
-                project.instruction_file_hashes.remove(filename);
+                Ok(None) => {
+                    project.instruction_file_hashes.remove(filename);
+                }
+                // Leave the stored hash alone; drift reports the file.
+                Err(reason) => eprintln!("[automatic] sync: {reason}"),
             }
         }
         // Persist the real project (directory unchanged) with the updated hashes.
@@ -2150,5 +2268,383 @@ mod tests {
             assert!(written["mcpServers"].get("sync-unused-locked").is_none());
             assert!(written["mcpServers"].get("sync-disabled-locked").is_none());
         });
+    }
+
+    // ── Containment: sync never writes through a link out of the project ──
+
+    #[cfg(unix)]
+    fn make_fifo(path: &Path) {
+        let status = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo failed");
+    }
+
+    fn claude_project(dir: &Path) -> Project {
+        Project {
+            name: "contained".into(),
+            directory: dir.display().to_string(),
+            agents: vec!["claude".into()],
+            instruction_mode: "per-agent".into(),
+            ..Default::default()
+        }
+    }
+
+    fn entry_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("read dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Case (a): an instruction file or MCP config committed as a link out of
+    /// the project stops the sync before anything is written.
+    #[cfg(unix)]
+    #[test]
+    fn sync_refuses_owned_files_that_link_out_of_the_project() {
+        for name in ["CLAUDE.md", ".mcp.json"] {
+            let dir = tmp();
+            let outside = tmp();
+            let target = outside.path().join("target");
+            fs::write(&target, "OUTSIDE").expect("write target");
+            std::os::unix::fs::symlink(&target, dir.path().join(name)).expect("link");
+
+            let err = sync_project_without_autodetect(&mut claude_project(dir.path()))
+                .expect_err("sync must refuse");
+
+            assert!(err.contains("Sync refused") && err.contains(name), "{err}");
+            assert_eq!(fs::read_to_string(&target).expect("read"), "OUTSIDE");
+            assert!(!dir.path().join(".agents").exists(), "nothing may be written");
+        }
+    }
+
+    /// Case (a): a linked agent directory carries the hook and settings
+    /// writers out of the project, so it is refused too.
+    #[cfg(unix)]
+    #[test]
+    fn sync_refuses_a_linked_agent_directory() {
+        let dir = tmp();
+        let outside = tmp();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join(".claude")).expect("link");
+
+        let err = sync_project_without_autodetect(&mut claude_project(dir.path()))
+            .expect_err("sync must refuse");
+
+        assert!(err.contains(".claude"), "{err}");
+        assert!(entry_names(outside.path()).is_empty());
+    }
+
+    /// Case (e) at the gate: a FIFO instruction file is refused without
+    /// being opened, so the sync returns instead of hanging.
+    #[cfg(unix)]
+    #[test]
+    fn sync_refuses_a_fifo_instruction_file() {
+        let dir = tmp();
+        make_fifo(&dir.path().join("CLAUDE.md"));
+
+        let err = sync_project_without_autodetect(&mut claude_project(dir.path()))
+            .expect_err("sync must refuse");
+
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    /// A link that stays inside the project is the user's own layout, so
+    /// sync writes through it as before.
+    #[cfg(unix)]
+    #[test]
+    fn sync_writes_through_a_link_that_stays_inside_the_project() {
+        let dir = tmp();
+        fs::write(dir.path().join("AGENTS.md"), "# Shared\n").expect("write AGENTS.md");
+        std::os::unix::fs::symlink("AGENTS.md", dir.path().join("CLAUDE.md")).expect("link");
+
+        sync_project_without_autodetect(&mut claude_project(dir.path())).expect("sync");
+
+        assert!(fs::symlink_metadata(dir.path().join("CLAUDE.md"))
+            .expect("meta")
+            .file_type()
+            .is_symlink());
+        let shared = fs::read_to_string(dir.path().join("AGENTS.md")).expect("read");
+        assert!(shared.contains("# Shared"), "{shared}");
+    }
+
+    /// Case (d): in Silent mode a linked `.automatic/silent`, or a linked
+    /// `.automatic` above it, would send every synced file out of the project.
+    #[cfg(unix)]
+    #[test]
+    fn silent_sync_refuses_a_silent_directory_that_links_out() {
+        for linked in [".automatic/silent", ".automatic"] {
+            let dir = tmp();
+            let outside = tmp();
+            fs::create_dir_all(dir.path().join(".automatic")).expect("mkdir");
+            if linked == ".automatic" {
+                fs::remove_dir(dir.path().join(".automatic")).expect("rmdir");
+            }
+            std::os::unix::fs::symlink(outside.path(), dir.path().join(linked)).expect("link");
+            let mut project = claude_project(dir.path());
+            project.mode = ProjectMode::Silent;
+
+            let err = sync_project_without_autodetect(&mut project).expect_err("must refuse");
+
+            assert!(err.contains("Sync refused"), "{linked}: {err}");
+            assert!(entry_names(outside.path()).is_empty(), "{linked}");
+        }
+    }
+
+    /// Case (e): unified replication treats a refused instruction file as
+    /// modified outside Automatic, so nothing is copied from or over it.
+    #[cfg(unix)]
+    #[test]
+    fn unified_replication_treats_a_fifo_instruction_file_as_modified() {
+        let dir = tmp();
+        fs::write(dir.path().join("AGENTS.md"), "# Shared\n").expect("write AGENTS.md");
+        make_fifo(&dir.path().join("CLAUDE.md"));
+        let mut project = claude_project(dir.path());
+        project.agents.push("codex".into());
+        project.instruction_mode = "unified".into();
+        let targets = [
+            InstructionTarget {
+                agent_id: "claude".into(),
+                filename: "CLAUDE.md".into(),
+            },
+            InstructionTarget {
+                agent_id: "codex".into(),
+                filename: "AGENTS.md".into(),
+            },
+        ];
+
+        let content =
+            resolve_unified_instruction_content(&dir.path().to_path_buf(), &project, &targets);
+
+        assert!(content.is_none());
+    }
+
+    /// Case (e): a legacy instruction file that links out of the project is
+    /// not folded into AGENTS.md, and is left as it is.
+    #[cfg(unix)]
+    #[test]
+    fn legacy_migration_skips_a_legacy_file_that_links_out() {
+        let dir = tmp();
+        let outside = tmp();
+        let target = outside.path().join("secret.md");
+        fs::write(&target, "SECRET").expect("write target");
+        std::os::unix::fs::symlink(&target, dir.path().join(".cursorrules")).expect("link");
+        let mut project = make_cursor_project(dir.path().to_str().expect("utf-8"));
+        let spec = LEGACY_INSTRUCTION_MIGRATIONS
+            .iter()
+            .find(|s| s.legacy == ".cursorrules")
+            .expect("spec");
+
+        migrate_legacy_instruction_file(dir.path(), &mut project, spec);
+
+        assert!(!dir.path().join("AGENTS.md").exists());
+        assert_eq!(fs::read_to_string(&target).expect("read"), "SECRET");
+        assert!(fs::symlink_metadata(dir.path().join(".cursorrules"))
+            .expect("meta")
+            .file_type()
+            .is_symlink());
+    }
+
+    /// Every path below `root`, relative, paired with whether it is (or
+    /// links to) a directory.  Links are listed but not descended into.
+    fn list_synced_paths(root: &Path) -> Vec<(PathBuf, bool)> {
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<(PathBuf, bool)>) {
+            for entry in fs::read_dir(dir).expect("read dir") {
+                let path = entry.expect("entry").path();
+                let is_link = fs::symlink_metadata(&path)
+                    .expect("meta")
+                    .file_type()
+                    .is_symlink();
+                let is_dir = path.is_dir();
+                out.push((path.strip_prefix(root).expect("relative").to_path_buf(), is_dir));
+                if is_dir && !is_link {
+                    walk(root, &path, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out.sort();
+        out
+    }
+
+    /// Link every path a clean sync of `make`'s project creates out of a
+    /// fresh project in turn, sync, and return each path through which the
+    /// sync wrote outside, whether it refused or not.
+    #[cfg(unix)]
+    fn paths_that_leak(make: &dyn Fn(&Path) -> Project) -> Vec<String> {
+        let clean = tmp();
+        sync_project_without_autodetect(&mut make(clean.path())).expect("clean sync");
+        let synced = list_synced_paths(clean.path());
+        assert!(synced.len() > 20, "expected a full tree, got {synced:?}");
+
+        let mut leaks = Vec::new();
+        for (rel, is_dir) in synced {
+            let dir = tmp();
+            let outside = tmp();
+            if let Some(parent) = rel.parent() {
+                fs::create_dir_all(dir.path().join(parent)).expect("mkdir parent");
+            }
+            let sentinel = outside.path().join("sentinel");
+            if is_dir {
+                std::os::unix::fs::symlink(outside.path(), dir.path().join(&rel)).expect("link");
+            } else {
+                // A JSON object, so merge writers parse it and would write.
+                fs::write(&sentinel, "{}\n").expect("write sentinel");
+                std::os::unix::fs::symlink(&sentinel, dir.path().join(&rel)).expect("link");
+            }
+
+            let _ = sync_project_without_autodetect(&mut make(dir.path()));
+
+            let untouched = if is_dir {
+                entry_names(outside.path()).is_empty()
+            } else {
+                entry_names(outside.path()) == ["sentinel"]
+                    && fs::read_to_string(&sentinel).expect("read sentinel") == "{}\n"
+            };
+            if !untouched {
+                leaks.push(format!("{} -> {:?}", rel.display(), entry_names(outside.path())));
+            }
+        }
+        leaks
+    }
+
+    /// Canary for writers the gate or the per-file checks miss.  Every agent
+    /// syncs, with custom assets of each kind and a script hook per hook
+    /// agent, in each rule layout (inline, `.claude/rules/` and
+    /// `.cursor/rules/`, index mode), in unified and Silent mode, and in copy
+    /// mode.  No path the sync creates may carry a write outside.
+    #[cfg(unix)]
+    #[test]
+    fn no_synced_path_writes_through_a_link_out_of_the_project() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let mut hooks = Vec::new();
+            for a in agent::all().into_iter().filter(|a| a.capabilities().hooks) {
+                let machine_name = format!("canary-{}", a.id());
+                crate::core::save_hook(
+                    &machine_name,
+                    "Canary",
+                    a.id(),
+                    a.hook_events()[0],
+                    None,
+                    crate::core::HookHandler::Script {
+                        interpreter: "bash".into(),
+                        script: "echo canary\n".into(),
+                    },
+                    None,
+                )
+                .expect("save hook");
+                hooks.push(machine_name);
+            }
+
+            let base = |dir: &Path| Project {
+                name: "canary".into(),
+                directory: dir.display().to_string(),
+                agents: agent::all().iter().map(|a| a.id().to_string()).collect(),
+                instruction_mode: "per-agent".into(),
+                hooks: hooks.clone(),
+                custom_rules: vec![CustomRule {
+                    name: CUSTOM_RULE_NAME.into(),
+                    content: CUSTOM_RULE_CONTENT.into(),
+                }],
+                custom_commands: Some(vec![crate::core::CustomCommand {
+                    name: "deploy".into(),
+                    content: "---\ndescription: Deploy\n---\nShip it.\n".into(),
+                }]),
+                custom_agents: Some(vec![crate::core::CustomAgent {
+                    name: "Planner".into(),
+                    content: "---\nname: planner\ndescription: Plans\n---\nPlan.\n".into(),
+                }]),
+                custom_skills: Some(vec![crate::core::CustomSkill {
+                    name: "local-skill".into(),
+                    content: "---\nname: local-skill\ndescription: Local\n---\nBody.\n".into(),
+                }]),
+                ..Default::default()
+            };
+            let dot_dirs = |dir: &Path| {
+                let mut project = base(dir);
+                let cursor = project.agent_options.entry("cursor".into()).or_default();
+                cursor.cursor_rules_in_dot_cursor = true;
+                project
+            };
+            let index = |dir: &Path| {
+                let mut project = base(dir);
+                project.instructions_index_mode = true;
+                project
+            };
+            let unified = |dir: &Path| {
+                let mut project = base(dir);
+                project.instruction_mode = "unified".into();
+                project
+            };
+            let silent = |dir: &Path| {
+                let mut project = base(dir);
+                project.mode = ProjectMode::Silent;
+                project
+            };
+
+            let mut leaks = paths_that_leak(&base);
+            leaks.extend(paths_that_leak(&dot_dirs));
+            leaks.extend(paths_that_leak(&index));
+            leaks.extend(paths_that_leak(&unified));
+            leaks.extend(paths_that_leak(&silent));
+            // Copy mode replaces the agent-directory links with copies.
+            let mut settings = crate::core::read_settings().expect("read settings");
+            settings.sync_mode = "copy".into();
+            crate::core::write_settings(&settings).expect("write settings");
+            leaks.extend(paths_that_leak(&base));
+            assert!(leaks.is_empty(), "sync wrote outside the project through: {leaks:#?}");
+        });
+    }
+
+    /// Case (f): discovery for newly added agents skips a FIFO MCP config
+    /// instead of hanging on it.
+    #[cfg(unix)]
+    #[test]
+    fn new_agent_discovery_skips_a_fifo_mcp_config() {
+        let dir = tmp();
+        make_fifo(&dir.path().join(".mcp.json"));
+
+        let discovered = discover_new_agent_mcp_configs(dir.path(), &["claude".to_string()]);
+
+        assert!(discovered.is_empty());
+    }
+
+    /// The gate checks only the paths of the agents a project uses.  A
+    /// monorepo's shared `.cursorrules` link does not block a Claude-only
+    /// project, which never reads it.
+    #[cfg(unix)]
+    #[test]
+    fn sync_ignores_links_for_agents_the_project_does_not_use() {
+        let dir = tmp();
+        let outside = tmp();
+        let shared = outside.path().join("shared.md");
+        fs::write(&shared, "SHARED").expect("write shared");
+        std::os::unix::fs::symlink(&shared, dir.path().join(".cursorrules")).expect("link");
+
+        sync_project_without_autodetect(&mut claude_project(dir.path())).expect("sync");
+
+        assert_eq!(fs::read_to_string(&shared).expect("read"), "SHARED");
+    }
+
+    /// A Silent-mode directory linked into `.git` is refused like one linked
+    /// out of the project.
+    #[cfg(unix)]
+    #[test]
+    fn silent_sync_refuses_a_silent_directory_inside_git() {
+        let dir = tmp();
+        fs::create_dir_all(dir.path().join(".git")).expect("mkdir .git");
+        fs::create_dir_all(dir.path().join(".automatic")).expect("mkdir .automatic");
+        std::os::unix::fs::symlink("../.git", dir.path().join(".automatic/silent")).expect("link");
+        let mut project = claude_project(dir.path());
+        project.mode = ProjectMode::Silent;
+
+        let err = sync_project_without_autodetect(&mut project).expect_err("must refuse");
+
+        assert!(err.contains("Sync refused"), "{err}");
+        assert!(entry_names(&dir.path().join(".git")).is_empty());
     }
 }

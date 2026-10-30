@@ -1,5 +1,4 @@
 use serde_json::{json, Map, Value};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, Agent};
@@ -40,6 +39,12 @@ impl Agent for Kiro {
     /// `.kiro/` is Kiro's alone: MCP settings, skills and sub-agents.
     fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".kiro")]
+    }
+
+    /// Kiro writes this file whole.  Naming it puts it through the sync gate
+    /// and the autodetect and discovery pre-checks.
+    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".kiro").join("settings").join("mcp.json")]
     }
 
     // ── Capabilities ────────────────────────────────────────────────────
@@ -93,17 +98,12 @@ impl Agent for Kiro {
 
         let output = json!({ "mcpServers": Value::Object(kiro_servers) });
 
-        let settings_dir = dir.join(".kiro").join("settings");
-        if !settings_dir.exists() {
-            fs::create_dir_all(&settings_dir)
-                .map_err(|e| format!("Failed to create .kiro/settings/: {}", e))?;
-        }
-
-        let path = settings_dir.join("mcp.json");
+        // No trait method names this file, so the sync gate does not check
+        // it: the write is contained here instead.
+        let path = dir.join(".kiro").join("settings").join("mcp.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write .kiro/settings/mcp.json: {}", e))?;
+        crate::sync::write_project_file(dir, &path, content)?;
 
         Ok(path.display().to_string())
     }
@@ -239,6 +239,7 @@ fn convert_md_to_kiro_json(content: &str, fallback_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use serde_json::json;
     use tempfile::tempdir;
 

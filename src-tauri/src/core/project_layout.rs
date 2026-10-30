@@ -125,9 +125,12 @@ pub fn has_project_files(directory: &str) -> bool {
     project_config_source_path(directory).is_some()
 }
 
-fn read_json_object(path: &Path) -> Result<ProjectFields, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+/// Read one of the project's own config files from `directory`.  The read is
+/// contained: a committed link out of the project must not be imported as
+/// this project's config, and a huge or special file must not be read.
+fn read_json_object(directory: &str, path: &Path) -> Result<ProjectFields, String> {
+    let raw = crate::sync::read_project_text(Path::new(directory), path)?
+        .ok_or_else(|| format!("Failed to read {}: it does not exist", path.display()))?;
     match serde_json::from_str::<Value>(&raw) {
         Ok(Value::Object(map)) => Ok(map),
         Ok(_) => Err(format!("{} does not contain a JSON object", path.display())),
@@ -175,11 +178,11 @@ pub fn read_project_files(
     fallback_name: &str,
 ) -> Result<Option<Project>, String> {
     let config = existing_config_path(directory)
-        .map(|path| read_json_object(&path))
+        .map(|path| read_json_object(directory, &path))
         .transpose()?;
     let state_path = project_state_path(directory);
     let state = if state_path.is_file() {
-        Some(read_json_object(&state_path)?)
+        Some(read_json_object(directory, &state_path)?)
     } else {
         None
     };
@@ -279,7 +282,7 @@ fn needs_legacy_backup(directory: &str) -> bool {
     if existing_config_path(directory).is_some() || !state_path.is_file() {
         return false;
     }
-    match read_json_object(&state_path) {
+    match read_json_object(directory, &state_path) {
         Ok(fields) => fields
             .keys()
             .any(|key| !is_state_field(key) && !TRANSIENT_FIELDS.contains(&key.as_str())),
@@ -329,16 +332,29 @@ pub fn write_project_files(project: &Project) -> Result<(), String> {
         ));
     }
 
+    let config_path = config_path_for_mode(directory, &project.mode);
+    let state_path = project_state_path(directory);
+    // A cloned repo can commit `.automatic -> /elsewhere` or a linked
+    // `.automatic.json`; the project's config must not be written through it.
+    // A directory that does not exist yet holds no links.
+    let root = Path::new(directory);
+    if root.exists() {
+        for path in [&config_path, &state_path, &project_legacy_backup_path(directory)] {
+            if let Some(reason) = crate::sync::project_write_refusal(root, path) {
+                return Err(format!("Refused to write the project config: {reason}"));
+            }
+        }
+    }
+
     back_up_legacy_file(directory)?;
     let (config, state) = split_project(project)?;
-    let config_path = config_path_for_mode(directory, &project.mode);
     write_json_file(&config_path, &Value::Object(config))?;
     for other in config_paths(directory) {
         if other != config_path {
             remove_file_if_present(&other)?;
         }
     }
-    write_json_file(&project_state_path(directory), &Value::Object(state))
+    write_json_file(&state_path, &Value::Object(state))
 }
 
 /// Delete the config file from either location, the state file and any
@@ -397,7 +413,8 @@ mod tests {
     }
 
     fn read_object(path: &Path) -> Map<String, Value> {
-        read_json_object(path).expect("read json object")
+        // Tests read files they wrote; "/" contains every path.
+        read_json_object("/", path).expect("read json object")
     }
 
     #[test]

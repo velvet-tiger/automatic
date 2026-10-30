@@ -409,6 +409,7 @@ fn sync_github_copilot_hooks(
     let hooks_file = hooks_dir.join("automatic.json");
     let spec = super::HookWriteSpec {
         supported_events: GITHUB_COPILOT_EVENTS,
+        project_dir: project_dir.to_path_buf(),
         scripts_dir: hooks_dir,
         script_command: |file_name| format!("./.github/hooks/{}", file_name),
         handler: super::standard_command_handler,

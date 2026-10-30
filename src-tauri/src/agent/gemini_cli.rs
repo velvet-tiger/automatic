@@ -354,6 +354,7 @@ fn sync_gemini_hooks(
     let settings_path = project_dir.join(".gemini").join("settings.json");
     let spec = super::HookWriteSpec {
         supported_events: GEMINI_CLI_EVENTS,
+        project_dir: project_dir.to_path_buf(),
         scripts_dir: project_dir.join(".gemini").join("hooks"),
         // No vendor documentation on absolute-vs-relative script paths for
         // Gemini; mirrors Codex CLI's relative-from-project-root convention

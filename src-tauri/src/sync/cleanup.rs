@@ -67,6 +67,7 @@ pub fn remove_agent_from_project(
             })?;
             match agent::from_id(agent_id) {
                 Some(agent_instance) => {
+                    refuse_unsafe_agent_paths(agent_instance, &dir)?;
                     let managed = managed_mcp_servers(project);
                     let plan =
                         agent::plan_agent_removal(agent_instance, &dir, &remaining, &managed)?;
@@ -112,9 +113,29 @@ pub fn get_agent_cleanup_preview(
     let Some(agent_instance) = agent::from_id(agent_id) else {
         return Ok(vec![]);
     };
+    refuse_unsafe_agent_paths(agent_instance, &dir)?;
     let remaining = remaining_agents(project, agent_id);
     let managed = managed_mcp_servers(project);
     Ok(agent::plan_agent_removal(agent_instance, &dir, &remaining, &managed)?.entries())
+}
+
+/// Removal reads the agent's merged files for its preview and rewrites them
+/// to strip Automatic's entries.  A committed link out of the project would
+/// carry that rewrite to the user's own config, and a FIFO would hang the
+/// preview, so both are refused before either runs.
+fn refuse_unsafe_agent_paths(
+    agent_instance: &dyn agent::Agent,
+    dir: &std::path::Path,
+) -> Result<(), String> {
+    let refused = super::engine::refused_agent_paths(agent_instance, dir);
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Removal refused. Remove these links or special files, or point them inside the \
+         project, then try again: {}",
+        refused.join("; ")
+    ))
 }
 
 #[cfg(test)]
@@ -236,6 +257,28 @@ mod tests {
             );
             assert!(remove_agent_from_project(&mut project, "claude", RemovalMode::Keep).is_ok());
             assert!(project.agents.is_empty());
+        });
+    }
+
+    /// Removing an agent whose merged config links out of the project is
+    /// refused before the preview reads it or the cleanup rewrites it.
+    #[cfg(unix)]
+    #[test]
+    fn removal_refuses_a_config_that_links_out_of_the_project() {
+        with_temp_home(|| {
+            let dir = tempdir().expect("tempdir");
+            let outside = tempdir().expect("tempdir");
+            let global = outside.path().join("settings.json");
+            fs::write(&global, "{\"hooks\":{}}").expect("write global");
+            fs::create_dir_all(dir.path().join(".claude")).expect("mkdir");
+            std::os::unix::fs::symlink(&global, dir.path().join(".claude/settings.json"))
+                .expect("link");
+            let mut project = project_in(dir.path(), &["claude"]);
+
+            assert!(get_agent_cleanup_preview(&project, "claude", RemovalMode::Remove).is_err());
+            let removed = remove_agent_from_project(&mut project, "claude", RemovalMode::Remove);
+            assert!(removed.is_err());
+            assert_eq!(fs::read_to_string(&global).expect("read"), "{\"hooks\":{}}");
         });
     }
 }

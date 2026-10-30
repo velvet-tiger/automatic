@@ -43,7 +43,11 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
         return Ok(String::new());
     }
 
-    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    // Contained: a committed link out of the project must not show another
+    // file's content in the editor, and a FIFO must not hang the read.
+    let Some(content) = crate::sync::read_project_text(&project_dir, &path)? else {
+        return Ok(String::new());
+    };
     Ok(strip_index_section(&strip_groups_section(
         &strip_rules_section(&strip_managed_section(&content)),
     )))
@@ -75,10 +79,7 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     if path.is_dir() {
         return Err(format!("Instruction path '{}' is a directory", filename));
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    fs::write(&path, content).map_err(|e| e.to_string())
+    crate::sync::write_project_file(&dir, &path, content)
 }
 
 // ── Rule-aware project file writes ──────────────────────────────────────────
@@ -218,19 +219,11 @@ pub fn save_instruction_snapshot(
     if directory.is_empty() {
         return Ok(());
     }
-    let snap_dir = PathBuf::from(directory).join(SNAPSHOT_DIR);
-    fs::create_dir_all(&snap_dir).map_err(|e| e.to_string())?;
-    let path = snap_dir.join(filename);
-    // Nested filenames (e.g. `.junie/AGENTS.md`, `.clinerules/automatic.md`,
-    // `.github/copilot-instructions.md`) require the parent directory under
-    // the snapshot root to exist before writing.  Without this, the write
-    // fails silently at the caller and drift detection loses its snapshot.
-    if let Some(parent) = path.parent() {
-        if parent != snap_dir {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-    }
-    fs::write(&path, user_content).map_err(|e| e.to_string())
+    let root = PathBuf::from(directory);
+    let path = root.join(SNAPSHOT_DIR).join(filename);
+    // Creates nested parents such as `.junie/` for `.junie/AGENTS.md`, and
+    // refuses a committed `.automatic` link out of the project.
+    crate::sync::write_project_file(&root, &path, user_content)
 }
 
 /// Where the snapshot for `filename` lives inside `project_dir`.  Agent
@@ -245,8 +238,18 @@ pub fn read_instruction_snapshot(directory: &str, filename: &str) -> Option<Stri
     if directory.is_empty() {
         return None;
     }
-    let path = PathBuf::from(directory).join(SNAPSHOT_DIR).join(filename);
-    fs::read_to_string(&path).ok()
+    let root = PathBuf::from(directory);
+    let path = root.join(SNAPSHOT_DIR).join(filename);
+    // Contained: drift diffs this and "overwrite" writes it into the
+    // instruction file, so a committed link out of the project must not be
+    // read, and a FIFO must not hang the drift poll.
+    match crate::sync::read_project_text(&root, &path) {
+        Ok(snapshot) => snapshot,
+        Err(reason) => {
+            eprintln!("[automatic] ignoring instruction snapshot: {reason}");
+            None
+        }
+    }
 }
 
 /// Returns `true` if rules for the given project file should be written to
@@ -423,10 +426,16 @@ pub fn compute_instruction_hashes(project: &Project) -> BTreeMap<String, String>
             }
             seen.insert(filename.clone());
 
-            let path = dir.join(&filename);
-            if path.is_file() {
-                if let Ok(content) = fs::read_to_string(&path) {
+            match crate::sync::read_project_text(&dir, &dir.join(&filename)) {
+                Ok(Some(content)) => {
                     hashes.insert(filename, compute_content_hash(&content));
+                }
+                Ok(None) => {}
+                // Refused: keep the stored hash, so drift still reports it.
+                Err(_) => {
+                    if let Some(stored) = project.instruction_file_hashes.get(&filename) {
+                        hashes.insert(filename, stored.clone());
+                    }
                 }
             }
         }
@@ -472,15 +481,17 @@ pub fn record_instruction_hashes_for_filenames(
             continue;
         }
 
-        let path = dir.join(filename);
-        if path.is_file() {
-            if let Ok(content) = fs::read_to_string(&path) {
+        match crate::sync::read_project_text(&dir, &dir.join(filename)) {
+            Ok(Some(content)) => {
                 project
                     .instruction_file_hashes
                     .insert(filename.clone(), compute_content_hash(&content));
             }
-        } else {
-            project.instruction_file_hashes.remove(filename);
+            Ok(None) => {
+                project.instruction_file_hashes.remove(filename);
+            }
+            // Refused: leave the stored hash, so drift still reports the file.
+            Err(_) => {}
         }
     }
 
@@ -986,5 +997,29 @@ mod tests {
                 marker_count, on_disk
             );
         });
+    }
+
+    /// Drift diffs the snapshot and "overwrite" writes it back into the
+    /// instruction file, so a snapshot that links out of the project, or is
+    /// a FIFO, is ignored instead of read.
+    #[cfg(unix)]
+    #[test]
+    fn read_instruction_snapshot_ignores_links_out_and_fifos() {
+        let dir = tmp();
+        let outside = tmp();
+        let snapshots = dir.path().join(SNAPSHOT_DIR);
+        fs::create_dir_all(&snapshots).expect("mkdir");
+        let secret = outside.path().join("credentials");
+        fs::write(&secret, "SECRET").expect("write secret");
+        std::os::unix::fs::symlink(&secret, snapshots.join("CLAUDE.md")).expect("link");
+        let status = std::process::Command::new("mkfifo")
+            .arg(snapshots.join("AGENTS.md"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+        let directory = dir.path().to_str().expect("utf-8");
+
+        assert_eq!(read_instruction_snapshot(directory, "CLAUDE.md"), None);
+        assert_eq!(read_instruction_snapshot(directory, "AGENTS.md"), None);
     }
 }

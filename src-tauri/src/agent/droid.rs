@@ -276,6 +276,7 @@ fn sync_droid_hooks(
 
     let spec = super::HookWriteSpec {
         supported_events: DROID_EVENTS,
+        project_dir: project_dir.to_path_buf(),
         scripts_dir,
         script_command: |file_name| format!("./.factory/hooks/{}", file_name),
         handler: super::standard_command_handler,

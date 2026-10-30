@@ -87,15 +87,189 @@ fn project_file_target(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let (Ok(target), Ok(root)) = (fs::canonicalize(path), fs::canonicalize(root)) else {
         return Err(outside());
     };
-    let inside = target.strip_prefix(&root).is_ok_and(|rel| {
-        !rel.components()
-            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
-    });
-    if inside {
+    if resolves_inside(&root, &target) {
         Ok(target)
     } else {
         Err(outside())
     }
+}
+
+/// `true` when the canonical `target` lies inside the canonical `root` and
+/// outside any `.git` directory.
+fn resolves_inside(root: &Path, target: &Path) -> bool {
+    target.strip_prefix(root).is_ok_and(|rel| {
+        !rel.components()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    })
+}
+
+/// Why sync must not write a file or create a directory at `path`, or
+/// `None` when it may.
+///
+/// The write-side twin of [`read_project_text`].  A cloned repository can
+/// commit `CLAUDE.md -> ~/.bashrc`, `.cursor -> /elsewhere` or a FIFO, and a
+/// plain `fs::write` follows the link or blocks.  So:
+///
+/// - An existing `path` is resolved in full and must land inside `root`,
+///   outside any `.git` directory, on a regular file or a directory.  A
+///   FIFO, socket or device is refused, and so is a dangling link, since
+///   writing would create its target.  Links that stay inside the project
+///   (`CLAUDE.md -> AGENTS.md`) pass.  A file where a directory is expected
+///   (or the reverse) is left for the write itself to fail on: it cannot
+///   reach outside the project.
+/// - For an absent `path`, the nearest existing ancestor must resolve inside
+///   `root`.  That catches a linked parent such as `.claude -> ~/.claude`.
+/// - A `..` component is refused outright.  The ancestor walk is lexical, so
+///   `new/../../x` would pass it at `root`, and `create_dir_all` would then
+///   resolve the `..` and create `x` beside the project.  Names from the
+///   committed config or from agent frontmatter can carry one.
+///
+/// The check runs before the write, so a path swapped in between is not
+/// caught.  The threat is committed repository content, not a concurrent
+/// attacker, and std has no portable `O_NOFOLLOW`/`openat` to close the gap.
+pub(crate) fn project_write_refusal(root: &Path, path: &Path) -> Option<String> {
+    let given_root = root;
+    let Ok(root) = fs::canonicalize(root) else {
+        return Some(format!("project directory {} cannot be resolved", root.display()));
+    };
+    let outside = || {
+        format!(
+            "{} resolves to somewhere outside the project",
+            path.display()
+        )
+    };
+    // Only the part below the root may not hold `..`: a project registered
+    // as `/a/../proj` is the user's own choice of path.
+    let below_root = path
+        .strip_prefix(given_root)
+        .or_else(|_| path.strip_prefix(&root))
+        .unwrap_or(path);
+    if below_root
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Some(format!("{} contains a `..` component", path.display()));
+    }
+    // Walk up from `path` to the first entry that exists.  NotADirectory
+    // means a parent is a regular file (Cline's legacy `.clinerules` file
+    // under `.clinerules/automatic.md`), which is still a step up.
+    let mut candidate = path;
+    loop {
+        match fs::symlink_metadata(candidate) {
+            Ok(_) => break,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                match candidate.parent() {
+                    Some(parent) => candidate = parent,
+                    None => return Some(outside()),
+                }
+            }
+            Err(e) => return Some(format!("Failed to inspect {}: {e}", candidate.display())),
+        }
+    }
+    let Ok(target) = fs::canonicalize(candidate) else {
+        return Some(format!("{} is a link to nothing", candidate.display()));
+    };
+    if !resolves_inside(&root, &target) {
+        return Some(outside());
+    }
+    let Ok(meta) = fs::metadata(&target) else {
+        return Some(format!("{} cannot be inspected", candidate.display()));
+    };
+    if meta.is_file() || meta.is_dir() {
+        None
+    } else {
+        Some(format!(
+            "{} is not a regular file or directory",
+            candidate.display()
+        ))
+    }
+}
+
+/// Write `contents` to `path` after [`project_write_refusal`] clears it,
+/// creating missing parent directories.  A refusal is returned as `Err`.
+pub(crate) fn write_project_file(
+    root: &Path,
+    path: &Path,
+    contents: impl AsRef<[u8]>,
+) -> Result<(), String> {
+    if let Some(reason) = project_write_refusal(root, path) {
+        return Err(format!("Refused to write {}: {reason}", path.display()));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
+    fs::write(path, contents).map_err(|e| format!("Failed to write {}: {e}", path.display()))
+}
+
+/// `create_dir_all(dir)` after [`project_write_refusal`] clears it.
+pub(crate) fn create_project_dir(root: &Path, dir: &Path) -> Result<(), String> {
+    if let Some(reason) = project_write_refusal(root, dir) {
+        return Err(format!("Refused to create {}: {reason}", dir.display()));
+    }
+    fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))
+}
+
+/// [`write_project_file`] for one file among many (a sub-agent, a command,
+/// a rule).  A refused target is skipped with a log line so the other files
+/// still sync; drift reports the refused file as unreadable.  Returns
+/// whether the file was written.
+pub(crate) fn write_project_file_or_skip(
+    root: &Path,
+    path: &Path,
+    contents: impl AsRef<[u8]>,
+) -> Result<bool, String> {
+    if let Some(reason) = project_write_refusal(root, path) {
+        eprintln!("[automatic] sync: not writing {}: {reason}", path.display());
+        return Ok(false);
+    }
+    write_project_file(root, path, contents).map(|()| true)
+}
+
+/// Why the Silent-mode directory `effective_dir` must not be used, or
+/// `None` when it is the project root, absent, or inside the project.
+///
+/// A committed `.automatic/silent -> /elsewhere` (or a linked `.automatic`)
+/// would otherwise send every synced file out of the project.
+pub(crate) fn escaped_silent_dir(dir: &Path, effective_dir: &Path) -> Option<String> {
+    if effective_dir == dir {
+        return None;
+    }
+    if fs::symlink_metadata(effective_dir).is_err() {
+        // Absent: the ancestors still matter, since creating the directory
+        // would follow a linked `.automatic`.
+        return project_write_refusal(dir, effective_dir);
+    }
+    let inside = match (fs::canonicalize(effective_dir), fs::canonicalize(dir)) {
+        (Ok(silent), Ok(root)) => resolves_inside(&root, &silent),
+        _ => false,
+    };
+    (!inside).then(|| {
+        format!(
+            "{} resolves to somewhere outside the project",
+            effective_dir.display()
+        )
+    })
+}
+
+/// Why `agent`'s root MCP config files in `dir` must not be read, or `None`.
+///
+/// Shared by drift's Silent-mode problem check and autodetect's discovery,
+/// which both read these files through the uncontained discovery reader.
+pub(crate) fn refused_root_mcp_file(agent: &dyn crate::agent::Agent, dir: &Path) -> Option<String> {
+    agent
+        .mcp_merge_inputs(dir)
+        .into_iter()
+        .chain(agent.owned_config_paths(dir))
+        // Absent and dangling paths fail discovery's own read harmlessly;
+        // a FIFO or device must reach the check.
+        .filter(|p| fs::metadata(p).is_ok_and(|m| !m.is_dir()))
+        .find_map(|p| read_project_text(dir, &p).err())
 }
 
 /// `true` when `a` and `b` describe the same file.  Off unix there is no
@@ -391,8 +565,9 @@ pub(crate) fn collect_custom_rule_conflicts(project: &Project, _dir: &Path) -> C
     scan
 }
 
-/// Compare each `custom_agents` entry against the first on-disk agent file
-/// found under any configured agent's `agents_dir`.
+/// Compare each `custom_agents` entry against its file under every
+/// configured agent's `agents_dir`, reporting the first that differs or is
+/// refused.
 pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> CustomAssetScan {
     let custom = project.custom_agents.as_deref().unwrap_or(&[]);
     let mut scan = CustomAssetScan::default();
@@ -432,7 +607,10 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
             let expected =
                 agent_instance.convert_agent_content(&ca.content, &machine_name);
             if disk_content == expected {
-                break; // matches this agent dir — no conflict
+                // Matches here.  Keep looking: a file in another agent's
+                // directory can still differ, or be a link out of the
+                // project that sync must not write through.
+                continue;
             }
             scan.conflicts.push(CustomAssetConflict {
                 kind: CustomAssetKind::Agent,
@@ -809,6 +987,7 @@ pub(crate) fn strip_internal_fields(mut value: Value) -> Value {
 ///
 /// Returns the list of files written.
 pub(crate) fn sync_custom_agents(
+    root: &Path,
     agents_dir: &std::path::Path,
     custom_agents: &[crate::core::CustomAgent],
     agent: &dyn crate::agent::Agent,
@@ -822,9 +1001,7 @@ pub(crate) fn sync_custom_agents(
         .map(custom_agent_machine_name)
         .collect::<Result<Vec<_>, _>>()?;
 
-    if !agents_dir.exists() {
-        fs::create_dir_all(agents_dir).map_err(|e| e.to_string())?;
-    }
+    create_project_dir(root, agents_dir)?;
 
     let mut written = Vec::new();
 
@@ -835,8 +1012,9 @@ pub(crate) fn sync_custom_agents(
         let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
         let path = agents_dir.join(agent.agent_file_name(&machine_name));
 
-        fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
-        written.push(path.display().to_string());
+        if write_project_file_or_skip(root, &path, &converted_content)? {
+            written.push(path.display().to_string());
+        }
     }
 
     Ok(written)
@@ -852,6 +1030,7 @@ pub(crate) fn sync_custom_agents(
 /// 4. Remove stale *managed* agent files not in the selected list (but NOT
 ///    custom agents, and NOT anything the user placed there by hand)
 pub(crate) fn sync_user_agents(
+    root: &Path,
     agents_dir: &std::path::Path,
     user_agent_names: &[String],
     custom_agent_names: &[String],
@@ -869,9 +1048,7 @@ pub(crate) fn sync_user_agents(
         }
     }
 
-    if !agents_dir.exists() {
-        fs::create_dir_all(agents_dir).map_err(|e| e.to_string())?;
-    }
+    create_project_dir(root, agents_dir)?;
 
     let mut written = Vec::new();
     // Full filenames, not bare machine names: `agent_file_name` may add a
@@ -888,8 +1065,9 @@ pub(crate) fn sync_user_agents(
         let file_name = agent.agent_file_name(&machine_name);
         let path = agents_dir.join(&file_name);
 
-        fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
-        written.push(path.display().to_string());
+        if write_project_file_or_skip(root, &path, &converted_content)? {
+            written.push(path.display().to_string());
+        }
         expected_file_names.insert(file_name);
     }
 
@@ -1108,8 +1286,14 @@ mod tests {
             },
         ];
 
-        let written = sync_custom_agents(&agents_dir, &custom_agents, &ClaudeCode, &HashSet::new())
-            .expect("sync");
+        let written = sync_custom_agents(
+            dir.path(),
+            &agents_dir,
+            &custom_agents,
+            &ClaudeCode,
+            &HashSet::new(),
+        )
+        .expect("sync");
 
         assert_eq!(written.len(), 2);
         assert!(agents_dir.join("planner-agent.md").exists());
@@ -1122,7 +1306,9 @@ mod tests {
     #[test]
     fn sync_custom_agents_refuses_a_traversal_name_and_writes_nothing() {
         let dir = tmp();
-        let agents_dir = dir.path().join("project").join(".claude").join("agents");
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).expect("create project");
+        let agents_dir = root.join(".claude").join("agents");
         let custom_agents = vec![
             CustomAgent {
                 name: "Good".to_string(),
@@ -1134,8 +1320,9 @@ mod tests {
             },
         ];
 
-        let err = sync_custom_agents(&agents_dir, &custom_agents, &ClaudeCode, &HashSet::new())
-            .expect_err("a traversal name must be refused");
+        let err =
+            sync_custom_agents(&root, &agents_dir, &custom_agents, &ClaudeCode, &HashSet::new())
+                .expect_err("a traversal name must be refused");
 
         assert!(err.contains("Custom agent") && err.contains("Evil"), "{err}");
         assert!(!agents_dir.exists(), "nothing is written");
@@ -1160,6 +1347,7 @@ mod tests {
         .expect("save subagent");
 
         let err = sync_user_agents(
+            project.path(),
             &agents_dir,
             &["good".to_string(), "imported".to_string()],
             &[],
@@ -1248,6 +1436,7 @@ mod tests {
             .expect("write custom agent");
 
         let written = sync_user_agents(
+            project.path(),
             &agents_dir,
             &["reviewer-agent".to_string()],
             &["custom-agent".to_string()],
@@ -1290,7 +1479,8 @@ mod tests {
         )
         .expect("write hand-written copilot agent");
 
-        sync_user_agents(&agents_dir, &[], &[], &GitHubCopilot).expect("sync user agents");
+        sync_user_agents(project.path(), &agents_dir, &[], &[], &GitHubCopilot)
+            .expect("sync user agents");
 
         assert!(
             hand_written_path.exists(),
@@ -1473,5 +1663,149 @@ mod tests {
         assert_eq!(project[server]["args"], json!(["mcp-proxy", server]));
         let global = build_global_selected_servers(&names, &registry).expect("build");
         assert_eq!(global[server]["args"], json!(["mcp-proxy", server]));
+    }
+
+    // ── Contained writes ───────────────────────────────────────────────
+
+    #[cfg(unix)]
+    fn link(target: &Path, at: &Path) {
+        std::os::unix::fs::symlink(target, at).expect("symlink");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refusal_allows_project_paths_and_links_that_stay_inside() {
+        let dir = tmp();
+        let root = dir.path();
+        fs::write(root.join("AGENTS.md"), "x").expect("write");
+        link(Path::new("AGENTS.md"), &root.join("CLAUDE.md"));
+        // Cline's legacy `.clinerules` file sits where a directory will go.
+        fs::write(root.join(".clinerules"), "legacy").expect("write");
+
+        assert_eq!(project_write_refusal(root, &root.join("CLAUDE.md")), None);
+        assert_eq!(project_write_refusal(root, &root.join("new/deep/file.md")), None);
+        assert_eq!(project_write_refusal(root, &root.join(".clinerules/automatic.md")), None);
+
+        // A project registered through a `..` path is the user's choice.
+        let name = root.file_name().expect("name");
+        let roundabout = root.join("..").join(name);
+        assert_eq!(project_write_refusal(&roundabout, &roundabout.join("CLAUDE.md")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refusal_refuses_links_out_dangling_links_git_and_fifos() {
+        let dir = tmp();
+        let outside = tmp();
+        let root = dir.path();
+        link(outside.path(), &root.join(".claude"));
+        link(&outside.path().join("missing"), &root.join("dangling.md"));
+        fs::create_dir_all(root.join(".git")).expect("mkdir .git");
+        link(&root.join(".git"), &root.join(".cursor"));
+        let status = std::process::Command::new("mkfifo")
+            .arg(root.join("fifo.md"))
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success());
+
+        for refused in [
+            ".claude",
+            ".claude/agents/new.md",
+            "dangling.md",
+            ".git/config",
+            ".cursor/mcp.json",
+            "fifo.md",
+            "new/../../escaped/x.md",
+        ] {
+            assert!(
+                project_write_refusal(root, &root.join(refused)).is_some(),
+                "{refused} must be refused"
+            );
+        }
+        assert!(write_project_file(root, &root.join(".claude/x.md"), "x").is_err());
+        assert!(write_project_file(root, &root.join("new/../../escaped/x.md"), "x").is_err());
+        assert!(!root.parent().expect("parent").join("escaped").exists());
+        assert!(entry_count(outside.path()) == 0, "nothing may reach outside");
+    }
+
+    fn entry_count(dir: &Path) -> usize {
+        fs::read_dir(dir).expect("read dir").count()
+    }
+
+    /// Case (b): a custom agent's file committed as a link out of the
+    /// project is skipped, and the other agents still sync.
+    #[cfg(unix)]
+    #[test]
+    fn sync_custom_agents_skips_a_file_that_links_out_of_the_project() {
+        let dir = tmp();
+        let outside = tmp();
+        let secret = outside.path().join("secret");
+        fs::write(&secret, "OUTSIDE").expect("write secret");
+        let agents_dir = dir.path().join(".claude").join("agents");
+        fs::create_dir_all(&agents_dir).expect("mkdir");
+        link(&secret, &agents_dir.join("planner.md"));
+        let custom_agents = vec![
+            CustomAgent {
+                name: "Planner".into(),
+                content: "---\nname: planner\n---\nPlan.\n".into(),
+            },
+            CustomAgent {
+                name: "Reviewer".into(),
+                content: "---\nname: reviewer\n---\nReview.\n".into(),
+            },
+        ];
+
+        let written = sync_custom_agents(
+            dir.path(),
+            &agents_dir,
+            &custom_agents,
+            &ClaudeCode,
+            &HashSet::new(),
+        )
+        .expect("sync");
+
+        assert_eq!(fs::read_to_string(&secret).expect("read"), "OUTSIDE");
+        assert_eq!(written.len(), 1, "{written:?}");
+        assert!(agents_dir.join("reviewer.md").is_file());
+    }
+
+    /// Case (b): the conflict scan reads the custom agent's file under every
+    /// agent directory, not only the first that has one.  A matching file
+    /// under `.claude/agents/` no longer hides a link under `.codex/agents/`.
+    #[cfg(unix)]
+    #[test]
+    fn custom_agent_scan_checks_every_agent_directory() {
+        let dir = tmp();
+        let outside = tmp();
+        let content = "---\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let project = Project {
+            name: "scan".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into(), "codex".into()],
+            custom_agents: Some(vec![CustomAgent {
+                name: "Planner".into(),
+                content: content.into(),
+            }]),
+            ..Default::default()
+        };
+        let claude_dir = dir.path().join(".claude").join("agents");
+        fs::create_dir_all(&claude_dir).expect("mkdir");
+        fs::write(
+            claude_dir.join("planner.md"),
+            crate::agent::Agent::convert_agent_content(&ClaudeCode, content, "planner"),
+        )
+        .expect("write matching file");
+        let codex_dir = dir.path().join(".codex").join("agents");
+        fs::create_dir_all(&codex_dir).expect("mkdir");
+        let secret = outside.path().join("secret");
+        fs::write(&secret, "OUTSIDE").expect("write secret");
+        link(&secret, &codex_dir.join("planner.toml"));
+
+        let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+        assert!(
+            conflicting_names(&scan, CustomAssetKind::Agent).contains("Planner"),
+            "the linked file under .codex/agents must hold the agent back"
+        );
     }
 }

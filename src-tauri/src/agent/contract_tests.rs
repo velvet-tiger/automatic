@@ -352,3 +352,38 @@ zed | Zed (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_server
          the actual block above into `expected`.\n"
     );
 }
+
+/// The project MCP file an agent writes must be named by
+/// [`Agent::mcp_merge_inputs`] or [`Agent::owned_config_paths`].  The sync
+/// gate and the autodetect and discovery pre-checks find the file only
+/// through those lists, so an unnamed file can be read or written through a
+/// committed link out of the project.  Kiro shipped with neither.
+#[test]
+fn every_project_mcp_file_is_named_for_the_containment_checks() {
+    let mut servers = Map::new();
+    servers.insert(
+        "probe".into(),
+        json!({ "type": "stdio", "command": "probe", "args": [] }),
+    );
+    let mut unnamed = Vec::new();
+    for agent in all() {
+        let dir = tempdir().expect("tempdir");
+        let written = agent.write_mcp_config(dir.path(), &servers).expect("write");
+        if written.is_empty() {
+            continue;
+        }
+        let written = PathBuf::from(written);
+        if !written.starts_with(dir.path()) {
+            continue;
+        }
+        let named = agent
+            .mcp_merge_inputs(dir.path())
+            .into_iter()
+            .chain(agent.owned_config_paths(dir.path()))
+            .any(|p| p == written);
+        if !named {
+            unnamed.push(format!("{}: {}", agent.id(), written.display()));
+        }
+    }
+    assert!(unnamed.is_empty(), "unnamed project MCP files: {unnamed:#?}");
+}

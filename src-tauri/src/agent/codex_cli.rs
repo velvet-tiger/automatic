@@ -948,6 +948,7 @@ fn sync_codex_hooks(
     let hooks_file = project_dir.join(".codex").join("hooks.json");
     let spec = super::HookWriteSpec {
         supported_events: CODEX_SUPPORTED_EVENTS,
+        project_dir: project_dir.to_path_buf(),
         scripts_dir: project_dir.join(".codex").join("hooks"),
         script_command: |file_name| format!("./.codex/hooks/{}", file_name),
         handler: super::standard_command_handler,

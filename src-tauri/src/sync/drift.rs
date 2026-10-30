@@ -11,7 +11,7 @@ use crate::core::{Project, ProjectMode, ProjectSummary};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
     collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
-    load_mcp_server_configs, read_project_text,
+    escaped_silent_dir, load_mcp_server_configs, read_project_text, refused_root_mcp_file,
     McpConfigSyncNotes, McpServerNote, MAX_PROJECT_READ_BYTES,
     CustomAssetConflict, CustomAssetKind,
 };
@@ -374,19 +374,6 @@ fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Op
         agents: agent_labels,
         resources: all_servers,
     })
-}
-
-/// Why one of `agent`'s root MCP config files must not be read, or `None`
-/// when every one that exists passes [`read_project_text`].
-fn refused_root_mcp_file(agent: &dyn agent::Agent, dir: &std::path::Path) -> Option<String> {
-    agent
-        .mcp_merge_inputs(dir)
-        .into_iter()
-        .chain(agent.owned_config_paths(dir))
-        // Absent and dangling paths fail discovery's own read harmlessly;
-        // a FIFO or device must reach the check.
-        .filter(|p| fs::metadata(p).is_ok_and(|m| !m.is_dir()))
-        .find_map(|p| read_project_text(dir, &p).err())
 }
 
 /// The first existing root MCP config file for `agent`, relative to `dir`.
@@ -777,26 +764,6 @@ fn collect_gitignore_drift(project: &Project, dir: &std::path::Path) -> Option<D
         reason: reason.to_string(),
         expected: Some(expected.unwrap_or_default()),
         actual: Some(actual.unwrap_or_default()),
-    })
-}
-
-/// Why the Silent-mode directory must not be used, or `None` when it is
-/// absent or resolves inside the project.  It is committed with the repo, so
-/// a `.automatic/silent` symlink could otherwise move the whole check (and
-/// the containment root of every read) outside the project.
-fn escaped_silent_dir(dir: &Path, effective_dir: &Path) -> Option<String> {
-    if effective_dir == dir || fs::symlink_metadata(effective_dir).is_err() {
-        return None;
-    }
-    let inside = match (fs::canonicalize(effective_dir), fs::canonicalize(dir)) {
-        (Ok(silent), Ok(root)) => silent.starts_with(&root),
-        _ => false,
-    };
-    (!inside).then(|| {
-        format!(
-            "{} resolves to somewhere outside the project",
-            effective_dir.display()
-        )
     })
 }
 
@@ -1446,6 +1413,7 @@ fn collect_commands_drift(
     // content for non-`.md` agents).
     let tmp_hub = tmp.path().join(".agents").join("commands");
     if agent::copy_commands_to_project(
+        tmp.path(),
         &tmp_hub,
         workspace_command_contents,
         custom_commands,
@@ -1459,6 +1427,7 @@ fn collect_commands_drift(
     let tmp_agent_dir = tmp.path().join(&relative);
     let sync_result = if agent_instance.commands_file_ext() == "md" {
         agent::symlink_commands_from_project(
+            tmp.path(),
             &tmp_agent_dir,
             &tmp_hub,
             workspace_command_contents,
@@ -1467,6 +1436,7 @@ fn collect_commands_drift(
         )
     } else {
         agent::sync_commands_to_dir(
+            tmp.path(),
             &tmp_agent_dir,
             workspace_command_contents,
             custom_commands,
@@ -2868,6 +2838,7 @@ mod tests {
         // what drift expects.
         let project_commands_dir = dir.join(".agents").join("commands");
         crate::agent::copy_commands_to_project(
+            &dir,
             &project_commands_dir,
             &workspace_commands,
             &custom_commands,
@@ -2876,6 +2847,7 @@ mod tests {
         .expect("write hub");
         let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
         crate::agent::symlink_commands_from_project(
+            &dir,
             &claude_commands_dir,
             &project_commands_dir,
             &workspace_commands,
@@ -2919,6 +2891,7 @@ mod tests {
         let custom: Vec<crate::core::CustomCommand> = Vec::new();
         let project_commands_dir = dir.join(".agents").join("commands");
         crate::agent::copy_commands_to_project(
+            &dir,
             &project_commands_dir,
             &old_workspace,
             &custom,
@@ -2927,6 +2900,7 @@ mod tests {
         .expect("write hub old");
         let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
         crate::agent::symlink_commands_from_project(
+            &dir,
             &claude_commands_dir,
             &project_commands_dir,
             &old_workspace,

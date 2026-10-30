@@ -142,6 +142,12 @@ impl Agent for OpenCode {
 
         for filename in &["opencode.json", ".opencode.json"] {
             let path = dir.join(filename);
+            // `.opencode.json` is read here only, so no trait list names it
+            // for the autodetect pre-check: contain the read here instead.
+            if let Err(reason) = crate::sync::read_project_text(dir, &path) {
+                eprintln!("[automatic] discovery: skipping {filename}: {reason}");
+                continue;
+            }
             if path.exists() {
                 let found =
                     discover_mcp_servers_from_json(&path, "mcp", normalise_opencode_server);

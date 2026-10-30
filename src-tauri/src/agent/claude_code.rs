@@ -341,6 +341,7 @@ fn sync_claude_code_hooks(
     let settings_path = project_dir.join(".claude").join("settings.json");
     let spec = super::HookWriteSpec {
         supported_events: CLAUDE_CODE_EVENTS,
+        project_dir: project_dir.to_path_buf(),
         scripts_dir: project_dir.join(".claude").join("hooks"),
         // Reference the script via ${CLAUDE_PROJECT_DIR} so the settings
         // file is portable across machines / containers.
