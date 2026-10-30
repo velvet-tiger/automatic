@@ -3,7 +3,10 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Agent, GlobalMcpTarget, GlobalMcpWriteReport, HeaderValuePart};
+use super::{
+    escape_toml_multiline_string, escape_toml_string, toml_table_key, Agent, GlobalMcpTarget,
+    GlobalMcpWriteReport, HeaderValuePart,
+};
 
 /// Codex CLI agent — writes `.codex/config.toml` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -150,7 +153,7 @@ impl Agent for CodexCli {
                 .and_then(|v| v.as_str())
                 .unwrap_or("stdio");
 
-            toml_content.push_str(&format!("[mcp_servers.{}]\n", name));
+            toml_content.push_str(&format!("[mcp_servers.{}]\n", toml_table_key(name)));
 
             // Codex has no `type`/`transport` key: a `command` selects stdio and
             // a `url` selects streamable HTTP.  Supplying both is a
@@ -178,7 +181,7 @@ impl Agent for CodexCli {
                     if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                         if !headers.is_empty() {
                             toml_content
-                                .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", name));
+                                .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", toml_table_key(name)));
                             for (key, val) in headers {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
@@ -228,7 +231,8 @@ impl Agent for CodexCli {
 
                     if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
                         if !env.is_empty() {
-                            toml_content.push_str(&format!("\n[mcp_servers.{}.env]\n", name));
+                            toml_content
+                                .push_str(&format!("\n[mcp_servers.{}.env]\n", toml_table_key(name)));
                             for (key, val) in env {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
@@ -302,7 +306,7 @@ impl Agent for CodexCli {
             let trimmed = line.trim();
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 skip_block = parse_mcp_server_header(trimmed)
-                    .map(|name| to_remove.contains(name))
+                    .map(|name| to_remove.contains(name.as_str()))
                     .unwrap_or(false);
             }
             if !skip_block {
@@ -546,7 +550,10 @@ fn render_codex_env_http_headers(name: &str, config: &Value) -> String {
     if headers.is_empty() {
         return String::new();
     }
-    let mut section = format!("\n[mcp_servers.{}.env_http_headers]\n", name);
+    let mut section = format!(
+        "\n[mcp_servers.{}.env_http_headers]\n",
+        toml_table_key(name)
+    );
     for (header, variable) in headers {
         if let Some(variable) = variable.as_str() {
             section.push_str(&format!(
@@ -572,71 +579,6 @@ fn has_oauth_client(config: &Value) -> bool {
         .is_some_and(|s| !s.is_empty())
 }
 
-/// Escape text for a single-line basic string.  Such a string cannot hold a
-/// raw line break either, so those are escaped along with the control
-/// characters.  Tab is allowed and stays literal.
-fn escape_toml_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' | '\r' => push_toml_unicode_escape(&mut out, c),
-            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut out, c),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// `true` for a control character TOML forbids raw in any basic string.
-/// Tab, line feed and carriage return are left to the caller: which of them
-/// are allowed depends on the kind of string.
-fn is_forbidden_toml_control(c: char) -> bool {
-    matches!(
-        c,
-        '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'
-    )
-}
-
-fn push_toml_unicode_escape(out: &mut String, c: char) {
-    out.push_str(&format!("\\u{:04X}", c as u32));
-}
-
-/// Escape text for a `"""` multi-line basic string.  Unlike
-/// [`escape_toml_string`], line breaks stay literal, and a quote is escaped
-/// only inside a run of three or more, the only place one can end the
-/// string.  So ordinary text renders unchanged.  A carriage return is
-/// allowed only as part of a CRLF line break.
-fn escape_toml_multiline_string(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => escaped.push_str("\\\\"),
-            '\r' if chars.peek() != Some(&'\n') => push_toml_unicode_escape(&mut escaped, c),
-            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut escaped, c),
-            c => escaped.push(c),
-        }
-    }
-
-    let mut out = String::with_capacity(escaped.len());
-    let mut rest = escaped.as_str();
-    while let Some(start) = rest.find('"') {
-        let run = rest[start..].bytes().take_while(|b| *b == b'"').count();
-        let quotes = &rest[start..start + run];
-        out.push_str(&rest[..start]);
-        if run >= 3 {
-            out.push_str(&quotes.replace('"', "\\\""));
-        } else {
-            out.push_str(quotes);
-        }
-        rest = &rest[start + run..];
-    }
-    out.push_str(rest);
-    out
-}
-
 fn read_existing_toml(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
 }
@@ -657,7 +599,7 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
         .and_then(|v| v.as_str())
         .unwrap_or("stdio");
 
-    toml_content.push_str(&format!("[mcp_servers.{}]\n", name));
+    toml_content.push_str(&format!("[mcp_servers.{}]\n", toml_table_key(name)));
 
     match transport {
         "http" | "sse" => {
@@ -673,7 +615,7 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
             if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                 if !headers.is_empty() {
                     toml_content
-                        .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", name));
+                        .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", toml_table_key(name)));
                     for (key, val) in headers {
                         if let Some(val_str) = val.as_str() {
                             toml_content.push_str(&format!(
@@ -719,7 +661,8 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
 
             if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
                 if !env.is_empty() {
-                    toml_content.push_str(&format!("\n[mcp_servers.{}.env]\n", name));
+                    toml_content
+                                .push_str(&format!("\n[mcp_servers.{}.env]\n", toml_table_key(name)));
                     for (key, val) in env {
                         if let Some(val_str) = val.as_str() {
                             toml_content.push_str(&format!(
@@ -739,18 +682,16 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
 }
 
 /// If `trimmed` is a section header of the form `[mcp_servers.<name>]` or
-/// `[mcp_servers.<name>.<subtable>]`, return `<name>`. Handles both bare and
-/// double-quoted keys so foreign entries with hyphens or other non-bare
-/// characters still classify correctly. Returns `None` for any other header.
-fn parse_mcp_server_header(trimmed: &str) -> Option<&str> {
+/// `[mcp_servers.<name>.<subtable>]`, return `<name>`, decoded.  The key is
+/// parsed as TOML so a quoted name matches the decoded names `toml` reports,
+/// whatever it holds (a dot, an escaped quote, `\\u000A`).  Returns `None`
+/// for any other header.
+fn parse_mcp_server_header(trimmed: &str) -> Option<String> {
     let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
-    let rest = inner.strip_prefix("mcp_servers.")?;
-    if let Some(after_quote) = rest.strip_prefix('"') {
-        let end_quote = after_quote.find('"')?;
-        Some(&after_quote[..end_quote])
-    } else {
-        let end = rest.find('.').unwrap_or(rest.len());
-        Some(&rest[..end])
+    let path = toml_edit::Key::parse(inner).ok()?;
+    match path.as_slice() {
+        [table, name, ..] if table.get() == "mcp_servers" => Some(name.get().to_string()),
+        _ => None,
     }
 }
 
@@ -835,7 +776,7 @@ fn write_codex_global_mcp(
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             skip_block = parse_mcp_server_header(trimmed)
-                .map(|name| to_remove.contains(name))
+                .map(|name| to_remove.contains(name.as_str()))
                 .unwrap_or(false);
         }
         if !skip_block {
@@ -1099,6 +1040,135 @@ mod tests {
 
     fn differences(disk: &str, expected: &str) -> Vec<String> {
         CodexCli.agent_file_differences(disk, expected)
+    }
+
+    fn stdio_server() -> Value {
+        json!({"type": "stdio", "command": "npx"})
+    }
+
+    /// A server name comes from project config.  It must stay one key, or it
+    /// could close the header and add a table such as
+    /// `[sandbox_workspace_write]` to the user's Codex config.
+    const CRAFTED_NAME: &str = "x]\n[sandbox_workspace_write]\nnetwork_access = true\n[mcp_servers.y";
+
+    #[test]
+    fn crafted_server_name_adds_no_table_to_the_project_config() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(CRAFTED_NAME.to_string(), stdio_server());
+
+        CodexCli.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+        let doc = toml::from_str::<toml::Table>(&raw).expect("valid TOML");
+        assert_eq!(doc.keys().collect::<Vec<_>>(), vec!["mcp_servers"], "{raw}");
+        let names: Vec<&String> = doc["mcp_servers"].as_table().unwrap().keys().collect();
+        assert_eq!(names, vec![CRAFTED_NAME], "{raw}");
+    }
+
+    #[test]
+    fn crafted_server_name_stays_one_key_in_every_sub_table() {
+        let config = json!({
+            "type": "http",
+            "url": "https://example.test",
+            "headers": {"X-One": "1"},
+            "env_http_headers": {"X-Two": "TOKEN"},
+        });
+        let http = render_codex_server_section(CRAFTED_NAME, &config);
+        let stdio = render_codex_server_section(
+            CRAFTED_NAME,
+            &json!({"type": "stdio", "command": "npx", "env": {"A": "1"}}),
+        );
+
+        for section in [http, stdio] {
+            let doc = toml::from_str::<toml::Table>(&section).expect("valid TOML");
+            assert_eq!(doc.keys().collect::<Vec<_>>(), vec!["mcp_servers"], "{section}");
+            let servers = doc["mcp_servers"].as_table().unwrap();
+            assert_eq!(servers.len(), 1, "{section}");
+            assert!(servers.contains_key(CRAFTED_NAME), "{section}");
+        }
+    }
+
+    /// A rendered header must decode to the name `toml` reports, or removal
+    /// would never find a quoted server.
+    #[test]
+    fn mcp_header_parser_decodes_quoted_names() {
+        for name in [CRAFTED_NAME, "a.b", "say \"hi\"", "back\\slash", "plain-name"] {
+            let key = toml_table_key(name);
+            assert_eq!(
+                parse_mcp_server_header(&format!("[mcp_servers.{key}]")).as_deref(),
+                Some(name)
+            );
+            assert_eq!(
+                parse_mcp_server_header(&format!("[mcp_servers.{key}.env]")).as_deref(),
+                Some(name)
+            );
+        }
+        assert_eq!(parse_mcp_server_header("[mcp_servers]"), None);
+        assert_eq!(parse_mcp_server_header("[model]"), None);
+    }
+
+    #[test]
+    fn cleanup_removes_a_quoted_server_and_keeps_the_rest() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".codex/config.toml");
+        let mut servers = Map::new();
+        servers.insert(CRAFTED_NAME.to_string(), stdio_server());
+        CodexCli.write_mcp_config(dir.path(), &servers).unwrap();
+        let existing = fs::read_to_string(&path).unwrap();
+        fs::write(
+            &path,
+            format!("[model]\nprovider = \"a\"\n\n{existing}\n[mcp_servers.user-server]\ncommand = \"u\"\n"),
+        )
+        .unwrap();
+
+        CodexCli.cleanup_mcp_config(dir.path(), &[CRAFTED_NAME.to_string()]);
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let doc = toml::from_str::<toml::Table>(&raw).expect("valid TOML");
+        assert!(doc.contains_key("model"), "{raw}");
+        let names: Vec<&String> = doc["mcp_servers"].as_table().unwrap().keys().collect();
+        assert_eq!(names, vec!["user-server"], "{raw}");
+    }
+
+    #[test]
+    fn global_writer_removes_a_quoted_server_it_managed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut desired = Map::new();
+        desired.insert(CRAFTED_NAME.to_string(), stdio_server());
+        write_codex_global_mcp(&path, &desired, &[]).unwrap();
+
+        let report =
+            write_codex_global_mcp(&path, &Map::new(), &[CRAFTED_NAME.to_string()]).unwrap();
+
+        assert_eq!(report.removed, vec![CRAFTED_NAME]);
+        let raw = fs::read_to_string(&path).unwrap_or_default();
+        assert!(!raw.contains("sandbox_workspace_write"), "{raw}");
+    }
+
+    /// Existing names must render byte-identically, so no user sees a config
+    /// rewrite from the quoting.
+    #[test]
+    fn config_output_for_bare_names_is_pinned() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "github".to_string(),
+            json!({"type": "stdio", "command": "npx", "args": ["-y", "gh"], "env": {"A": "1"}}),
+        );
+        servers.insert(
+            "remote_api-2".to_string(),
+            json!({"type": "http", "url": "https://example.test/mcp", "headers": {"X-Key": "v"}}),
+        );
+
+        CodexCli.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
+        assert_eq!(
+            raw,
+            "[mcp_servers.github]\ncommand = \"npx\"\nargs = [\"-y\", \"gh\"]\n\n[mcp_servers.github.env]\n\"A\" = \"1\"\n\n[mcp_servers.remote_api-2]\nurl = \"https://example.test/mcp\"\n\n[mcp_servers.remote_api-2.http_headers]\n\"X-Key\" = \"v\"\n\n"
+        );
     }
 
     #[test]

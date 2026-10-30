@@ -70,6 +70,7 @@ tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 urlencoding = "2"
 toml = "1.0.3"
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"

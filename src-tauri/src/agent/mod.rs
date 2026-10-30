@@ -765,6 +765,86 @@ pub(crate) fn is_plain_file_name(name: &str) -> bool {
     )
 }
 
+/// Escape text for a single-line basic string.  Such a string cannot hold a
+/// raw line break either, so those are escaped along with the control
+/// characters.  Tab is allowed and stays literal.
+pub(crate) fn escape_toml_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' => push_toml_unicode_escape(&mut out, c),
+            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut out, c),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `true` for a control character TOML forbids raw in any basic string.
+/// Tab, line feed and carriage return are left to the caller: which of them
+/// are allowed depends on the kind of string.
+fn is_forbidden_toml_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0}'..='\u{8}' | '\u{b}' | '\u{c}' | '\u{e}'..='\u{1f}' | '\u{7f}'
+    )
+}
+
+fn push_toml_unicode_escape(out: &mut String, c: char) {
+    out.push_str(&format!("\\u{:04X}", c as u32));
+}
+
+/// Escape text for a `"""` multi-line basic string.  Unlike
+/// [`escape_toml_string`], line breaks stay literal, and a quote is escaped
+/// only inside a run of three or more, the only place one can end the
+/// string.  So ordinary text renders unchanged.  A carriage return is
+/// allowed only as part of a CRLF line break.
+pub(crate) fn escape_toml_multiline_string(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '\r' if chars.peek() != Some(&'\n') => push_toml_unicode_escape(&mut escaped, c),
+            c if is_forbidden_toml_control(c) => push_toml_unicode_escape(&mut escaped, c),
+            c => escaped.push(c),
+        }
+    }
+
+    let mut out = String::with_capacity(escaped.len());
+    let mut rest = escaped.as_str();
+    while let Some(start) = rest.find('"') {
+        let run = rest[start..].bytes().take_while(|b| *b == b'"').count();
+        let quotes = &rest[start..start + run];
+        out.push_str(&rest[..start]);
+        if run >= 3 {
+            out.push_str(&quotes.replace('"', "\\\""));
+        } else {
+            out.push_str(quotes);
+        }
+        rest = &rest[start + run..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Write `name` as one key of a TOML table header.  A bare key stays bare,
+/// so existing files stay byte-identical.  Anything else is quoted, or a name
+/// from project config could close the header and add tables of its own.
+pub(crate) fn toml_table_key(name: &str) -> String {
+    let bare = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if bare {
+        name.to_string()
+    } else {
+        format!("\"{}\"", escape_toml_string(name))
+    }
+}
+
 /// Recover the machine name from a sub-agent file name: the reverse of
 /// [`Agent::agent_file_name`].  The suffix that method writes is tried
 /// first, then a plain `.{agents_file_ext()}`.  The two differ only for

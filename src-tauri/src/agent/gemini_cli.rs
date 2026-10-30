@@ -2,7 +2,9 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, Agent};
+use super::{
+    discover_mcp_servers_from_json, escape_toml_multiline_string, escape_toml_string, Agent,
+};
 
 /// Gemini CLI agent — writes MCP servers into `.gemini/settings.json`
 /// under the `mcpServers` key, preserving other settings.  Stores skills
@@ -290,13 +292,12 @@ fn convert_md_command_to_gemini_toml(content: &str) -> String {
         ));
     }
 
-    toml.push_str(&format!("prompt = \"\"\"\n{}\n\"\"\"\n", body.trim()));
+    toml.push_str(&format!(
+        "prompt = \"\"\"\n{}\n\"\"\"\n",
+        escape_toml_multiline_string(body.trim())
+    ));
 
     toml
-}
-
-fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Pass-through normaliser: Gemini's format is already canonical.
@@ -374,6 +375,34 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;
+
+    /// A backslash, `"""` or control character in the prompt must not make
+    /// the command file unloadable.
+    #[test]
+    fn command_prompt_with_special_characters_renders_valid_toml() {
+        let body = "Match \\d and \"\"\"quoted\"\"\" and ring \u{7}.";
+        let rendered = GeminiCli.convert_command_content(
+            &format!("---\ndescription: Say \"hi\"\n---\n{body}\n"),
+            "greet",
+        );
+
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+        assert_eq!(table["prompt"].as_str().unwrap().trim(), body);
+    }
+
+    /// A prompt with neither a backslash nor `"""` renders as it always did.
+    #[test]
+    fn command_prompt_with_plain_quotes_renders_unchanged() {
+        let rendered = GeminiCli.convert_command_content(
+            "---\ndescription: Greets\n---\nSay \"hello\" and \"\"done\"\".\nSecond.\n",
+            "greet",
+        );
+
+        assert_eq!(
+            rendered,
+            "automatic_managed = true\ndescription = \"Greets\"\nprompt = \"\"\"\nSay \"hello\" and \"\"done\"\".\nSecond.\n\"\"\"\n"
+        );
+    }
 
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
