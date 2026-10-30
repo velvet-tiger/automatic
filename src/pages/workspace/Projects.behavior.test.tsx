@@ -511,6 +511,43 @@ describe("Projects — characterization", () => {
       expect(banner).toHaveTextContent(UNREADABLE);
       expect(screen.queryByText(/Failed to adopt/)).toBeNull();
     });
+
+    it("B18: a failed adopt reloads the project, so stale state cannot be saved back", async () => {
+      mockInvoke(
+        baselineRoutes({
+          get_project_summaries: [summary("alpha")],
+          check_project_drift: () =>
+            JSON.stringify({
+              drifted: true,
+              agents: [],
+              custom_conflicts: [
+                {
+                  kind: "skill",
+                  name: "my-skill",
+                  path: ".agents/skills/my-skill/SKILL.md",
+                  disk_content: "on disk",
+                  automatic_content: "in automatic",
+                },
+              ],
+            }),
+          adopt_custom_asset: () => Promise.reject("could not update .claude/agents/planner.md"),
+        }),
+      );
+      renderProjects();
+      await userEvent.click(await screen.findByRole("button", { name: /alpha/i }));
+      await userEvent.click(await screen.findByText("Use on-disk skill"));
+      await waitFor(() =>
+        expect(invokeMock.mock.calls.some((c) => c[0] === "adopt_custom_asset")).toBe(true),
+      );
+      const adoptAt = invokeMock.mock.calls.findIndex((c) => c[0] === "adopt_custom_asset");
+
+      await waitFor(() =>
+        expect(
+          invokeMock.mock.calls.slice(adoptAt).some((c) => c[0] === "read_project"),
+        ).toBe(true),
+      );
+      expect(await screen.findByText(/Failed to adopt custom skill/)).toBeInTheDocument();
+    });
   });
 
   // Behaviors NOT covered automatically (gaps for the manual GUI checklist):

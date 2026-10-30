@@ -3101,6 +3101,15 @@ export function ProjectEditor({
     } catch (err: unknown) {
       setError(`Failed to adopt custom ${kind}: ${err}`);
       setCustomAssetConflict(null);
+      // An adopt can fail after saving, when another agent's file could not
+      // be written. The page must show what was saved, or its next save
+      // writes the old copy back.
+      try {
+        const projRaw: string = await invoke("read_project", { name });
+        setProject(JSON.parse(projRaw));
+      } catch (reloadErr: unknown) {
+        setError(`Failed to adopt custom ${kind}: ${err}. The project could not be reloaded: ${reloadErr}`);
+      }
     }
   };
 
