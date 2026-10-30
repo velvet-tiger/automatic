@@ -1184,10 +1184,32 @@ fn adoptable_custom_agent_content(
         },
     )?;
 
+    let other_files = sync::other_agent_files_matching(project, effective, ca, agent);
+    let blocked = sync::unwritable_other_agent_files(effective, &other_files);
+    if !blocked.is_empty() {
+        return Err(format!(
+            "Cannot adopt agent '{}' from {}: these files cannot be updated: {}. Nothing was changed.",
+            ca.name,
+            conflict.path,
+            blocked.join("; ")
+        ));
+    }
+
     Ok(AdoptedCustomAgent {
         content,
-        other_files: sync::other_agent_files_matching(project, effective, ca, agent),
+        other_files,
     })
+}
+
+/// The activity line for an adopt, which says when other files were missed.
+fn adopt_activity_summary(kind: &str, rewrites: &Result<(), Vec<String>>) -> String {
+    match rewrites {
+        Ok(()) => format!("Custom {kind} adopted from disk"),
+        Err(failed) => format!(
+            "Custom {kind} adopted from disk, but not written to: {}",
+            failed.join("; ")
+        ),
+    }
 }
 
 /// Adopt on-disk custom asset content into the project's stored snapshot.
@@ -1290,17 +1312,24 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
     let data = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
     core::save_project(name, &data)?;
 
+    let rewrites = match other_agent_rewrites {
+        Some((files, adopted)) => sync::rewrite_other_agent_files(&effective, &files, &adopted),
+        None => Ok(()),
+    };
     activity::log(
         name,
         ActivityEvent::ProjectUpdated,
-        &format!("Custom {} adopted from disk", kind),
+        &adopt_activity_summary(kind, &rewrites),
         asset_name,
     );
 
-    match other_agent_rewrites {
-        Some((files, adopted)) => sync::rewrite_other_agent_files(&effective, &files, &adopted),
-        None => Ok(()),
-    }
+    rewrites.map_err(|failed| {
+        format!(
+            "Agent '{}' was adopted and saved, but these files could not be updated: {}. Fix them, then use Overwrite to bring them in step with Automatic's copy. Using the on-disk version of one would undo the adopt.",
+            asset_name,
+            failed.join("; ")
+        )
+    })
 }
 
 /// Overwrite the on-disk custom asset with Automatic's stored snapshot, then
@@ -4087,26 +4116,82 @@ mod adopt_custom_asset_tests {
         });
     }
 
-    /// The adopt is already saved, so a failed rewrite must say which file
-    /// still needs attention.
+    /// A file that cannot be updated must stop the adopt before anything
+    /// changes, or the copies end up out of step.  Fixing it and adopting
+    /// again finishes the job.
     #[cfg(unix)]
     #[test]
-    fn a_failed_rewrite_is_an_error_naming_the_file() {
+    fn a_blocked_file_refuses_the_adopt_with_nothing_changed() {
         use std::os::unix::fs::PermissionsExt;
         with_temp_home(|_| {
-            let (_keep, dir) = shared_project("locked", &["claude", "codex"]);
+            let (_keep, dir) = shared_project("locked", &["claude", "copilot", "codex"]);
             let claude = dir.join(".claude/agents/planner.md");
             write(&claude, &claude_render(SHARED));
+            let copilot = dir.join(".github/agents/planner.agent.md");
+            write(&copilot, &claude_render(SHARED));
+            let codex = dir.join(".codex/agents/planner.toml");
+            let edited = codex_render(SHARED).replace("Stored body.", "Edited body.");
+            write(&codex, &edited);
             std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o444))
                 .expect("chmod");
-            write(
-                &dir.join(".codex/agents/planner.toml"),
-                &codex_render(SHARED).replace("Stored body.", "Edited body."),
-            );
 
             let err = adopt_custom_asset("locked", "agent", "Planner").unwrap_err();
 
             assert!(err.contains(".claude/agents/planner.md"), "{err}");
+            assert!(err.contains("Nothing was changed."), "{err}");
+            assert_eq!(stored_planner("locked"), SHARED);
+            assert_eq!(
+                std::fs::read_to_string(&copilot).expect("read"),
+                claude_render(SHARED)
+            );
+            assert_eq!(std::fs::read_to_string(&codex).expect("read"), edited);
+
+            std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o644))
+                .expect("chmod");
+            adopt_custom_asset("locked", "agent", "Planner").expect("adopt after the fix");
+
+            assert!(stored_planner("locked").contains("Edited body."));
+            assert!(std::fs::read_to_string(&claude)
+                .expect("read")
+                .contains("Edited body."));
+            assert!(std::fs::read_to_string(&copilot)
+                .expect("read")
+                .contains("Edited body."));
+            assert_no_conflict("locked", &dir);
+        });
+    }
+
+    #[test]
+    fn the_activity_line_says_which_files_were_missed() {
+        assert_eq!(
+            adopt_activity_summary("agent", &Ok(())),
+            "Custom agent adopted from disk"
+        );
+        assert_eq!(
+            adopt_activity_summary("agent", &Err(vec!["one".into(), "two".into()])),
+            "Custom agent adopted from disk, but not written to: one; two"
+        );
+    }
+
+    /// Windows editors re-save with CRLF.  With no real edit there is nothing
+    /// to resolve.
+    #[test]
+    fn a_crlf_resave_of_a_codex_file_is_no_conflict() {
+        with_temp_home(|_| {
+            let stored = SHARED.replace("Stored body.", "One.\nTwo.");
+            let (_keep, dir) = make_project("crlf", |p| {
+                p.agents = vec!["codex".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: stored.clone(),
+                }]);
+            });
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                &codex_render(&stored).replace('\n', "\r\n"),
+            );
+
+            assert_no_conflict("crlf", &dir);
         });
     }
 

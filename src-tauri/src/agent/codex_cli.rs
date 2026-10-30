@@ -1096,8 +1096,11 @@ fn codex_agent_field_matches(
             .cloned()
             .unwrap_or_else(|| toml::Value::String(default.to_string()))
     };
-    let trimmed = |value: Option<&toml::Value>| match or_default(value, "") {
-        toml::Value::String(text) => toml::Value::String(text.trim().to_string()),
+    // A CRLF re-save or stray whitespace is not an edit to the instructions.
+    let instructions = |value: Option<&toml::Value>| match or_default(value, "") {
+        toml::Value::String(text) => {
+            toml::Value::String(text.replace("\r\n", "\n").trim().to_string())
+        }
         other => other,
     };
 
@@ -1113,7 +1116,7 @@ fn codex_agent_field_matches(
         "name" if disk.is_none() || expected.is_none() => true,
         "model" => or_default(disk, "inherit") == or_default(expected, "inherit"),
         "description" => or_default(disk, "") == or_default(expected, ""),
-        "developer_instructions" => trimmed(disk) == trimmed(expected),
+        "developer_instructions" => instructions(disk) == instructions(expected),
         _ => disk == expected,
     }
 }

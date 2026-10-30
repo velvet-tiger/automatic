@@ -2,13 +2,15 @@
 //! becomes, and keeping the other agents' files in step with it.
 
 use std::collections::BTreeSet;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use crate::agent::{self, Agent};
 use crate::core::{CustomAgent, Project};
 
 use super::helpers::{
-    agent_machine_slug, custom_agent_machine_name, read_project_text, write_project_file,
+    agent_machine_slug, custom_agent_machine_name, project_write_refusal, read_project_text,
+    write_project_file,
 };
 
 /// Why a file cannot be adopted.
@@ -219,12 +221,24 @@ fn apply_edit(edit: &CodexEdit, stored: &str) -> Result<String, AdoptRefusal> {
     if edit.changed("developer_instructions") {
         merged = match edit.table.get("developer_instructions") {
             None => agent::replace_markdown_body(&merged, ""),
-            Some(toml::Value::String(text)) => agent::replace_markdown_body(&merged, text.trim()),
+            Some(toml::Value::String(text)) => {
+                agent::replace_markdown_body(&merged, &with_line_endings_of(stored, text.trim()))
+            }
             Some(_) => merged,
         };
     }
 
     Ok(merged)
+}
+
+/// `text` with the line endings `stored` uses, so one copy never mixes them.
+fn with_line_endings_of(stored: &str, text: &str) -> String {
+    let unix = text.replace("\r\n", "\n");
+    if stored.contains("\r\n") {
+        unix.replace('\n', "\r\n")
+    } else {
+        unix
+    }
 }
 
 /// Set or remove a frontmatter key.  `field` is what the user touched, so a
@@ -293,21 +307,44 @@ pub(crate) fn other_agent_files_matching(
     files
 }
 
-/// Render the adopted agent into each file.  A refused write is an error
-/// naming the file.
+/// Why each file cannot be rewritten, without changing any of them.  Adopt
+/// checks this before saving, so a blocked file leaves nothing half done.
+pub(crate) fn unwritable_other_agent_files(dir: &Path, files: &[OtherAgentFile]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|file| {
+            project_write_refusal(dir, &file.path).or_else(|| {
+                let opened = OpenOptions::new().write(true).open(&file.path);
+                opened
+                    .err()
+                    .map(|e| format!("{}: {e}", file.path.display()))
+            })
+        })
+        .collect()
+}
+
+/// Render the adopted agent into each file.  Every file is tried, and the
+/// failures come back naming each one.
 pub(crate) fn rewrite_other_agent_files(
     dir: &Path,
     files: &[OtherAgentFile],
     adopted: &CustomAgent,
-) -> Result<(), String> {
+) -> Result<(), Vec<String>> {
     let machine_name = custom_agent_machine_name(&adopted.content, &adopted.name);
-    for file in files {
-        let rendered = file
-            .agent
-            .convert_agent_content(&adopted.content, &machine_name);
-        write_project_file(dir, &file.path, rendered)?;
+    let failures: Vec<String> = files
+        .iter()
+        .filter_map(|file| {
+            let rendered = file
+                .agent
+                .convert_agent_content(&adopted.content, &machine_name);
+            write_project_file(dir, &file.path, rendered).err()
+        })
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -696,5 +733,88 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    /// A file can fail after the check passed.  The rest must still be
+    /// written, every failure named, and a second run must finish the job.
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_tries_every_file_and_can_be_run_again() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "rewrite".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into(), "copilot".into(), "codex".into()],
+            ..Default::default()
+        };
+        let old = stored(PLAIN);
+        let claude = dir.path().join(".claude/agents/planner.md");
+        let copilot = dir.path().join(".github/agents/planner.agent.md");
+        for path in [&claude, &copilot] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, ClaudeCode.convert_agent_content(PLAIN, "planner")).unwrap();
+        }
+        let files = other_agent_files_matching(&project, dir.path(), &old, &CodexCli);
+        assert_eq!(files.len(), 2);
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o444)).unwrap();
+        let adopted = stored(&PLAIN.replace("Plan.", "Edited."));
+
+        let failed = rewrite_other_agent_files(dir.path(), &files, &adopted).unwrap_err();
+
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(
+            failed[0].contains(".claude/agents/planner.md"),
+            "{failed:?}"
+        );
+        assert!(fs::read_to_string(&copilot).unwrap().contains("Edited."));
+        assert!(fs::read_to_string(&claude).unwrap().contains("Plan."));
+
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o644)).unwrap();
+        rewrite_other_agent_files(dir.path(), &files, &adopted).unwrap();
+        assert!(fs::read_to_string(&claude).unwrap().contains("Edited."));
+    }
+
+    /// Windows editors re-save with CRLF.  That is no edit, so nothing about
+    /// the stored copy may change.
+    #[test]
+    fn a_crlf_resave_is_not_a_difference() {
+        let render = rendered(&STORED.replace("Stored body.", "One.\nTwo."));
+        let disk = render.replace('\n', "\r\n");
+
+        assert_eq!(
+            CodexCli.agent_file_differences(&disk, &render),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_crlf_edit_is_stored_with_the_copys_line_endings() {
+        let multi = STORED.replace("Stored body.", "One.\nTwo.");
+        let disk = rendered(&multi)
+            .replace("Two.", "Edited.")
+            .replace('\n', "\r\n");
+
+        let merged = adopt(&multi, &disk, true).unwrap();
+
+        assert_eq!(merged, multi.replace("Two.", "Edited."));
+        assert!(!merged.contains('\r'), "{merged:?}");
+    }
+
+    #[test]
+    fn an_lf_edit_of_a_crlf_copy_stores_no_mixed_line_endings() {
+        let crlf = STORED
+            .replace("Stored body.", "One.\nTwo.")
+            .replace('\n', "\r\n");
+        let disk = rendered(&crlf)
+            .replace("\r\n", "\n")
+            .replace("Two.", "Edited.");
+
+        let merged = adopt(&crlf, &disk, true).unwrap();
+
+        assert_eq!(merged, crlf.replace("Two.", "Edited."));
+        assert!(!merged.replace("\r\n", "").contains('\n'), "{merged:?}");
     }
 }

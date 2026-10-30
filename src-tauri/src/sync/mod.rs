@@ -28,7 +28,8 @@ pub(crate) use helpers::{
 };
 // Adopting a custom agent resolves the conflict the scan reported.
 pub(crate) use agent_adopt::{
-    adopted_agent_markdown, other_agent_files_matching, rewrite_other_agent_files, OtherAgentFile,
+    adopted_agent_markdown, other_agent_files_matching, rewrite_other_agent_files,
+    unwritable_other_agent_files, OtherAgentFile,
 };
 pub(crate) use helpers::{scan_custom_agent, CustomAgentFinding};
 
