@@ -770,6 +770,27 @@ pub(crate) fn agent_machine_name_from_file_name<'a>(
         .filter(|stem| is_plain_file_name(stem))
 }
 
+/// Recover the machine name from a command file name: the reverse of
+/// [`Agent::command_file_name`].  Only the suffix that method writes is
+/// stripped.  Copilot's prompt files are `*.prompt.md`
+/// (<https://code.visualstudio.com/docs/copilot/customization/prompt-files>),
+/// so unlike [`agent_machine_name_from_file_name`] there is no plain `.md`
+/// fallback.  `Path::file_stem` would turn `planner.prompt.md` into
+/// `planner.prompt`.
+///
+/// Returns `None` when `file_name` is not one of this agent's command
+/// files, or when what is left is not a plain file name (`...md` leaves
+/// `..`).
+pub(crate) fn command_machine_name_from_file_name<'a>(
+    agent: &dyn Agent,
+    file_name: &'a str,
+) -> Option<&'a str> {
+    let written = agent.command_file_name("");
+    file_name
+        .strip_suffix(written.as_str())
+        .filter(|stem| is_plain_file_name(stem))
+}
+
 /// Log and report a name [`is_plain_file_name`] rejects.
 fn skip_unsafe_name(kind: &str, name: &str) -> bool {
     if is_plain_file_name(name) {

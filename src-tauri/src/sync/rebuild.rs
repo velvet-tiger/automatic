@@ -208,15 +208,18 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
                 continue;
             }
             let path = entry.path();
-            // Only the extensions `is_managed_command_content` accepts.
-            // Checking before the read keeps unrelated files out of the
-            // refusal log.
-            if !matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("md" | "toml")
-            ) {
+            // Strip the agent's whole file-name suffix: `file_stem` would
+            // name Copilot's `planner.prompt.md` `planner.prompt`.  Checking
+            // before the read also keeps unrelated files out of the refusal
+            // log.
+            let Some(command_name) = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .and_then(|name| agent::command_machine_name_from_file_name(agent_instance, name))
+                .map(str::to_string)
+            else {
                 continue;
-            }
+            };
 
             let Some(raw) = read_discovered_file("command", project_dir, &path) else {
                 continue;
@@ -233,17 +236,11 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
             }
 
             // Managed file that doesn't match any global command — treat as custom.
-            let fallback_name = path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("custom-command")
-                .to_string();
-
             // Strip the agent-specific rendering to recover canonical content.
             // For most agents the content is already canonical Markdown.
-            if seen_custom_command_names.insert(fallback_name.clone()) {
+            if seen_custom_command_names.insert(command_name.clone()) {
                 custom_commands.push(CustomCommand {
-                    name: fallback_name,
+                    name: command_name,
                     content: raw,
                 });
             }
@@ -679,6 +676,60 @@ Inspect the repo carefully.\n\
             assert_eq!(custom_agents.len(), 1, "{custom_agents:?}");
             assert_eq!(custom_agents[0].name, "planner");
             assert_eq!(custom_agents[0].content, written);
+        });
+    }
+
+    /// The written form wins even when another file sorts before it.
+    /// `a.md` names itself `planner` and sorts before `planner.agent.md`,
+    /// so only the written-form preference keeps `planner.agent.md`.
+    #[test]
+    fn discover_agents_prefers_the_written_form_over_name_order() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let agents_dir = project_dir.path().join(".github").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let written = "---\nname: planner\ndescription: Written\n---\nWritten form.\n";
+        fs::write(agents_dir.join("planner.agent.md"), written).unwrap();
+        fs::write(
+            agents_dir.join("a.md"),
+            "---\nname: planner\ndescription: Other\n---\nOther file.\n",
+        )
+        .unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["copilot".into()],
+                ..make_project(project_dir.path())
+            };
+            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            assert_eq!(custom_agents.len(), 1, "{custom_agents:?}");
+            assert_eq!(custom_agents[0].content, written);
+        });
+    }
+
+    /// Copilot names prompt files `{name}.prompt.md`.  A managed
+    /// `planner.prompt.md` must be discovered as `planner`, or the next
+    /// sync writes `planner.prompt.prompt.md`.
+    #[test]
+    fn discover_commands_strips_the_copilot_prompt_suffix() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let prompts_dir = project_dir.path().join(".github").join("prompts");
+        fs::create_dir_all(&prompts_dir).unwrap();
+        fs::write(
+            prompts_dir.join("planner.prompt.md"),
+            "---\nautomatic-managed: true\n---\nPlan.\n",
+        )
+        .unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["copilot".into()],
+                ..make_project(project_dir.path())
+            };
+            let (_, custom_commands) = discover_sub_commands(&project).unwrap();
+            let names: Vec<&str> = custom_commands.iter().map(|c| c.name.as_str()).collect();
+            assert_eq!(names, vec!["planner"]);
         });
     }
 

@@ -153,6 +153,43 @@ fn sub_agent_filenames_round_trip() {
     }
 }
 
+/// `command_file_name` must be the machine name followed by one fixed
+/// suffix that ends in `.{commands_file_ext()}`, so
+/// `command_machine_name_from_file_name` can reverse it.  `file_stem()`
+/// cannot: it turns Copilot's `my-command.prompt.md` into
+/// `my-command.prompt`.
+#[test]
+fn command_filenames_round_trip() {
+    for agent in all() {
+        let file_name = agent.command_file_name("my-command");
+        let ext = agent.commands_file_ext();
+        assert_eq!(
+            file_name,
+            format!("my-command{}", agent.command_file_name("")),
+            "{}: command_file_name is not the machine name plus a fixed suffix",
+            agent.id(),
+        );
+        assert!(
+            file_name.ends_with(&format!(".{ext}")),
+            "{}: command_file_name(\"my-command\") = \"{file_name}\" does not end with .{ext}",
+            agent.id(),
+        );
+        assert_eq!(
+            command_machine_name_from_file_name(agent, &file_name),
+            Some("my-command"),
+            "{}: command_machine_name_from_file_name does not reverse \"{file_name}\"",
+            agent.id(),
+        );
+        let parent = agent.command_file_name("..");
+        assert_eq!(
+            command_machine_name_from_file_name(agent, &parent),
+            None,
+            "{}: command_machine_name_from_file_name accepts \"{parent}\"",
+            agent.id(),
+        );
+    }
+}
+
 // ── Hooks ────────────────────────────────────────────────────────────────────
 
 /// A minimal command-handler hook, matcher-free so it fits every event this
