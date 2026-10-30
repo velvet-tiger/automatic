@@ -83,7 +83,7 @@ pub fn get_projects_referencing_subagent(
                 .as_ref()
                 .map(|agents| {
                     agents.iter().any(|a| {
-                        let content_machine = extract_machine_name_from_content(&a.content);
+                        let content_machine = core::extract_agent_machine_name(&a.content);
                         content_machine.as_deref() == Some(agent_machine_name.as_str())
                             || a.name.to_lowercase().replace(' ', "-") == agent_machine_name
                     })
@@ -101,22 +101,4 @@ pub fn get_projects_referencing_subagent(
     }
 
     Ok(referencing)
-}
-
-fn extract_machine_name_from_content(content: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let end = content[4..].find("\n---")?;
-    let yaml = &content[4..end + 4];
-    for line in yaml.lines() {
-        let line = line.trim();
-        if let Some(name_val) = line.strip_prefix("name:") {
-            let name = name_val.trim().trim_matches('"').trim_matches('\'');
-            if !name.is_empty() {
-                return Some(name.to_lowercase().replace(' ', "-"));
-            }
-        }
-    }
-    None
 }

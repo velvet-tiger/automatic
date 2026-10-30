@@ -225,6 +225,18 @@ mod tests {
         }
     }
 
+    /// Every caller reads the name through the one frontmatter reader, so a
+    /// CRLF file names the same agent and a false closing line names none.
+    #[test]
+    fn agent_name_reads_crlf_and_needs_a_real_closing_line() {
+        assert_eq!(
+            extract_agent_name("---\r\nname: Planner\r\n---\r\n").as_deref(),
+            Some("Planner")
+        );
+        assert_eq!(extract_agent_name("---\nname: x\n-----\nBody\n"), None);
+        assert_eq!(extract_agent_name("---\nname: x\n---x\nBody\n"), None);
+    }
+
     #[test]
     fn agent_machine_name_refuses_traversal_in_frontmatter() {
         let content = "---\nname: ../../.claude/agents/evil\n---\nBody\n";

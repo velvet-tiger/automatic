@@ -1169,7 +1169,10 @@ struct FrontmatterSpan {
     body_start: usize,
 }
 
-/// Locate the frontmatter block.  `None` when there is no complete block.
+/// Locate the frontmatter block.  The closing `---` must be a whole line, so
+/// `-----` or `---x` closes nothing.  `None` when there is no complete block.
+/// Every frontmatter reader goes through this, so they cannot disagree on
+/// where a block ends.
 fn frontmatter_span(content: &str) -> Option<FrontmatterSpan> {
     let start = if content.starts_with("---\r\n") {
         5
@@ -1178,20 +1181,24 @@ fn frontmatter_span(content: &str) -> Option<FrontmatterSpan> {
     } else {
         return None;
     };
-    let rest = &content[start..];
-    if rest.starts_with("---") {
-        return Some(FrontmatterSpan {
-            start,
-            end: start,
-            body_start: start + 3,
-        });
+
+    let mut line_start = start;
+    loop {
+        let rest = &content[line_start..];
+        let line_len = rest.find('\n').map_or(rest.len(), |newline| newline + 1);
+        let line = rest[..line_len].trim_end_matches('\n');
+        if line.strip_suffix('\r').unwrap_or(line) == "---" {
+            return Some(FrontmatterSpan {
+                start,
+                end: line_start.saturating_sub(1).max(start),
+                body_start: line_start + 3,
+            });
+        }
+        if line_len == 0 || line_start + line_len >= content.len() {
+            return None;
+        }
+        line_start += line_len;
     }
-    let end = start + rest.find("\n---")?;
-    Some(FrontmatterSpan {
-        start,
-        end,
-        body_start: end + "\n---".len(),
-    })
 }
 
 /// The frontmatter lines of `content`, or `None` when it has no block.
@@ -1392,39 +1399,37 @@ pub(crate) fn replace_markdown_body(content: &str, body: &str) -> String {
 /// (especially a compound one like `{name}.agent.md`) isn't reliable for
 /// that — see [`is_managed_command_file`] and [`is_managed_agent_file`].
 pub(crate) fn render_markdown_command(content: &str) -> String {
-    if content.starts_with("---\n") || content.starts_with("---\r\n") {
-        let after_first = &content[4..];
-        if let Some(end_marker_pos) = after_first
-            .find("\n---")
-            .or_else(|| after_first.find("\r\n---"))
-        {
-            let yaml_str = &after_first[..end_marker_pos];
-            if yaml_str
+    let (rendered, line_break) = match frontmatter_span(content) {
+        Some(span) => {
+            let yaml = &content[span.start..span.end];
+            if yaml
                 .lines()
                 .any(|line| line.trim() == "automatic-managed: true")
             {
                 return content.to_string();
             }
-
-            let mut output = String::from("---\n");
-            output.push_str(yaml_str);
-            if !yaml_str.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("automatic-managed: true\n---");
-            output.push_str(&after_first[end_marker_pos + 4..]);
-            if !output.ends_with('\n') {
-                output.push('\n');
-            }
-            return output;
+            let line_break = &content[3..span.start];
+            let existing = yaml.trim_end_matches('\r');
+            let separator = if existing.is_empty() { "" } else { line_break };
+            let body = &content[span.body_start..];
+            (
+                format!("---{line_break}{existing}{separator}automatic-managed: true{line_break}---{body}"),
+                line_break,
+            )
         }
+        None => {
+            let line_break = if content.contains("\r\n") { "\r\n" } else { "\n" };
+            (
+                format!("---{line_break}automatic-managed: true{line_break}---{line_break}{content}"),
+                line_break,
+            )
+        }
+    };
+    if rendered.ends_with('\n') {
+        rendered
+    } else {
+        rendered + line_break
     }
-
-    let mut output = format!("---\nautomatic-managed: true\n---\n{}", content);
-    if !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output
 }
 
 pub(crate) fn is_managed_command_file(path: &Path) -> bool {
@@ -3614,6 +3619,86 @@ mod tests {
             replace_markdown_body("---\na: 1\n---\n\nOld.\n", ""),
             "---\na: 1\n---\n"
         );
+    }
+
+    #[test]
+    fn frontmatter_needs_a_closing_line_of_exactly_three_dashes() {
+        for content in [
+            "---\n-----\nBody\n",
+            "---\n---x\nBody\n",
+            "---\na: 1\n-----\nBody\n",
+            "---\na: 1\n--- \nBody\n",
+            "---\na: 1\n",
+            "---\n",
+        ] {
+            let (frontmatter, body) = parse_frontmatter(content);
+            assert!(frontmatter.is_empty(), "{content:?}");
+            assert_eq!(body, content);
+            assert_eq!(frontmatter_block(content), None, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn frontmatter_closes_at_a_line_break_or_the_end_of_the_text() {
+        for content in [
+            "---\na: 1\n---\nBody\n",
+            "---\na: 1\n---\n",
+            "---\na: 1\n---",
+            "---\r\na: 1\r\n---\r\nBody\r\n",
+            "---\r\na: 1\r\n---",
+        ] {
+            let (frontmatter, _) = parse_frontmatter(content);
+            assert_eq!(frontmatter.get("a").map(String::as_str), Some("1"), "{content:?}");
+        }
+    }
+
+    /// `---\nname: x\n-----\n---\n` would otherwise read `-----` as the end,
+    /// so a later real closing line is what counts.
+    #[test]
+    fn frontmatter_skips_a_longer_dash_line_to_the_real_closing_line() {
+        let content = "---\nname: x\n-----\nmore: 1\n---\nBody\n";
+        assert_eq!(frontmatter_block(content), Some("name: x\n-----\nmore: 1"));
+    }
+
+    #[test]
+    fn render_markdown_command_output_for_lf_is_pinned() {
+        assert_eq!(
+            render_markdown_command("---\nname: x\n---\nBody\n"),
+            "---\nname: x\nautomatic-managed: true\n---\nBody\n"
+        );
+        assert_eq!(
+            render_markdown_command("---\nname: x\n---\nBody"),
+            "---\nname: x\nautomatic-managed: true\n---\nBody\n"
+        );
+        assert_eq!(
+            render_markdown_command("Body\n"),
+            "---\nautomatic-managed: true\n---\nBody\n"
+        );
+        let managed = "---\nautomatic-managed: true\n---\nBody\n";
+        assert_eq!(render_markdown_command(managed), managed);
+    }
+
+    #[test]
+    fn render_markdown_command_keeps_a_crlf_file_crlf() {
+        for content in [
+            "---\r\nname: x\r\n---\r\nOne\r\nTwo\r\n",
+            "---\r\nname: x\r\n---\r\nOne",
+            "---\r\n---\r\nOne\r\n",
+            "One\r\nTwo\r\n",
+        ] {
+            let rendered = render_markdown_command(content);
+            assert!(rendered.contains("automatic-managed: true\r\n"), "{rendered:?}");
+            assert!(!rendered.replace("\r\n", "").contains('\n'), "{rendered:?}");
+            assert_eq!(parse_frontmatter(&rendered).0["automatic-managed"], "true");
+        }
+    }
+
+    /// `---x` closes nothing, so the marker must go into a block of its own,
+    /// where a reader will find it.
+    #[test]
+    fn render_markdown_command_does_not_trust_a_false_closing_line() {
+        let rendered = render_markdown_command("---\nname: x\n---x\nBody\n");
+        assert_eq!(parse_frontmatter(&rendered).0["automatic-managed"], "true");
     }
 
     /// Sync adds the marker, so a file missing only that loses nothing.

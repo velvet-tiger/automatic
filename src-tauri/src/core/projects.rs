@@ -716,7 +716,7 @@ fn enrich_resolved_agents(project: &mut Project) {
             continue;
         };
         // Extract display name from frontmatter, fall back to machine name.
-        let name = extract_frontmatter_name(&content).unwrap_or_else(|| machine_name.clone());
+        let name = extract_agent_name(&content).unwrap_or_else(|| machine_name.clone());
         resolved.insert(machine_name.clone(), CustomAgent { name, content });
     }
     project.resolved_agents = resolved;
@@ -737,25 +737,6 @@ fn enrich_resolved_commands(project: &mut Project) {
         );
     }
     project.resolved_commands = resolved;
-}
-
-/// Extract the `name` field from YAML frontmatter in markdown content.
-fn extract_frontmatter_name(content: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let end = content[4..].find("\n---")?;
-    let yaml = &content[4..end + 4];
-    for line in yaml.lines() {
-        let line = line.trim();
-        if let Some(name_val) = line.strip_prefix("name:") {
-            let name = name_val.trim().trim_matches('"').trim_matches('\'');
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
-        }
-    }
-    None
 }
 
 /// Compare two directory paths for equality, preferring canonical forms when
@@ -1525,7 +1506,7 @@ mod tests {
     fn extract_frontmatter_name_returns_name() {
         let content = "---\nname: My Agent\ndescription: does stuff\n---\n\nBody here.";
         assert_eq!(
-            super::extract_frontmatter_name(content),
+            extract_agent_name(content),
             Some("My Agent".into())
         );
     }
@@ -1534,7 +1515,7 @@ mod tests {
     fn extract_frontmatter_name_strips_quotes() {
         let content = "---\nname: \"Quoted Name\"\n---\n\nBody.";
         assert_eq!(
-            super::extract_frontmatter_name(content),
+            extract_agent_name(content),
             Some("Quoted Name".into())
         );
     }
@@ -1542,13 +1523,13 @@ mod tests {
     #[test]
     fn extract_frontmatter_name_returns_none_without_frontmatter() {
         let content = "# Just a heading\n\nNo frontmatter.";
-        assert_eq!(super::extract_frontmatter_name(content), None);
+        assert_eq!(extract_agent_name(content), None);
     }
 
     #[test]
     fn extract_frontmatter_name_returns_none_for_empty_name() {
         let content = "---\nname: \n---\n\nBody.";
-        assert_eq!(super::extract_frontmatter_name(content), None);
+        assert_eq!(extract_agent_name(content), None);
     }
 
     // ── resolved fields roundtrip through save/read ─────────────────────

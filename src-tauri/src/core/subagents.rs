@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use super::asset_security::{enforce_text_asset, AssetKind};
 use super::paths::get_library_dir;
 use super::recently_added::{record_recently_added, remove_recently_added};
+use super::custom_assets::extract_agent_name;
 // ── Sub-Agents ───────────────────────────────────────────────────────────────
 
 /// A user-defined sub-agent stored as Markdown with YAML frontmatter in
@@ -66,26 +67,6 @@ pub fn get_subagents_dir() -> Result<PathBuf, String> {
     Ok(get_library_dir()?.join("subagents"))
 }
 
-/// Extract the `name` field from YAML frontmatter in a Markdown file.
-/// Returns `None` if frontmatter is missing or invalid.
-fn extract_name_from_frontmatter(content: &str) -> Option<String> {
-    if !content.starts_with("---\n") {
-        return None;
-    }
-    let end = content[4..].find("\n---")?;
-    let yaml = &content[4..end + 4];
-    for line in yaml.lines() {
-        let line = line.trim();
-        if let Some(name_val) = line.strip_prefix("name:") {
-            let name = name_val.trim().trim_matches('"').trim_matches('\'');
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
-        }
-    }
-    None
-}
-
 pub fn list_subagents() -> Result<Vec<SubagentEntry>, String> {
     let dir = get_subagents_dir()?;
 
@@ -104,7 +85,7 @@ pub fn list_subagents() -> Result<Vec<SubagentEntry>, String> {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     if is_valid_agent_machine_name(stem) {
                         if let Ok(raw) = fs::read_to_string(&path) {
-                            let name = extract_name_from_frontmatter(&raw)
+                            let name = extract_agent_name(&raw)
                                 .unwrap_or_else(|| stem.to_string());
                             let remote_repo = provenance.source_of("agent", stem);
                             let (source, author, source_repo) = if is_bundled_agent(stem) {
@@ -300,7 +281,7 @@ pub fn read_subagent(machine_name: &str) -> Result<String, String> {
     if path.exists() {
         let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
         let name =
-            extract_name_from_frontmatter(&content).unwrap_or_else(|| machine_name.to_string());
+            extract_agent_name(&content).unwrap_or_else(|| machine_name.to_string());
         let agent = Subagent { name, content };
         serde_json::to_string_pretty(&agent).map_err(|e| e.to_string())
     } else {
@@ -491,7 +472,7 @@ mod tests {
     fn read_agent_from_dir(agents_dir: &PathBuf, machine_name: &str) -> Subagent {
         let raw = fs::read_to_string(agents_dir.join(format!("{}.md", machine_name)))
             .expect("read agent file");
-        let name = extract_name_from_frontmatter(&raw).unwrap_or_else(|| machine_name.to_string());
+        let name = extract_agent_name(&raw).unwrap_or_else(|| machine_name.to_string());
         Subagent { name, content: raw }
     }
 
@@ -563,7 +544,7 @@ mod tests {
     fn extract_name_from_valid_frontmatter() {
         let content = "---\nname: my-agent\ndescription: Test agent\n---\n\nBody content";
         assert_eq!(
-            extract_name_from_frontmatter(content),
+            extract_agent_name(content),
             Some("my-agent".to_string())
         );
     }
@@ -572,7 +553,7 @@ mod tests {
     fn extract_name_with_quotes() {
         let content = "---\nname: \"My Agent\"\n---\n\nBody";
         assert_eq!(
-            extract_name_from_frontmatter(content),
+            extract_agent_name(content),
             Some("My Agent".to_string())
         );
     }
@@ -580,13 +561,13 @@ mod tests {
     #[test]
     fn extract_name_missing_frontmatter() {
         let content = "# My Agent\n\nNo frontmatter here";
-        assert_eq!(extract_name_from_frontmatter(content), None);
+        assert_eq!(extract_agent_name(content), None);
     }
 
     #[test]
     fn extract_name_empty_frontmatter() {
         let content = "---\n---\n\nBody";
-        assert_eq!(extract_name_from_frontmatter(content), None);
+        assert_eq!(extract_agent_name(content), None);
     }
 
     // ── CRUD operations ─────────────────────────────────────────────────────────
