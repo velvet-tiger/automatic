@@ -1112,7 +1112,6 @@ mod tests {
     use super::*;
     use crate::agent::{ClaudeCode, GitHubCopilot};
     use crate::core::{save_subagent, CustomAgent};
-    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
     // ── read_project_text ──────────────────────────────────────────────────
@@ -1240,37 +1239,6 @@ mod tests {
         tempfile::tempdir().expect("tempdir")
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct HomeGuard {
-        original: Option<String>,
-    }
-
-    impl HomeGuard {
-        fn set(path: &std::path::Path) -> Self {
-            let original = std::env::var("HOME").ok();
-            unsafe {
-                std::env::set_var("HOME", path);
-            }
-            Self { original }
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(original) = &self.original {
-                    std::env::set_var("HOME", original);
-                } else {
-                    std::env::remove_var("HOME");
-                }
-            }
-        }
-    }
-
     #[test]
     fn sync_custom_agents_uses_frontmatter_name_and_fallback_name() {
         let dir = tmp();
@@ -1331,9 +1299,7 @@ mod tests {
 
     #[test]
     fn sync_user_agents_refuses_a_traversal_frontmatter_name() {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tmp();
-        let _home_guard = HomeGuard::set(home.path());
+        let _home = crate::core::temp_test_home();
         let project = tmp();
         let agents_dir = project.path().join("agents");
 
@@ -1395,9 +1361,7 @@ mod tests {
 
     #[test]
     fn sync_user_agents_writes_selected_and_removes_stale_non_custom_files() {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tmp();
-        let _home_guard = HomeGuard::set(home.path());
+        let _home = crate::core::temp_test_home();
         let project = tmp();
         let agents_dir = project.path().join("agents");
         fs::create_dir_all(&agents_dir).expect("create agents dir");
@@ -1465,9 +1429,7 @@ mod tests {
     /// own convention.
     #[test]
     fn copilot_hand_written_agent_file_survives_the_stale_sweep() {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tmp();
-        let _home_guard = HomeGuard::set(home.path());
+        let _home = crate::core::temp_test_home();
         let project = tmp();
         let agents_dir = project.path().join("agents");
         fs::create_dir_all(&agents_dir).expect("create agents dir");

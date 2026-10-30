@@ -1456,6 +1456,7 @@ mod tests {
 
     #[test]
     fn sync_covers_instruction_rule_and_split_combinations() {
+        let _home = crate::core::temp_test_home();
         for instructions_set in [false, true] {
             for rules_set in [false, true] {
                 for split_rules in [false, true] {
@@ -1472,6 +1473,7 @@ mod tests {
 
     #[test]
     fn toggle_split_on_covers_instruction_and_rule_combinations() {
+        let _home = crate::core::temp_test_home();
         for instructions_set in [false, true] {
             for rules_set in [false, true] {
                 let dir = tmp();
@@ -1486,6 +1488,7 @@ mod tests {
 
     #[test]
     fn toggle_split_off_covers_instruction_and_rule_combinations() {
+        let _home = crate::core::temp_test_home();
         for instructions_set in [false, true] {
             for rules_set in [false, true] {
                 let dir = tmp();
@@ -1500,6 +1503,7 @@ mod tests {
 
     #[test]
     fn sync_migrates_legacy_clinerules_file_to_directory() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let legacy_content = "# Legacy Cline Instructions\n\nKeep this during upgrade.";
         fs::write(dir.path().join(".clinerules"), legacy_content).expect("write legacy file");
@@ -1538,6 +1542,7 @@ mod tests {
 
     #[test]
     fn sync_migrates_legacy_cursorrules_to_agents_md() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let legacy_content = "# Legacy Cursor Instructions\n\nKeep this during upgrade.";
         fs::write(dir.path().join(".cursorrules"), legacy_content).expect("write legacy file");
@@ -1570,6 +1575,7 @@ mod tests {
 
     #[test]
     fn sync_keeps_conflicting_cursorrules_stripped_but_intact() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let agents_content = "# Agents\n\nAGENTS.md-specific content.";
         let legacy_user = "# Legacy Cursor Instructions\n\nDifferent content.";
@@ -1631,6 +1637,7 @@ mod tests {
 
     #[test]
     fn sync_drops_empty_legacy_rules_file_for_zed() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::write(dir.path().join(".rules"), "   \n\t\n").expect("write empty legacy file");
         let mut project = make_zed_project(dir.path().to_str().unwrap());
@@ -1649,6 +1656,7 @@ mod tests {
 
     #[test]
     fn sync_migrates_legacy_zed_rules_to_agents_md() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let legacy_content = "# Legacy Zed Instructions\n\nKeep this during upgrade.";
         fs::write(dir.path().join(".rules"), legacy_content).expect("write legacy file");
@@ -1686,6 +1694,7 @@ mod tests {
 
     #[test]
     fn sync_keeps_conflicting_zed_rules_and_surfaces_a_ui_conflict() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let agents_content = "# Agents\n\nAGENTS.md-specific content.";
         let legacy_user = "# Legacy Zed Instructions\n\nDifferent content.";
@@ -1730,6 +1739,7 @@ mod tests {
 
     #[test]
     fn sync_drops_empty_legacy_warp_md_file() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::write(dir.path().join("WARP.md"), "   \n\t\n").expect("write empty legacy file");
         let mut project = make_warp_project(dir.path().to_str().unwrap());
@@ -1744,6 +1754,7 @@ mod tests {
 
     #[test]
     fn sync_migrates_legacy_warp_md_to_agents_md() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let legacy_content = "# Legacy Warp Instructions\n\nKeep this during upgrade.";
         fs::write(dir.path().join("WARP.md"), legacy_content).expect("write legacy file");
@@ -1762,6 +1773,7 @@ mod tests {
 
     #[test]
     fn sync_keeps_conflicting_warp_md_and_surfaces_a_ui_conflict() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let agents_content = "# Agents\n\nAGENTS.md-specific content.";
         let legacy_user = "# Legacy Warp Instructions\n\nDifferent content.";
@@ -1808,6 +1820,7 @@ mod tests {
 
     #[test]
     fn sync_migrates_legacy_kilocode_when_its_servers_are_already_selected() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
         fs::write(
@@ -1832,6 +1845,7 @@ mod tests {
 
     #[test]
     fn sync_keeps_legacy_kilocode_with_an_unselected_server() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
         fs::write(
@@ -1855,6 +1869,7 @@ mod tests {
 
     #[test]
     fn sync_keeps_conflicted_unified_instruction_files_unmanaged() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::write(dir.path().join("AGENTS.md"), "# Agents\n\nCodex-specific")
             .expect("write AGENTS");
@@ -2305,6 +2320,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sync_refuses_owned_files_that_link_out_of_the_project() {
+        let _home = crate::core::temp_test_home();
         for name in ["CLAUDE.md", ".mcp.json"] {
             let dir = tmp();
             let outside = tmp();
@@ -2326,6 +2342,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sync_refuses_a_linked_agent_directory() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let outside = tmp();
         std::os::unix::fs::symlink(outside.path(), dir.path().join(".claude")).expect("link");
@@ -2342,6 +2359,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sync_refuses_a_fifo_instruction_file() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         make_fifo(&dir.path().join("CLAUDE.md"));
 
@@ -2356,6 +2374,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sync_writes_through_a_link_that_stays_inside_the_project() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::write(dir.path().join("AGENTS.md"), "# Shared\n").expect("write AGENTS.md");
         std::os::unix::fs::symlink("AGENTS.md", dir.path().join("CLAUDE.md")).expect("link");
@@ -2375,6 +2394,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn silent_sync_refuses_a_silent_directory_that_links_out() {
+        let _home = crate::core::temp_test_home();
         for linked in [".automatic/silent", ".automatic"] {
             let dir = tmp();
             let outside = tmp();
@@ -2619,6 +2639,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sync_ignores_links_for_agents_the_project_does_not_use() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         let outside = tmp();
         let shared = outside.path().join("shared.md");
@@ -2635,6 +2656,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn silent_sync_refuses_a_silent_directory_inside_git() {
+        let _home = crate::core::temp_test_home();
         let dir = tmp();
         fs::create_dir_all(dir.path().join(".git")).expect("mkdir .git");
         fs::create_dir_all(dir.path().join(".automatic")).expect("mkdir .automatic");
