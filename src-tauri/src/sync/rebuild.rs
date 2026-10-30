@@ -98,21 +98,8 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
             Err(_) => continue,
         };
 
-        for entry in entries.flatten() {
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            let path = entry.path();
-            // Strip the agent's whole file-name suffix: `file_stem` would
-            // name Copilot's `planner.agent.md` `planner.agent`.
-            let Some(fallback_id) = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .and_then(|name| agent::agent_machine_name_from_file_name(agent_instance, name))
-            else {
-                continue;
-            };
-
+        for (path, fallback_id) in sub_agent_candidates(agent_instance, entries) {
+            let fallback_id = fallback_id.as_str();
             let Some(raw) = read_discovered_file("sub-agent", project_dir, &path) else {
                 continue;
             };
@@ -139,6 +126,37 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
     custom_agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     Ok((user_agents, custom_agents))
+}
+
+/// The sub-agent files in one agent directory, each with the machine name
+/// its file name gives, in the order discovery should take them.
+///
+/// Copilot's `planner.md` and `planner.agent.md` both name `planner`, and
+/// discovery keeps the first file per name.  `read_dir` order differs
+/// between machines, so the files are sorted: the form Automatic writes
+/// ([`agent::Agent::agent_file_name`]) first, then by file name.
+fn sub_agent_candidates(
+    agent_instance: &dyn agent::Agent,
+    entries: fs::ReadDir,
+) -> Vec<(std::path::PathBuf, String)> {
+    let mut candidates: Vec<(bool, String, std::path::PathBuf, String)> = entries
+        .flatten()
+        .filter(|entry| !entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let file_name = entry.file_name().into_string().ok()?;
+            // Strip the agent's whole file-name suffix: `file_stem` would
+            // name Copilot's `planner.agent.md` `planner.agent`.
+            let machine_name =
+                agent::agent_machine_name_from_file_name(agent_instance, &file_name)?.to_string();
+            let not_written_form = file_name != agent_instance.agent_file_name(&machine_name);
+            Some((not_written_form, file_name, entry.path(), machine_name))
+        })
+        .collect();
+    candidates.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    candidates
+        .into_iter()
+        .map(|(_, _, path, machine_name)| (path, machine_name))
+        .collect()
 }
 
 /// Read a file found in an agent's directory during rebuild, or `None` to
@@ -190,6 +208,15 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
                 continue;
             }
             let path = entry.path();
+            // Only the extensions `is_managed_command_content` accepts.
+            // Checking before the read keeps unrelated files out of the
+            // refusal log.
+            if !matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("md" | "toml")
+            ) {
+                continue;
+            }
 
             let Some(raw) = read_discovered_file("command", project_dir, &path) else {
                 continue;
@@ -623,6 +650,35 @@ Inspect the repo carefully.\n\
             assert!(user_agents.is_empty());
             let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
             assert_eq!(names, vec!["helper", "planner"]);
+        });
+    }
+
+    /// `planner.md` and `planner.agent.md` both name `planner` for Copilot.
+    /// Discovery must take the form Automatic writes on every machine,
+    /// whatever order `read_dir` returns.
+    #[test]
+    fn discover_agents_prefers_the_written_copilot_file() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let agents_dir = project_dir.path().join(".github").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let written = "---\ndescription: Written\n---\nWritten form.\n";
+        fs::write(agents_dir.join("planner.agent.md"), written).unwrap();
+        fs::write(
+            agents_dir.join("planner.md"),
+            "---\ndescription: Plain\n---\nPlain form.\n",
+        )
+        .unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["copilot".into()],
+                ..make_project(project_dir.path())
+            };
+            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            assert_eq!(custom_agents.len(), 1, "{custom_agents:?}");
+            assert_eq!(custom_agents[0].name, "planner");
+            assert_eq!(custom_agents[0].content, written);
         });
     }
 
