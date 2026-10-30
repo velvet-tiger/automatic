@@ -659,33 +659,12 @@ mod tests {
     use super::*;
     use crate::core::Project;
     use std::path::Path;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn with_temp_home<T>(test: impl FnOnce(&Path) -> T) -> T {
-        let _lock = env_lock().lock().expect("env lock");
         let home = tempdir().expect("temp home");
-        let original = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", home.path());
-        }
-
-        let result = test(home.path());
-
-        unsafe {
-            if let Some(value) = original {
-                std::env::set_var("HOME", value);
-            } else {
-                std::env::remove_var("HOME");
-            }
-        }
-
-        result
+        let home_path = home.path().to_path_buf();
+        crate::core::with_test_home(home_path.clone(), || test(&home_path))
     }
 
     #[test]

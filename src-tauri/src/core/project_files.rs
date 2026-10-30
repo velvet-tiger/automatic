@@ -676,10 +676,14 @@ mod tests {
 
         let mut project =
             make_unified_project(dir.path().to_str().unwrap(), &["claude", "opencode"]);
-        record_instruction_hashes_for_filenames(
-            &mut project,
-            &["AGENTS.md".to_string()],
-        );
+        // Recording saves the project to the registry, so it needs its own home.
+        let home = tmp();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            record_instruction_hashes_for_filenames(
+                &mut project,
+                &["AGENTS.md".to_string()],
+            );
+        });
 
         assert!(
             project.instruction_file_hashes.contains_key("AGENTS.md"),
