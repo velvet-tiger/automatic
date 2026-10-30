@@ -747,19 +747,27 @@ pub(crate) fn is_plain_file_name(name: &str) -> bool {
 }
 
 /// Recover the machine name from a sub-agent file name: the reverse of
-/// [`Agent::agent_file_name`].  `Path::file_stem` only strips the last
-/// dot-segment, so it turns Copilot's `planner.agent.md` into
-/// `planner.agent`.  This strips the agent's whole suffix instead.
+/// [`Agent::agent_file_name`].  The suffix that method writes is tried
+/// first, then a plain `.{agents_file_ext()}`.  The two differ only for
+/// Copilot, which loads both `planner.agent.md` and `planner.md` from
+/// `.github/agents/` and names the agent after the file minus either
+/// suffix (<https://docs.github.com/en/copilot/reference/custom-agents-configuration>).
+/// `Path::file_stem` is not enough: it turns `planner.agent.md` into
+/// `planner.agent`.
+///
 /// Returns `None` when `file_name` is not one of this agent's sub-agent
-/// files, or has nothing before the suffix.
+/// files, or when what is left is not a plain file name (`...agent.md`
+/// leaves `..`).
 pub(crate) fn agent_machine_name_from_file_name<'a>(
     agent: &dyn Agent,
     file_name: &'a str,
 ) -> Option<&'a str> {
-    let suffix = agent.agent_file_name("");
+    let written = agent.agent_file_name("");
+    let plain = format!(".{}", agent.agents_file_ext());
     file_name
-        .strip_suffix(suffix.as_str())
-        .filter(|stem| !stem.is_empty())
+        .strip_suffix(written.as_str())
+        .or_else(|| file_name.strip_suffix(plain.as_str()))
+        .filter(|stem| is_plain_file_name(stem))
 }
 
 /// Log and report a name [`is_plain_file_name`] rejects.

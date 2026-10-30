@@ -1131,37 +1131,41 @@ fn strip_instructions_header(content: &str) -> String {
         .to_string()
 }
 
-/// Read a custom agent's file from the first configured agent directory that
-/// has one.  The path comes from [`crate::agent::Agent::agent_file_name`],
-/// the name sync writes, so a compound name such as Copilot's
-/// `{name}.agent.md` is found.
-fn read_custom_agent_from_disk(
+/// The on-disk version of a custom agent to adopt, as the Markdown the
+/// project stores.  It is the file the conflict scan reports, so adopting
+/// resolves the conflict the user was shown even when another agent's
+/// directory holds a matching copy.  An agent-native file (Codex TOML) is
+/// converted back to Markdown; a format with no reverse conversion is
+/// refused rather than stored as Markdown.
+fn adoptable_custom_agent_content(
     project: &core::Project,
     effective: &std::path::Path,
-    project_dir: &std::path::Path,
-    asset_name: &str,
+    ca: &core::CustomAgent,
 ) -> Result<String, String> {
-    let custom = project.custom_agents.as_deref().unwrap_or(&[]);
-    if let Some(ca) = custom.iter().find(|a| a.name == asset_name) {
-        let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
-            .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
-        for agent_id in &project.agents {
-            let Some(agent_instance) = crate::agent::from_id(agent_id) else {
-                continue;
-            };
-            let Some(agents_dir) = agent_instance.agents_dir(effective) else {
-                continue;
-            };
-            let path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
-            if let Ok(Some(content)) = sync::read_project_text(project_dir, &path) {
-                return Ok(content);
-            }
+    match sync::scan_custom_agent(project, effective, ca) {
+        Some(sync::CustomAgentFinding::Conflict { agent, conflict }) => {
+            let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
+                .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+            sync::agent_file_to_markdown(agent, &conflict.disk_content, &machine_name).ok_or_else(
+                || {
+                    format!(
+                        "Cannot adopt agent '{}' from {}: Automatic cannot convert this {} file back to Markdown",
+                        ca.name,
+                        conflict.path,
+                        agent.label()
+                    )
+                },
+            )
         }
+        Some(sync::CustomAgentFinding::Unreadable(unreadable)) => Err(format!(
+            "Cannot adopt agent '{}' from {}: {}",
+            ca.name, unreadable.path, unreadable.reason
+        )),
+        None => Err(format!(
+            "No on-disk version of agent '{}' differs from Automatic's copy",
+            ca.name
+        )),
     }
-    Err(format!(
-        "On-disk agent '{}' was not found in any agent directory",
-        asset_name
-    ))
 }
 
 /// Adopt on-disk custom asset content into the project's stored snapshot.
@@ -1220,16 +1224,21 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
             entry.content = disk_body;
         }
         "agent" => {
-            let disk_content =
-                read_custom_agent_from_disk(&project, &effective, &project_dir, asset_name)?;
-            let custom = project.custom_agents.get_or_insert_with(Vec::new);
-            let Some(entry) = custom.iter_mut().find(|a| a.name == asset_name) else {
+            let custom = project.custom_agents.as_deref().unwrap_or(&[]);
+            let Some(ca) = custom.iter().find(|a| a.name == asset_name).cloned() else {
                 return Err(format!(
                     "Agent '{}' is not a project-scoped custom agent",
                     asset_name
                 ));
             };
-            entry.content = disk_content;
+            let disk_content = adoptable_custom_agent_content(&project, &effective, &ca)?;
+            if let Some(entry) = project
+                .custom_agents
+                .as_mut()
+                .and_then(|agents| agents.iter_mut().find(|a| a.name == asset_name))
+            {
+                entry.content = disk_content;
+            }
         }
         "command" => {
             let path = effective
@@ -3506,31 +3515,119 @@ mod read_only_tests {
 mod adopt_custom_asset_tests {
     use super::propagation_tests::{make_project, with_temp_home};
     use super::*;
+    use crate::agent::{Agent, ClaudeCode};
+
+    const STORED: &str = "---\nname: planner\ndescription: Plans\n---\nStored.\n";
+
+    /// Save a project `name` with one custom agent, `Planner`, stored as
+    /// [`STORED`], and the given agents.  Returns the project directory.
+    fn planner_project(
+        name: &str,
+        agents: &[&str],
+    ) -> (tempfile::TempDir, std::path::PathBuf) {
+        make_project(name, |p| {
+            p.agents = agents.iter().map(|a| a.to_string()).collect();
+            p.custom_agents = Some(vec![core::CustomAgent {
+                name: "Planner".into(),
+                content: STORED.into(),
+            }]);
+        })
+    }
+
+    fn write(path: &std::path::Path, content: &str) {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, content).expect("write");
+    }
+
+    fn stored_planner(name: &str) -> String {
+        let raw = core::read_project(name).expect("read project");
+        let project: core::Project = serde_json::from_str(&raw).expect("project json");
+        project.custom_agents.expect("custom agents")[0].content.clone()
+    }
 
     /// Copilot names sub-agent files `{name}.agent.md`.  Adopting must read
     /// that file, not `{name}.md`.
     #[test]
     fn adopt_reads_copilot_agent_md_file() {
         with_temp_home(|_| {
-            let stored = "---\nname: planner\ndescription: Plans\n---\nStored.\n";
-            let (_keep, dir) = make_project("copilot-adopt", |p| {
-                p.agents = vec!["copilot".into()];
-                p.custom_agents = Some(vec![core::CustomAgent {
-                    name: "Planner".into(),
-                    content: stored.into(),
-                }]);
-            });
-            let agents_dir = dir.join(".github").join("agents");
-            std::fs::create_dir_all(&agents_dir).expect("mkdir");
+            let (_keep, dir) = planner_project("copilot-adopt", &["copilot"]);
             let edited = "---\nname: planner\ndescription: Plans\n---\nEdited on disk.\n";
-            std::fs::write(agents_dir.join("planner.agent.md"), edited).expect("write");
+            write(&dir.join(".github/agents/planner.agent.md"), edited);
 
             adopt_custom_asset("copilot-adopt", "agent", "Planner").expect("adopt");
 
-            let raw = core::read_project("copilot-adopt").expect("read project");
-            let project: core::Project = serde_json::from_str(&raw).expect("project json");
-            let agents = project.custom_agents.expect("custom agents");
-            assert_eq!(agents[0].content, edited);
+            assert_eq!(stored_planner("copilot-adopt"), edited);
+        });
+    }
+
+    /// Adopt takes the file the conflict scan reported.  A Claude copy that
+    /// still matches the stored version must not be adopted in place of the
+    /// edited Copilot file.
+    #[test]
+    fn adopt_takes_the_conflicting_file_not_the_first_one() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("two-agents", &["claude", "copilot"]);
+            write(
+                &dir.join(".claude/agents/planner.md"),
+                &ClaudeCode.convert_agent_content(STORED, "planner"),
+            );
+            let edited = "---\nname: planner\ndescription: Plans\n---\nEdited for Copilot.\n";
+            write(&dir.join(".github/agents/planner.agent.md"), edited);
+
+            adopt_custom_asset("two-agents", "agent", "Planner").expect("adopt");
+
+            assert_eq!(stored_planner("two-agents"), edited);
+        });
+    }
+
+    /// Codex stores sub-agents as TOML.  Adopting one must store Markdown,
+    /// or the next sync converts TOML as if it were Markdown.
+    #[test]
+    fn adopt_converts_a_codex_toml_file_to_markdown() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-adopt", &["codex"]);
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                "name = \"planner\"\ndescription = \"Plans\"\ndeveloper_instructions = \"Edited on disk.\"\n",
+            );
+
+            adopt_custom_asset("codex-adopt", "agent", "Planner").expect("adopt");
+
+            let stored = stored_planner("codex-adopt");
+            assert!(stored.starts_with("---\nname: planner\n"), "{stored}");
+            assert!(stored.contains("Edited on disk."), "{stored}");
+            assert!(!stored.contains("developer_instructions"), "{stored}");
+        });
+    }
+
+    /// Kiro's JSON has no conversion back to Markdown, so adopt refuses it
+    /// and leaves the stored copy alone.
+    #[test]
+    fn adopt_refuses_a_format_with_no_reverse_conversion() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("kiro-adopt", &["kiro"]);
+            write(&dir.join(".kiro/agents/planner.json"), "{\"name\":\"planner\"}\n");
+
+            let err = adopt_custom_asset("kiro-adopt", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains("cannot convert"), "{err}");
+            assert_eq!(stored_planner("kiro-adopt"), STORED);
+        });
+    }
+
+    /// With no differing file there is nothing to adopt.
+    #[test]
+    fn adopt_without_a_conflict_is_an_error() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("in-sync", &["claude"]);
+            write(
+                &dir.join(".claude/agents/planner.md"),
+                &ClaudeCode.convert_agent_content(STORED, "planner"),
+            );
+
+            let err = adopt_custom_asset("in-sync", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains("No on-disk version"), "{err}");
         });
     }
 }

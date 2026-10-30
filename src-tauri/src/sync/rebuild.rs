@@ -6,6 +6,7 @@ use crate::agent;
 use crate::core::{self, CustomAgent, CustomCommand, Project, Subagent};
 
 use super::autodetect::{autodetect_inner, AgentAdoption};
+use super::read_project_text;
 
 struct GlobalUserAgent {
     id: String,
@@ -98,13 +99,12 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
         };
 
         for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
                 continue;
             }
-            // Match the agent's whole file-name suffix, not only the last
-            // extension: Copilot loads `*.agent.md`, so a `README.md` in
-            // `.github/agents/` is not a sub-agent.
+            let path = entry.path();
+            // Strip the agent's whole file-name suffix: `file_stem` would
+            // name Copilot's `planner.agent.md` `planner.agent`.
             let Some(fallback_id) = path
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -113,9 +113,8 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
                 continue;
             };
 
-            let raw = match fs::read_to_string(&path) {
-                Ok(raw) => raw,
-                Err(_) => continue,
+            let Some(raw) = read_discovered_file("sub-agent", project_dir, &path) else {
+                continue;
             };
 
             if let Some(global_id) =
@@ -140,6 +139,21 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
     custom_agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     Ok((user_agents, custom_agents))
+}
+
+/// Read a file found in an agent's directory during rebuild, or `None` to
+/// skip it.  What is read here is imported into the project's committed
+/// config, so the read goes through [`read_project_text`]: a committed link
+/// out of the project (`notes.md -> ~/.ssh/id_rsa`), a FIFO or an oversized
+/// file is refused and logged, never imported.
+fn read_discovered_file(kind: &str, project_dir: &Path, path: &Path) -> Option<String> {
+    match read_project_text(project_dir, path) {
+        Ok(content) => content,
+        Err(reason) => {
+            eprintln!("[automatic] rebuild: not importing {kind} file: {reason}");
+            None
+        }
+    }
 }
 
 struct GlobalUserCommand {
@@ -172,19 +186,17 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
         };
 
         for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
             let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
 
-            if !agent::is_managed_command_file(&path) {
+            let Some(raw) = read_discovered_file("command", project_dir, &path) else {
                 continue;
-            }
-
-            let raw = match fs::read_to_string(&path) {
-                Ok(raw) => raw,
-                Err(_) => continue,
             };
+            if !agent::is_managed_command_content(&path, &raw) {
+                continue;
+            }
 
             if let Some(global_id) =
                 match_global_user_command(agent_instance, &raw, &global_user_commands)
@@ -281,16 +293,29 @@ fn match_global_user_agent(
     None
 }
 
+/// Turn a sub-agent file in `agent_instance`'s own format back into the
+/// canonical Markdown a [`CustomAgent`] stores: the reverse of
+/// [`agent::Agent::convert_agent_content`].  `fallback_id` names the agent
+/// when the file does not.  Returns `None` for a format with no reverse
+/// conversion (Kiro's JSON) and for a file that does not parse.
+pub(crate) fn agent_file_to_markdown(
+    agent_instance: &dyn agent::Agent,
+    raw_disk_content: &str,
+    fallback_id: &str,
+) -> Option<String> {
+    match agent_instance.agents_file_ext() {
+        "md" => Some(raw_disk_content.to_string()),
+        "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id),
+        _ => None,
+    }
+}
+
 fn parse_custom_agent(
     agent_instance: &dyn agent::Agent,
     raw_disk_content: &str,
     fallback_id: &str,
 ) -> Option<CustomAgent> {
-    let canonical_content = match agent_instance.agents_file_ext() {
-        "md" => raw_disk_content.to_string(),
-        "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id)?,
-        _ => return None,
-    };
+    let canonical_content = agent_file_to_markdown(agent_instance, raw_disk_content, fallback_id)?;
 
     let name = extract_frontmatter_value(&canonical_content, "name")
         .filter(|value| !value.is_empty())
@@ -569,19 +594,23 @@ Inspect the repo carefully.\n\
         });
     }
 
-    /// Copilot loads `*.agent.md` from `.github/agents/`.  Discovery must
-    /// skip other Markdown there, and name a file without a `name:` field
-    /// `planner`, not `planner.agent`.
+    /// Copilot loads both `planner.agent.md` and `planner.md` from
+    /// `.github/agents/`, named after the file minus either suffix.  A file
+    /// without a `name:` field must be named `planner`, not `planner.agent`.
     #[test]
-    fn discover_agents_uses_copilot_agent_md_suffix() {
+    fn discover_agents_strips_both_copilot_suffixes() {
         let home = tempdir().unwrap();
         let project_dir = tempdir().unwrap();
         let agents_dir = project_dir.path().join(".github").join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
-        fs::write(agents_dir.join("README.md"), "# Our agents\n").unwrap();
         fs::write(
             agents_dir.join("planner.agent.md"),
             "---\ndescription: Plans\n---\nPlan.\n",
+        )
+        .unwrap();
+        fs::write(
+            agents_dir.join("helper.md"),
+            "---\ndescription: Helps\n---\nHelp.\n",
         )
         .unwrap();
 
@@ -593,7 +622,37 @@ Inspect the repo carefully.\n\
             let (user_agents, custom_agents) = discover_sub_agents(&project).unwrap();
             assert!(user_agents.is_empty());
             let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
-            assert_eq!(names, vec!["planner"]);
+            assert_eq!(names, vec!["helper", "planner"]);
+        });
+    }
+
+    /// Rebuild imports what it finds into committed config, so a committed
+    /// link out of the project under an agents or commands directory must
+    /// not be read.
+    #[cfg(unix)]
+    #[test]
+    fn discover_skips_links_out_of_the_project() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret_agent = outside.path().join("agent.md");
+        fs::write(&secret_agent, "---\nname: secret\n---\nSECRET\n").unwrap();
+        let secret_command = outside.path().join("command.md");
+        fs::write(&secret_command, "---\nautomatic-managed: true\n---\nSECRET\n").unwrap();
+
+        let agents_dir = ClaudeCode.agents_dir(project_dir.path()).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+        std::os::unix::fs::symlink(&secret_agent, agents_dir.join("notes.md")).unwrap();
+        let commands_dir = ClaudeCode.commands_dir(project_dir.path()).unwrap();
+        fs::create_dir_all(&commands_dir).unwrap();
+        std::os::unix::fs::symlink(&secret_command, commands_dir.join("notes.md")).unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = make_project(project_dir.path());
+            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            assert!(custom_agents.is_empty(), "{custom_agents:?}");
+            let (_, custom_commands) = discover_sub_commands(&project).unwrap();
+            assert!(custom_commands.is_empty(), "{custom_commands:?}");
         });
     }
 }

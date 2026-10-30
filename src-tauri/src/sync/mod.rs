@@ -25,6 +25,10 @@ pub(crate) use helpers::{
     create_project_dir, escaped_silent_dir, project_write_refusal, read_project_text,
     write_project_file, write_project_file_or_skip,
 };
+// Adopting a custom agent resolves the conflict the scan reported, and turns
+// the agent-native file back into the Markdown the project stores.
+pub(crate) use helpers::{scan_custom_agent, CustomAgentFinding};
+pub(crate) use rebuild::agent_file_to_markdown;
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(

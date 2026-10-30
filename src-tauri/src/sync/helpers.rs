@@ -580,58 +580,94 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
     let mut scan = CustomAssetScan::default();
 
     for ca in custom {
-        let machine_name = extract_agent_machine_name(&ca.content)
-            .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+        match scan_custom_agent(project, dir, ca) {
+            Some(CustomAgentFinding::Conflict { conflict, .. }) => scan.conflicts.push(conflict),
+            Some(CustomAgentFinding::Unreadable(unreadable)) => scan.unreadable.push(unreadable),
+            None => {}
+        }
+    }
 
-        for agent_id in &project.agents {
-            let Some(agent_instance) = crate::agent::from_id(agent_id) else {
-                continue;
-            };
-            let Some(agents_dir) = agent_instance.agents_dir(dir) else {
-                continue;
-            };
-            // Read the file sync writes.  A compound name such as Copilot's
-            // `{name}.agent.md` is not `{name}.{ext}`, and a scan that misses
-            // the file lets the next sync overwrite a hand edit.
-            let file_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
-            let relative = file_path
-                .strip_prefix(dir)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| file_path.display().to_string());
-            let disk_content = match read_project_text(dir, &file_path) {
-                Ok(Some(c)) => c,
-                Ok(None) => continue,
-                Err(reason) => {
-                    scan.push_unreadable(
-                        CustomAssetKind::Agent,
-                        &ca.name,
-                        relative,
-                        Some(agent_id),
-                        reason,
-                    );
-                    break; // one entry per custom agent
-                }
-            };
-            let expected =
-                agent_instance.convert_agent_content(&ca.content, &machine_name);
-            if disk_content == expected {
-                // Matches here.  Keep looking: a file in another agent's
-                // directory can still differ, or be a link out of the
-                // project that sync must not write through.
-                continue;
+    scan
+}
+
+/// What [`scan_custom_agent`] found for one custom agent.
+pub(crate) enum CustomAgentFinding {
+    /// The first file that differs from the stored copy.  `agent` owns the
+    /// directory that holds it, and knows the file's format.
+    Conflict {
+        agent: &'static dyn crate::agent::Agent,
+        conflict: CustomAssetConflict,
+    },
+    /// The first file the scan refused to read.
+    Unreadable(UnreadableCustomAsset),
+}
+
+/// Check one custom agent's file under every configured agent's
+/// `agents_dir`.  Returns the first file that differs or is refused, or
+/// `None` when every file there matches the stored copy or is absent.
+/// Adopt calls this too, so it takes exactly the file the user was shown.
+pub(crate) fn scan_custom_agent(
+    project: &Project,
+    dir: &Path,
+    ca: &crate::core::CustomAgent,
+) -> Option<CustomAgentFinding> {
+    let machine_name = extract_agent_machine_name(&ca.content)
+        .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+    // Sync never writes a name that is not a plain file name (see
+    // `sync_custom_agents`), and joining one could read outside the agent
+    // directory.
+    if !crate::agent::is_plain_file_name(&machine_name) {
+        return None;
+    }
+
+    for agent_id in &project.agents {
+        let Some(agent_instance) = crate::agent::from_id(agent_id) else {
+            continue;
+        };
+        let Some(agents_dir) = agent_instance.agents_dir(dir) else {
+            continue;
+        };
+        // Read the file sync writes.  A compound name such as Copilot's
+        // `{name}.agent.md` is not `{name}.{ext}`, and a scan that misses
+        // the file lets the next sync overwrite a hand edit.
+        let file_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
+        let relative = file_path
+            .strip_prefix(dir)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| file_path.display().to_string());
+        let disk_content = match read_project_text(dir, &file_path) {
+            Ok(Some(c)) => c,
+            Ok(None) => continue,
+            Err(reason) => {
+                return Some(CustomAgentFinding::Unreadable(UnreadableCustomAsset {
+                    kind: CustomAssetKind::Agent,
+                    name: ca.name.clone(),
+                    path: relative,
+                    agent_id: Some(agent_id.clone()),
+                    reason,
+                }));
             }
-            scan.conflicts.push(CustomAssetConflict {
+        };
+        let expected = agent_instance.convert_agent_content(&ca.content, &machine_name);
+        if disk_content == expected {
+            // Matches here.  Keep looking: a file in another agent's
+            // directory can still differ, or be a link out of the
+            // project that sync must not write through.
+            continue;
+        }
+        return Some(CustomAgentFinding::Conflict {
+            agent: agent_instance,
+            conflict: CustomAssetConflict {
                 kind: CustomAssetKind::Agent,
                 name: ca.name.clone(),
                 path: relative,
                 disk_content,
                 automatic_content: expected,
-            });
-            break; // one conflict entry per custom agent
-        }
+            },
+        });
     }
 
-    scan
+    None
 }
 
 /// Compare each `custom_commands` entry against `.agents/commands/<name>.md`.
@@ -1770,5 +1806,31 @@ mod tests {
         assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
         assert_eq!(scan.conflicts[0].path, ".github/agents/planner.agent.md");
         assert_eq!(scan.conflicts[0].disk_content, "hand edited\n");
+    }
+
+    /// A frontmatter name that is not a plain file name is never joined to
+    /// an agent directory, so the scan cannot read `.claude/planner.md`
+    /// through `name: ../planner`.
+    #[test]
+    fn custom_agent_scan_skips_names_that_are_not_plain_file_names() {
+        let dir = tmp();
+        let project = Project {
+            name: "scan".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into()],
+            custom_agents: Some(vec![CustomAgent {
+                name: "Planner".into(),
+                content: "---\nname: ../planner\n---\nPlan.\n".into(),
+            }]),
+            ..Default::default()
+        };
+        fs::create_dir_all(dir.path().join(".claude").join("agents")).expect("mkdir");
+        fs::write(dir.path().join(".claude").join("planner.md"), "outside the agents dir\n")
+            .expect("write");
+
+        let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
     }
 }

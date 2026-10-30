@@ -136,6 +136,20 @@ fn sub_agent_filenames_round_trip() {
             "{}: agent_machine_name_from_file_name does not reverse \"{file_name}\"",
             agent.id(),
         );
+        let plain = format!("my-agent.{ext}");
+        assert_eq!(
+            agent_machine_name_from_file_name(agent, &plain),
+            Some("my-agent"),
+            "{}: agent_machine_name_from_file_name does not accept \"{plain}\"",
+            agent.id(),
+        );
+        let parent = agent.agent_file_name("..");
+        assert_eq!(
+            agent_machine_name_from_file_name(agent, &parent),
+            None,
+            "{}: agent_machine_name_from_file_name accepts \"{parent}\"",
+            agent.id(),
+        );
     }
 }
 
