@@ -69,10 +69,11 @@ pub fn ensure_valid_asset_name(kind: &str, name: &str) -> Result<(), String> {
     }
 }
 
-/// The first non-empty `name` line in agent frontmatter, without quotes.
+/// The first non-empty top-level `name` line in agent frontmatter, without
+/// quotes.  An indented `name` belongs to a nested value.
 pub fn extract_agent_name(content: &str) -> Option<String> {
     for line in crate::agent::frontmatter_block(content)?.lines() {
-        if let Some(name_val) = line.trim().strip_prefix("name:") {
+        if let Some(name_val) = line.strip_prefix("name:") {
             let name = name_val.trim().trim_matches('"').trim_matches('\'');
             if !name.is_empty() {
                 return Some(name.to_string());
@@ -235,6 +236,13 @@ mod tests {
         );
         assert_eq!(extract_agent_name("---\nname: x\n-----\nBody\n"), None);
         assert_eq!(extract_agent_name("---\nname: x\n---x\nBody\n"), None);
+    }
+
+    #[test]
+    fn agent_name_ignores_a_nested_name() {
+        let content = "---\nhooks:\n  name: inner\nname: planner\n---\n";
+        assert_eq!(extract_agent_name(content).as_deref(), Some("planner"));
+        assert_eq!(extract_agent_name("---\nhooks:\n  name: inner\n---\n"), None);
     }
 
     #[test]

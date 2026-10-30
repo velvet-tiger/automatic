@@ -484,10 +484,21 @@ pub trait Agent: Send + Sync {
     /// and adopting must be able to end it.  A Markdown file missing only the
     /// `automatic-managed` marker loses nothing, because sync adds the marker.
     /// The byte comparison must stay first: Kiro's JSON is not Markdown, so
-    /// rendering it can never equal `expected`.  Codex overrides this to
-    /// compare fields.
+    /// rendering it can never equal `expected`.  A byte order mark is no
+    /// content either, as some editors add one.  `automatic-managed: false`
+    /// is the user's edit, and the render cannot keep it.  Codex overrides
+    /// this to compare fields.
     fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
-        if disk == expected || render_markdown_command(disk) == expected {
+        let disk = disk.strip_prefix('\u{feff}').unwrap_or(disk);
+        if disk == expected {
+            return Vec::new();
+        }
+        if top_level_frontmatter_value(disk, "automatic-managed")
+            .is_some_and(|managed| managed != "true")
+        {
+            return vec!["automatic-managed".to_string()];
+        }
+        if render_markdown_command(disk) == expected {
             Vec::new()
         } else {
             vec!["content".to_string()]
@@ -1284,6 +1295,16 @@ pub(crate) fn top_level_frontmatter_value<'a>(content: &'a str, key: &str) -> Op
         .map(|(_, value)| value)
 }
 
+/// How many top-level lines set `key`.
+pub(crate) fn top_level_frontmatter_key_count(content: &str, key: &str) -> usize {
+    frontmatter_block(content).map_or(0, |block| {
+        block
+            .split('\n')
+            .filter(|line| frontmatter_line_sets(line, key))
+            .count()
+    })
+}
+
 /// `true` when a flow collection (`[a, b` or `{a: 1`) is not closed on the
 /// line that opens it.
 fn opens_unclosed_flow_collection(value: &str) -> bool {
@@ -1333,30 +1354,49 @@ fn frontmatter_value_continues(lines: &[&str], index: usize) -> bool {
 /// the last line for a repeated key, so that is the one replaced.  A new key
 /// goes at the end of the block.  `value: None` removes every line for `key`.
 ///
-/// Returns `None` when this cannot be done safely: [`render_frontmatter_value`]
-/// refuses the value, or the existing value runs over several lines.
+/// Refuses when [`render_frontmatter_value`] refuses the value, or when the
+/// existing value runs over several lines.
 pub(crate) fn set_frontmatter_value(
     content: &str,
     key: &str,
     value: Option<&str>,
-) -> Option<String> {
+) -> Result<String, FrontmatterEditRefusal> {
     let rendered = match value {
-        Some(value) => Some(render_frontmatter_value(value)?),
+        Some(value) => Some(
+            render_frontmatter_value(value).ok_or(FrontmatterEditRefusal::UnsafeValue)?,
+        ),
         None => None,
     };
     write_frontmatter_line(content, key, rendered.as_deref())
 }
 
 /// [`set_frontmatter_value`] for an integer, which stays a number in YAML.
-pub(crate) fn set_frontmatter_integer(content: &str, key: &str, value: i64) -> Option<String> {
+pub(crate) fn set_frontmatter_integer(
+    content: &str,
+    key: &str,
+    value: i64,
+) -> Result<String, FrontmatterEditRefusal> {
     write_frontmatter_line(content, key, Some(&value.to_string()))
 }
 
+/// Why a frontmatter key could not be edited.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FrontmatterEditRefusal {
+    /// The new value cannot be written safely.
+    UnsafeValue,
+    /// The existing value runs over several lines.
+    MultiLineValue,
+}
+
 /// The edit behind [`set_frontmatter_value`], with the value already rendered.
-fn write_frontmatter_line(content: &str, key: &str, rendered: Option<&str>) -> Option<String> {
+fn write_frontmatter_line(
+    content: &str,
+    key: &str,
+    rendered: Option<&str>,
+) -> Result<String, FrontmatterEditRefusal> {
     let line = rendered.map(|rendered| format!("{key}: {rendered}"));
     let Some(span) = frontmatter_span(content) else {
-        return Some(match line {
+        return Ok(match line {
             Some(line) => format!("---\n{line}\n---\n{content}"),
             None => content.to_string(),
         });
@@ -1364,10 +1404,10 @@ fn write_frontmatter_line(content: &str, key: &str, rendered: Option<&str>) -> O
 
     if span.start == span.end {
         let Some(line) = line else {
-            return Some(content.to_string());
+            return Ok(content.to_string());
         };
         let line_break = &content[3..span.start];
-        return Some(format!(
+        return Ok(format!(
             "{}{line}{line_break}{}",
             &content[..span.start],
             &content[span.end..]
@@ -1386,7 +1426,7 @@ fn write_frontmatter_line(content: &str, key: &str, rendered: Option<&str>) -> O
         .iter()
         .any(|&index| frontmatter_value_continues(&lines, index))
     {
-        return None;
+        return Err(FrontmatterEditRefusal::MultiLineValue);
     }
 
     let carriage_return = if content.starts_with("---\r\n") { "\r" } else { "" };
@@ -1403,7 +1443,7 @@ fn write_frontmatter_line(content: &str, key: &str, rendered: Option<&str>) -> O
         (Some(replacement), None) => lines.push(replacement),
     }
 
-    Some(format!(
+    Ok(format!(
         "{}{}{}",
         &content[..span.start],
         lines.join("\n"),
@@ -3681,16 +3721,21 @@ mod tests {
             "tools: [Read,\n  Grep]\n",
             "tools: [Read,\nGrep]\n",
             "tools:\n# a comment\n  - Read\n",
+            "tools:\n# see: the list\n  - Read\n",
             "tools:\n# one\n\n# two\n  Read\n",
             "tools: [Read,\n",
             "tools: {a: 1,\n",
             "tools: [\"a]\", b,\n",
         ] {
             let content = format!("---\nname: planner\n{block}after: 1\n---\n");
-            assert_eq!(set_frontmatter_value(&content, "tools", None), None, "{block}");
+            assert_eq!(
+                set_frontmatter_value(&content, "tools", None),
+                Err(FrontmatterEditRefusal::MultiLineValue),
+                "{block}"
+            );
             assert_eq!(
                 set_frontmatter_value(&content, "tools", Some("x")),
-                None,
+                Err(FrontmatterEditRefusal::MultiLineValue),
                 "{block}"
             );
         }
@@ -3737,7 +3782,7 @@ mod tests {
     fn set_frontmatter_value_refuses_a_value_the_gate_refuses() {
         assert_eq!(
             set_frontmatter_value("---\na: 1\n---\n", "a", Some("x\ny: 2")),
-            None
+            Err(FrontmatterEditRefusal::UnsafeValue)
         );
     }
 
@@ -3858,6 +3903,23 @@ mod tests {
         assert_eq!(
             ClaudeCode.agent_file_differences(&disk, &expected),
             vec!["content"]
+        );
+    }
+
+    #[test]
+    fn agent_differences_treat_a_byte_order_mark_as_no_content() {
+        let expected = ClaudeCode.convert_agent_content("---\nname: planner\n---\nPlan.\n", "planner");
+        let disk = format!("\u{feff}{expected}");
+        assert!(ClaudeCode.agent_file_differences(&disk, &expected).is_empty());
+    }
+
+    #[test]
+    fn agent_differences_report_automatic_managed_false() {
+        let expected = ClaudeCode.convert_agent_content("---\nname: planner\n---\nPlan.\n", "planner");
+        let disk = expected.replace("automatic-managed: true", "automatic-managed: false");
+        assert_eq!(
+            ClaudeCode.agent_file_differences(&disk, &expected),
+            vec!["automatic-managed"]
         );
     }
 

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::{self, Agent};
 use crate::core::{
-    agent_machine_name, agent_machine_slug, custom_agent_machine_name, CustomAgent, Project,
+    agent_machine_name, agent_machine_slug, custom_agent_machine_name, extract_agent_name,
+    CustomAgent, Project,
 };
 
 use super::helpers::{project_write_refusal, read_project_text, write_project_file};
@@ -25,6 +26,9 @@ pub(crate) enum AdoptRefusal {
     SharedSettings(Vec<String>),
     /// Removing `sandbox_mode` would lose a real tool list.
     WouldDropTools,
+    /// The stored value of this field runs over several lines, so one line
+    /// of a Codex file cannot replace it.
+    MultiLineStoredValue(String),
     /// The file would sync under a different name.
     NameChanged,
     /// The stored name itself fails validation.
@@ -35,9 +39,9 @@ impl AdoptRefusal {
     /// The reason to show the user.  `agent_label` names the file's agent.
     pub(crate) fn message(&self, agent_label: &str) -> String {
         match self {
-            Self::CannotConvert => {
-                format!("Automatic cannot convert this {agent_label} file back to Markdown")
-            }
+            Self::CannotConvert => format!(
+                "Automatic cannot convert this {agent_label} file back to Markdown. Use Overwrite to replace the file with Automatic's copy."
+            ),
             Self::CannotKeep(changes) => format!(
                 "Automatic's copy cannot hold these {agent_label} changes: {}. Undo them in the file and adopt again, or use Overwrite to replace the file with Automatic's copy.",
                 changes.join(", ")
@@ -47,12 +51,15 @@ impl AdoptRefusal {
                 settings.join(" and ")
             ),
             Self::WouldDropTools => {
-                "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted."
+                "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted. Restore sandbox_mode in the file, or use Overwrite to replace the file with Automatic's copy."
                     .to_string()
             }
+            Self::MultiLineStoredValue(field) => format!(
+                "Automatic's copy writes {field} over several lines, so this file cannot change it. Change it in the agent's content on the Agents tab, or use Overwrite to replace the file with Automatic's copy."
+            ),
             Self::InvalidStoredName(reason) => reason.clone(),
             Self::NameChanged => {
-                "Adopting cannot rename an agent. Rename it in Automatic's agent editor, or restore the name in the file."
+                "Adopting cannot rename an agent. Restore the name in the file and adopt, then change `name:` in the agent's content on the Agents tab."
                     .to_string()
             }
         }
@@ -80,12 +87,7 @@ pub(crate) fn adopted_agent_markdown(
     let machine_name =
         custom_agent_machine_name(stored).map_err(AdoptRefusal::InvalidStoredName)?;
     let markdown = match adopting.agents_file_ext() {
-        "md" if agent_machine_name("Custom agent", disk, &stored.name).as_ref()
-            != Ok(&machine_name) =>
-        {
-            return Err(AdoptRefusal::NameChanged);
-        }
-        "md" => disk.to_string(),
+        "md" => whole_markdown_file(disk, stored, &machine_name)?,
         "toml" => merge_edit_into_stored(
             adopting,
             &stored.content,
@@ -103,6 +105,31 @@ pub(crate) fn adopted_agent_markdown(
     } else {
         Err(AdoptRefusal::CannotKeep(lost))
     }
+}
+
+/// A Markdown file to adopt whole, without any byte order mark.  Its name
+/// must read the same to every reader, because the machine name decides
+/// where the file syncs.
+fn whole_markdown_file(
+    disk: &str,
+    stored: &CustomAgent,
+    machine_name: &str,
+) -> Result<String, AdoptRefusal> {
+    let disk = disk.strip_prefix('\u{feff}').unwrap_or(disk);
+    let (frontmatter, _) = agent::parse_frontmatter(disk);
+    let parsed_name = frontmatter
+        .get("name")
+        .map(String::as_str)
+        .filter(|name| !name.is_empty());
+    if agent::top_level_frontmatter_key_count(disk, "name") > 1
+        || parsed_name != extract_agent_name(disk).as_deref()
+    {
+        return Err(AdoptRefusal::CannotKeep(vec!["name".to_string()]));
+    }
+    if agent_machine_name("Custom agent", disk, &stored.name).as_deref() != Ok(machine_name) {
+        return Err(AdoptRefusal::NameChanged);
+    }
+    Ok(disk.to_string())
 }
 
 /// What the user changed in a Codex file.
@@ -154,9 +181,11 @@ fn refuse_unsupported_edit(
     shared_with_other_agents: bool,
 ) -> Result<(), AdoptRefusal> {
     // A missing name is filled in from the stored copy, so it is no rename.
-    if let Some(toml::Value::String(name)) = edit.table.get("name") {
-        if agent_machine_slug(name) != machine_name {
-            return Err(AdoptRefusal::NameChanged);
+    if edit.changed("name") {
+        if let Some(toml::Value::String(name)) = edit.table.get("name") {
+            if agent_machine_slug(name) != machine_name {
+                return Err(AdoptRefusal::NameChanged);
+            }
         }
     }
 
@@ -204,7 +233,7 @@ fn apply_edit(edit: &CodexEdit, stored: &str) -> Result<String, AdoptRefusal> {
             None => apply_field(&merged, "max_turns", "maxTurns", None)?,
             Some(toml::Value::Integer(turns)) => {
                 agent::set_frontmatter_integer(&merged, "maxTurns", *turns)
-                    .ok_or_else(|| AdoptRefusal::CannotKeep(vec!["max_turns".to_string()]))?
+                    .map_err(|refusal| field_refusal(refusal, "max_turns"))?
             }
             Some(_) => merged,
         };
@@ -256,7 +285,18 @@ fn apply_field(
     value: Option<&str>,
 ) -> Result<String, AdoptRefusal> {
     agent::set_frontmatter_value(markdown, frontmatter_key, value)
-        .ok_or_else(|| AdoptRefusal::CannotKeep(vec![field.to_string()]))
+        .map_err(|refusal| field_refusal(refusal, field))
+}
+
+fn field_refusal(refusal: agent::FrontmatterEditRefusal, field: &str) -> AdoptRefusal {
+    match refusal {
+        agent::FrontmatterEditRefusal::UnsafeValue => {
+            AdoptRefusal::CannotKeep(vec![field.to_string()])
+        }
+        agent::FrontmatterEditRefusal::MultiLineValue => {
+            AdoptRefusal::MultiLineStoredValue(field.to_string())
+        }
+    }
 }
 
 /// Set a frontmatter key from a TOML text value, or remove it when the value
@@ -605,21 +645,93 @@ mod tests {
 
     #[test]
     fn each_refusal_says_what_to_do() {
-        assert_eq!(
-            AdoptRefusal::CannotKeep(vec!["custom".into(), "other".into()]).message("Codex CLI"),
-            "Automatic's copy cannot hold these Codex CLI changes: custom, other. Undo them in the file and adopt again, or use Overwrite to replace the file with Automatic's copy."
-        );
-        assert_eq!(
-            AdoptRefusal::SharedSettings(vec!["model".into()]).message("Codex CLI"),
-            "Automatic stores one model for every agent in this project. Change it in Automatic's agent editor, or use Overwrite to discard this edit."
-        );
-        assert_eq!(
-            AdoptRefusal::WouldDropTools.message("Codex CLI"),
-            "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted."
-        );
+        const OVERWRITE: &str = "use Overwrite to replace the file with Automatic's copy.";
+        for (refusal, says) in [
+            (AdoptRefusal::CannotConvert, "Use Overwrite"),
+            (AdoptRefusal::WouldDropTools, OVERWRITE),
+            (
+                AdoptRefusal::CannotKeep(vec!["a".into(), "b".into()]),
+                OVERWRITE,
+            ),
+            (
+                AdoptRefusal::CannotKeep(vec!["a".into(), "b".into()]),
+                "changes: a, b.",
+            ),
+            (
+                AdoptRefusal::MultiLineStoredValue("description".into()),
+                "on the Agents tab",
+            ),
+            (
+                AdoptRefusal::MultiLineStoredValue("description".into()),
+                OVERWRITE,
+            ),
+            (
+                AdoptRefusal::SharedSettings(vec!["model".into()]),
+                "one model for every agent",
+            ),
+        ] {
+            let message = refusal.message("Codex CLI");
+            assert!(message.contains(says), "{message}");
+        }
         assert_eq!(
             AdoptRefusal::NameChanged.message("Codex CLI"),
-            "Adopting cannot rename an agent. Rename it in Automatic's agent editor, or restore the name in the file."
+            "Adopting cannot rename an agent. Restore the name in the file and adopt, then change `name:` in the agent's content on the Agents tab."
+        );
+    }
+
+    /// A nested `name` is what the Codex render shows, but with `name`
+    /// unchanged it is no rename, so a body edit must not be refused.
+    #[test]
+    fn a_nested_name_does_not_refuse_a_body_edit() {
+        let nested = "---\nname: planner\nhooks:\n  name: inner\n---\nPlan.\n";
+        let disk = rendered(nested).replace("Plan.", "Edited.");
+
+        assert_eq!(
+            adopt(nested, &disk, false).unwrap(),
+            nested.replace("Plan.", "Edited.")
+        );
+    }
+
+    /// Two readers could send this file to two names, so it is refused
+    /// rather than picking one.
+    #[test]
+    fn a_markdown_file_with_an_ambiguous_name_is_refused() {
+        for disk in [
+            "---\nname: planner\nname: planner\n---\nPlan.\n",
+            "---\nname: planner\nname: reviewer\n---\nPlan.\n",
+            "---\nname: planner\nhooks:\n  name: inner\n---\nPlan.\n",
+        ] {
+            assert_eq!(
+                adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), disk, false),
+                Err(cannot_keep("name")),
+                "{disk}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_markdown_file_with_automatic_managed_false_is_refused() {
+        let disk = "---\nname: planner\nautomatic-managed: false\n---\nEdited.\n";
+
+        assert_eq!(
+            adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), disk, false),
+            Err(cannot_keep("automatic-managed"))
+        );
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_stripped_from_a_markdown_file() {
+        let disk = "---\nname: planner\n---\nEdited.\n";
+
+        assert_eq!(
+            adopted_agent_markdown(
+                &ClaudeCode,
+                &stored(PLAIN),
+                &format!("\u{feff}{disk}"),
+                false
+            )
+            .unwrap(),
+            disk
         );
     }
 
@@ -673,7 +785,12 @@ mod tests {
     fn editing_a_stored_block_value_is_refused_naming_the_field() {
         let block = PLAIN.replace("description: Plans\n", "description: |\n  Plans\n  more\n");
         let disk = rendered(&block).replace("description = \"|\"", "description = \"Edited\"");
-        assert_eq!(adopt(&block, &disk, false), Err(cannot_keep("description")));
+        assert_eq!(
+            adopt(&block, &disk, false),
+            Err(AdoptRefusal::MultiLineStoredValue(
+                "description".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -783,6 +900,36 @@ mod tests {
         fs::set_permissions(&claude, fs::Permissions::from_mode(0o644)).unwrap();
         rewrite_other_agent_files(dir.path(), &files, &adopted).unwrap();
         assert!(fs::read_to_string(&claude).unwrap().contains("Edited."));
+    }
+
+    /// A name that fails main's validation never reaches a path.
+    #[test]
+    fn other_agent_files_use_the_validated_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "invalid".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into(), "codex".into()],
+            ..Default::default()
+        };
+        let invalid = stored("---\nname: ../planner\n---\nPlan.\n");
+        let outside = dir.path().join(".claude/planner.md");
+        std::fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        std::fs::write(
+            &outside,
+            ClaudeCode.convert_agent_content(&invalid.content, "../planner"),
+        )
+        .unwrap();
+
+        let files = other_agent_files_matching(&project, dir.path(), &invalid, &CodexCli);
+
+        assert!(files.is_empty());
+        let failed = rewrite_other_agent_files(dir.path(), &[], &invalid).unwrap_err();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(
+            adopted_agent_markdown(&CodexCli, &invalid, "name = \"x\"\n", false),
+            Err(AdoptRefusal::InvalidStoredName(failed[0].clone()))
+        );
     }
 
     /// Windows editors re-save with CRLF.  That is no edit, so nothing about

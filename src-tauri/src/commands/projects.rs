@@ -4332,6 +4332,22 @@ mod adopt_custom_asset_tests {
         });
     }
 
+    /// A byte order mark must not leave a conflict behind: the stored copy
+    /// drops it, and the file still on disk then matches.
+    #[test]
+    fn adopted_markdown_file_with_a_byte_order_mark_leaves_no_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("bom", &["claude"]);
+            let edited = "---\nname: planner\ndescription: Plans\n---\nEdited.\n";
+            write(&dir.join(".claude/agents/planner.md"), &format!("\u{feff}{edited}"));
+
+            adopt_custom_asset("bom", "agent", "Planner").expect("adopt");
+
+            assert_eq!(stored_planner("bom"), edited);
+            assert_no_conflict("bom", &dir);
+        });
+    }
+
     /// With no differing file there is nothing to adopt.
     #[test]
     fn adopt_without_a_conflict_is_an_error() {
