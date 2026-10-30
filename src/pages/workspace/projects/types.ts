@@ -239,6 +239,8 @@ export interface RebuildPreview {
   project_name: string;
   categories: RebuildPreviewCategory[];
   changed: boolean;
+  /** Sub-agent files rebuild could not read, each with the reason. */
+  refused_files?: string[];
 }
 
 export interface DriftReport {

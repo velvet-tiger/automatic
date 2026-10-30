@@ -1129,8 +1129,11 @@ pub(crate) fn sync_user_agents(
                 let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
                     continue;
                 };
+                // A managed file rebuild could not read is not stale.  Without
+                // this, rebuild dropping it would make sync delete it.
                 if expected_file_names.contains(file_name)
                     || !crate::agent::is_managed_agent_file(&path)
+                    || super::rebuild::agent_file_is_refused(root, agent, &path)
                 {
                     continue;
                 }

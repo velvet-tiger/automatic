@@ -40,6 +40,9 @@ struct RebuildPreview {
     project_name: String,
     categories: Vec<RebuildPreviewCategory>,
     changed: bool,
+    /// Sub-agent files rebuild could not read, each with the reason.  They
+    /// stay on disk, and any stored version of them stays in the project.
+    refused_files: Vec<String>,
 }
 
 #[tauri::command]
@@ -48,7 +51,7 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let rebuilt = sync::rebuild_project_state(&project)?;
+    let (rebuilt, refused_files) = sync::rebuild_project_with_refusals(&project)?;
 
     let categories = vec![
         diff_category("agents", "Agent Tools", &project.agents, &rebuilt.agents),
@@ -104,6 +107,7 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
             .iter()
             .any(|category| !category.added.is_empty() || !category.removed.is_empty()),
         categories,
+        refused_files,
     };
 
     serde_json::to_string_pretty(&preview).map_err(|e| e.to_string())
@@ -4252,6 +4256,79 @@ mod adopt_custom_asset_tests {
                 std::fs::read_to_string(&codex).expect("read"),
                 codex_render(SHARED)
             );
+        });
+    }
+
+    const REFUSED_FILE: &str = "automatic_managed = true\nname = \"planner\"\ndescription = \"a\\u0007\\nb\"\n";
+
+    /// Rebuild cannot read this file, but it holds the only copy of what the
+    /// user wrote.  Rebuild keeps the stored agent, and sync keeps the file.
+    #[test]
+    fn rebuild_and_sync_keep_a_refused_file_with_a_stored_agent() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("refused-stored", &["codex"]);
+            let path = dir.join(".codex/agents/planner.toml");
+            write(&path, REFUSED_FILE);
+
+            rebuild_project("refused-stored").expect("rebuild");
+            assert_eq!(stored_planner("refused-stored"), STORED);
+
+            sync_project("refused-stored").expect("sync");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), REFUSED_FILE);
+        });
+    }
+
+    /// With no stored agent there is nothing to keep in the project, so the
+    /// file itself must stay out of sync's stale sweep.
+    #[test]
+    fn rebuild_and_sync_keep_a_refused_file_with_no_stored_agent() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("refused-new", |p| {
+                p.agents = vec!["codex".into()];
+            });
+            let path = dir.join(".codex/agents/planner.toml");
+            write(&path, REFUSED_FILE);
+
+            rebuild_project("refused-new").expect("rebuild");
+            sync_project("refused-new").expect("sync");
+
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), REFUSED_FILE);
+            let raw = core::read_project("refused-new").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            assert!(project.custom_agents.is_none(), "{:?}", project.custom_agents);
+        });
+    }
+
+    #[test]
+    fn rebuild_preview_says_which_files_were_refused_and_why() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("refused-preview", &["codex"]);
+            write(&dir.join(".codex/agents/planner.toml"), REFUSED_FILE);
+
+            let preview = preview_rebuild_project("refused-preview").expect("preview");
+
+            let preview: serde_json::Value = serde_json::from_str(&preview).expect("json");
+            let refused = preview["refused_files"].as_array().expect("refused files");
+            assert_eq!(refused.len(), 1, "{refused:?}");
+            let line = refused[0].as_str().expect("text");
+            assert!(line.contains(".codex/agents/planner.toml"), "{line}");
+            assert!(line.contains("description"), "{line}");
+        });
+    }
+
+    /// A stale managed file rebuild can read is still removed.
+    #[test]
+    fn sync_still_removes_a_stale_managed_file_it_can_read() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("stale", |p| {
+                p.agents = vec!["codex".into()];
+            });
+            let path = dir.join(".codex/agents/planner.toml");
+            write(&path, "automatic_managed = true\nname = \"planner\"\n");
+
+            sync_project("stale").expect("sync");
+
+            assert!(!path.exists());
         });
     }
 

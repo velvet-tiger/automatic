@@ -14,6 +14,12 @@ struct GlobalUserAgent {
 }
 
 pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
+    rebuild_project_with_refusals(project).map(|(rebuilt, _)| rebuilt)
+}
+
+/// [`rebuild_project_state`], plus why each sub-agent file it could not read
+/// was left out of the rebuild.
+pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<String>), String> {
     // The agent list is kept as configured.  Rebuild re-derives what those
     // agents have on disk; to rebuild another agent the user adds it first.
     let mut seed = project.clone();
@@ -50,15 +56,16 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
 
     if rebuilt.directory.is_empty() || !Path::new(&rebuilt.directory).exists() {
         rebuilt.updated_at = chrono::Utc::now().to_rfc3339();
-        return Ok(rebuilt);
+        return Ok((rebuilt, Vec::new()));
     }
 
-    let (user_agents, custom_agents) = discover_sub_agents(&rebuilt)?;
-    rebuilt.user_agents = user_agents;
-    rebuilt.custom_agents = if custom_agents.is_empty() {
+    let stored_agents = project.custom_agents.as_deref().unwrap_or(&[]);
+    let found = discover_sub_agents(&rebuilt, stored_agents)?;
+    rebuilt.user_agents = found.user_agents;
+    rebuilt.custom_agents = if found.custom_agents.is_empty() {
         None
     } else {
-        Some(custom_agents)
+        Some(found.custom_agents)
     };
 
     let (user_commands, custom_commands) = discover_sub_commands(&rebuilt)?;
@@ -71,16 +78,34 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
 
     rebuilt.updated_at = chrono::Utc::now().to_rfc3339();
 
-    Ok(rebuilt)
+    Ok((rebuilt, found.refused))
 }
 
-fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgent>), String> {
+/// What rebuild found in the agents' directories.
+struct DiscoveredSubAgents {
+    user_agents: Vec<String>,
+    custom_agents: Vec<CustomAgent>,
+    /// One line per file that could not be imported, saying why.
+    refused: Vec<String>,
+}
+
+/// Find the sub-agents in each configured agent's directory.
+///
+/// Rebuild decides what stays in the project, and sync then deletes managed
+/// files the project no longer lists.  So a file rebuild cannot read must not
+/// simply drop out: its stored agent in `stored` is kept, and with none,
+/// [`agent_file_is_refused`] keeps the file out of sync's stale sweep.
+fn discover_sub_agents(
+    project: &Project,
+    stored: &[CustomAgent],
+) -> Result<DiscoveredSubAgents, String> {
     let project_dir = Path::new(&project.directory);
     let global_user_agents = load_global_user_agents()?;
 
     let mut user_agent_ids = HashSet::new();
     let mut custom_agents = Vec::new();
     let mut seen_custom_agent_ids = HashSet::new();
+    let mut refused = Vec::new();
 
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -100,29 +125,42 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
 
         for (path, fallback_id) in sub_agent_candidates(agent_instance, entries) {
             let fallback_id = fallback_id.as_str();
-            let Some(raw) = read_discovered_file("sub-agent", project_dir, &path) else {
-                continue;
-            };
-
-            if let Some(global_id) =
-                match_global_user_agent(agent_instance, &raw, &global_user_agents)
-            {
-                user_agent_ids.insert(global_id);
-                continue;
-            }
-
-            if let Some(custom_agent) = parse_custom_agent(agent_instance, &raw, fallback_id) {
-                // A cloned repo controls the frontmatter. Adopting a name that
-                // cannot be a file name would leave a project that fails to load.
-                let custom_id = match crate::core::custom_agent_machine_name(&custom_agent) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        eprintln!("[automatic] rebuild: not adopting {}: {e}", path.display());
+            let imported = match read_project_text(project_dir, &path) {
+                Ok(None) => continue,
+                Ok(Some(raw)) => {
+                    if let Some(global_id) =
+                        match_global_user_agent(agent_instance, &raw, &global_user_agents)
+                    {
+                        user_agent_ids.insert(global_id);
                         continue;
                     }
-                };
-                if seen_custom_agent_ids.insert(custom_id) {
-                    custom_agents.push(custom_agent);
+                    import_agent_file(agent_instance, &raw, fallback_id)
+                }
+                Err(reason) => Err(reason),
+            };
+
+            let keep = match imported {
+                Ok(Some(custom_agent)) => {
+                    let custom_id = crate::core::custom_agent_machine_name(&custom_agent)?;
+                    if seen_custom_agent_ids.insert(custom_id) {
+                        custom_agents.push(custom_agent);
+                    }
+                    continue;
+                }
+                Ok(None) => stored_agent_with_machine_name(stored, fallback_id),
+                Err(reason) => {
+                    let relative = path.strip_prefix(project_dir).unwrap_or(&path);
+                    eprintln!(
+                        "[automatic] rebuild: not importing {}: {reason}",
+                        relative.display()
+                    );
+                    refused.push(format!("{}: {reason}", relative.display()));
+                    stored_agent_with_machine_name(stored, fallback_id)
+                }
+            };
+            if let Some(agent) = keep {
+                if seen_custom_agent_ids.insert(fallback_id.to_string()) {
+                    custom_agents.push(agent.clone());
                 }
             }
         }
@@ -132,7 +170,43 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
     user_agents.sort();
     custom_agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    Ok((user_agents, custom_agents))
+    Ok(DiscoveredSubAgents {
+        user_agents,
+        custom_agents,
+        refused,
+    })
+}
+
+fn stored_agent_with_machine_name<'a>(
+    stored: &'a [CustomAgent],
+    machine_name: &str,
+) -> Option<&'a CustomAgent> {
+    stored
+        .iter()
+        .find(|agent| core::custom_agent_machine_name(agent).is_ok_and(|name| name == machine_name))
+}
+
+/// `true` when rebuild could not import the sub-agent file at `path`.  Sync
+/// must then leave the file alone: it is not stale, only unreadable to
+/// Automatic.  A format with no conversion back to Markdown (Kiro's JSON) is
+/// no refusal, so its stale files are still removed.
+pub(super) fn agent_file_is_refused(
+    root: &Path,
+    agent_instance: &dyn agent::Agent,
+    path: &Path,
+) -> bool {
+    let machine_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| agent::agent_machine_name_from_file_name(agent_instance, name));
+    let Some(machine_name) = machine_name else {
+        return true;
+    };
+    match read_project_text(root, path) {
+        Ok(Some(raw)) => import_agent_file(agent_instance, &raw, machine_name).is_err(),
+        Ok(None) => false,
+        Err(_) => true,
+    }
 }
 
 /// The sub-agent files in one agent directory, each with the machine name
@@ -335,38 +409,43 @@ fn match_global_user_agent(
 /// Turn a sub-agent file in `agent_instance`'s own format back into the
 /// canonical Markdown a [`CustomAgent`] stores: the reverse of
 /// [`agent::Agent::convert_agent_content`].  `fallback_id` names the agent
-/// when the file does not.  Returns `None` for a format with no reverse
-/// conversion (Kiro's JSON) and for a file that does not parse.
+/// when the file does not.  Returns `Ok(None)` for a format with no reverse
+/// conversion (Kiro's JSON), and `Err` with the reason for a file this cannot
+/// represent.
 fn agent_file_to_markdown(
     agent_instance: &dyn agent::Agent,
     raw_disk_content: &str,
     fallback_id: &str,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     match agent_instance.agents_file_ext() {
-        "md" => Some(raw_disk_content.to_string()),
-        "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id),
-        _ => None,
+        "md" => Ok(Some(raw_disk_content.to_string())),
+        "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id).map(Some),
+        _ => Ok(None),
     }
 }
 
-fn parse_custom_agent(
+/// Read a sub-agent file as a custom agent.  `Ok(None)` and `Err` mean the
+/// same as for [`agent_file_to_markdown`].  A cloned repo controls the
+/// frontmatter, and a name that cannot be a file name would leave a project
+/// that fails to load, so that is refused too.
+fn import_agent_file(
     agent_instance: &dyn agent::Agent,
     raw_disk_content: &str,
     fallback_id: &str,
-) -> Option<CustomAgent> {
-    let canonical_content = agent_file_to_markdown(agent_instance, raw_disk_content, fallback_id)?;
-
-    let name = crate::core::extract_agent_name(&canonical_content).unwrap_or_else(|| fallback_id.to_string());
-
-    Some(CustomAgent {
-        name,
-        content: canonical_content,
-    })
+) -> Result<Option<CustomAgent>, String> {
+    let Some(content) = agent_file_to_markdown(agent_instance, raw_disk_content, fallback_id)?
+    else {
+        return Ok(None);
+    };
+    let name = core::extract_agent_name(&content).unwrap_or_else(|| fallback_id.to_string());
+    let custom_agent = CustomAgent { name, content };
+    core::custom_agent_machine_name(&custom_agent)?;
+    Ok(Some(custom_agent))
 }
 
-fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<String> {
-    let value = toml::from_str::<toml::Value>(content).ok()?;
-    let table = value.as_table()?;
+fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Result<String, String> {
+    let table = toml::from_str::<toml::Table>(content)
+        .map_err(|_| "it is not valid TOML".to_string())?;
 
     let name = table
         .get("name")
@@ -390,16 +469,12 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
         .and_then(|value| value.as_str())
         .unwrap_or("");
 
-    // Rebuild has no round-trip check, so a value the gate refuses skips the
-    // whole file rather than storing something other than it says.
-    let line = |key: &str, value: &str| match agent::render_frontmatter_value(value) {
-        Some(rendered) => Some(format!("{key}: {rendered}")),
-        None => {
-            eprintln!(
-                "[automatic] rebuild: not importing sub-agent '{fallback_id}': its {key} cannot be stored as frontmatter"
-            );
-            None
-        }
+    // Rebuild has no round-trip check, so a value the gate refuses refuses the
+    // file rather than storing something other than it says.
+    let line = |key: &str, value: &str| {
+        agent::render_frontmatter_value(value)
+            .map(|rendered| format!("{key}: {rendered}"))
+            .ok_or_else(|| format!("its {key} cannot be stored as frontmatter"))
     };
 
     let mut frontmatter = vec![
@@ -430,7 +505,7 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
     markdown.push_str("\n\n");
     markdown.push_str(instructions.trim());
     markdown.push('\n');
-    Some(markdown)
+    Ok(markdown)
 }
 
 pub fn rebuild_instruction_snapshots(project: &Project) {
@@ -517,7 +592,7 @@ mod tests {
         fs::write(agents_dir.join("good.md"), "---\nname: Good\n---\nFine.\n").unwrap();
 
         let project = make_project(project_dir.path());
-        let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+        let custom_agents = discover_sub_agents(&project, &[]).unwrap().custom_agents;
 
         let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, vec!["Good"]);
@@ -672,9 +747,9 @@ Inspect the repo carefully.\n\
                 agents: vec!["copilot".into()],
                 ..make_project(project_dir.path())
             };
-            let (user_agents, custom_agents) = discover_sub_agents(&project).unwrap();
-            assert!(user_agents.is_empty());
-            let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
+            let found = discover_sub_agents(&project, &[]).unwrap();
+            assert!(found.user_agents.is_empty());
+            let names: Vec<&str> = found.custom_agents.iter().map(|a| a.name.as_str()).collect();
             assert_eq!(names, vec!["helper", "planner"]);
         });
     }
@@ -701,7 +776,7 @@ Inspect the repo carefully.\n\
                 agents: vec!["copilot".into()],
                 ..make_project(project_dir.path())
             };
-            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            let custom_agents = discover_sub_agents(&project, &[]).unwrap().custom_agents;
             assert_eq!(custom_agents.len(), 1, "{custom_agents:?}");
             assert_eq!(custom_agents[0].name, "planner");
             assert_eq!(custom_agents[0].content, written);
@@ -730,7 +805,7 @@ Inspect the repo carefully.\n\
                 agents: vec!["copilot".into()],
                 ..make_project(project_dir.path())
             };
-            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            let custom_agents = discover_sub_agents(&project, &[]).unwrap().custom_agents;
             assert_eq!(custom_agents.len(), 1, "{custom_agents:?}");
             assert_eq!(custom_agents[0].content, written);
         });
@@ -785,7 +860,7 @@ Inspect the repo carefully.\n\
 
         crate::core::with_test_home(home.path().to_path_buf(), || {
             let project = make_project(project_dir.path());
-            let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+            let custom_agents = discover_sub_agents(&project, &[]).unwrap().custom_agents;
             assert!(custom_agents.is_empty(), "{custom_agents:?}");
             let (_, custom_commands) = discover_sub_commands(&project).unwrap();
             assert!(custom_commands.is_empty(), "{custom_commands:?}");
@@ -856,13 +931,78 @@ Inspect the repo carefully.\n\
     }
 
     /// There is no round-trip check here, so a value that could add keys of
-    /// its own or close the block skips the whole file.
+    /// its own or close the block refuses the file, with a reason.
     #[test]
-    fn codex_toml_with_a_value_the_gate_refuses_is_skipped() {
+    fn codex_toml_with_a_value_the_gate_refuses_is_refused() {
         for value in ["x\\n---\\nfoo: bar", "a\\u2028b", "a\\u0085b"] {
             let toml = format!("name = \"planner\"\ndescription = \"{value}\"\n");
-            assert_eq!(convert_codex_toml_to_markdown(&toml, "planner"), None, "{value}");
+            let reason = convert_codex_toml_to_markdown(&toml, "planner").unwrap_err();
+            assert!(reason.contains("description"), "{reason}");
         }
+    }
+
+    /// A refused file keeps its stored agent, or rebuild would drop it from
+    /// the project and sync would delete the file.
+    #[test]
+    fn a_refused_file_keeps_the_stored_agent() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let agents_dir = project_dir.path().join(".codex").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("planner.toml"),
+            "automatic_managed = true\nname = \"planner\"\ndescription = \"a\\nb\"\n",
+        )
+        .unwrap();
+        fs::write(agents_dir.join("broken.toml"), "automatic_managed = true\nnot = = toml\n").unwrap();
+        let stored = CustomAgent {
+            name: "Planner".into(),
+            content: "---\nname: planner\n---\nStored.\n".into(),
+        };
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["codex".into()],
+                ..make_project(project_dir.path())
+            };
+            let found = discover_sub_agents(&project, std::slice::from_ref(&stored)).unwrap();
+
+            assert_eq!(found.custom_agents.len(), 1);
+            assert_eq!(found.custom_agents[0].content, stored.content);
+            assert_eq!(found.refused.len(), 2, "{:?}", found.refused);
+            assert!(found.refused.iter().any(|line| line.contains("broken.toml")));
+        });
+    }
+
+    /// Kiro's JSON cannot be read back at all, so a stored agent is kept the
+    /// same way, without calling the file refused.
+    #[test]
+    fn a_format_with_no_reverse_conversion_keeps_the_stored_agent() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        let agents_dir = project_dir.path().join(".kiro").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("planner.json"), "{}").unwrap();
+        let stored = CustomAgent {
+            name: "Planner".into(),
+            content: "---\nname: planner\n---\nStored.\n".into(),
+        };
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                agents: vec!["kiro".into()],
+                ..make_project(project_dir.path())
+            };
+            let found = discover_sub_agents(&project, std::slice::from_ref(&stored)).unwrap();
+
+            assert_eq!(found.custom_agents.len(), 1);
+            assert!(found.refused.is_empty(), "{:?}", found.refused);
+            assert!(!agent_file_is_refused(
+                project_dir.path(),
+                &agent::Kiro,
+                &agents_dir.join("planner.json")
+            ));
+        });
     }
 
     #[test]

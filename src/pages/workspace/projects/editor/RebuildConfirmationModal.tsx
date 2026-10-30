@@ -13,6 +13,7 @@ interface RebuildConfirmationModalProps {
 
 export function RebuildConfirmationModal({ preview, busy, onConfirm, onClose }: RebuildConfirmationModalProps) {
   const categories = Array.isArray(preview.categories) ? preview.categories : [];
+  const refusedFiles = preview.refused_files ?? [];
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -77,6 +78,19 @@ export function RebuildConfirmationModal({ preview, busy, onConfirm, onClose }: 
               This compares feature state, not file contents.
             </p>
           </div>
+
+          {refusedFiles.length > 0 && (
+            <div className="rounded-lg border border-warning/25 bg-warning/5 px-4 py-3">
+              <p className="text-[13px] text-text-base leading-relaxed">
+                Automatic could not read these agent files. They stay on disk, and any saved version stays in the project.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {refusedFiles.map((line) => (
+                  <li key={line} className="text-[12px] font-mono text-text-muted break-all">{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {changedCategories.length > 0 ? (
             <div className="space-y-3">
