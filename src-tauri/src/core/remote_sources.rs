@@ -4158,6 +4158,27 @@ mod tests {
     }
 
     #[test]
+    fn install_template_accepts_a_nested_project_file_name() {
+        let sandbox = sandbox();
+        let content =
+            r#"{"name":"remote","project_files":[{"filename":"docs/README.md","content":"x"}]}"#;
+        fs::write(sandbox.source.join("resource.json"), content).expect("write source file");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_template(
+                &sandbox.source,
+                &resource("remote", "resource.json"),
+                WriteMode::Create,
+            )
+            .expect("a nested project file name should be accepted");
+            assert!(crate::core::templates::get_templates_dir()
+                .unwrap()
+                .join("remote.json")
+                .is_file());
+        });
+    }
+
+    #[test]
     fn a_file_installer_refuses_a_path_outside_the_source_directory() {
         for (kind, install, file_name, content) in FILE_INSTALLERS {
             let sandbox = sandbox();

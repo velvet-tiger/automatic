@@ -147,8 +147,9 @@ pub fn read_template(name: &str) -> Result<String, String> {
         let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
         let mut template: ProjectTemplate =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
-        // Templates stored before names were checked are refused here.
-        validate_template_project_files(&template)?;
+        // A stored template with an unsafe project file name still reads, so
+        // the user can open and fix it.  Cloud sync also tombstones any
+        // template that fails to read.  The merge refuses it before writing.
         if template._author.is_none() {
             template._author = super::remote_sources::get_provenance_author("template", name);
         }
@@ -227,7 +228,6 @@ pub fn rename_template(old_name: &str, new_name: &str) -> Result<(), String> {
     let raw = fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
     let mut template: ProjectTemplate =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
-    validate_template_project_files(&template)?;
     template.name = new_name.to_string();
     let pretty = serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?;
     fs::write(&new_path, pretty).map_err(|e| e.to_string())?;
@@ -1232,8 +1232,11 @@ mod tests {
         });
     }
 
+    /// Cloud sync tombstones a template that fails to read, which deletes it
+    /// on every device.  So a stored template with an unsafe name must still
+    /// read, and only applying it is refused.
     #[test]
-    fn read_template_refuses_a_stored_template_with_an_unsafe_name() {
+    fn a_stored_template_with_an_unsafe_name_reads_but_is_not_applied() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             let dir = get_templates_dir().expect("templates dir");
@@ -1242,8 +1245,17 @@ mod tests {
                 .expect("serialise");
             fs::write(dir.join("tmpl.json"), data).expect("write template");
 
-            let err = read_template("tmpl").expect_err("unsafe name should be refused");
+            let raw = read_template("tmpl").expect("an unsafe template should still read");
+            let tmpl: ProjectTemplate = serde_json::from_str(&raw).expect("parse template");
+
+            let project_dir = temp.path().join("project");
+            fs::create_dir(&project_dir).expect("create project dir");
+            let mut project = empty_project();
+            project.directory = project_dir.to_str().unwrap().into();
+            let err = merge_templates_into_project(&mut project, &[tmpl])
+                .expect_err("applying an unsafe template should be refused");
             assert!(err.contains("cannot be used"), "unexpected error: {err}");
+            assert!(!temp.path().join("x").exists());
         });
     }
 

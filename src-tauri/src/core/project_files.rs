@@ -22,13 +22,37 @@ use super::*;
 ///   drive-relative path that `join` treats as absolute, and `a:b` names an
 ///   NTFS stream.  No agent instruction file uses either character.
 /// - No control characters, NUL among them.
+/// - No part ends in `.` or a space.  Windows drops those, so `CLAUDE.md.`
+///   would quietly write `CLAUDE.md`.
+/// - On Windows, no part is a device name such as `CON` or `com1.md`,
+///   which opens the device instead of a file.
 pub fn is_valid_project_file_path(filename: &str) -> bool {
     !filename.is_empty()
         && !filename.contains(['\\', ':'])
         && !filename.chars().any(char::is_control)
-        && filename
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
+        && filename.split('/').all(|part| {
+            !part.is_empty()
+                && !part.ends_with(['.', ' '])
+                && !(cfg!(windows) && is_windows_device_name(part))
+        })
+}
+
+/// `true` when `part` is a Windows device name such as `CON` or `com1`, with
+/// or without an extension.  Windows also counts the superscript digits ¹, ²
+/// and ³ as port numbers.  `CONIN$` and `CONOUT$` are the console too.
+fn is_windows_device_name(part: &str) -> bool {
+    let stem = part.split('.').next().unwrap_or(part).trim_end().to_ascii_uppercase();
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+        return true;
+    }
+    let Some(port) = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")) else {
+        return false;
+    };
+    let mut digits = port.chars();
+    matches!(
+        (digits.next(), digits.next()),
+        (Some('1'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+    )
 }
 
 /// `Ok` when `filename` passes [`is_valid_project_file_path`].  The error
@@ -39,8 +63,8 @@ pub fn ensure_valid_project_file_path(filename: &str) -> Result<(), String> {
     } else {
         Err(format!(
             "Project file name {filename:?} cannot be used. It must be a relative path such as \
-             \"docs/README.md\", with no empty, \".\" or \"..\" parts, and cannot contain '\\', \
-             ':' or control characters"
+             \"docs/README.md\", with no empty parts and no part that ends in '.' or a space, \
+             and cannot contain '\\', ':' or control characters"
         ))
     }
 }
@@ -103,16 +127,11 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
         return Err(format!("Directory '{}' does not exist", directory));
     }
     // Checked before anything is removed or written.  Template names reach
-    // here from cloud sync and remote import.
+    // here from cloud sync and remote import.  A name that passes joins to a
+    // path below `dir`.
     ensure_valid_project_file_path(filename)?;
 
     let path = dir.join(filename);
-    if !path.starts_with(&dir) {
-        return Err(format!(
-            "Project file '{}' resolves outside the project directory",
-            filename
-        ));
-    }
     if let Some(legacy_path) = legacy_clinerules_file_path(&dir, filename) {
         fs::remove_file(&legacy_path).map_err(|e| {
             format!(
@@ -764,7 +783,10 @@ mod tests {
 
     /// Project file names that would land outside the project folder, or
     /// that Windows reads as something other than a relative path.
-    const UNSAFE_PROJECT_FILE_NAMES: [&str; 14] = [
+    const UNSAFE_PROJECT_FILE_NAMES: [&str; 17] = [
+        "CLAUDE.md.",
+        "trailing /CLAUDE.md",
+        "docs/...",
         "",
         "/etc/passwd",
         "../escaped.md",
@@ -787,6 +809,18 @@ mod tests {
             assert!(!is_valid_project_file_path(name), "{name:?} should be refused");
         }
         assert!(!is_valid_project_file_path("nul\0byte.md"));
+    }
+
+    #[test]
+    fn windows_device_names_are_recognised() {
+        for part in ["CON", "con.md", "Nul", "CONIN$", "conout$.md", "AUX.txt", "COM1", "lpt9.md", "COM\u{b9}"] {
+            assert!(is_windows_device_name(part), "{part:?} is a device name");
+        }
+        for part in ["CONSOLE.md", "COM0", "COM10", "auxiliary", "README.md"] {
+            assert!(!is_windows_device_name(part), "{part:?} is not a device name");
+        }
+        // Refused only where Windows opens the device instead of a file.
+        assert_eq!(is_valid_project_file_path("docs/CON.md"), !cfg!(windows));
     }
 
     #[test]
