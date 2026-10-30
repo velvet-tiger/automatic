@@ -9,6 +9,48 @@ use super::*;
 
 // ── Project Files ────────────────────────────────────────────────────────────
 
+/// `true` when `filename` can name a file inside a project folder: a
+/// relative path such as `CLAUDE.md` or `.junie/AGENTS.md`.
+///
+/// Template `project_files` names arrive by cloud sync and remote import, so
+/// another machine controls them.  `Path::join` replaces the project folder
+/// with an absolute name, and `..` climbs out of it.  So a name must be
+/// plain parts joined by `/`:
+///
+/// - No part is empty, `.` or `..`.  An empty first part is a leading `/`.
+/// - No `\` or `:` anywhere.  On Windows `\` is a separator, `C:x` is a
+///   drive-relative path that `join` treats as absolute, and `a:b` names an
+///   NTFS stream.  No agent instruction file uses either character.
+/// - No control characters, NUL among them.
+/// - No part ends in `.` or a space.  Windows drops those, so `CLAUDE.md.`
+///   would quietly write `CLAUDE.md`.
+/// - On Windows, no part is a device name such as `CON` or `com1.md`,
+///   which opens the device instead of a file.
+pub fn is_valid_project_file_path(filename: &str) -> bool {
+    !filename.is_empty()
+        && !filename.contains(['\\', ':'])
+        && !filename.chars().any(char::is_control)
+        && filename.split('/').all(|part| {
+            !part.is_empty()
+                && !part.ends_with(['.', ' '])
+                && !(cfg!(windows) && is_windows_device_name(part))
+        })
+}
+
+/// `Ok` when `filename` passes [`is_valid_project_file_path`].  The error
+/// says what a project file name may not contain.
+pub fn ensure_valid_project_file_path(filename: &str) -> Result<(), String> {
+    if is_valid_project_file_path(filename) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Project file name {filename:?} cannot be used. It must be a relative path such as \
+             \"docs/README.md\", with no empty parts and no part that ends in '.' or a space, \
+             and cannot contain '\\', ':' or control characters"
+        ))
+    }
+}
+
 fn legacy_clinerules_file_path(project_dir: &std::path::Path, filename: &str) -> Option<PathBuf> {
     if !filename.starts_with(".clinerules/") {
         return None;
@@ -25,6 +67,7 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
     if directory.is_empty() {
         return Err("Project has no directory configured".into());
     }
+    ensure_valid_project_file_path(filename)?;
 
     let project_dir = PathBuf::from(directory);
     let requested_path = project_dir.join(filename);
@@ -65,6 +108,10 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     if !dir.exists() {
         return Err(format!("Directory '{}' does not exist", directory));
     }
+    // Checked before anything is removed or written.  Template names reach
+    // here from cloud sync and remote import.  A name that passes joins to a
+    // path below `dir`.
+    ensure_valid_project_file_path(filename)?;
 
     let path = dir.join(filename);
     if let Some(legacy_path) = legacy_clinerules_file_path(&dir, filename) {
@@ -611,10 +658,14 @@ mod tests {
 
         let mut project =
             make_unified_project(dir.path().to_str().unwrap(), &["claude", "opencode"]);
-        record_instruction_hashes_for_filenames(
-            &mut project,
-            &["AGENTS.md".to_string()],
-        );
+        // Recording saves the project to the registry, so it needs its own home.
+        let home = tmp();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            record_instruction_hashes_for_filenames(
+                &mut project,
+                &["AGENTS.md".to_string()],
+            );
+        });
 
         assert!(
             project.instruction_file_hashes.contains_key("AGENTS.md"),
@@ -714,6 +765,115 @@ mod tests {
         let on_disk = fs::read_to_string(dir.path().join(".clinerules").join("automatic.md"))
             .expect("read saved file");
         assert_eq!(on_disk, "# Instructions");
+    }
+
+    /// Project file names that would land outside the project folder, or
+    /// that Windows reads as something other than a relative path.
+    const UNSAFE_PROJECT_FILE_NAMES: [&str; 17] = [
+        "CLAUDE.md.",
+        "trailing /CLAUDE.md",
+        "docs/...",
+        "",
+        "/etc/passwd",
+        "../escaped.md",
+        "docs/../../escaped.md",
+        "./CLAUDE.md",
+        "docs//README.md",
+        "docs/",
+        "..",
+        "back\\slash.md",
+        "..\\escaped.md",
+        "C:escaped.md",
+        "C:/Windows/escaped.md",
+        "name:stream",
+        "line\nbreak.md",
+    ];
+
+    #[test]
+    fn project_file_path_rule_refuses_paths_that_leave_the_project() {
+        for name in UNSAFE_PROJECT_FILE_NAMES {
+            assert!(!is_valid_project_file_path(name), "{name:?} should be refused");
+        }
+        assert!(!is_valid_project_file_path("nul\0byte.md"));
+    }
+
+    #[test]
+    fn windows_device_names_are_refused_only_on_windows() {
+        assert_eq!(is_valid_project_file_path("docs/CON.md"), !cfg!(windows));
+        assert_eq!(is_valid_project_file_path("CONIN$"), !cfg!(windows));
+    }
+
+    #[test]
+    fn project_file_path_rule_allows_relative_names() {
+        for name in [
+            "CLAUDE.md",
+            "docs/README.md",
+            ".junie/AGENTS.md",
+            ".clinerules/automatic.md",
+            ".github/copilot-instructions.md",
+        ] {
+            assert!(is_valid_project_file_path(name), "{name:?} should be allowed");
+        }
+    }
+
+    #[test]
+    fn every_agent_instruction_file_name_passes_the_project_file_path_rule() {
+        for agent in agent::all() {
+            let name = agent.project_file_name();
+            assert!(
+                is_valid_project_file_path(name),
+                "{} instruction file {name:?} should be allowed",
+                agent.id()
+            );
+        }
+    }
+
+    #[test]
+    fn save_project_file_refuses_unsafe_names_and_writes_nothing() {
+        let sandbox = tmp();
+        let project = sandbox.path().join("project");
+        fs::create_dir(&project).expect("create project dir");
+        let outside = sandbox.path().join("outside.md");
+
+        let absolute = outside.to_str().unwrap().to_string();
+        let escaping = "../outside.md".to_string();
+        for name in [absolute, escaping] {
+            let err = save_project_file(project.to_str().unwrap(), &name, "# Escaped")
+                .expect_err("unsafe name should be refused");
+            assert!(err.contains("cannot be used"), "unexpected error: {err}");
+        }
+
+        assert!(!outside.exists(), "nothing may be written outside the project");
+        assert_eq!(
+            fs::read_dir(&project).expect("list project").count(),
+            0,
+            "nothing may be written inside the project either"
+        );
+    }
+
+    #[test]
+    fn save_project_file_writes_a_nested_relative_name() {
+        let dir = tmp();
+
+        save_project_file(dir.path().to_str().unwrap(), "docs/README.md", "# Docs")
+            .expect("save nested file");
+
+        let on_disk =
+            fs::read_to_string(dir.path().join("docs").join("README.md")).expect("read saved file");
+        assert_eq!(on_disk, "# Docs");
+    }
+
+    #[test]
+    fn read_project_file_refuses_an_absolute_name() {
+        let sandbox = tmp();
+        let project = sandbox.path().join("project");
+        fs::create_dir(&project).expect("create project dir");
+        let outside = sandbox.path().join("outside.md");
+        fs::write(&outside, "secret").expect("write outside file");
+
+        let err = read_project_file(project.to_str().unwrap(), outside.to_str().unwrap())
+            .expect_err("absolute name should be refused");
+        assert!(err.contains("cannot be used"), "unexpected error: {err}");
     }
 
     #[test]

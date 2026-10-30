@@ -195,9 +195,15 @@ pub fn read_project_files(
     if !fields.contains_key("name") {
         fields.insert("name".into(), Value::String(fallback_name.to_string()));
     }
-    serde_json::from_value(Value::Object(fields))
-        .map(Some)
-        .map_err(|e| format!("Invalid project config in {}: {}", directory, e))
+    let project: Project = serde_json::from_value(Value::Object(fields))
+        .map_err(|e| format!("Invalid project config in {}: {}", directory, e))?;
+    // A cloned repo controls these names, and sync turns them into paths.
+    super::validate_custom_asset_names(&project).map_err(|e| {
+        let file = project_config_source_path(directory)
+            .map_or_else(|| directory.to_string(), |p| p.display().to_string());
+        format!("Invalid project config: {e}. Fix or remove the entry in {file}")
+    })?;
+    Ok(Some(project))
 }
 
 /// Split a project into its configuration and state fields.
@@ -553,6 +559,21 @@ mod tests {
 
         let err = read_project_files(tmp.path().to_str().unwrap(), "x")
             .expect_err("a conflicted config must not load");
+        assert!(err.contains(CONFIG_FILE_NAME), "error names the file: {err}");
+    }
+
+    #[test]
+    fn custom_asset_traversal_name_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            r#"{"name":"x","custom_commands":[{"name":"../../../.claude/agents/evil","content":"x"}]}"#,
+        )
+        .unwrap();
+
+        let err = read_project_files(tmp.path().to_str().unwrap(), "x")
+            .expect_err("a traversal name must not load");
+        assert!(err.contains("Custom command"), "error names the kind: {err}");
         assert!(err.contains(CONFIG_FILE_NAME), "error names the file: {err}");
     }
 

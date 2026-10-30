@@ -915,6 +915,7 @@ pub(crate) fn sync_individual_skills(
     preserve_names: &[String],
     written: &mut Vec<String>,
 ) -> Result<(), String> {
+    ensure_valid_skill_names(skills)?;
     cleanup_skill_dir(base_dir, selected_skill_names, preserve_names)?;
 
     for (name, content) in skills {
@@ -951,6 +952,7 @@ pub(crate) fn copy_skills_to_project(
     preserve_names: &[String],
     written: &mut Vec<String>,
 ) -> Result<(), String> {
+    ensure_valid_skill_names(skills)?;
     cleanup_skill_dir(project_skills_dir, selected_skill_names, preserve_names)?;
 
     for (name, content) in skills {
@@ -1004,6 +1006,7 @@ pub(crate) fn symlink_skills_from_project(
     preserve_names: &[String],
     written: &mut Vec<String>,
 ) -> Result<(), String> {
+    ensure_valid_skill_names(skills)?;
     cleanup_skill_dir(agent_skills_dir, selected_skill_names, preserve_names)?;
 
     let settings = crate::core::read_settings().unwrap_or_default();
@@ -1052,6 +1055,15 @@ pub(crate) fn symlink_skills_from_project(
         written.push(link_path.display().to_string());
     }
     Ok(())
+}
+
+/// Check every skill name before a writer touches the disk. Custom skill
+/// names come from a project's committed config, and each name becomes a
+/// directory under the skills directory.
+fn ensure_valid_skill_names(skills: &[(String, String)]) -> Result<(), String> {
+    skills
+        .iter()
+        .try_for_each(|(name, _)| crate::core::ensure_valid_asset_name("Skill", name))
 }
 
 /// Remove skill entries from `base_dir` that are not in the selected set
@@ -1478,6 +1490,22 @@ pub(crate) fn is_managed_agent_content(path: &Path, content: &str) -> bool {
     }
 }
 
+/// Check every command name before a writer touches the disk. Custom command
+/// names come from a project's committed config, and each name becomes a
+/// file name in a commands directory.
+fn ensure_valid_command_names(
+    workspace_commands: &[(String, String)],
+    custom_commands: &[crate::core::CustomCommand],
+) -> Result<(), String> {
+    for (name, _) in workspace_commands {
+        crate::core::ensure_valid_asset_name("Command", name)?;
+    }
+    for command in custom_commands {
+        crate::core::ensure_valid_asset_name("Custom command", &command.name)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn copy_commands_to_project(
     root: &Path,
     project_commands_dir: &Path,
@@ -1485,6 +1513,7 @@ pub(crate) fn copy_commands_to_project(
     custom_commands: &[crate::core::CustomCommand],
     skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
+    ensure_valid_command_names(workspace_commands, custom_commands)?;
     let mut written = Vec::new();
     let mut expected: HashSet<String> = HashSet::new();
     let mut index_entries = Vec::new();
@@ -1562,6 +1591,7 @@ pub(crate) fn symlink_commands_from_project(
     custom_commands: &[crate::core::CustomCommand],
     agent_instance: &dyn Agent,
 ) -> Result<Vec<String>, String> {
+    ensure_valid_command_names(workspace_commands, custom_commands)?;
     let mut written = Vec::new();
     let mut expected: HashSet<String> = HashSet::new();
     let settings = crate::core::read_settings().unwrap_or_default();
@@ -1627,6 +1657,7 @@ pub(crate) fn sync_commands_to_dir(
     agent_instance: &dyn Agent,
     skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
+    ensure_valid_command_names(workspace_commands, custom_commands)?;
     let mut written = Vec::new();
     let mut expected: HashSet<String> = HashSet::new();
 
@@ -4136,6 +4167,62 @@ mod tests {
         assert!(skills_dir.join("local-skill").exists());
     }
 
+    #[test]
+    fn skill_writers_refuse_a_traversal_name_and_change_nothing() {
+        let dir = tempdir().expect("tempdir");
+        let project = dir.path().join("project");
+        let hub = project.join(".agents").join("skills");
+        let agent_dir = project.join(".claude").join("skills");
+        fs::create_dir_all(hub.join("stale-skill")).expect("create stale skill");
+        let skills = [("../../../evil".to_string(), "# Evil\n".to_string())];
+        let selected = ["../../../evil".to_string()];
+
+        let mut written = Vec::new();
+        let err = copy_skills_to_project(&hub, &skills, &selected, &[], &mut written)
+            .expect_err("a traversal name must be refused");
+        assert!(err.contains("Skill"), "{err}");
+        let err =
+            symlink_skills_from_project(&agent_dir, &hub, &skills, &selected, &[], &mut written)
+                .expect_err("a traversal name must be refused");
+        assert!(err.contains("Skill"), "{err}");
+        let err = sync_individual_skills(&agent_dir, &skills, &selected, &[], &mut written)
+            .expect_err("a traversal name must be refused");
+        assert!(err.contains("Skill"), "{err}");
+
+        assert!(written.is_empty());
+        assert!(!dir.path().join("evil").exists());
+        assert!(hub.join("stale-skill").exists(), "cleanup did not run");
+        assert!(!agent_dir.exists());
+    }
+
+    #[test]
+    fn command_writers_refuse_a_traversal_name_and_write_nothing() {
+        let dir = tempdir().expect("tempdir");
+        let project = dir.path().join("project");
+        let hub = project.join(".agents").join("commands");
+        let agent_dir = project.join(".claude").join("commands");
+        let custom = [crate::core::CustomCommand {
+            name: "../../../.claude/agents/evil".to_string(),
+            content: "Escape.\n".to_string(),
+        }];
+
+        let err = copy_commands_to_project(&project, &hub, &[], &custom, &HashSet::new())
+            .expect_err("a traversal name must be refused");
+        assert!(err.contains("Custom command"), "{err}");
+        let err =
+            sync_commands_to_dir(&project, &agent_dir, &[], &custom, &ClaudeCode, &HashSet::new())
+                .expect_err("a traversal name must be refused");
+        assert!(err.contains("Custom command"), "{err}");
+        let err =
+            symlink_commands_from_project(&project, &agent_dir, &hub, &[], &custom, &ClaudeCode)
+                .expect_err("a traversal name must be refused");
+        assert!(err.contains("Custom command"), "{err}");
+
+        assert!(!hub.exists());
+        assert!(!agent_dir.exists());
+        assert!(!dir.path().join(".claude").exists());
+    }
+
     /// Case (c): Gemini's `.toml` commands are written through the contained
     /// writer, so a committed link at a command's name is skipped.
     #[cfg(unix)]
@@ -4206,10 +4293,11 @@ mod tests {
     /// Names come from the committed config and from frontmatter.  A name
     /// that is not one plain component never reaches a remove or a write,
     /// so `../..` cannot delete the project's parent and an absolute name
-    /// cannot replace an outside file.
+    /// cannot replace an outside file.  The writers refuse such a name with
+    /// an error before they touch the disk.
     #[cfg(unix)]
     #[test]
-    fn unsafe_skill_and_command_names_are_skipped() {
+    fn unsafe_skill_and_command_names_are_refused() {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
         let skills_dir = project.join(".agents").join("skills");
@@ -4226,7 +4314,7 @@ mod tests {
             &[],
             &mut written,
         )
-        .expect("skip is not an error");
+        .expect_err("an unsafe name is refused");
         assert!(precious.exists(), "the project's parent must survive");
         assert!(written.is_empty());
 
@@ -4238,7 +4326,7 @@ mod tests {
             name: absolute.display().to_string(),
             content: "x".into(),
         }];
-        let written = symlink_commands_from_project(
+        symlink_commands_from_project(
             &project,
             &agent_dir,
             &hub,
@@ -4246,9 +4334,8 @@ mod tests {
             &commands,
             &ClaudeCode,
         )
-        .expect("skip is not an error");
+        .expect_err("an unsafe name is refused");
         assert_eq!(fs::read_to_string(&precious).unwrap(), "KEEP");
-        assert!(written.is_empty(), "{written:?}");
         assert!(is_plain_file_name("deploy") && !is_plain_file_name("a/b"));
 
         // Drift's tempdir writer: an absolute name must not escape it.
@@ -4261,7 +4348,7 @@ mod tests {
             &[],
             &mut written,
         )
-        .expect("skip is not an error");
+        .expect_err("an unsafe name is refused");
         assert!(!escape.exists());
     }
 }

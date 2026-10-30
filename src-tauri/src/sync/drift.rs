@@ -11,8 +11,7 @@ use crate::core::{Project, ProjectMode, ProjectSummary};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
     collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
-    escaped_silent_dir, extract_agent_machine_name, load_mcp_server_configs, read_project_text,
-    refused_root_mcp_file,
+    escaped_silent_dir, load_mcp_server_configs, read_project_text, refused_root_mcp_file,
     McpConfigSyncNotes, McpServerNote, MAX_PROJECT_READ_BYTES,
     CustomAssetConflict, CustomAssetKind,
 };
@@ -1572,10 +1571,12 @@ fn collect_agents_drift(
     let mut expected_file_names: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
-    // Add custom agent filenames
+    // Add custom agent filenames. An invalid name is skipped here: load
+    // refuses it and sync fails on it, so it has no file to compare.
     for agent in custom_agents {
-        let machine_name = extract_agent_machine_name(&agent.content)
-            .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
+        let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
+            continue;
+        };
         expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
     }
 
@@ -1583,8 +1584,11 @@ fn collect_agents_drift(
     for name in user_agent_names {
         if let Ok(content) = crate::core::read_subagent(name) {
             if let Ok(agent) = serde_json::from_str::<crate::core::Subagent>(&content) {
-                let machine_name = extract_agent_machine_name(&agent.content)
-                    .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                let Ok(machine_name) =
+                    crate::core::agent_machine_name("Sub-agent", &agent.content, name)
+                else {
+                    continue;
+                };
                 expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
             }
         }
@@ -1596,8 +1600,9 @@ fn collect_agents_drift(
         if skip_custom_names.contains(&agent.name) {
             continue;
         }
-        let machine_name = extract_agent_machine_name(&agent.content)
-            .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
+        let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
+            continue;
+        };
         let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
         let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
 
@@ -1618,8 +1623,11 @@ fn collect_agents_drift(
     for name in user_agent_names {
         if let Ok(content) = crate::core::read_subagent(name) {
             if let Ok(agent) = serde_json::from_str::<crate::core::Subagent>(&content) {
-                let machine_name = extract_agent_machine_name(&agent.content)
-                    .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                let Ok(machine_name) =
+                    crate::core::agent_machine_name("Sub-agent", &agent.content, name)
+                else {
+                    continue;
+                };
                 let converted_content =
                     agent_instance.convert_agent_content(&agent.content, &machine_name);
                 let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));

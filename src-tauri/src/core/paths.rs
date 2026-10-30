@@ -223,7 +223,7 @@ thread_local! {
 ///
 /// The override is thread-local (see [`TEST_HOME_OVERRIDE`]), so any code that
 /// reads it must run on the same thread that installed it via
-/// [`with_test_home`].  Cargo's default one-test-per-thread model satisfies
+/// [`with_test_home`] or [`temp_test_home`].  Cargo's default one-test-per-thread model satisfies
 /// this without extra care.
 #[cfg(test)]
 pub(crate) fn test_home_override() -> Option<PathBuf> {
@@ -254,20 +254,48 @@ pub(crate) fn default_test_home() -> PathBuf {
 }
 
 #[cfg(test)]
-pub(crate) fn with_test_home<T>(path: PathBuf, test: impl FnOnce() -> T) -> T {
-    struct RestoreHome(Option<PathBuf>);
+struct RestoreHome(Option<PathBuf>);
 
-    impl Drop for RestoreHome {
-        fn drop(&mut self) {
-            TEST_HOME_OVERRIDE.with(|override_path| {
-                *override_path.borrow_mut() = self.0.take();
-            });
-        }
+#[cfg(test)]
+impl RestoreHome {
+    fn install(path: PathBuf) -> Self {
+        Self(TEST_HOME_OVERRIDE.with(|override_path| override_path.replace(Some(path))))
     }
+}
 
-    let previous = TEST_HOME_OVERRIDE.with(|override_path| override_path.replace(Some(path)));
-    let _restore = RestoreHome(previous);
+#[cfg(test)]
+impl Drop for RestoreHome {
+    fn drop(&mut self) {
+        TEST_HOME_OVERRIDE.with(|override_path| {
+            *override_path.borrow_mut() = self.0.take();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_home<T>(path: PathBuf, test: impl FnOnce() -> T) -> T {
+    let _restore = RestoreHome::install(path);
     test()
+}
+
+/// A temporary home for the calling thread, removed when this guard drops.
+#[cfg(test)]
+pub(crate) struct TempTestHome {
+    _restore: RestoreHome,
+    _dir: tempfile::TempDir,
+}
+
+/// Give a whole test its own home without wrapping its body in
+/// [`with_test_home`]: `let _home = temp_test_home();`. Bind it to a name, as
+/// `let _ = ...` would drop the guard at once.
+#[cfg(test)]
+#[must_use = "the test loses its home when this guard drops"]
+pub(crate) fn temp_test_home() -> TempTestHome {
+    let dir = tempfile::tempdir().expect("temp home");
+    TempTestHome {
+        _restore: RestoreHome::install(dir.path().to_path_buf()),
+        _dir: dir,
+    }
 }
 
 #[cfg(test)]

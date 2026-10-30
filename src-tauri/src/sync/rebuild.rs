@@ -6,7 +6,6 @@ use crate::agent;
 use crate::core::{self, CustomAgent, CustomCommand, Project, Subagent};
 
 use super::autodetect::{autodetect_inner, AgentAdoption};
-use super::helpers::{extract_agent_machine_name, extract_agent_name};
 use super::read_project_text;
 
 struct GlobalUserAgent {
@@ -113,8 +112,15 @@ fn discover_sub_agents(project: &Project) -> Result<(Vec<String>, Vec<CustomAgen
             }
 
             if let Some(custom_agent) = parse_custom_agent(agent_instance, &raw, fallback_id) {
-                let custom_id = extract_agent_machine_name(&custom_agent.content)
-                    .unwrap_or_else(|| fallback_id.to_string());
+                // A cloned repo controls the frontmatter. Adopting a name that
+                // cannot be a file name would leave a project that fails to load.
+                let custom_id = match crate::core::custom_agent_machine_name(&custom_agent) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("[automatic] rebuild: not adopting {}: {e}", path.display());
+                        continue;
+                    }
+                };
                 if seen_custom_agent_ids.insert(custom_id) {
                     custom_agents.push(custom_agent);
                 }
@@ -237,6 +243,14 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
             }
 
             // Managed file that doesn't match any global command — treat as custom.
+            if !crate::core::is_valid_asset_name(&command_name) {
+                eprintln!(
+                    "[automatic] rebuild: not adopting {}: its name cannot be used as a file name",
+                    path.display()
+                );
+                continue;
+            }
+
             // Strip the agent-specific rendering to recover canonical content.
             // For most agents the content is already canonical Markdown.
             if seen_custom_command_names.insert(command_name.clone()) {
@@ -342,7 +356,7 @@ fn parse_custom_agent(
 ) -> Option<CustomAgent> {
     let canonical_content = agent_file_to_markdown(agent_instance, raw_disk_content, fallback_id)?;
 
-    let name = extract_agent_name(&canonical_content).unwrap_or_else(|| fallback_id.to_string());
+    let name = crate::core::extract_agent_name(&canonical_content).unwrap_or_else(|| fallback_id.to_string());
 
     Some(CustomAgent {
         name,
@@ -488,6 +502,25 @@ mod tests {
         assert_eq!(custom_cmds.len(), 1);
         assert_eq!(custom_cmds[0].name, "my-command");
         assert_eq!(custom_cmds[0].content, content);
+    }
+
+    #[test]
+    fn discover_agents_skips_a_traversal_frontmatter_name() {
+        let project_dir = tempdir().unwrap();
+        let agents_dir = ClaudeCode.agents_dir(project_dir.path()).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("evil.md"),
+            "---\nname: ../../../evil\n---\nEscape.\n",
+        )
+        .unwrap();
+        fs::write(agents_dir.join("good.md"), "---\nname: Good\n---\nFine.\n").unwrap();
+
+        let project = make_project(project_dir.path());
+        let (_, custom_agents) = discover_sub_agents(&project).unwrap();
+
+        let names: Vec<&str> = custom_agents.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Good"]);
     }
 
     #[test]
@@ -835,10 +868,10 @@ Inspect the repo carefully.\n\
     #[test]
     fn name_extraction_reads_a_crlf_block_and_keeps_the_first_name() {
         let crlf = "---\r\nname: First One\r\nname: second\r\n---\r\nBody.\r\n";
-        assert_eq!(extract_agent_machine_name(crlf).as_deref(), Some("first-one"));
-        assert_eq!(extract_agent_name(crlf).as_deref(), Some("First One"));
+        assert_eq!(core::extract_agent_machine_name(crlf).as_deref(), Some("first-one"));
+        assert_eq!(core::extract_agent_name(crlf).as_deref(), Some("First One"));
 
         let lf = "---\nname:\nname: \"Second\"\n---\n";
-        assert_eq!(extract_agent_name(lf).as_deref(), Some("Second"));
+        assert_eq!(core::extract_agent_name(lf).as_deref(), Some("Second"));
     }
 }

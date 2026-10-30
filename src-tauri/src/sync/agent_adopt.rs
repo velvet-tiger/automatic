@@ -6,12 +6,11 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use crate::agent::{self, Agent};
-use crate::core::{CustomAgent, Project};
-
-use super::helpers::{
-    agent_machine_slug, custom_agent_machine_name, project_write_refusal, read_project_text,
-    write_project_file,
+use crate::core::{
+    agent_machine_name, agent_machine_slug, custom_agent_machine_name, CustomAgent, Project,
 };
+
+use super::helpers::{project_write_refusal, read_project_text, write_project_file};
 
 /// Why a file cannot be adopted.
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +27,8 @@ pub(crate) enum AdoptRefusal {
     WouldDropTools,
     /// The file would sync under a different name.
     NameChanged,
+    /// The stored name itself fails validation.
+    InvalidStoredName(String),
 }
 
 impl AdoptRefusal {
@@ -49,6 +50,7 @@ impl AdoptRefusal {
                 "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted."
                     .to_string()
             }
+            Self::InvalidStoredName(reason) => reason.clone(),
             Self::NameChanged => {
                 "Adopting cannot rename an agent. Rename it in Automatic's agent editor, or restore the name in the file."
                     .to_string()
@@ -75,9 +77,12 @@ pub(crate) fn adopted_agent_markdown(
     disk: &str,
     shared_with_other_agents: bool,
 ) -> Result<String, AdoptRefusal> {
-    let machine_name = custom_agent_machine_name(&stored.content, &stored.name);
+    let machine_name =
+        custom_agent_machine_name(stored).map_err(AdoptRefusal::InvalidStoredName)?;
     let markdown = match adopting.agents_file_ext() {
-        "md" if custom_agent_machine_name(disk, &stored.name) != machine_name => {
+        "md" if agent_machine_name("Custom agent", disk, &stored.name).as_ref()
+            != Ok(&machine_name) =>
+        {
             return Err(AdoptRefusal::NameChanged);
         }
         "md" => disk.to_string(),
@@ -286,7 +291,9 @@ pub(crate) fn other_agent_files_matching(
     stored: &CustomAgent,
     adopting: &dyn Agent,
 ) -> Vec<OtherAgentFile> {
-    let machine_name = custom_agent_machine_name(&stored.content, &stored.name);
+    let Ok(machine_name) = custom_agent_machine_name(stored) else {
+        return Vec::new();
+    };
     let mut files = Vec::new();
     for agent_id in project.agents.iter().filter(|id| *id != adopting.id()) {
         let Some(other) = agent::from_id(agent_id) else {
@@ -330,7 +337,7 @@ pub(crate) fn rewrite_other_agent_files(
     files: &[OtherAgentFile],
     adopted: &CustomAgent,
 ) -> Result<(), Vec<String>> {
-    let machine_name = custom_agent_machine_name(&adopted.content, &adopted.name);
+    let machine_name = custom_agent_machine_name(adopted).map_err(|reason| vec![reason])?;
     let failures: Vec<String> = files
         .iter()
         .filter_map(|file| {

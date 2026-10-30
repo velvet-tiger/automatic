@@ -6,7 +6,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::core::store_reads::StoreRead;
-use crate::core::Project;
+use crate::core::{
+    agent_machine_name, custom_agent_machine_name, custom_rule_slug, is_valid_asset_name,
+    Project,
+};
 
 /// Largest project file [`read_project_text`] reads, in bytes.
 pub(crate) const MAX_PROJECT_READ_BYTES: u64 = 1024 * 1024;
@@ -417,17 +420,6 @@ fn strip_instructions_managed_header(content: &str) -> String {
         .to_string()
 }
 
-fn custom_rule_slug(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 /// A project-scoped custom asset whose on-disk file [`read_project_text`]
 /// refused or could not read.
 #[derive(Debug, Clone)]
@@ -497,7 +489,8 @@ pub(crate) fn collect_custom_skill_conflicts(project: &Project, dir: &Path) -> C
     let mut scan = CustomAssetScan::default();
 
     for cs in custom {
-        if library_names.contains(cs.name.as_str()) {
+        // Load refuses such a name; this guards a project built in memory.
+        if library_names.contains(cs.name.as_str()) || !is_valid_asset_name(&cs.name) {
             continue;
         }
         let skill_md = dir
@@ -590,12 +583,6 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
     scan
 }
 
-/// The file name a custom agent syncs under: the frontmatter `name`, or its
-/// display name.
-pub(crate) fn custom_agent_machine_name(content: &str, display_name: &str) -> String {
-    extract_agent_machine_name(content).unwrap_or_else(|| agent_machine_slug(display_name))
-}
-
 /// What [`scan_custom_agent`] found for one custom agent.
 pub(crate) enum CustomAgentFinding {
     /// The first file that differs from the stored copy.  `agent` owns the
@@ -617,13 +604,11 @@ pub(crate) fn scan_custom_agent(
     dir: &Path,
     ca: &crate::core::CustomAgent,
 ) -> Option<CustomAgentFinding> {
-    let machine_name = custom_agent_machine_name(&ca.content, &ca.name);
-    // Sync never writes a name that is not a plain file name (see
-    // `sync_custom_agents`), and joining one could read outside the agent
-    // directory.
-    if !crate::agent::is_plain_file_name(&machine_name) {
+    // Sync never writes a name that fails validation, and joining one could
+    // read outside the agent directory.
+    let Ok(machine_name) = custom_agent_machine_name(ca) else {
         return None;
-    }
+    };
 
     for agent_id in &project.agents {
         let Some(agent_instance) = crate::agent::from_id(agent_id) else {
@@ -684,6 +669,9 @@ pub(crate) fn collect_custom_command_conflicts(project: &Project, dir: &Path) ->
     let mut scan = CustomAssetScan::default();
 
     for cc in custom {
+        if !is_valid_asset_name(&cc.name) {
+            continue;
+        }
         let cmd_path = dir
             .join(".agents")
             .join("commands")
@@ -1022,30 +1010,6 @@ pub(crate) fn strip_internal_fields(mut value: Value) -> Value {
     value
 }
 
-/// The first non-empty `name` line in agent frontmatter, without quotes.
-pub(crate) fn extract_agent_name(content: &str) -> Option<String> {
-    for line in crate::agent::frontmatter_block(content)?.lines() {
-        if let Some(name_val) = line.trim().strip_prefix("name:") {
-            let name = name_val.trim().trim_matches('"').trim_matches('\'');
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// The file-name form of an agent name: lowercase, with hyphens for spaces.
-pub(crate) fn agent_machine_slug(name: &str) -> String {
-    name.to_lowercase().replace(' ', "-")
-}
-
-/// Extract the machine name (slug) from agent frontmatter content.
-/// Returns the `name` field converted to lowercase with spaces replaced by hyphens.
-pub fn extract_agent_machine_name(content: &str) -> Option<String> {
-    extract_agent_name(content).map(|name| agent_machine_slug(&name))
-}
-
 /// Sync project-local custom agents to a project's agents directory.
 ///
 /// For each custom agent:
@@ -1054,6 +1018,9 @@ pub fn extract_agent_machine_name(content: &str) -> Option<String> {
 ///
 /// Agents whose names appear in `skip_names` are left untouched on disk
 /// (conflict: favour on-disk content until the user resolves it).
+///
+/// Every machine name is checked before anything is written, so one invalid
+/// name fails the call with nothing written.
 ///
 /// Returns the list of files written.
 pub(crate) fn sync_custom_agents(
@@ -1066,21 +1033,17 @@ pub(crate) fn sync_custom_agents(
     if custom_agents.is_empty() {
         return Ok(Vec::new());
     }
+    let machine_names = custom_agents
+        .iter()
+        .map(custom_agent_machine_name)
+        .collect::<Result<Vec<_>, _>>()?;
 
     create_project_dir(root, agents_dir)?;
 
     let mut written = Vec::new();
 
-    for custom_agent in custom_agents {
+    for (custom_agent, machine_name) in custom_agents.iter().zip(machine_names) {
         if skip_names.contains(&custom_agent.name) {
-            continue;
-        }
-        let machine_name = extract_agent_machine_name(&custom_agent.content)
-            .unwrap_or_else(|| custom_agent.name.to_lowercase().replace(' ', "-"));
-        if !crate::agent::is_plain_file_name(&machine_name) {
-            eprintln!(
-                "[automatic] sync: not syncing agent '{machine_name}': not a plain file name"
-            );
             continue;
         }
         let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
@@ -1110,6 +1073,18 @@ pub(crate) fn sync_user_agents(
     custom_agent_names: &[String],
     agent: &dyn crate::agent::Agent,
 ) -> Result<Vec<String>, String> {
+    // Read every selected agent and check its machine name before writing,
+    // so one invalid name fails the call with nothing written.
+    let mut selected = Vec::new();
+    for name in user_agent_names {
+        if let Ok(content) = crate::core::read_subagent(name) {
+            let user_agent: crate::core::Subagent =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            let machine_name = agent_machine_name("Sub-agent", &user_agent.content, name)?;
+            selected.push((user_agent, machine_name));
+        }
+    }
+
     create_project_dir(root, agents_dir)?;
 
     let mut written = Vec::new();
@@ -1122,27 +1097,15 @@ pub(crate) fn sync_user_agents(
         std::collections::HashSet::new();
 
     // Write each selected agent
-    for name in user_agent_names {
-        if let Ok(content) = crate::core::read_subagent(name) {
-            let user_agent: crate::core::Subagent =
-                serde_json::from_str(&content).map_err(|e| e.to_string())?;
-            let machine_name = extract_agent_machine_name(&user_agent.content)
-                .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
-            if !crate::agent::is_plain_file_name(&machine_name) {
-                eprintln!(
-                    "[automatic] sync: not syncing agent '{machine_name}': not a plain file name"
-                );
-                continue;
-            }
-            let converted_content = agent.convert_agent_content(&user_agent.content, &machine_name);
-            let file_name = agent.agent_file_name(&machine_name);
-            let path = agents_dir.join(&file_name);
+    for (user_agent, machine_name) in selected {
+        let converted_content = agent.convert_agent_content(&user_agent.content, &machine_name);
+        let file_name = agent.agent_file_name(&machine_name);
+        let path = agents_dir.join(&file_name);
 
-            if write_project_file_or_skip(root, &path, &converted_content)? {
-                written.push(path.display().to_string());
-            }
-            expected_file_names.insert(file_name);
+        if write_project_file_or_skip(root, &path, &converted_content)? {
+            written.push(path.display().to_string());
         }
+        expected_file_names.insert(file_name);
     }
 
     // Also add custom agent filenames to the expected set so they're not
@@ -1186,7 +1149,6 @@ mod tests {
     use super::*;
     use crate::agent::{ClaudeCode, GitHubCopilot};
     use crate::core::{save_subagent, CustomAgent};
-    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
     // ── read_project_text ──────────────────────────────────────────────────
@@ -1314,37 +1276,6 @@ mod tests {
         tempfile::tempdir().expect("tempdir")
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct HomeGuard {
-        original: Option<String>,
-    }
-
-    impl HomeGuard {
-        fn set(path: &std::path::Path) -> Self {
-            let original = std::env::var("HOME").ok();
-            unsafe {
-                std::env::set_var("HOME", path);
-            }
-            Self { original }
-        }
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            unsafe {
-                if let Some(original) = &self.original {
-                    std::env::set_var("HOME", original);
-                } else {
-                    std::env::remove_var("HOME");
-                }
-            }
-        }
-    }
-
     #[test]
     fn sync_custom_agents_uses_frontmatter_name_and_fallback_name() {
         let dir = tmp();
@@ -1378,10 +1309,96 @@ mod tests {
     }
 
     #[test]
+    fn sync_custom_agents_refuses_a_traversal_name_and_writes_nothing() {
+        let dir = tmp();
+        let root = dir.path().join("project");
+        fs::create_dir_all(&root).expect("create project");
+        let agents_dir = root.join(".claude").join("agents");
+        let custom_agents = vec![
+            CustomAgent {
+                name: "Good".to_string(),
+                content: "---\nname: good\n---\n\nFine.\n".to_string(),
+            },
+            CustomAgent {
+                name: "Evil".to_string(),
+                content: "---\nname: ../../../evil\n---\n\nEscape.\n".to_string(),
+            },
+        ];
+
+        let err =
+            sync_custom_agents(&root, &agents_dir, &custom_agents, &ClaudeCode, &HashSet::new())
+                .expect_err("a traversal name must be refused");
+
+        assert!(err.contains("Custom agent") && err.contains("Evil"), "{err}");
+        assert!(!agents_dir.exists(), "nothing is written");
+        assert!(!dir.path().join("evil.md").exists());
+    }
+
+    #[test]
+    fn sync_user_agents_refuses_a_traversal_frontmatter_name() {
+        let _home = crate::core::temp_test_home();
+        let project = tmp();
+        let agents_dir = project.path().join("agents");
+
+        save_subagent("good", "Good", "---\nname: good\n---\n\nFine.\n")
+            .expect("save good subagent");
+        save_subagent(
+            "imported",
+            "Imported",
+            "---\nname: ../escaped\n---\n\nEscape.\n",
+        )
+        .expect("save subagent");
+
+        let err = sync_user_agents(
+            project.path(),
+            &agents_dir,
+            &["good".to_string(), "imported".to_string()],
+            &[],
+            &ClaudeCode,
+        )
+        .expect_err("a traversal name must be refused");
+
+        assert!(err.contains("Sub-agent"), "{err}");
+        assert!(!project.path().join("escaped.md").exists());
+        assert!(!agents_dir.exists(), "nothing is written, not even the valid agent");
+    }
+
+    #[test]
+    fn custom_conflict_readers_skip_traversal_names() {
+        let dir = tmp();
+        let outside = dir.path().join("outside.md");
+        fs::write(&outside, "secret").expect("write outside");
+        fs::write(dir.path().join("SKILL.md"), "secret").expect("write outside skill");
+        let project_dir = dir.path().join("project");
+        fs::create_dir_all(&project_dir).expect("create project");
+        let project = Project {
+            name: "p".into(),
+            directory: project_dir.to_str().unwrap().into(),
+            agents: vec!["claude".into()],
+            custom_commands: Some(vec![crate::core::CustomCommand {
+                name: "../../../outside".into(),
+                content: "x".into(),
+            }]),
+            custom_skills: Some(vec![crate::core::CustomSkill {
+                name: "../../..".into(),
+                content: "x".into(),
+            }]),
+            custom_agents: Some(vec![CustomAgent {
+                name: "Evil".into(),
+                content: "---\nname: ../../../outside\n---\n".into(),
+            }]),
+            ..Default::default()
+        };
+
+        let scan = collect_custom_asset_conflicts(&project, &project_dir);
+
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
+        assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
+    }
+
+    #[test]
     fn sync_user_agents_writes_selected_and_removes_stale_non_custom_files() {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tmp();
-        let _home_guard = HomeGuard::set(home.path());
+        let _home = crate::core::temp_test_home();
         let project = tmp();
         let agents_dir = project.path().join("agents");
         fs::create_dir_all(&agents_dir).expect("create agents dir");
@@ -1449,9 +1466,7 @@ mod tests {
     /// own convention.
     #[test]
     fn copilot_hand_written_agent_file_survives_the_stale_sweep() {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tmp();
-        let _home_guard = HomeGuard::set(home.path());
+        let _home = crate::core::temp_test_home();
         let project = tmp();
         let agents_dir = project.path().join("agents");
         fs::create_dir_all(&agents_dir).expect("create agents dir");

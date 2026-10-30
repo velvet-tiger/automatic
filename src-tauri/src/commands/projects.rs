@@ -1028,6 +1028,8 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    // The name is joined into a path that is then deleted recursively.
+    core::ensure_valid_asset_name("Skill", skill_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -1101,6 +1103,19 @@ fn effective_project_dir(project: &core::Project) -> Result<std::path::PathBuf, 
     }
 }
 
+/// Refuse an `asset_name` that cannot be used in a path for its `kind`.
+/// Skills and commands use the name as a file name. A rule uses its slug.
+/// An agent uses the machine name from its stored content, which is checked
+/// where that name is worked out.
+fn ensure_custom_asset_name(kind: &str, asset_name: &str) -> Result<(), String> {
+    match kind {
+        "skill" => core::ensure_valid_asset_name("Custom skill", asset_name),
+        "command" => core::ensure_valid_asset_name("Custom command", asset_name),
+        "rule" => core::ensure_valid_custom_rule_name(asset_name),
+        _ => Ok(()),
+    }
+}
+
 /// Read a custom asset's on-disk file for adoption.  Adopted content is
 /// stored in the project's committed config, so a file that links out of
 /// the project (or a FIFO) is refused rather than imported.
@@ -1110,17 +1125,6 @@ fn read_adoptable_file(
 ) -> Result<String, String> {
     sync::read_project_text(project_dir, path)?
         .ok_or_else(|| format!("Failed to read {}: it does not exist", path.display()))
-}
-
-fn custom_rule_slug(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 fn strip_instructions_header(content: &str) -> String {
@@ -1218,6 +1222,7 @@ fn adopt_activity_summary(kind: &str, rewrites: &Result<(), Vec<String>>) -> Str
 /// Favours the on-disk file over Automatic's stored copy.
 #[tauri::command]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -1253,7 +1258,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
             let path = std::path::Path::new(&project.directory)
                 .join(".automatic")
                 .join("instructions")
-                .join(format!("custom-{}.md", custom_rule_slug(asset_name)));
+                .join(format!("custom-{}.md", core::custom_rule_slug(asset_name)));
             let raw_disk = read_adoptable_file(&project_dir, &path)?;
             let disk_body = strip_instructions_header(&raw_disk);
             let Some(entry) = project
@@ -1336,6 +1341,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 /// re-sync so agent copies/symlinks match.
 #[tauri::command]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -1385,7 +1391,8 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
             let instructions_dir = std::path::Path::new(&project.directory)
                 .join(".automatic")
                 .join("instructions");
-            let path = instructions_dir.join(format!("custom-{}.md", custom_rule_slug(asset_name)));
+            let path = instructions_dir
+                .join(format!("custom-{}.md", core::custom_rule_slug(asset_name)));
             let file_content = format!(
                 "<!-- managed by Automatic — do not edit by hand -->\n\n{}\n",
                 stored.trim_end()
@@ -4262,5 +4269,30 @@ mod adopt_custom_asset_tests {
 
             assert!(err.contains("No on-disk version"), "{err}");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_asset_commands_refuse_traversal_names_first() {
+        for kind in ["skill", "command", "rule"] {
+            let asset_name = if kind == "rule" { "../.." } else { "../../evil" };
+            assert!(
+                adopt_custom_asset("no-such-project", kind, asset_name)
+                    .is_err_and(|e| e.contains("Custom")),
+                "adopt {kind}"
+            );
+            assert!(
+                overwrite_custom_asset("no-such-project", kind, asset_name)
+                    .is_err_and(|e| e.contains("Custom")),
+                "overwrite {kind}"
+            );
+        }
+        assert!(remove_stale_skill("no-such-project", "../..").is_err_and(|e| e.contains("Skill")));
+        assert!(ensure_custom_asset_name("command", "deploy").is_ok());
+        assert!(ensure_custom_asset_name("rule", "CI/CD").is_ok());
     }
 }

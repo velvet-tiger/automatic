@@ -658,74 +658,45 @@ pub fn get_instruction_file_conflicts(name: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::core::Project;
-    use std::path::Path;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn with_temp_home<T>(test: impl FnOnce(&Path) -> T) -> T {
-        let _lock = env_lock().lock().expect("env lock");
-        let home = tempdir().expect("temp home");
-        let original = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", home.path());
-        }
-
-        let result = test(home.path());
-
-        unsafe {
-            if let Some(value) = original {
-                std::env::set_var("HOME", value);
-            } else {
-                std::env::remove_var("HOME");
-            }
-        }
-
-        result
-    }
 
     #[test]
     fn overwrite_instruction_file_restores_snapshot_content() {
-        with_temp_home(|_| {
-            let project_dir = tempdir().expect("project dir");
-            let project = Project {
-                name: "test-project".to_string(),
-                directory: project_dir.path().display().to_string(),
-                agents: vec!["opencode".to_string()],
-                ..Default::default()
-            };
+        let _home = crate::core::temp_test_home();
+        let project_dir = tempdir().expect("project dir");
+        let project = Project {
+            name: "test-project".to_string(),
+            directory: project_dir.path().display().to_string(),
+            agents: vec!["opencode".to_string()],
+            ..Default::default()
+        };
 
-            let project_json = serde_json::to_string_pretty(&project).expect("project json");
-            crate::core::save_project(crate::core::project_ident(&project), &project_json).expect("save project");
+        let project_json = serde_json::to_string_pretty(&project).expect("project json");
+        crate::core::save_project(crate::core::project_ident(&project), &project_json).expect("save project");
 
-            crate::core::save_instruction_snapshot(
-                project_dir.path().to_str().unwrap(),
-                "AGENTS.md",
-                "# Stored Instructions\n\nKeep this.",
-            )
-            .expect("save snapshot");
-            std::fs::write(
-                project_dir.path().join("AGENTS.md"),
-                "# Different\n\nDisk content",
-            )
-            .expect("write disk content");
+        crate::core::save_instruction_snapshot(
+            project_dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            "# Stored Instructions\n\nKeep this.",
+        )
+        .expect("save snapshot");
+        std::fs::write(
+            project_dir.path().join("AGENTS.md"),
+            "# Different\n\nDisk content",
+        )
+        .expect("write disk content");
 
-            overwrite_instruction_file(&project.name, "AGENTS.md").expect("overwrite");
+        overwrite_instruction_file(&project.name, "AGENTS.md").expect("overwrite");
 
-            let on_disk =
-                std::fs::read_to_string(project_dir.path().join("AGENTS.md")).expect("read file");
-            assert!(
-                on_disk.contains("# Stored Instructions"),
-                "overwrite should restore Automatic's stored snapshot content"
-            );
-            assert!(
-                on_disk.contains("Keep this."),
-                "restored file should contain the stored user-authored content"
-            );
-        });
+        let on_disk =
+            std::fs::read_to_string(project_dir.path().join("AGENTS.md")).expect("read file");
+        assert!(
+            on_disk.contains("# Stored Instructions"),
+            "overwrite should restore Automatic's stored snapshot content"
+        );
+        assert!(
+            on_disk.contains("Keep this."),
+            "restored file should contain the stored user-authored content"
+        );
     }
 }

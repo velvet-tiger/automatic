@@ -3246,9 +3246,11 @@ fn install_template(
         &content,
     )?;
 
-    // Validate it's valid JSON (basic check)
-    let _: serde_json::Value = serde_json::from_str(&content)
+    let value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Template '{}' is not valid JSON: {}", template.name, e))?;
+    // The file is stored as it is, so its project file names are checked
+    // here: applying the template writes each one into a project.
+    super::templates::validate_template_json_project_files(&template.name, &value)?;
 
     let templates_dir = super::templates::get_templates_dir()?;
     fs::create_dir_all(&templates_dir)
@@ -4130,6 +4132,50 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn install_template_refuses_a_project_file_name_that_leaves_the_project() {
+        let sandbox = sandbox();
+        let content = r#"{"name":"remote","project_files":[{"filename":"../../x","content":"x"}]}"#;
+        fs::write(sandbox.source.join("resource.json"), content).expect("write source file");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = install_template(
+                &sandbox.source,
+                &resource("remote", "resource.json"),
+                WriteMode::Create,
+            )
+            .expect_err("an unsafe project file name should be refused");
+            assert!(err.contains("cannot be used"), "unexpected error: {err}");
+        });
+
+        assert_eq!(
+            files_under(&sandbox.home),
+            Vec::<PathBuf>::new(),
+            "a refused template must write nothing"
+        );
+    }
+
+    #[test]
+    fn install_template_accepts_a_nested_project_file_name() {
+        let sandbox = sandbox();
+        let content =
+            r#"{"name":"remote","project_files":[{"filename":"docs/README.md","content":"x"}]}"#;
+        fs::write(sandbox.source.join("resource.json"), content).expect("write source file");
+
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            install_template(
+                &sandbox.source,
+                &resource("remote", "resource.json"),
+                WriteMode::Create,
+            )
+            .expect("a nested project file name should be accepted");
+            assert!(crate::core::templates::get_templates_dir()
+                .unwrap()
+                .join("remote.json")
+                .is_file());
+        });
     }
 
     #[test]

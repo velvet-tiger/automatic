@@ -494,6 +494,9 @@ pub fn sync_rules_to_automatic_instructions(
     custom_rules: &[crate::core::CustomRule],
     skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
+    for cr in custom_rules {
+        crate::core::ensure_valid_custom_rule_name(&cr.name)?;
+    }
     let instructions_dir = PathBuf::from(project_dir).join(AUTOMATIC_INSTRUCTIONS_DIR);
     let root = Path::new(project_dir);
     crate::sync::create_project_dir(root, &instructions_dir)?;
@@ -503,7 +506,7 @@ pub fn sync_rules_to_automatic_instructions(
     // Build the set of filenames we intend to write.
     let mut intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.md", n)).collect();
     for cr in custom_rules {
-        intended.insert(format!("custom-{}.md", slugify(&cr.name)));
+        intended.insert(format!("custom-{}.md", custom_rule_slug(&cr.name)));
     }
 
     // Remove stale Automatic-managed files no longer in the intended set.
@@ -557,7 +560,7 @@ pub fn sync_rules_to_automatic_instructions(
         if skip_custom_names.contains(&cr.name) {
             continue;
         }
-        let slug = slugify(&cr.name);
+        let slug = custom_rule_slug(&cr.name);
         let file_path = instructions_dir.join(format!("custom-{}.md", slug));
         let file_content = format!(
             "{}{}\n",
@@ -608,7 +611,7 @@ pub fn build_index_section(
             "- [{}]({}/custom-{}.md)",
             cr.name,
             AUTOMATIC_INSTRUCTIONS_DIR,
-            slugify(&cr.name)
+            custom_rule_slug(&cr.name)
         ));
     }
 
@@ -725,17 +728,6 @@ fn machine_name_to_display(name: &str) -> String {
 }
 
 /// Convert a display name to a URL-safe slug (lowercase, hyphens).
-fn slugify(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 /// Re-inject rules into an existing project file.  Reads the file, strips
 /// any existing rules section, rebuilds it from the provided rule names,
 /// and writes back.  Used during sync to keep rules current.
@@ -1541,6 +1533,50 @@ mod tests {
         assert!(instructions_dir.join("user-file.md").exists());
     }
 
+    #[test]
+    fn sync_instructions_keeps_a_traversal_rule_name_inside_the_directory() {
+        let dir = tmp();
+        let project = dir.path().join("project");
+        fs::create_dir_all(&project).expect("create project");
+        let rules = vec![crate::core::CustomRule {
+            name: "../../evil".into(),
+            content: "Rule body".into(),
+        }];
+
+        sync_rules_to_automatic_instructions(
+            project.to_str().unwrap(),
+            &no_rules(),
+            &rules,
+            &HashSet::new(),
+        )
+        .expect("sync");
+
+        let instructions_dir = project.join(".automatic").join("instructions");
+        assert!(instructions_dir.join("custom-evil.md").is_file());
+        assert!(!dir.path().join("evil.md").exists());
+        assert!(!project.join("evil.md").exists());
+    }
+
+    #[test]
+    fn sync_instructions_refuses_a_rule_name_with_no_slug() {
+        let dir = tmp();
+        let rules = vec![crate::core::CustomRule {
+            name: "../..".into(),
+            content: "Rule body".into(),
+        }];
+
+        let err = sync_rules_to_automatic_instructions(
+            dir.path().to_str().unwrap(),
+            &no_rules(),
+            &rules,
+            &HashSet::new(),
+        )
+        .expect_err("a rule with an empty slug must be refused");
+
+        assert!(err.contains("Custom rule"), "{err}");
+        assert!(!dir.path().join(".automatic").exists(), "nothing is written");
+    }
+
     // ── inject_index_into_project_file ──────────────────────────────────────
 
     #[test]
@@ -1575,16 +1611,16 @@ mod tests {
         assert!(on_disk.contains("# File"));
     }
 
-    // ── slugify ──────────────────────────────────────────────────────────────
+    // ── custom_rule_slug ─────────────────────────────────────────────────────
 
     #[test]
     fn slugify_lowercases_and_replaces_spaces() {
-        assert_eq!(slugify("My Custom Rule"), "my-custom-rule");
+        assert_eq!(custom_rule_slug("My Custom Rule"), "my-custom-rule");
     }
 
     #[test]
     fn slugify_removes_consecutive_separators() {
-        assert_eq!(slugify("foo  bar"), "foo-bar");
+        assert_eq!(custom_rule_slug("foo  bar"), "foo-bar");
     }
 
     // ── machine_name_to_display ──────────────────────────────────────────────
