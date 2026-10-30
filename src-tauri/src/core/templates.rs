@@ -73,6 +73,42 @@ pub struct ProjectTemplate {
     pub _author: Option<serde_json::Value>,
 }
 
+/// `Ok` when every file name in `files` passes
+/// [`ensure_valid_project_file_path`].  Applying a template writes each file
+/// into a project, and templates arrive by cloud sync and remote import.
+/// An empty name is skipped, as the merge skips it.  `template` labels the
+/// error.
+fn validate_project_files(template: &str, files: &[TemplateProjectFile]) -> Result<(), String> {
+    for pf in files {
+        if pf.filename.is_empty() {
+            continue;
+        }
+        ensure_valid_project_file_path(&pf.filename)
+            .map_err(|e| format!("Project template '{}': {}", template, e))?;
+    }
+    Ok(())
+}
+
+/// [`validate_project_files`] for a parsed template.
+pub(crate) fn validate_template_project_files(template: &ProjectTemplate) -> Result<(), String> {
+    validate_project_files(&template.name, &template.project_files)
+}
+
+/// [`validate_project_files`] for template JSON that is stored without being
+/// parsed as a [`ProjectTemplate`], such as a remote template file.  `name`
+/// labels the error.
+pub(crate) fn validate_template_json_project_files(
+    name: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(files) = value.get("project_files") else {
+        return Ok(());
+    };
+    let files: Vec<TemplateProjectFile> = serde_json::from_value(files.clone())
+        .map_err(|e| format!("Project template '{}' has invalid project_files: {}", name, e))?;
+    validate_project_files(name, &files)
+}
+
 pub fn get_templates_dir() -> Result<PathBuf, String> {
     Ok(super::paths::get_library_dir()?.join("templates"))
 }
@@ -111,6 +147,8 @@ pub fn read_template(name: &str) -> Result<String, String> {
         let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
         let mut template: ProjectTemplate =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
+        // Templates stored before names were checked are refused here.
+        validate_template_project_files(&template)?;
         if template._author.is_none() {
             template._author = super::remote_sources::get_provenance_author("template", name);
         }
@@ -128,6 +166,7 @@ pub fn save_template(name: &str, data: &str) -> Result<(), String> {
     // Validate that data is valid JSON for a ProjectTemplate
     let template: ProjectTemplate =
         serde_json::from_str(data).map_err(|e| format!("Invalid template data: {}", e))?;
+    validate_template_project_files(&template)?;
     let pretty = serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?;
 
     let dir = get_templates_dir()?;
@@ -188,6 +227,7 @@ pub fn rename_template(old_name: &str, new_name: &str) -> Result<(), String> {
     let raw = fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
     let mut template: ProjectTemplate =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
+    validate_template_project_files(&template)?;
     template.name = new_name.to_string();
     let pretty = serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?;
     fs::write(&new_path, pretty).map_err(|e| e.to_string())?;
@@ -523,6 +563,12 @@ pub(crate) fn merge_templates_into_project(
 ) -> Result<ApplyTemplatesResult, String> {
     let mut pending_unified: Vec<PendingUnifiedEntry> = Vec::new();
     let mut any_unified = false;
+
+    // Every name is checked before any file is written, so a refused name
+    // never leaves a template half applied.
+    for tmpl in templates {
+        validate_template_project_files(tmpl)?;
+    }
 
     for tmpl in templates {
         union_vec(&mut project.agents, &tmpl.agents);
@@ -1119,6 +1165,112 @@ mod tests {
 
         // Neither file should have been written
         assert!(!tmp.path().join("empty.txt").exists());
+    }
+
+    fn template_with_files(files: &[(&str, &str)]) -> ProjectTemplate {
+        ProjectTemplate {
+            name: "tmpl".into(),
+            project_files: files
+                .iter()
+                .map(|(filename, content)| TemplateProjectFile {
+                    filename: (*filename).into(),
+                    content: (*content).into(),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_refuses_unsafe_project_file_names_and_writes_nothing() {
+        let sandbox = tempfile::tempdir().expect("tempdir");
+        let project_dir = sandbox.path().join("project");
+        fs::create_dir(&project_dir).expect("create project dir");
+        let outside = sandbox.path().join("outside.md");
+        let absolute = outside.to_str().unwrap().to_string();
+
+        for unsafe_name in [absolute.as_str(), "../outside.md", "C:outside.md"] {
+            let mut project = empty_project();
+            project.directory = project_dir.to_str().unwrap().into();
+            // The safe file comes first: it must not be written either.
+            let tmpl = template_with_files(&[("README.md", "# Hello"), (unsafe_name, "# Escaped")]);
+
+            let err = merge_templates_into_project(&mut project, &[tmpl])
+                .expect_err("unsafe name should be refused");
+            assert!(err.contains("Project template 'tmpl'"), "unexpected error: {err}");
+        }
+
+        assert!(!outside.exists(), "nothing may be written outside the project");
+        assert!(!project_dir.join("README.md").exists());
+    }
+
+    #[test]
+    fn merge_writes_nested_project_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut project = empty_project();
+        project.directory = tmp.path().to_str().unwrap().into();
+        let tmpl = template_with_files(&[("docs/README.md", "# Docs")]);
+
+        merge_templates_into_project(&mut project, &[tmpl]).expect("merge should succeed");
+
+        let on_disk =
+            fs::read_to_string(tmp.path().join("docs").join("README.md")).expect("read nested");
+        assert_eq!(on_disk, "# Docs");
+    }
+
+    #[test]
+    fn save_template_refuses_unsafe_project_file_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            for unsafe_name in ["/Users/someone/.zshrc", "../../x", "a\\b", "bad\u{7}.md"] {
+                let data = serde_json::to_string(&template_with_files(&[(unsafe_name, "x")]))
+                    .expect("serialise");
+                let err = save_template("tmpl", &data).expect_err("unsafe name should be refused");
+                assert!(err.contains("cannot be used"), "unexpected error: {err}");
+            }
+            assert!(!get_templates_dir().unwrap().join("tmpl.json").exists());
+        });
+    }
+
+    #[test]
+    fn read_template_refuses_a_stored_template_with_an_unsafe_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let dir = get_templates_dir().expect("templates dir");
+            fs::create_dir_all(&dir).expect("create templates dir");
+            let data = serde_json::to_string(&template_with_files(&[("../../x", "x")]))
+                .expect("serialise");
+            fs::write(dir.join("tmpl.json"), data).expect("write template");
+
+            let err = read_template("tmpl").expect_err("unsafe name should be refused");
+            assert!(err.contains("cannot be used"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn save_template_accepts_nested_project_file_names() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let data = serde_json::to_string(&template_with_files(&[("docs/README.md", "x")]))
+                .expect("serialise");
+            save_template("tmpl", &data).expect("nested name should be accepted");
+            read_template("tmpl").expect("nested name should read back");
+        });
+    }
+
+    #[test]
+    fn template_json_check_refuses_unsafe_names_and_allows_missing_files() {
+        let unsafe_json = serde_json::json!({
+            "name": "remote",
+            "project_files": [{ "filename": "/etc/passwd", "content": "x" }]
+        });
+        assert!(validate_template_json_project_files("remote", &unsafe_json).is_err());
+
+        assert!(validate_template_json_project_files("remote", &serde_json::json!({})).is_ok());
+        let nested = serde_json::json!({
+            "project_files": [{ "filename": "docs/README.md", "content": "x" }]
+        });
+        assert!(validate_template_json_project_files("remote", &nested).is_ok());
     }
 
     // ── union_vec ───────────────────────────────────────────────────────────
