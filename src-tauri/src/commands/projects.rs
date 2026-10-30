@@ -3680,8 +3680,7 @@ mod adopt_custom_asset_tests {
 
     /// The scan compares fields and drift compares bytes.  After adopting, a
     /// formatting difference is no longer a conflict but still shows as a
-    /// modified file, until sync rewrites it.  The rewrite keeps every field
-    /// and drops what TOML does not parse, such as a comment.
+    /// modified file, until sync rewrites it with every field kept.
     #[test]
     fn adopted_codex_file_shows_drift_until_sync_rewrites_it() {
         with_temp_home(|_| {
@@ -3689,7 +3688,7 @@ mod adopt_custom_asset_tests {
             let path = dir.join(".codex/agents/planner.toml");
             write(
                 &path,
-                "# hand note\nmax_turns = 5\ndeveloper_instructions = \"Edited.\"\nname = \"planner\"\n",
+                "max_turns = 5\ndeveloper_instructions = \"Edited.\"\nname = \"planner\"\n",
             );
             adopt_custom_asset("codex-drift", "agent", "Planner").expect("adopt");
 
@@ -3710,7 +3709,26 @@ mod adopt_custom_asset_tests {
             let rewritten = std::fs::read_to_string(&path).expect("read");
             assert!(rewritten.contains("max_turns = 5"), "{rewritten}");
             assert!(rewritten.contains("Edited."), "{rewritten}");
-            assert!(!rewritten.contains("hand note"), "{rewritten}");
+        });
+    }
+
+    /// Sync would delete a comment, so it is a conflict sync leaves alone.
+    /// Adopting cannot keep it either, so it is refused and both copies stay.
+    #[test]
+    fn comment_in_a_codex_file_is_a_conflict_adopt_refuses_and_sync_keeps() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-comment", &["codex"]);
+            let path = dir.join(".codex/agents/planner.toml");
+            let rendered = crate::agent::CodexCli.convert_agent_content(STORED, "planner");
+            let disk = format!("# hand note\n{rendered}");
+            write(&path, &disk);
+
+            let err = adopt_custom_asset("codex-comment", "agent", "Planner").unwrap_err();
+            assert!(err.contains("settings: comments."), "{err}");
+            assert_eq!(stored_planner("codex-comment"), STORED);
+
+            sync_project("codex-comment").expect("sync");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), disk);
         });
     }
 

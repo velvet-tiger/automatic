@@ -1871,6 +1871,41 @@ mod tests {
         assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
     }
 
+    /// A comment and `automatic_managed = false` are the user's edits, so
+    /// each one is a conflict sync must leave alone.
+    #[test]
+    fn custom_agent_scan_reports_a_comment_and_a_managed_flag_edit() {
+        let content = "---\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let rendered = crate::agent::Agent::convert_agent_content(
+            &crate::agent::CodexCli,
+            content,
+            "planner",
+        );
+        for disk in [
+            format!("# hand note\n{rendered}"),
+            rendered.replace("automatic_managed = true", "automatic_managed = false"),
+        ] {
+            let dir = tmp();
+            let project = Project {
+                name: "scan".into(),
+                directory: dir.path().display().to_string(),
+                agents: vec!["codex".into()],
+                custom_agents: Some(vec![CustomAgent {
+                    name: "Planner".into(),
+                    content: content.into(),
+                }]),
+                ..Default::default()
+            };
+            let agents_dir = dir.path().join(".codex").join("agents");
+            fs::create_dir_all(&agents_dir).expect("mkdir");
+            fs::write(agents_dir.join("planner.toml"), &disk).expect("write");
+
+            let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+            assert_eq!(scan.conflicts.len(), 1, "{disk}");
+        }
+    }
+
     /// An older version wrote the body unescaped, so `\t` parsed as a tab.
     /// That file means something else than the stored text, so it is a
     /// conflict naming the same file sync would rewrite.

@@ -377,8 +377,9 @@ impl Agent for CodexCli {
 
     /// Compare by field: a hand-written TOML file never matches the rendered
     /// one byte for byte, so a byte comparison would keep an adopted file in
-    /// conflict for ever.  The byte comparison stays first because a match
-    /// needs no parsing.
+    /// conflict for ever.  Formatting alone is not a difference.  A comment
+    /// is, because sync would delete it.  The byte comparison stays first
+    /// because a match needs no parsing.
     fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
         if disk == expected {
             return Vec::new();
@@ -942,20 +943,106 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
 }
 
 /// The sorted names of the fields that differ between two Codex agent files.
-/// `content` stands for the whole file when either one is not valid TOML.
+/// `content` stands for the whole file when either one is not valid TOML, and
+/// `comments` means `disk` has a comment `expected` lacks: sync would delete
+/// it, so it counts as something the user wrote.
 fn codex_agent_differences(disk: &str, expected: &str) -> Vec<String> {
-    let (Ok(disk), Ok(expected)) = (
+    let (Ok(disk_table), Ok(expected_table)) = (
         toml::from_str::<toml::Table>(disk),
         toml::from_str::<toml::Table>(expected),
     ) else {
         return vec!["content".to_string()];
     };
+    let (Some(disk_comments), Some(expected_comments)) =
+        (toml_comments(disk), toml_comments(expected))
+    else {
+        return vec!["content".to_string()];
+    };
 
-    let keys: BTreeSet<&String> = disk.keys().chain(expected.keys()).collect();
-    keys.into_iter()
-        .filter(|key| !codex_agent_field_matches(key, disk.get(*key), expected.get(*key)))
+    let keys: BTreeSet<&String> = disk_table.keys().chain(expected_table.keys()).collect();
+    let mut differences: BTreeSet<String> = keys
+        .into_iter()
+        .filter(|key| {
+            !codex_agent_field_matches(key, disk_table.get(*key), expected_table.get(*key))
+        })
         .cloned()
-        .collect()
+        .collect();
+    if !disk_comments.is_subset(&expected_comments) {
+        differences.insert("comments".to_string());
+    }
+    differences.into_iter().collect()
+}
+
+/// Every comment in a TOML file, trimmed.  This reads the parser's decor, the
+/// text it keeps between tokens, so a `#` inside a string is not a comment.
+/// Returns `None` when the file does not parse.
+fn toml_comments(text: &str) -> Option<BTreeSet<String>> {
+    let document = text.parse::<toml_edit::DocumentMut>().ok()?;
+    let mut comments = BTreeSet::new();
+    collect_table_comments(document.as_table(), &mut comments);
+    collect_raw_comments(Some(document.trailing()), &mut comments);
+    Some(comments)
+}
+
+fn collect_table_comments(table: &toml_edit::Table, out: &mut BTreeSet<String>) {
+    collect_decor_comments(table.decor(), out);
+    for (name, item) in table.iter() {
+        if let Some(key) = table.key(name) {
+            collect_key_comments(key, out);
+        }
+        match item {
+            toml_edit::Item::Value(value) => collect_value_comments(value, out),
+            toml_edit::Item::Table(child) => collect_table_comments(child, out),
+            toml_edit::Item::ArrayOfTables(tables) => {
+                for child in tables.iter() {
+                    collect_table_comments(child, out);
+                }
+            }
+            toml_edit::Item::None => {}
+        }
+    }
+}
+
+fn collect_value_comments(value: &toml_edit::Value, out: &mut BTreeSet<String>) {
+    collect_decor_comments(value.decor(), out);
+    match value {
+        toml_edit::Value::Array(array) => {
+            for element in array.iter() {
+                collect_value_comments(element, out);
+            }
+            collect_raw_comments(Some(array.trailing()), out);
+        }
+        toml_edit::Value::InlineTable(table) => {
+            collect_raw_comments(Some(table.trailing()), out);
+            for (name, element) in table.iter() {
+                if let Some(key) = table.key(name) {
+                    collect_key_comments(key, out);
+                }
+                collect_value_comments(element, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_key_comments(key: &toml_edit::Key, out: &mut BTreeSet<String>) {
+    collect_decor_comments(key.leaf_decor(), out);
+    collect_decor_comments(key.dotted_decor(), out);
+}
+
+fn collect_decor_comments(decor: &toml_edit::Decor, out: &mut BTreeSet<String>) {
+    collect_raw_comments(decor.prefix(), out);
+    collect_raw_comments(decor.suffix(), out);
+}
+
+/// Decor holds only whitespace and comments, so a `#` here starts a comment.
+fn collect_raw_comments(raw: Option<&toml_edit::RawString>, out: &mut BTreeSet<String>) {
+    let text = raw.and_then(toml_edit::RawString::as_str).unwrap_or("");
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('#') {
+            out.insert(line.to_string());
+        }
+    }
 }
 
 /// `true` when one field of two Codex agent files means the same thing.
@@ -979,7 +1066,14 @@ fn codex_agent_field_matches(
     };
 
     match key {
-        "automatic_managed" => true,
+        // Sync writes `true`.  `false` is the user's edit, and the render
+        // cannot keep it.
+        "automatic_managed" => {
+            let managed = |value: Option<&toml::Value>| {
+                value.is_none_or(|value| value.as_bool() == Some(true))
+            };
+            managed(disk) && managed(expected)
+        }
         "name" if disk.is_none() || expected.is_none() => true,
         "model" => or_default(disk, "inherit") == or_default(expected, "inherit"),
         "description" => or_default(disk, "") == or_default(expected, ""),
@@ -1175,6 +1269,56 @@ mod tests {
     fn agent_differences_ignore_formatting_order_and_the_marker() {
         let disk = "developer_instructions = \"Plan.\"\nmodel = \"inherit\"\ndescription = \"Plans\"\nname = \"planner\"\n";
         assert_eq!(differences(disk, RENDERED_AGENT), Vec::<String>::new());
+    }
+
+    /// A comment can sit anywhere the parser keeps decor.
+    #[test]
+    fn agent_differences_report_a_comment_wherever_it_sits() {
+        for disk in [
+            format!("# above\n{RENDERED_AGENT}"),
+            format!("{RENDERED_AGENT}# below\n"),
+            RENDERED_AGENT.replacen("name = \"planner\"", "name = \"planner\" # beside", 1),
+            RENDERED_AGENT.replacen("name =", "# between\nname =", 1),
+            RENDERED_AGENT.replacen("name = \"planner\"", "name = \"planner\"\nalso = [\n  1, # inside\n  # last\n]", 1),
+            format!("{RENDERED_AGENT}\n# before\n[extra] # beside\n# in table\nvalue = 1\n"),
+        ] {
+            let found = differences(&disk, RENDERED_AGENT);
+            assert!(found.contains(&"comments".to_string()), "{found:?} for {disk}");
+        }
+    }
+
+    /// `#` inside a string is content.
+    #[test]
+    fn agent_differences_do_not_read_a_hash_in_a_string_as_a_comment() {
+        let expected = "name = \"#1 planner\"\ndeveloper_instructions = \"\"\"\n# Heading\nPlan. # not a comment\n\"\"\"\n";
+        let disk = "developer_instructions = '''\n# Heading\nPlan. # not a comment\n'''\nname = '#1 planner'\n";
+        assert_eq!(differences(disk, expected), Vec::<String>::new());
+    }
+
+    #[test]
+    fn agent_differences_accept_a_comment_expected_also_has() {
+        let expected = format!("# shared\n{RENDERED_AGENT}");
+        let disk = format!("{RENDERED_AGENT}# shared\n");
+        assert_eq!(differences(&disk, &expected), Vec::<String>::new());
+    }
+
+    /// Comments sort with the fields, so the list stays in one order.
+    #[test]
+    fn agent_differences_sort_comments_with_the_fields() {
+        let disk = format!("# note\n{}", RENDERED_AGENT.replace("Plans", "Changed"));
+        assert_eq!(differences(&disk, RENDERED_AGENT), vec!["comments", "description"]);
+    }
+
+    #[test]
+    fn agent_differences_treat_automatic_managed_false_as_a_change() {
+        let disk = RENDERED_AGENT.replace("automatic_managed = true", "automatic_managed = false");
+        assert_eq!(differences(&disk, RENDERED_AGENT), vec!["automatic_managed"]);
+
+        let text = RENDERED_AGENT.replace("automatic_managed = true", "automatic_managed = \"true\"");
+        assert_eq!(differences(&text, RENDERED_AGENT), vec!["automatic_managed"]);
+
+        let absent = RENDERED_AGENT.replace("automatic_managed = true\n", "");
+        assert_eq!(differences(&absent, RENDERED_AGENT), Vec::<String>::new());
     }
 
     #[test]
