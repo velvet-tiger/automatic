@@ -17,10 +17,17 @@ use super::types::{CustomAgent, Project};
 /// There `C:evil` is a drive-relative path, and `Path::join` replaces the
 /// whole base path with it. Elsewhere `:` stays allowed, because command
 /// names such as `git:commit` already sync there.
+///
+/// Windows also drops a trailing `.` or space, so there `my-skill.` would
+/// write into `my-skill`, and `.. ` could reach the parent folder. Those
+/// names stay allowed elsewhere, where the file system keeps them as typed.
 pub fn is_valid_asset_name(name: &str) -> bool {
     is_valid_name(name)
         && !name.chars().any(char::is_control)
-        && !(cfg!(windows) && (name.contains(':') || is_windows_device_name(name)))
+        && !(cfg!(windows)
+            && (name.contains(':')
+                || name.ends_with(['.', ' '])
+                || is_windows_device_name(name)))
 }
 
 /// `true` when `name` is a Windows device name such as `CON` or `com1`, with
@@ -44,7 +51,7 @@ pub(crate) fn is_windows_device_name(name: &str) -> bool {
 
 /// The characters [`is_valid_asset_name`] refuses, for error messages.
 const REFUSED_CHARACTERS: &str = if cfg!(windows) {
-    "'/', '\\', ':' or control characters, or be a device name such as CON"
+    "'/', '\\', ':' or control characters, end in '.' or a space, or be a device name such as CON"
 } else {
     "'/', '\\' or control characters"
 };
@@ -188,6 +195,9 @@ mod tests {
         assert_eq!(is_valid_asset_name("git:commit"), !cfg!(windows));
         assert_eq!(is_valid_asset_name("con"), !cfg!(windows));
         assert_eq!(is_valid_asset_name("COM1.md"), !cfg!(windows));
+        for name in ["my-skill.", "my-skill ", "...", ".. "] {
+            assert_eq!(is_valid_asset_name(name), !cfg!(windows), "{name:?}");
+        }
     }
 
     #[test]
