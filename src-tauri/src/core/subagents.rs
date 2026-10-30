@@ -214,9 +214,9 @@ fn parse_codex_openai_yaml(content: &str) -> Option<CodexAgent> {
 fn discover_codex_agents() -> Vec<SubagentEntry> {
     let mut agents = Vec::new();
 
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return agents,
+    let home = match super::paths::home_dir() {
+        Ok(h) => h,
+        Err(_) => return agents,
     };
 
     // Path: ~/.codex/vendor_imports/skills/skills/.curated/{skill}/agents/openai.yaml
@@ -240,6 +240,11 @@ fn discover_codex_agents() -> Vec<SubagentEntry> {
                         // Create machine name from skill directory + "-openai"
                         let skill_name = skill_dir.file_name().to_string_lossy().to_string();
                         let id = format!("codex-{}-openai", skill_name);
+                        // `read_subagent` refuses ids that fail this check, so
+                        // listing one would show an agent that cannot be opened.
+                        if !is_valid_agent_machine_name(&id) {
+                            continue;
+                        }
 
                         agents.push(SubagentEntry {
                             id,
@@ -279,15 +284,17 @@ pub fn list_all_subagents() -> Result<Vec<SubagentEntry>, String> {
 /// For Codex agents, reads from openai.yaml and converts to MD format.
 /// Returns JSON: `{"name": "...", "content": "..."}`.
 pub fn read_subagent(machine_name: &str) -> Result<String, String> {
-    // Check if it's a Codex agent
+    // Validate before the Codex branch: the Codex reader joins part of the
+    // name onto a path, so an unchecked name like `codex-/tmp/x-openai` or
+    // `codex-../../x-openai` would read outside the curated folder.
+    if !is_valid_agent_machine_name(machine_name) {
+        return Err("Invalid agent machine name".into());
+    }
+
     if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
         return read_codex_agent(machine_name);
     }
 
-    // Regular local/bundled agent
-    if !is_valid_agent_machine_name(machine_name) {
-        return Err("Invalid agent machine name".into());
-    }
     let dir = get_subagents_dir()?;
     let path = dir.join(format!("{}.md", machine_name));
 
@@ -310,7 +317,7 @@ fn read_codex_agent(machine_name: &str) -> Result<String, String> {
         .and_then(|s| s.strip_suffix("-openai"))
         .ok_or("Invalid Codex agent name format")?;
 
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let home = super::paths::home_dir()?;
     let yaml_path = home
         .join(".codex")
         .join("vendor_imports")
@@ -661,6 +668,69 @@ mod tests {
 
             assert_eq!(entry.source, "github");
             assert_eq!(entry.source_repo.as_deref(), Some("octocat/remote-agents"));
+        });
+    }
+
+    // ── Codex agents ────────────────────────────────────────────────────────────
+
+    const CODEX_YAML: &str = "interface:\n  display_name: \"Codex Agent\"\n  short_description: \"A test agent\"\n  default_prompt: \"Do the thing\"\n";
+
+    fn curated_dir(home: &Path) -> PathBuf {
+        home.join(".codex/vendor_imports/skills/skills/.curated")
+    }
+
+    fn write_codex_yaml(skill_dir: &Path) {
+        let agents = skill_dir.join("agents");
+        fs::create_dir_all(&agents).expect("create codex agents dir");
+        fs::write(agents.join("openai.yaml"), CODEX_YAML).expect("write openai.yaml");
+    }
+
+    #[test]
+    fn read_subagent_reads_curated_codex_agent() {
+        with_temp_home(|home| {
+            write_codex_yaml(&curated_dir(home).join("gh-fix-ci"));
+
+            let raw = read_subagent("codex-gh-fix-ci-openai").expect("read codex agent");
+            let agent: Subagent = serde_json::from_str(&raw).expect("parse codex agent");
+
+            assert_eq!(agent.name, "Codex Agent");
+            assert!(agent.content.contains("Do the thing"));
+        });
+    }
+
+    #[test]
+    fn read_subagent_refuses_codex_names_that_leave_the_curated_folder() {
+        with_temp_home(|home| {
+            // Each name below would resolve to a readable openai.yaml if the
+            // name were not checked first.
+            let outside = home.join("outside");
+            write_codex_yaml(&outside);
+            write_codex_yaml(&curated_dir(home).join(".."));
+            let absolute = format!("codex-{}-openai", outside.display());
+
+            for name in [
+                "codex-../../../../../outside-openai",
+                "codex-..-openai",
+                absolute.as_str(),
+            ] {
+                let err = read_subagent(name).expect_err("escaping name must be refused");
+                assert_eq!(err, "Invalid agent machine name", "name: {name}");
+            }
+        });
+    }
+
+    #[test]
+    fn discover_codex_agents_skips_folders_with_invalid_names() {
+        with_temp_home(|home| {
+            write_codex_yaml(&curated_dir(home).join("gh-fix-ci"));
+            write_codex_yaml(&curated_dir(home).join("Bad_Name"));
+
+            let ids: Vec<String> = discover_codex_agents()
+                .into_iter()
+                .map(|agent| agent.id)
+                .collect();
+
+            assert_eq!(ids, vec!["codex-gh-fix-ci-openai".to_string()]);
         });
     }
 
