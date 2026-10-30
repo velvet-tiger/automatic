@@ -37,24 +37,6 @@ pub fn is_valid_project_file_path(filename: &str) -> bool {
         })
 }
 
-/// `true` when `part` is a Windows device name such as `CON` or `com1`, with
-/// or without an extension.  Windows also counts the superscript digits ¹, ²
-/// and ³ as port numbers.  `CONIN$` and `CONOUT$` are the console too.
-fn is_windows_device_name(part: &str) -> bool {
-    let stem = part.split('.').next().unwrap_or(part).trim_end().to_ascii_uppercase();
-    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
-        return true;
-    }
-    let Some(port) = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")) else {
-        return false;
-    };
-    let mut digits = port.chars();
-    matches!(
-        (digits.next(), digits.next()),
-        (Some('1'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
-    )
-}
-
 /// `Ok` when `filename` passes [`is_valid_project_file_path`].  The error
 /// says what a project file name may not contain.
 pub fn ensure_valid_project_file_path(filename: &str) -> Result<(), String> {
@@ -812,15 +794,9 @@ mod tests {
     }
 
     #[test]
-    fn windows_device_names_are_recognised() {
-        for part in ["CON", "con.md", "Nul", "CONIN$", "conout$.md", "AUX.txt", "COM1", "lpt9.md", "COM\u{b9}"] {
-            assert!(is_windows_device_name(part), "{part:?} is a device name");
-        }
-        for part in ["CONSOLE.md", "COM0", "COM10", "auxiliary", "README.md"] {
-            assert!(!is_windows_device_name(part), "{part:?} is not a device name");
-        }
-        // Refused only where Windows opens the device instead of a file.
+    fn windows_device_names_are_refused_only_on_windows() {
         assert_eq!(is_valid_project_file_path("docs/CON.md"), !cfg!(windows));
+        assert_eq!(is_valid_project_file_path("CONIN$"), !cfg!(windows));
     }
 
     #[test]

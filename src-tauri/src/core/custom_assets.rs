@@ -26,9 +26,10 @@ pub fn is_valid_asset_name(name: &str) -> bool {
 /// `true` when `name` is a Windows device name such as `CON` or `com1`, with
 /// or without an extension. On Windows `CON.md` opens the console, not a file.
 /// Windows also counts the superscript digits ¹, ² and ³ as port numbers.
-fn is_windows_device_name(name: &str) -> bool {
+/// `CONIN$` and `CONOUT$` are the console too.
+pub(crate) fn is_windows_device_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).trim_end().to_ascii_uppercase();
-    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+    if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
         return true;
     }
     let Some(port) = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")) else {
@@ -200,10 +201,12 @@ mod tests {
             "aux ",
             "COM\u{b9}",
             "lpt\u{b3}.md",
+            "CONIN$",
+            "conout$.md",
         ] {
             assert!(is_windows_device_name(name), "{name:?}");
         }
-        for name in ["console", "com0", "com10", "lpt", "connect.md"] {
+        for name in ["console", "com0", "com10", "lpt", "connect.md", "auxiliary"] {
             assert!(!is_windows_device_name(name), "{name:?}");
         }
     }
