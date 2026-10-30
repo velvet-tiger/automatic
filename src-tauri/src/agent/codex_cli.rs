@@ -1,5 +1,5 @@
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -369,6 +369,18 @@ impl Agent for CodexCli {
 
     fn convert_agent_content(&self, content: &str, name: &str) -> String {
         convert_md_to_codex_toml(content, name)
+    }
+
+    /// Compare by field: a hand-written TOML file never matches the rendered
+    /// one byte for byte, so a byte comparison would keep an adopted file in
+    /// conflict for ever.  The byte comparison stays first because
+    /// `convert_md_to_codex_toml` does not escape the body, so a file sync
+    /// wrote may not parse.
+    fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
+        if disk == expected {
+            return Vec::new();
+        }
+        codex_agent_differences(disk, expected)
     }
 
     fn capabilities(&self) -> super::AgentCapabilities {
@@ -917,6 +929,53 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     toml
 }
 
+/// The sorted names of the fields that differ between two Codex agent files.
+/// `content` stands for the whole file when either one is not valid TOML.
+fn codex_agent_differences(disk: &str, expected: &str) -> Vec<String> {
+    let (Ok(disk), Ok(expected)) = (
+        toml::from_str::<toml::Table>(disk),
+        toml::from_str::<toml::Table>(expected),
+    ) else {
+        return vec!["content".to_string()];
+    };
+
+    let keys: BTreeSet<&String> = disk.keys().chain(expected.keys()).collect();
+    keys.into_iter()
+        .filter(|key| !codex_agent_field_matches(key, disk.get(*key), expected.get(*key)))
+        .cloned()
+        .collect()
+}
+
+/// `true` when one field of two Codex agent files means the same thing.
+/// The defaults mirror what `convert_codex_toml_to_markdown` fills in for an
+/// absent field.  Every other field must be present on both sides, so a
+/// setting Automatic cannot keep (`sandbox_mode = "workspace-write"`, an
+/// unknown key) always counts as a difference.
+fn codex_agent_field_matches(
+    key: &str,
+    disk: Option<&toml::Value>,
+    expected: Option<&toml::Value>,
+) -> bool {
+    let or_default = |value: Option<&toml::Value>, default: &str| {
+        value
+            .cloned()
+            .unwrap_or_else(|| toml::Value::String(default.to_string()))
+    };
+    let trimmed = |value: Option<&toml::Value>| match or_default(value, "") {
+        toml::Value::String(text) => toml::Value::String(text.trim().to_string()),
+        other => other,
+    };
+
+    match key {
+        "automatic_managed" => true,
+        "name" if disk.is_none() || expected.is_none() => true,
+        "model" => or_default(disk, "inherit") == or_default(expected, "inherit"),
+        "description" => or_default(disk, "") == or_default(expected, ""),
+        "developer_instructions" => trimmed(disk) == trimmed(expected),
+        _ => disk == expected,
+    }
+}
+
 // ── Hooks ────────────────────────────────────────────────────────────────────
 //
 // Codex CLI supports a smaller event set than Claude Code. We write the full
@@ -964,6 +1023,58 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;
+
+    const RENDERED_AGENT: &str = "automatic_managed = true\nname = \"planner\"\ndescription = \"Plans\"\nmodel = \"inherit\"\n\ndeveloper_instructions = \"\"\"\nPlan.\n\"\"\"\n";
+
+    fn differences(disk: &str, expected: &str) -> Vec<String> {
+        CodexCli.agent_file_differences(disk, expected)
+    }
+
+    #[test]
+    fn agent_differences_ignore_formatting_order_and_the_marker() {
+        let disk = "developer_instructions = \"Plan.\"\nmodel = \"inherit\"\ndescription = \"Plans\"\nname = \"planner\"\n";
+        assert_eq!(differences(disk, RENDERED_AGENT), Vec::<String>::new());
+    }
+
+    #[test]
+    fn agent_differences_fill_in_a_missing_model_description_and_name() {
+        let expected = "automatic_managed = true\nname = \"planner\"\ndescription = \"\"\nmodel = \"inherit\"\n";
+        assert_eq!(differences("", expected), Vec::<String>::new());
+    }
+
+    #[test]
+    fn agent_differences_name_each_changed_field_in_order() {
+        let disk = "name = \"other\"\ndescription = \"Changed\"\nmodel = \"gpt-5.4\"\ndeveloper_instructions = \"Changed.\"\n";
+        assert_eq!(
+            differences(disk, RENDERED_AGENT),
+            vec!["description", "developer_instructions", "model", "name"]
+        );
+    }
+
+    #[test]
+    fn agent_differences_report_a_key_present_on_one_side() {
+        let extra = RENDERED_AGENT.replacen("name =", "custom_flag = true\nname =", 1);
+        assert_eq!(differences(&extra, RENDERED_AGENT), vec!["custom_flag"]);
+
+        let read_only =
+            RENDERED_AGENT.replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1);
+        assert_eq!(differences(&read_only, RENDERED_AGENT), vec!["sandbox_mode"]);
+        assert_eq!(differences(RENDERED_AGENT, &read_only), vec!["sandbox_mode"]);
+    }
+
+    #[test]
+    fn agent_differences_report_content_for_unparseable_toml() {
+        assert_eq!(differences("not = = toml", RENDERED_AGENT), vec!["content"]);
+        assert_eq!(differences(RENDERED_AGENT, "not = = toml"), vec!["content"]);
+    }
+
+    /// `convert_md_to_codex_toml` does not escape the body, so sync can
+    /// write a file that does not parse.  It still matches itself.
+    #[test]
+    fn agent_differences_accept_an_identical_file_that_does_not_parse() {
+        let unparseable = "developer_instructions = \"\"\"\nMatch \\d.\n\"\"\"\n";
+        assert_eq!(differences(unparseable, unparseable), Vec::<String>::new());
+    }
 
     #[test]
     fn hook_events_declares_twelve_events() {

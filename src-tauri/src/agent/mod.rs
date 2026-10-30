@@ -475,6 +475,25 @@ pub trait Agent: Send + Sync {
         render_markdown_command(content)
     }
 
+    /// Return what differs between a sub-agent file on disk and `expected`,
+    /// the file [`convert_agent_content`](Agent::convert_agent_content)
+    /// renders from the stored copy.  Empty means the file matches.
+    ///
+    /// The conflict scan and the adopt guard use this rather than byte
+    /// equality.  A conflict means sync would lose something the user wrote,
+    /// and adopting must be able to end it.  A Markdown file missing only the
+    /// `automatic-managed` marker loses nothing, because sync adds the marker.
+    /// The byte comparison must stay first: Kiro's JSON is not Markdown, so
+    /// rendering it can never equal `expected`.  Codex overrides this to
+    /// compare fields.
+    fn agent_file_differences(&self, disk: &str, expected: &str) -> Vec<String> {
+        if disk == expected || render_markdown_command(disk) == expected {
+            Vec::new()
+        } else {
+            vec!["content".to_string()]
+        }
+    }
+
     /// Return the directory where this agent looks for custom command files.
     /// Returns `None` if this agent does not support project-local commands.
     fn commands_dir(&self, _dir: &Path) -> Option<PathBuf> {
@@ -3053,6 +3072,32 @@ mod tests {
     use std::collections::HashSet;
     use std::fs;
     use tempfile::tempdir;
+
+    /// Sync adds the marker, so a file missing only that loses nothing.
+    #[test]
+    fn agent_differences_ignore_a_missing_marker() {
+        let disk = "---\nname: planner\n---\nPlan.\n";
+        let expected = ClaudeCode.convert_agent_content(disk, "planner");
+        assert_ne!(disk, expected);
+        assert!(ClaudeCode.agent_file_differences(disk, &expected).is_empty());
+    }
+
+    #[test]
+    fn agent_differences_report_a_body_change_as_content() {
+        let expected = ClaudeCode.convert_agent_content("---\nname: planner\n---\nPlan.\n", "planner");
+        let disk = expected.replace("Plan.", "Edited.");
+        assert_eq!(
+            ClaudeCode.agent_file_differences(&disk, &expected),
+            vec!["content"]
+        );
+    }
+
+    /// Kiro's JSON only ever matches byte for byte.
+    #[test]
+    fn agent_differences_match_an_identical_kiro_file() {
+        let expected = Kiro.convert_agent_content("---\nname: planner\n---\nPlan.\n", "planner");
+        assert!(Kiro.agent_file_differences(&expected, &expected).is_empty());
+    }
 
     /// Discovery runs on a timer against cloned repos.  A config that is a
     /// FIFO or a link to `/dev/zero` yields nothing and does not block.

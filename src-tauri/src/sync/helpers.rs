@@ -649,7 +649,10 @@ pub(crate) fn scan_custom_agent(
             }
         };
         let expected = agent_instance.convert_agent_content(&ca.content, &machine_name);
-        if disk_content == expected {
+        if agent_instance
+            .agent_file_differences(&disk_content, &expected)
+            .is_empty()
+        {
             // Matches here.  Keep looking: a file in another agent's
             // directory can still differ, or be a link out of the
             // project that sync must not write through.
@@ -1832,5 +1835,72 @@ mod tests {
 
         assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
         assert!(scan.unreadable.is_empty(), "{:?}", scan.unreadable);
+    }
+
+    /// Comparing Codex files by field must not hide an edit: a change to a
+    /// key Automatic does not know is still a conflict.
+    #[test]
+    fn custom_agent_scan_reports_an_edit_to_an_unknown_codex_key() {
+        let dir = tmp();
+        let content = "---\nname: planner\ndescription: Plans\n---\nPlan.\n";
+        let project = Project {
+            name: "scan".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["codex".into()],
+            custom_agents: Some(vec![CustomAgent {
+                name: "Planner".into(),
+                content: content.into(),
+            }]),
+            ..Default::default()
+        };
+        let agents_dir = dir.path().join(".codex").join("agents");
+        fs::create_dir_all(&agents_dir).expect("mkdir");
+        let rendered = crate::agent::Agent::convert_agent_content(
+            &crate::agent::CodexCli,
+            content,
+            "planner",
+        );
+        fs::write(
+            agents_dir.join("planner.toml"),
+            format!("custom_flag = true\n{rendered}"),
+        )
+        .expect("write");
+
+        let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+        assert_eq!(scan.conflicts.len(), 1, "{:?}", scan.conflicts);
+    }
+
+    /// A body with a backslash renders to TOML that does not parse.  The
+    /// file sync wrote must still match its stored copy.
+    #[test]
+    fn custom_agent_scan_accepts_a_codex_file_that_does_not_parse() {
+        let dir = tmp();
+        let content = "---\nname: planner\ndescription: Plans\n---\nMatch \\d.\n";
+        let project = Project {
+            name: "scan".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["codex".into()],
+            custom_agents: Some(vec![CustomAgent {
+                name: "Planner".into(),
+                content: content.into(),
+            }]),
+            ..Default::default()
+        };
+        let agents_dir = dir.path().join(".codex").join("agents");
+        fs::create_dir_all(&agents_dir).expect("mkdir");
+        fs::write(
+            agents_dir.join("planner.toml"),
+            crate::agent::Agent::convert_agent_content(
+                &crate::agent::CodexCli,
+                content,
+                "planner",
+            ),
+        )
+        .expect("write");
+
+        let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+        assert!(scan.conflicts.is_empty(), "{:?}", scan.conflicts);
     }
 }

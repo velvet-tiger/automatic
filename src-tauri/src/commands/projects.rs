@@ -1137,6 +1137,11 @@ fn strip_instructions_header(content: &str) -> String {
 /// directory holds a matching copy.  An agent-native file (Codex TOML) is
 /// converted back to Markdown; a format with no reverse conversion is
 /// refused rather than stored as Markdown.
+///
+/// Markdown cannot hold every setting of an agent-native file.  The result
+/// is rendered back and compared with the disk file, so a file adopt would
+/// change is refused and the conflict stays open.  Whatever passes produces
+/// no conflict on the next scan.
 fn adoptable_custom_agent_content(
     project: &core::Project,
     effective: &std::path::Path,
@@ -1146,16 +1151,28 @@ fn adoptable_custom_agent_content(
         Some(sync::CustomAgentFinding::Conflict { agent, conflict }) => {
             let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
                 .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
-            sync::agent_file_to_markdown(agent, &conflict.disk_content, &machine_name).ok_or_else(
-                || {
-                    format!(
-                        "Cannot adopt agent '{}' from {}: Automatic cannot convert this {} file back to Markdown",
-                        ca.name,
-                        conflict.path,
-                        agent.label()
-                    )
-                },
-            )
+            let markdown =
+                sync::agent_file_to_markdown(agent, &conflict.disk_content, &machine_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "Cannot adopt agent '{}' from {}: Automatic cannot convert this {} file back to Markdown",
+                            ca.name,
+                            conflict.path,
+                            agent.label()
+                        )
+                    })?;
+            let rendered = agent.convert_agent_content(&markdown, &machine_name);
+            let lost = agent.agent_file_differences(&conflict.disk_content, &rendered);
+            if !lost.is_empty() {
+                return Err(format!(
+                    "Cannot adopt agent '{}' from {}: Automatic cannot keep these {} settings: {}. Remove them from the file, or overwrite it with Automatic's copy.",
+                    ca.name,
+                    conflict.path,
+                    agent.label(),
+                    lost.join(", ")
+                ));
+            }
+            Ok(markdown)
         }
         Some(sync::CustomAgentFinding::Unreadable(unreadable)) => Err(format!(
             "Cannot adopt agent '{}' from {}: {}",
@@ -3612,6 +3629,128 @@ mod adopt_custom_asset_tests {
 
             assert!(err.contains("cannot convert"), "{err}");
             assert_eq!(stored_planner("kiro-adopt"), STORED);
+        });
+    }
+
+    /// Whatever adopt accepts must leave no conflict for the next scan.
+    fn assert_no_conflict(name: &str, dir: &std::path::Path) {
+        let raw = core::read_project(name).expect("read project");
+        let project: core::Project = serde_json::from_str(&raw).expect("project json");
+        let agents = project.custom_agents.clone().expect("custom agents");
+        assert!(
+            sync::scan_custom_agent(&project, dir, &agents[0]).is_none(),
+            "adopted file still conflicts"
+        );
+    }
+
+    /// A hand-written file never matches the rendered TOML byte for byte.
+    /// With no `sandbox_mode`, adopting must not add one, and the conflict
+    /// must end.
+    #[test]
+    fn adopted_codex_file_leaves_no_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-plain", &["codex"]);
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                "developer_instructions = \"Edited.\"\nmodel_reasoning_effort = \"high\"\nmax_turns = 5\nmodel = \"gpt-5.4\"\ndescription = \"Plans\"\nname = \"planner\"\n",
+            );
+
+            adopt_custom_asset("codex-plain", "agent", "Planner").expect("adopt");
+
+            assert!(!stored_planner("codex-plain").contains("tools:"));
+            assert_no_conflict("codex-plain", &dir);
+        });
+    }
+
+    #[test]
+    fn adopted_read_only_codex_file_leaves_no_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-read-only", &["codex"]);
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                "sandbox_mode = \"read-only\"\ndeveloper_instructions = \"Edited.\"\nname = \"planner\"\n",
+            );
+
+            adopt_custom_asset("codex-read-only", "agent", "Planner").expect("adopt");
+
+            assert!(stored_planner("codex-read-only").contains("tools: inherit\n"));
+            assert_no_conflict("codex-read-only", &dir);
+        });
+    }
+
+    /// The scan compares fields and drift compares bytes.  After adopting, a
+    /// formatting difference is no longer a conflict but still shows as a
+    /// modified file, until sync rewrites it.  The rewrite keeps every field
+    /// and drops what TOML does not parse, such as a comment.
+    #[test]
+    fn adopted_codex_file_shows_drift_until_sync_rewrites_it() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("codex-drift", &["codex"]);
+            let path = dir.join(".codex/agents/planner.toml");
+            write(
+                &path,
+                "# hand note\nmax_turns = 5\ndeveloper_instructions = \"Edited.\"\nname = \"planner\"\n",
+            );
+            adopt_custom_asset("codex-drift", "agent", "Planner").expect("adopt");
+
+            let is_planner = |file: &sync::DriftedFile| file.path.ends_with("planner.toml");
+            let drift_of = |name: &str| {
+                let raw = core::read_project(name).expect("read project");
+                let project: core::Project = serde_json::from_str(&raw).expect("project json");
+                sync::check_project_drift(&project).expect("drift")
+            };
+            let before = drift_of("codex-drift");
+            assert!(before.custom_conflicts.is_empty(), "{:?}", before.custom_conflicts);
+            assert!(before.agents.iter().flat_map(|a| &a.files).any(is_planner));
+
+            sync_project("codex-drift").expect("sync");
+
+            let after = drift_of("codex-drift");
+            assert!(!after.agents.iter().flat_map(|a| &a.files).any(is_planner));
+            let rewritten = std::fs::read_to_string(&path).expect("read");
+            assert!(rewritten.contains("max_turns = 5"), "{rewritten}");
+            assert!(rewritten.contains("Edited."), "{rewritten}");
+            assert!(!rewritten.contains("hand note"), "{rewritten}");
+        });
+    }
+
+    /// A setting Markdown cannot hold is refused, with the conflict left
+    /// open and both copies untouched.
+    #[test]
+    fn adopt_refuses_codex_settings_it_cannot_keep() {
+        for (key, line) in [
+            ("sandbox_mode", "sandbox_mode = \"workspace-write\""),
+            ("custom_flag", "custom_flag = true"),
+        ] {
+            with_temp_home(|_| {
+                let (_keep, dir) = planner_project("codex-lossy", &["codex"]);
+                let path = dir.join(".codex/agents/planner.toml");
+                let disk = format!("{line}\nname = \"planner\"\ndeveloper_instructions = \"Edited.\"\n");
+                write(&path, &disk);
+
+                let err = adopt_custom_asset("codex-lossy", "agent", "Planner").unwrap_err();
+
+                assert!(err.contains(&format!("settings: {key}.")), "{err}");
+                assert!(err.contains("Codex"), "{err}");
+                assert_eq!(stored_planner("codex-lossy"), STORED);
+                assert_eq!(std::fs::read_to_string(&path).expect("read"), disk);
+            });
+        }
+    }
+
+    /// A Markdown file the user wrote has no `automatic-managed` marker.
+    /// Sync adds one, so the missing marker must not keep the conflict open.
+    #[test]
+    fn adopted_markdown_file_without_a_marker_leaves_no_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = planner_project("markdown-adopt", &["claude"]);
+            let edited = "---\nname: planner\ndescription: Plans\n---\nEdited on disk.\n";
+            write(&dir.join(".claude/agents/planner.md"), edited);
+
+            adopt_custom_asset("markdown-adopt", "agent", "Planner").expect("adopt");
+
+            assert_eq!(stored_planner("markdown-adopt"), edited);
+            assert_no_conflict("markdown-adopt", &dir);
         });
     }
 

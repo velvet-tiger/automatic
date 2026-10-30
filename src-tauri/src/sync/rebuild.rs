@@ -405,8 +405,16 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
         format!("name: {}", name),
         format!("description: {}", description),
         format!("model: {}", model),
-        "tools: inherit".to_string(),
     ];
+
+    // `convert_md_to_codex_toml` writes `sandbox_mode = "read-only"` whenever
+    // `tools` is present.  Emitting `tools` for any other file would silently
+    // tighten its permissions, and the adopt guard would refuse it.
+    let read_only =
+        table.get("sandbox_mode").and_then(|value| value.as_str()) == Some("read-only");
+    if read_only {
+        frontmatter.push("tools: inherit".to_string());
+    }
 
     if let Some(max_turns) = max_turns {
         frontmatter.push(format!("maxTurns: {}", max_turns));
@@ -761,5 +769,27 @@ Inspect the repo carefully.\n\
             let (_, custom_commands) = discover_sub_commands(&project).unwrap();
             assert!(custom_commands.is_empty(), "{custom_commands:?}");
         });
+    }
+
+    /// `tools` converts back to `sandbox_mode = "read-only"`, so only a
+    /// read-only file may carry it.
+    #[test]
+    fn codex_toml_gets_tools_only_when_read_only() {
+        let plain = convert_codex_toml_to_markdown("name = \"planner\"\n", "planner").unwrap();
+        assert!(!plain.contains("tools:"), "{plain}");
+
+        let read_only = convert_codex_toml_to_markdown(
+            "name = \"planner\"\nsandbox_mode = \"read-only\"\n",
+            "planner",
+        )
+        .unwrap();
+        assert!(read_only.contains("tools: inherit\n"), "{read_only}");
+
+        let writable = convert_codex_toml_to_markdown(
+            "name = \"planner\"\nsandbox_mode = \"workspace-write\"\n",
+            "planner",
+        )
+        .unwrap();
+        assert!(!writable.contains("tools:"), "{writable}");
     }
 }
