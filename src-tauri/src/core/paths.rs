@@ -223,7 +223,7 @@ thread_local! {
 ///
 /// The override is thread-local (see [`TEST_HOME_OVERRIDE`]), so any code that
 /// reads it must run on the same thread that installed it via
-/// [`with_test_home`].  Cargo's default one-test-per-thread model satisfies
+/// [`with_test_home`] or [`temp_test_home`].  Cargo's default one-test-per-thread model satisfies
 /// this without extra care.
 #[cfg(test)]
 pub(crate) fn test_home_override() -> Option<PathBuf> {
@@ -289,6 +289,7 @@ pub(crate) struct TempTestHome {
 /// [`with_test_home`]: `let _home = temp_test_home();`. Bind it to a name, as
 /// `let _ = ...` would drop the guard at once.
 #[cfg(test)]
+#[must_use = "the test loses its home when this guard drops"]
 pub(crate) fn temp_test_home() -> TempTestHome {
     let dir = tempfile::tempdir().expect("temp home");
     TempTestHome {
