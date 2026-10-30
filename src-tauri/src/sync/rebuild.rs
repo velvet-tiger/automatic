@@ -402,9 +402,12 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
 
     let mut frontmatter = vec![
         "---".to_string(),
-        format!("name: {}", name),
-        format!("description: {}", description),
-        format!("model: {}", model),
+        format!("name: {}", agent::render_frontmatter_value(name)),
+        format!(
+            "description: {}",
+            agent::render_frontmatter_value(description)
+        ),
+        format!("model: {}", agent::render_frontmatter_value(model)),
     ];
 
     // `convert_md_to_codex_toml` writes `sandbox_mode = "read-only"` whenever
@@ -420,7 +423,10 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Option<St
         frontmatter.push(format!("maxTurns: {}", max_turns));
     }
     if let Some(reasoning) = reasoning {
-        frontmatter.push(format!("modelReasoningEffort: {}", reasoning));
+        frontmatter.push(format!(
+            "modelReasoningEffort: {}",
+            agent::render_frontmatter_value(reasoning)
+        ));
     }
     frontmatter.push("---".to_string());
 
@@ -817,5 +823,20 @@ Inspect the repo carefully.\n\
 
         let (_, round_tripped) = agent::parse_frontmatter(&markdown);
         assert_eq!(round_tripped.trim(), body);
+    }
+
+    /// `parse_frontmatter` strips quotes and whitespace, so a value holding
+    /// them must be quoted or the Markdown changes what the file said.
+    #[test]
+    fn codex_toml_quotes_values_the_frontmatter_parser_would_change() {
+        let markdown = convert_codex_toml_to_markdown(
+            "name = \"planner\"\ndescription = '\"Plans\"'\nmodel = \"gpt \"\n",
+            "planner",
+        )
+        .unwrap();
+
+        let (frontmatter, _) = agent::parse_frontmatter(&markdown);
+        assert_eq!(frontmatter["description"], "\"Plans\"");
+        assert_eq!(frontmatter["model"], "gpt ");
     }
 }

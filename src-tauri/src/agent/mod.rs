@@ -1110,17 +1110,13 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str
         return (frontmatter, content);
     }
 
-    let after_first = &content[4..];
-    let end_marker_pos = after_first
-        .find("\n---")
-        .or_else(|| after_first.find("\r\n---"));
-
-    let end_marker_pos = match end_marker_pos {
-        Some(pos) => pos,
-        None => return (frontmatter, content),
+    let Some((yaml_start, yaml_end)) = frontmatter_span(content) else {
+        return (frontmatter, content);
     };
 
-    let yaml_str = &after_first[..end_marker_pos];
+    let after_first = &content[4..];
+    let end_marker_pos = yaml_end - yaml_start;
+    let yaml_str = &content[yaml_start..yaml_end];
     let body_start = end_marker_pos + 4;
     let body = if after_first[body_start..].starts_with('\n')
         || after_first[body_start..].starts_with("\r\n")
@@ -1149,6 +1145,100 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str
     }
 
     (frontmatter, body)
+}
+
+/// The byte range of `content`'s frontmatter lines, between the opening
+/// `---` and the newline before the closing one.  `None` when there is no
+/// complete block.
+fn frontmatter_span(content: &str) -> Option<(usize, usize)> {
+    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+        return None;
+    }
+    let end = content[4..].find("\n---")?;
+    Some((4, 4 + end))
+}
+
+/// Write `value` so [`parse_frontmatter`] reads back exactly that text.  The
+/// parser trims a value and strips one layer of matching quotes, so a value
+/// that would lose something is quoted.  Single quotes come first because
+/// they are also valid YAML for a value holding a backslash or double quote.
+pub(crate) fn render_frontmatter_value(value: &str) -> String {
+    let wrapped_in = |quote: char| {
+        value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote)
+    };
+    if value == value.trim() && !wrapped_in('"') && !wrapped_in('\'') {
+        value.to_string()
+    } else if value.contains('\'') {
+        format!("\"{value}\"")
+    } else {
+        format!("'{value}'")
+    }
+}
+
+/// `true` when a frontmatter line sets `key`, by [`parse_frontmatter`]'s rule.
+fn frontmatter_line_sets(line: &str, key: &str) -> bool {
+    let line = line.trim();
+    !line.starts_with('#')
+        && line
+            .find(':')
+            .is_some_and(|colon| line[..colon].trim() == key)
+}
+
+/// Set or remove one frontmatter key and leave every other byte alone.  An
+/// existing line is replaced where it stands.  [`parse_frontmatter`] keeps
+/// the last line for a repeated key, so that is the one replaced.  A new key
+/// goes at the end of the block.  `value: None` removes every line for `key`.
+pub(crate) fn set_frontmatter_value(content: &str, key: &str, value: Option<&str>) -> String {
+    let line = value.map(|value| format!("{key}: {}", render_frontmatter_value(value)));
+    let Some((start, end)) = frontmatter_span(content) else {
+        return match line {
+            Some(line) => format!("---\n{line}\n---\n{content}"),
+            None => content.to_string(),
+        };
+    };
+
+    let mut lines: Vec<String> = content[start..end].split('\n').map(str::to_string).collect();
+    let carriage_return = if lines.iter().any(|l| l.ends_with('\r')) {
+        "\r"
+    } else {
+        ""
+    };
+    match line {
+        None => lines.retain(|l| !frontmatter_line_sets(l, key)),
+        Some(line) => match lines.iter().rposition(|l| frontmatter_line_sets(l, key)) {
+            Some(index) => {
+                let indent = lines[index].len() - lines[index].trim_start().len();
+                let ending = if lines[index].ends_with('\r') { "\r" } else { "" };
+                lines[index] = format!("{}{line}{ending}", &lines[index][..indent]);
+            }
+            None if content[start..end].is_empty() => lines = vec![line],
+            None => lines.push(format!("{line}{carriage_return}")),
+        },
+    }
+
+    format!("{}{}{}", &content[..start], lines.join("\n"), &content[end..])
+}
+
+/// Replace the Markdown body and leave the frontmatter and the whitespace
+/// around the body alone.
+pub(crate) fn replace_markdown_body(content: &str, body: &str) -> String {
+    let body_start = frontmatter_span(content).map_or(0, |(_, end)| end + "\n---".len());
+    let (head, old_body) = content.split_at(body_start);
+    let trimmed = old_body.trim();
+    if trimmed.is_empty() || body.is_empty() {
+        let separator = if head.is_empty() { "" } else { "\n" };
+        return match body.is_empty() {
+            true => format!("{head}{separator}"),
+            false => format!("{head}{separator}{body}\n"),
+        };
+    }
+    let leading = old_body.len() - old_body.trim_start().len();
+    let trailing = old_body.trim_end().len();
+    format!(
+        "{head}{}{body}{}",
+        &old_body[..leading],
+        &old_body[trailing..]
+    )
 }
 
 /// Ensure `content`'s YAML frontmatter carries `automatic-managed: true`,
@@ -3152,6 +3242,100 @@ mod tests {
     use std::collections::HashSet;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn render_frontmatter_value_round_trips_through_the_parser() {
+        for value in [
+            "plain",
+            "with: colon",
+            "\"double\"",
+            "'single'",
+            "\"it's\"",
+            "trailing ",
+            " leading",
+            "\"",
+        ] {
+            let content = format!("---\nkey: {}\n---\n", render_frontmatter_value(value));
+            let (frontmatter, _) = parse_frontmatter(&content);
+            assert_eq!(frontmatter.get("key").map(String::as_str), Some(value));
+        }
+        assert_eq!(render_frontmatter_value("plain"), "plain");
+    }
+
+    #[test]
+    fn set_frontmatter_value_replaces_a_line_where_it_stands() {
+        let content = "---\nb: 1\na: 2\nc: 3\n---\nBody.\n";
+        assert_eq!(
+            set_frontmatter_value(content, "a", Some("9")),
+            "---\nb: 1\na: 9\nc: 3\n---\nBody.\n"
+        );
+    }
+
+    #[test]
+    fn set_frontmatter_value_replaces_the_line_the_parser_reads() {
+        let content = "---\na: 1\na: 2\n---\n";
+        let updated = set_frontmatter_value(content, "a", Some("9"));
+        assert_eq!(updated, "---\na: 1\na: 9\n---\n");
+    }
+
+    #[test]
+    fn set_frontmatter_value_adds_a_new_key_at_the_end_of_the_block() {
+        assert_eq!(
+            set_frontmatter_value("---\na: 1\n---\nBody.\n", "b", Some("2")),
+            "---\na: 1\nb: 2\n---\nBody.\n"
+        );
+        assert_eq!(
+            set_frontmatter_value("Body.\n", "b", Some("2")),
+            "---\nb: 2\n---\nBody.\n"
+        );
+    }
+
+    #[test]
+    fn set_frontmatter_value_removes_a_key_and_only_that_key() {
+        assert_eq!(
+            set_frontmatter_value("---\na: 1\n# a: comment\nb: 2\n---\n", "a", None),
+            "---\n# a: comment\nb: 2\n---\n"
+        );
+        assert_eq!(
+            set_frontmatter_value("---\na: 1\nb: 2\n---\n", "b", None),
+            "---\na: 1\n---\n"
+        );
+        assert_eq!(set_frontmatter_value("Body.\n", "a", None), "Body.\n");
+    }
+
+    #[test]
+    fn set_frontmatter_value_keeps_crlf_line_endings() {
+        let content = "---\r\na: 1\r\nb: 2\r\n---\r\nBody.\r\n";
+        assert_eq!(
+            set_frontmatter_value(content, "a", Some("9")),
+            "---\r\na: 9\r\nb: 2\r\n---\r\nBody.\r\n"
+        );
+        assert_eq!(
+            set_frontmatter_value(content, "c", Some("3")),
+            "---\r\na: 1\r\nb: 2\r\nc: 3\r\n---\r\nBody.\r\n"
+        );
+    }
+
+    #[test]
+    fn replace_markdown_body_keeps_the_frontmatter_and_surrounding_whitespace() {
+        assert_eq!(
+            replace_markdown_body("---\na: 1\n---\n\nOld.\n", "New."),
+            "---\na: 1\n---\n\nNew.\n"
+        );
+        assert_eq!(replace_markdown_body("Old.\n", "New."), "New.\n");
+    }
+
+    #[test]
+    fn replace_markdown_body_fills_and_empties_a_body() {
+        assert_eq!(
+            replace_markdown_body("---\na: 1\n---\n", "New."),
+            "---\na: 1\n---\nNew.\n"
+        );
+        assert_eq!(
+            replace_markdown_body("---\na: 1\n---\n\nOld.\n", ""),
+            "---\na: 1\n---\n"
+        );
+    }
 
     /// Sync adds the marker, so a file missing only that loses nothing.
     #[test]

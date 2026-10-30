@@ -1386,7 +1386,9 @@ mod tests {
         );
 
         assert!(rendered.contains(body), "{rendered:?}");
-        assert!(toml::from_str::<toml::Table>(&rendered).is_ok(), "{rendered:?}");
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+        let stored = table["developer_instructions"].as_str().expect("string");
+        assert_eq!(stored.trim(), body);
     }
 
     /// Frontmatter is free text.  No value in it may make the file

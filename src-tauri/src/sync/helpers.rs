@@ -590,6 +590,13 @@ pub(crate) fn collect_custom_agent_conflicts(project: &Project, dir: &Path) -> C
     scan
 }
 
+/// The file name a custom agent syncs under: the frontmatter `name`, or its
+/// display name.
+pub(crate) fn custom_agent_machine_name(content: &str, display_name: &str) -> String {
+    extract_agent_machine_name(content)
+        .unwrap_or_else(|| display_name.to_lowercase().replace(' ', "-"))
+}
+
 /// What [`scan_custom_agent`] found for one custom agent.
 pub(crate) enum CustomAgentFinding {
     /// The first file that differs from the stored copy.  `agent` owns the
@@ -611,8 +618,7 @@ pub(crate) fn scan_custom_agent(
     dir: &Path,
     ca: &crate::core::CustomAgent,
 ) -> Option<CustomAgentFinding> {
-    let machine_name = extract_agent_machine_name(&ca.content)
-        .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+    let machine_name = custom_agent_machine_name(&ca.content, &ca.name);
     // Sync never writes a name that is not a plain file name (see
     // `sync_custom_agents`), and joining one could read outside the agent
     // directory.
@@ -1903,6 +1909,39 @@ mod tests {
             let scan = collect_custom_agent_conflicts(&project, dir.path());
 
             assert_eq!(scan.conflicts.len(), 1, "{disk}");
+        }
+    }
+
+    /// Deleting a line with a non-default value changes the file, even
+    /// though a missing `model` or `description` has a default of its own.
+    #[test]
+    fn custom_agent_scan_reports_a_deleted_model_or_description() {
+        let content = "---\nname: planner\ndescription: Plans\nmodel: gpt-5.4\n---\nPlan.\n";
+        let rendered = crate::agent::Agent::convert_agent_content(
+            &crate::agent::CodexCli,
+            content,
+            "planner",
+        );
+        for line in ["description = \"Plans\"\n", "model = \"gpt-5.4\"\n"] {
+            let dir = tmp();
+            let project = Project {
+                name: "scan".into(),
+                directory: dir.path().display().to_string(),
+                agents: vec!["codex".into()],
+                custom_agents: Some(vec![CustomAgent {
+                    name: "Planner".into(),
+                    content: content.into(),
+                }]),
+                ..Default::default()
+            };
+            let agents_dir = dir.path().join(".codex").join("agents");
+            fs::create_dir_all(&agents_dir).expect("mkdir");
+            assert!(rendered.contains(line));
+            fs::write(agents_dir.join("planner.toml"), rendered.replace(line, "")).expect("write");
+
+            let scan = collect_custom_agent_conflicts(&project, dir.path());
+
+            assert_eq!(scan.conflicts.len(), 1, "{line}");
         }
     }
 

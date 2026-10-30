@@ -1,3 +1,4 @@
+mod agent_adopt;
 mod autodetect;
 mod cleanup;
 pub mod drift;
@@ -25,10 +26,12 @@ pub(crate) use helpers::{
     create_project_dir, escaped_silent_dir, project_write_refusal, read_project_text,
     write_project_file, write_project_file_or_skip,
 };
-// Adopting a custom agent resolves the conflict the scan reported, and turns
-// the agent-native file back into the Markdown the project stores.
-pub(crate) use helpers::{scan_custom_agent, CustomAgentFinding};
-pub(crate) use rebuild::agent_file_to_markdown;
+// Adopting a custom agent resolves the conflict the scan reported.
+pub(crate) use agent_adopt::{
+    adopted_agent_markdown, other_agent_files_matching, rewrite_other_agent_files, AdoptRefusal,
+    OtherAgentFile,
+};
+pub(crate) use helpers::{custom_agent_machine_name, scan_custom_agent, CustomAgentFinding};
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(

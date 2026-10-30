@@ -1131,58 +1131,84 @@ fn strip_instructions_header(content: &str) -> String {
         .to_string()
 }
 
-/// The on-disk version of a custom agent to adopt, as the Markdown the
-/// project stores.  It is the file the conflict scan reports, so adopting
-/// resolves the conflict the user was shown even when another agent's
-/// directory holds a matching copy.  An agent-native file (Codex TOML) is
-/// converted back to Markdown; a format with no reverse conversion is
-/// refused rather than stored as Markdown.
+/// What adopting a custom agent changes: its new stored Markdown, and the
+/// other agents' files to rewrite once that is saved.
+struct AdoptedCustomAgent {
+    content: String,
+    other_files: Vec<sync::OtherAgentFile>,
+}
+
+/// Work out what adopting the on-disk version of `ca` changes.  The file is
+/// the one the conflict scan reports, so adopting answers the conflict the
+/// user was shown.
 ///
-/// Markdown cannot hold every setting of an agent-native file.  The result
-/// is rendered back and compared with the disk file, so a file adopt would
-/// change is refused and the conflict stays open.  Whatever passes produces
-/// no conflict on the next scan.
+/// What holds afterwards: the adopted file no longer conflicts, and any other
+/// agent's file that matched the stored copy still matches once
+/// `other_files` are rewritten.  Another agent's file that really differs
+/// stays a conflict, and so the next scan can still report one.  A rename
+/// through the file's `name` is the exception: `other_files` is empty, and
+/// the next sync writes those agents' files under the new name.  What the
+/// file cannot represent is refused with both copies untouched.
 fn adoptable_custom_agent_content(
     project: &core::Project,
     effective: &std::path::Path,
     ca: &core::CustomAgent,
-) -> Result<String, String> {
-    match sync::scan_custom_agent(project, effective, ca) {
-        Some(sync::CustomAgentFinding::Conflict { agent, conflict }) => {
-            let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
-                .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
-            let markdown =
-                sync::agent_file_to_markdown(agent, &conflict.disk_content, &machine_name)
-                    .ok_or_else(|| {
-                        format!(
-                            "Cannot adopt agent '{}' from {}: Automatic cannot convert this {} file back to Markdown",
-                            ca.name,
-                            conflict.path,
-                            agent.label()
-                        )
-                    })?;
-            let rendered = agent.convert_agent_content(&markdown, &machine_name);
-            let lost = agent.agent_file_differences(&conflict.disk_content, &rendered);
-            if !lost.is_empty() {
-                return Err(format!(
-                    "Cannot adopt agent '{}' from {}: Automatic cannot keep these {} settings: {}. Remove them from the file, or overwrite it with Automatic's copy.",
-                    ca.name,
-                    conflict.path,
-                    agent.label(),
-                    lost.join(", ")
-                ));
-            }
-            Ok(markdown)
+) -> Result<AdoptedCustomAgent, String> {
+    let (agent, conflict) = match sync::scan_custom_agent(project, effective, ca) {
+        Some(sync::CustomAgentFinding::Conflict { agent, conflict }) => (agent, conflict),
+        Some(sync::CustomAgentFinding::Unreadable(unreadable)) => {
+            return Err(format!(
+                "Cannot adopt agent '{}' from {}: {}",
+                ca.name, unreadable.path, unreadable.reason
+            ));
         }
-        Some(sync::CustomAgentFinding::Unreadable(unreadable)) => Err(format!(
-            "Cannot adopt agent '{}' from {}: {}",
-            ca.name, unreadable.path, unreadable.reason
-        )),
-        None => Err(format!(
-            "No on-disk version of agent '{}' differs from Automatic's copy",
-            ca.name
-        )),
-    }
+        None => {
+            return Err(format!(
+                "No on-disk version of agent '{}' differs from Automatic's copy",
+                ca.name
+            ));
+        }
+    };
+
+    let shared = project.agents.iter().any(|id| {
+        id != agent.id()
+            && crate::agent::from_id(id).is_some_and(|other| other.agents_dir(effective).is_some())
+    });
+    let content = sync::adopted_agent_markdown(agent, ca, &conflict.disk_content, shared).map_err(
+        |refusal| {
+            let reason = match refusal {
+                sync::AdoptRefusal::CannotConvert => format!(
+                    "Automatic cannot convert this {} file back to Markdown",
+                    agent.label()
+                ),
+                sync::AdoptRefusal::CannotKeep(settings) => format!(
+                    "Automatic cannot keep these {} settings: {}. Restore them in the file, or overwrite it with Automatic's copy.",
+                    agent.label(),
+                    settings.join(", ")
+                ),
+                sync::AdoptRefusal::SharedSettings(settings) => format!(
+                    "changing {} would apply to every agent in this project. Use Overwrite, or change it per agent by hand.",
+                    settings.join(", ")
+                ),
+                sync::AdoptRefusal::NotAPlainName(name) => {
+                    format!("the name '{name}' is not a plain file name")
+                }
+            };
+            format!("Cannot adopt agent '{}' from {}: {}", ca.name, conflict.path, reason)
+        },
+    )?;
+
+    let renamed = sync::custom_agent_machine_name(&content, &ca.name)
+        != sync::custom_agent_machine_name(&ca.content, &ca.name);
+    let other_files = if renamed {
+        Vec::new()
+    } else {
+        sync::other_agent_files_matching(project, effective, ca, agent)
+    };
+    Ok(AdoptedCustomAgent {
+        content,
+        other_files,
+    })
 }
 
 /// Adopt on-disk custom asset content into the project's stored snapshot.
@@ -1203,6 +1229,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 
     let effective = effective_project_dir(&project)?;
     let project_dir = std::path::PathBuf::from(&project.directory);
+    let mut other_agent_rewrites = None;
 
     match kind {
         "skill" => {
@@ -1248,14 +1275,19 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
                     asset_name
                 ));
             };
-            let disk_content = adoptable_custom_agent_content(&project, &effective, &ca)?;
+            let adopted = adoptable_custom_agent_content(&project, &effective, &ca)?;
+            let updated = core::CustomAgent {
+                content: adopted.content,
+                ..ca
+            };
             if let Some(entry) = project
                 .custom_agents
                 .as_mut()
                 .and_then(|agents| agents.iter_mut().find(|a| a.name == asset_name))
             {
-                entry.content = disk_content;
+                *entry = updated.clone();
             }
+            other_agent_rewrites = Some((adopted.other_files, updated));
         }
         "command" => {
             let path = effective
@@ -1286,7 +1318,10 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
         asset_name,
     );
 
-    Ok(())
+    match other_agent_rewrites {
+        Some((files, adopted)) => sync::rewrite_other_agent_files(&effective, &files, &adopted),
+        None => Ok(()),
+    }
 }
 
 /// Overwrite the on-disk custom asset with Automatic's stored snapshot, then
@@ -3928,6 +3963,201 @@ mod adopt_custom_asset_tests {
             let repaired = std::fs::read_to_string(&path).expect("read");
             assert!(toml::from_str::<toml::Table>(&repaired).is_ok(), "{repaired}");
             assert_no_conflict("turns-older", &dir);
+        });
+    }
+
+    /// Keys only Claude reads, and a model and tool list Codex cannot hold.
+    const SHARED: &str = "---\nname: planner\ndescription: Plans\nmodel: sonnet\ntools: Read, Grep\ndisallowedTools: Bash\npermissionMode: plan\ncolor: blue\n---\n\nStored body.\n";
+
+    fn shared_project(name: &str, agents: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
+        make_project(name, |p| {
+            p.agents = agents.iter().map(|a| a.to_string()).collect();
+            p.custom_agents = Some(vec![core::CustomAgent {
+                name: "Planner".into(),
+                content: SHARED.into(),
+            }]);
+        })
+    }
+
+    fn codex_render(content: &str) -> String {
+        crate::agent::CodexCli.convert_agent_content(content, "planner")
+    }
+
+    fn claude_render(content: &str) -> String {
+        ClaudeCode.convert_agent_content(content, "planner")
+    }
+
+    /// Editing the Codex file and adopting it must leave nothing to resolve.
+    /// Claude's file follows the new copy and keeps what only Claude reads.
+    #[test]
+    fn adopting_a_codex_edit_updates_a_matching_claude_file() {
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("both", &["claude", "codex"]);
+            let claude = dir.join(".claude/agents/planner.md");
+            write(&claude, &claude_render(SHARED));
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                &codex_render(SHARED).replace("Stored body.", "Edited body."),
+            );
+
+            adopt_custom_asset("both", "agent", "Planner").expect("adopt");
+
+            let expected = SHARED.replace("Stored body.", "Edited body.");
+            assert_eq!(stored_planner("both"), expected);
+            assert_eq!(
+                std::fs::read_to_string(&claude).expect("read"),
+                claude_render(&expected)
+            );
+            assert_no_conflict("both", &dir);
+        });
+    }
+
+    /// A Claude file the user really changed is their decision to make, so
+    /// adopting the Codex edit must not overwrite it.
+    #[test]
+    fn adopting_a_codex_edit_leaves_a_differing_claude_file_as_a_conflict() {
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("differs", &["codex", "claude"]);
+            let claude = dir.join(".claude/agents/planner.md");
+            let edited = claude_render(SHARED).replace("Stored body.", "Claude edit.");
+            write(&claude, &edited);
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                &codex_render(SHARED).replace("Stored body.", "Edited body."),
+            );
+
+            adopt_custom_asset("differs", "agent", "Planner").expect("adopt");
+
+            assert_eq!(std::fs::read_to_string(&claude).expect("read"), edited);
+            let raw = core::read_project("differs").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let agents = project.custom_agents.clone().expect("custom agents");
+            let Some(sync::CustomAgentFinding::Conflict { conflict, .. }) =
+                sync::scan_custom_agent(&project, &dir, &agents[0])
+            else {
+                panic!("the differing Claude file must stay a conflict");
+            };
+            assert_eq!(conflict.path, ".claude/agents/planner.md");
+        });
+    }
+
+    /// Before this, taking Claude's file after a Codex adopt reverted it.
+    /// A Markdown adopt keeps the other agents in step the same way.
+    #[test]
+    fn adopting_a_markdown_edit_updates_a_matching_codex_file() {
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("markdown-first", &["claude", "codex"]);
+            let codex = dir.join(".codex/agents/planner.toml");
+            write(&codex, &codex_render(SHARED));
+            let edited = SHARED.replace("Stored body.", "Edited in Claude.");
+            write(&dir.join(".claude/agents/planner.md"), &edited);
+
+            adopt_custom_asset("markdown-first", "agent", "Planner").expect("adopt");
+
+            assert_eq!(stored_planner("markdown-first"), edited);
+            assert_eq!(
+                std::fs::read_to_string(&codex).expect("read"),
+                codex_render(&edited)
+            );
+            assert_no_conflict("markdown-first", &dir);
+        });
+    }
+
+    #[test]
+    fn adopt_refuses_a_shared_model_edit_and_names_the_way_out() {
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("shared-model", &["claude", "codex"]);
+            let claude = dir.join(".claude/agents/planner.md");
+            write(&claude, &claude_render(SHARED));
+            let codex = dir.join(".codex/agents/planner.toml");
+            let disk = codex_render(SHARED).replace("gpt-5.4", "gpt-5.5");
+            write(&codex, &disk);
+
+            let err = adopt_custom_asset("shared-model", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains("changing model would apply to every agent"), "{err}");
+            assert!(err.contains("Overwrite"), "{err}");
+            assert_eq!(stored_planner("shared-model"), SHARED);
+            assert_eq!(std::fs::read_to_string(&codex).expect("read"), disk);
+            assert_eq!(
+                std::fs::read_to_string(&claude).expect("read"),
+                claude_render(SHARED)
+            );
+        });
+    }
+
+    /// An agent with no `agents_dir` reads nothing from the stored copy, so
+    /// it does not count as sharing it.
+    #[test]
+    fn an_agent_without_sub_agents_does_not_share_the_copy() {
+        with_temp_home(|_| {
+            let without = crate::agent::all()
+                .into_iter()
+                .find(|a| a.agents_dir(std::path::Path::new("x")).is_none())
+                .expect("an agent with no sub-agents")
+                .id();
+            let (_keep, dir) = shared_project("alone", &["codex", without]);
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                &codex_render(SHARED).replace("gpt-5.4", "gpt-5.5"),
+            );
+
+            adopt_custom_asset("alone", "agent", "Planner").expect("adopt");
+
+            assert!(stored_planner("alone").contains("model: gpt-5.5\n"));
+        });
+    }
+
+    /// The adopt is already saved, so a failed rewrite must say which file
+    /// still needs attention.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_rewrite_is_an_error_naming_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            let (_keep, dir) = shared_project("locked", &["claude", "codex"]);
+            let claude = dir.join(".claude/agents/planner.md");
+            write(&claude, &claude_render(SHARED));
+            std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o444))
+                .expect("chmod");
+            write(
+                &dir.join(".codex/agents/planner.toml"),
+                &codex_render(SHARED).replace("Stored body.", "Edited body."),
+            );
+
+            let err = adopt_custom_asset("locked", "agent", "Planner").unwrap_err();
+
+            assert!(err.contains(".claude/agents/planner.md"), "{err}");
+        });
+    }
+
+    /// Silent mode keeps agent files under `.automatic/silent`.  The rewrite
+    /// must land there, contained by that directory.
+    #[test]
+    fn adopt_rewrites_other_files_inside_the_silent_directory() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("silent", |p| {
+                p.mode = core::ProjectMode::Silent;
+                p.agents = vec!["claude".into(), "codex".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: SHARED.into(),
+                }]);
+            });
+            let silent = dir.join(".automatic/silent");
+            let claude = silent.join(".claude/agents/planner.md");
+            write(&claude, &claude_render(SHARED));
+            write(
+                &silent.join(".codex/agents/planner.toml"),
+                &codex_render(SHARED).replace("Stored body.", "Edited body."),
+            );
+
+            adopt_custom_asset("silent", "agent", "Planner").expect("adopt");
+
+            assert!(std::fs::read_to_string(&claude)
+                .expect("read")
+                .contains("Edited body."));
+            assert!(!dir.join(".claude").exists());
         });
     }
 
