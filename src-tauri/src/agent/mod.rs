@@ -1208,34 +1208,44 @@ pub(crate) fn frontmatter_block(content: &str) -> Option<&str> {
 
 /// `true` for text a frontmatter value can hold on one line.  A control
 /// character or Unicode line break could end the line in some reader, which
-/// would let a value add keys of its own or close the block.
+/// would let a value add keys of its own or close the block.  Tab is the one
+/// control character YAML allows inside a line.
 fn fits_on_one_frontmatter_line(value: &str) -> bool {
     !value
         .chars()
-        .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+        .any(|c| (c.is_control() && c != '\t') || matches!(c, '\u{2028}' | '\u{2029}'))
 }
 
 /// `true` when YAML would read a plain `value` as something other than that
 /// text, so it has to be quoted.
 fn frontmatter_value_needs_quotes(value: &str) -> bool {
     const LEADING_INDICATORS: &[char] = &[
-        '[', ']', '{', '}', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', '#',
+        '[', ']', '{', '}', ',', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`', '#',
     ];
+    const OTHER_TYPES: &[&str] = &[
+        "", "-", "?", "~", "null", "true", "false", "yes", "no", "on", "off",
+    ];
+    let lowercase = value.to_ascii_lowercase();
     value != value.trim()
         || value.contains(": ")
+        || value.contains(":\t")
         || value.contains(" #")
+        || value.contains("\t#")
+        || (value.starts_with(['-', '?']) && value[1..].starts_with([' ', '\t']))
         || value.ends_with(':')
         || value.starts_with(LEADING_INDICATORS)
-        || value.starts_with("- ")
-        || value.starts_with("? ")
+        || OTHER_TYPES.contains(&lowercase.as_str())
+        || lowercase.parse::<f64>().is_ok()
+        || lowercase.starts_with("0x")
+        || lowercase.starts_with("0o")
+        || matches!(lowercase.as_str(), ".inf" | "+.inf" | "-.inf" | ".nan")
 }
 
 /// Write `value` as one frontmatter value, or return `None` when that cannot
 /// be done safely.  This is the single gate for what reaches frontmatter.
 ///
-/// The test for this proves the round trip through [`parse_frontmatter`]
-/// only: no YAML crate is in the tree, so a real YAML reader is not checked.
-/// The quoting rules aim at YAML, but that part is unverified.
+/// `frontmatter_value_is_one_yaml_string` in the tests checks this against a
+/// real YAML 1.2 parser, as well as [`parse_frontmatter`].
 ///
 /// [`parse_frontmatter`] strips one layer of quotes and does not unescape, so
 /// a quoted value must not need escaping.  Single quotes hold anything except
@@ -1274,25 +1284,48 @@ pub(crate) fn top_level_frontmatter_value<'a>(content: &'a str, key: &str) -> Op
         .map(|(_, value)| value)
 }
 
+/// `true` when a flow collection (`[a, b` or `{a: 1`) is not closed on the
+/// line that opens it.
+fn opens_unclosed_flow_collection(value: &str) -> bool {
+    if !value.starts_with(['[', '{']) {
+        return false;
+    }
+    let mut depth = 0;
+    let mut quote = None;
+    for c in value.chars() {
+        match (quote, c) {
+            (Some(open), _) if c == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '[' | '{') => depth += 1,
+            (None, ']' | '}') => depth -= 1,
+            _ => {}
+        }
+    }
+    depth > 0 || quote.is_some()
+}
+
 /// `true` when the value on `lines[index]` carries on past that line: a block
-/// scalar, an unclosed quote, or following lines that belong to it.  Editing
-/// only the first line would leave the rest behind.
+/// scalar, an unclosed quote or flow collection, or following lines that
+/// belong to it.  A comment can sit between a key and its value, so comments
+/// are skipped.  Editing only the first line would leave the rest behind.
 fn frontmatter_value_continues(lines: &[&str], index: usize) -> bool {
     let value = lines[index].split_once(':').map_or("", |(_, value)| value.trim());
     let unclosed = |quote: char| {
         value.starts_with(quote) && (value.len() < 2 || !value.ends_with(quote))
     };
-    if value.starts_with(['|', '>']) || unclosed('"') || unclosed('\'') {
+    if value.starts_with(['|', '>'])
+        || unclosed('"')
+        || unclosed('\'')
+        || opens_unclosed_flow_collection(value)
+    {
         return true;
     }
     lines[index + 1..]
         .iter()
         .map(|line| line.trim_end())
-        .find(|line| !line.is_empty())
-        .is_some_and(|next| {
-            next.starts_with([' ', '\t', '-'])
-                || !(next.starts_with('#') || next.contains(':'))
-        })
+        .find(|line| !line.is_empty() && !line.trim_start().starts_with('#'))
+        .is_some_and(|next| next.starts_with([' ', '\t', '-']) || !next.contains(':'))
 }
 
 /// Set or remove one top-level frontmatter key and leave every other byte
@@ -1307,10 +1340,21 @@ pub(crate) fn set_frontmatter_value(
     key: &str,
     value: Option<&str>,
 ) -> Option<String> {
-    let line = match value {
-        Some(value) => Some(format!("{key}: {}", render_frontmatter_value(value)?)),
+    let rendered = match value {
+        Some(value) => Some(render_frontmatter_value(value)?),
         None => None,
     };
+    write_frontmatter_line(content, key, rendered.as_deref())
+}
+
+/// [`set_frontmatter_value`] for an integer, which stays a number in YAML.
+pub(crate) fn set_frontmatter_integer(content: &str, key: &str, value: i64) -> Option<String> {
+    write_frontmatter_line(content, key, Some(&value.to_string()))
+}
+
+/// The edit behind [`set_frontmatter_value`], with the value already rendered.
+fn write_frontmatter_line(content: &str, key: &str, rendered: Option<&str>) -> Option<String> {
+    let line = rendered.map(|rendered| format!("{key}: {rendered}"));
     let Some(span) = frontmatter_span(content) else {
         return Some(match line {
             Some(line) => format!("---\n{line}\n---\n{content}"),
@@ -3436,6 +3480,15 @@ mod tests {
             "? question",
             "#hash",
             "back\\slash: yes",
+            "\tleading tab",
+            "trailing tab\t",
+            "",
+            "-",
+            "?",
+            "~",
+            "null",
+            "true",
+            "false",
         ] {
             let rendered = render_frontmatter_value(value).unwrap_or_else(|| panic!("{value}"));
             let content = format!("---\nkey: {rendered}\n---\n");
@@ -3444,9 +3497,77 @@ mod tests {
         }
     }
 
+    /// `value` must be accepted, and in a block of three keys a real YAML
+    /// parser must read it as one string and find no extra key.
+    fn frontmatter_value_is_one_yaml_string(value: &str) {
+        let Some(rendered) = render_frontmatter_value(value) else {
+            panic!("{value:?} was refused");
+        };
+        let block = format!("first: x\nkey: {rendered}\nlast: y\n");
+        let docs = yaml_rust2::YamlLoader::load_from_str(&block)
+            .unwrap_or_else(|e| panic!("{value:?} as {rendered:?}: {e}"));
+        assert_eq!(docs.len(), 1, "{value:?}");
+        let map = docs[0].as_hash().unwrap_or_else(|| panic!("{value:?}"));
+        assert_eq!(map.len(), 3, "{value:?} as {rendered:?}");
+        assert_eq!(
+            docs[0]["key"],
+            yaml_rust2::Yaml::String(value.to_string()),
+            "{value:?} as {rendered:?}"
+        );
+    }
+
+    const YAML_VALUES: &[&str] = &[
+        "plain", "two words", "a:b", "a: b", "a :b", "a#b", "a #b", "#a", "a:", ":", "::", ": a",
+        "-", "--", "---", "- a", "-a", "?", "??", "? a", "?a", "~", "~a", "null", "Null", "NULL",
+        "nullable", "true", "True", "TRUE", "truthy", "false", "False", "FALSE", "yes", "Yes",
+        "no", "No", "on", "On", "off", "Off", "0", "1", "-1", "+1", "1.5", "-1.5", "1e3", "1E3",
+        ".5", "5.", ".inf", "-.inf", "+.inf", ".Inf", ".INF", ".nan", ".NaN", ".NAN", "0x1F",
+        "0o17", "0b1", "1_000", "2001-12-14", "12:30:00", "[a]", "[", "]", "{a}", "{", "}", ",",
+        ", a", "a,b", "a, b", "&a", "*a", "!a", "!!str a", "|", "|-", ">", ">-", "'", "\"", "%a",
+        "@a", "`a", "a'b", "a\"b", "'a", "a'", "\"a", "a\"", "'a'", "\"a\"", "it's: x",
+        "tab\tinside", "\tlead", "trail\t", " lead", "trail ", "  both  ", "",
+        "back\\slash", "\\n", "a: \\n", "c:\\temp", "é: ü", "日本語", "emoji 🎉", "<<", "=",
+        "key: [x]", "--- a", "... a", "...", "a\u{a0}b", "gpt-5.4", "inherit", "Read, Grep",
+    ];
+
+    /// The gate must hold against a real parser, not only the repo's own.
+    #[test]
+    fn accepted_frontmatter_values_are_one_yaml_string() {
+        for value in YAML_VALUES {
+            frontmatter_value_is_one_yaml_string(value);
+        }
+    }
+
+    /// The same for what a user might build from those pieces.
+    #[test]
+    fn combined_frontmatter_values_are_one_yaml_string_or_refused() {
+        let pieces = [
+            "a", ":", ": ", "#", " #", "'", "\"", "\\", "-", "- ", "?", "? ", "[", "{", "]", "}", ",",
+            "&", "*", "!", "|", ">", "%", "@", "`", "~", "\t", " ",
+        ];
+        for first in pieces {
+            for second in pieces {
+                for third in ["", "a", "1"] {
+                    let value = format!("{first}{second}{third}");
+                    if render_frontmatter_value(&value).is_some() {
+                        frontmatter_value_is_one_yaml_string(&value);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_integer_stays_a_number_in_frontmatter() {
+        assert_eq!(
+            set_frontmatter_integer("---\nmaxTurns: 1\n---\n", "maxTurns", 5).unwrap(),
+            "---\nmaxTurns: 5\n---\n"
+        );
+    }
+
     #[test]
     fn render_frontmatter_value_leaves_a_plain_value_alone() {
-        for value in ["plain", "it's fine", "say \"hi\" now", "a:b", "x-y", "a#b", ""] {
+        for value in ["plain", "it's fine", "say \"hi\" now", "a:b", "x-y", "a#b", "tab\tinside"] {
             assert_eq!(render_frontmatter_value(value).as_deref(), Some(value));
         }
     }
@@ -3456,7 +3577,6 @@ mod tests {
         for value in [
             "a\nb",
             "a\r",
-            "a\tb",
             "a\u{7}b",
             "a\u{7f}b",
             "a\u{85}b",
@@ -3480,8 +3600,8 @@ mod tests {
     fn set_frontmatter_value_replaces_a_line_where_it_stands() {
         let content = "---\nb: 1\na: 2\nc: 3\n---\nBody.\n";
         assert_eq!(
-            set_frontmatter_value(content, "a", Some("9")).unwrap(),
-            "---\nb: 1\na: 9\nc: 3\n---\nBody.\n"
+            set_frontmatter_value(content, "a", Some("nine")).unwrap(),
+            "---\nb: 1\na: nine\nc: 3\n---\nBody.\n"
         );
     }
 
@@ -3489,20 +3609,20 @@ mod tests {
     fn set_frontmatter_value_replaces_the_line_the_parser_reads() {
         let content = "---\na: 1\na: 2\n---\n";
         assert_eq!(
-            set_frontmatter_value(content, "a", Some("9")).unwrap(),
-            "---\na: 1\na: 9\n---\n"
+            set_frontmatter_value(content, "a", Some("nine")).unwrap(),
+            "---\na: 1\na: nine\n---\n"
         );
     }
 
     #[test]
     fn set_frontmatter_value_adds_a_new_key_at_the_end_of_the_block() {
         assert_eq!(
-            set_frontmatter_value("---\na: 1\n---\nBody.\n", "b", Some("2")).unwrap(),
-            "---\na: 1\nb: 2\n---\nBody.\n"
+            set_frontmatter_value("---\na: 1\n---\nBody.\n", "b", Some("two")).unwrap(),
+            "---\na: 1\nb: two\n---\nBody.\n"
         );
         assert_eq!(
-            set_frontmatter_value("Body.\n", "b", Some("2")).unwrap(),
-            "---\nb: 2\n---\nBody.\n"
+            set_frontmatter_value("Body.\n", "b", Some("two")).unwrap(),
+            "---\nb: two\n---\nBody.\n"
         );
     }
 
@@ -3523,12 +3643,12 @@ mod tests {
     fn set_frontmatter_value_keeps_crlf_line_endings() {
         let content = "---\r\na: 1\r\nb: 2\r\n---\r\nBody.\r\n";
         assert_eq!(
-            set_frontmatter_value(content, "a", Some("9")).unwrap(),
-            "---\r\na: 9\r\nb: 2\r\n---\r\nBody.\r\n"
+            set_frontmatter_value(content, "a", Some("nine")).unwrap(),
+            "---\r\na: nine\r\nb: 2\r\n---\r\nBody.\r\n"
         );
         assert_eq!(
-            set_frontmatter_value(content, "c", Some("3")).unwrap(),
-            "---\r\na: 1\r\nb: 2\r\nc: 3\r\n---\r\nBody.\r\n"
+            set_frontmatter_value(content, "c", Some("three")).unwrap(),
+            "---\r\na: 1\r\nb: 2\r\nc: three\r\n---\r\nBody.\r\n"
         );
     }
 
@@ -3560,6 +3680,11 @@ mod tests {
             "tools: 'Read,\n  Grep'\n",
             "tools: [Read,\n  Grep]\n",
             "tools: [Read,\nGrep]\n",
+            "tools:\n# a comment\n  - Read\n",
+            "tools:\n# one\n\n# two\n  Read\n",
+            "tools: [Read,\n",
+            "tools: {a: 1,\n",
+            "tools: [\"a]\", b,\n",
         ] {
             let content = format!("---\nname: planner\n{block}after: 1\n---\n");
             assert_eq!(set_frontmatter_value(&content, "tools", None), None, "{block}");
@@ -3571,15 +3696,31 @@ mod tests {
         }
     }
 
+    /// A closed value followed by a comment and the next key is one line.
+    #[test]
+    fn set_frontmatter_value_edits_a_value_that_ends_on_its_line() {
+        for block in [
+            "tools: [Read, Grep]\n",
+            "tools: {a: 1}\n",
+            "tools: [\"a]\", \"b\"]\n",
+            "tools: x\n# a comment\n",
+            "tools:\n# a comment\n",
+        ] {
+            let content = format!("---\nname: planner\n{block}after: 1\n---\n");
+            let updated = set_frontmatter_value(&content, "tools", Some("new")).unwrap();
+            assert!(updated.contains("tools: new\n"), "{block}");
+        }
+    }
+
     #[test]
     fn set_frontmatter_value_handles_an_empty_block() {
         assert_eq!(
-            set_frontmatter_value("---\n---\nBody.\n", "a", Some("1")).unwrap(),
-            "---\na: 1\n---\nBody.\n"
+            set_frontmatter_value("---\n---\nBody.\n", "a", Some("one")).unwrap(),
+            "---\na: one\n---\nBody.\n"
         );
         assert_eq!(
-            set_frontmatter_value("---\r\n---\r\nBody.\r\n", "a", Some("1")).unwrap(),
-            "---\r\na: 1\r\n---\r\nBody.\r\n"
+            set_frontmatter_value("---\r\n---\r\nBody.\r\n", "a", Some("one")).unwrap(),
+            "---\r\na: one\r\n---\r\nBody.\r\n"
         );
     }
 

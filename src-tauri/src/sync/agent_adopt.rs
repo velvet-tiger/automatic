@@ -203,7 +203,8 @@ fn apply_edit(edit: &CodexEdit, stored: &str) -> Result<String, AdoptRefusal> {
         merged = match edit.table.get("max_turns") {
             None => apply_field(&merged, "max_turns", "maxTurns", None)?,
             Some(toml::Value::Integer(turns)) => {
-                apply_field(&merged, "max_turns", "maxTurns", Some(&turns.to_string()))?
+                agent::set_frontmatter_integer(&merged, "maxTurns", *turns)
+                    .ok_or_else(|| AdoptRefusal::CannotKeep(vec!["max_turns".to_string()]))?
             }
             Some(_) => merged,
         };

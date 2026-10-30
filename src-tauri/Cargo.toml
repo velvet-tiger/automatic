@@ -90,6 +90,9 @@ clap = { version = "4", features = ["derive"] }
 
 # The Secret Service client that `keyring` uses. `core/secret_store.rs` calls
 # it directly to confirm the default keyring is unlocked before each call.
+[dev-dependencies]
+yaml-rust2 = { version = "0.13", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus-secret-service = "4.1"
 
