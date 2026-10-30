@@ -180,8 +180,10 @@ impl Agent for CodexCli {
                     // `headers` table is an unknown key and is ignored.
                     if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                         if !headers.is_empty() {
-                            toml_content
-                                .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", toml_table_key(name)));
+                            toml_content.push_str(&format!(
+                                "\n[mcp_servers.{}.http_headers]\n",
+                                toml_table_key(name)
+                            ));
                             for (key, val) in headers {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
@@ -231,8 +233,10 @@ impl Agent for CodexCli {
 
                     if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
                         if !env.is_empty() {
-                            toml_content
-                                .push_str(&format!("\n[mcp_servers.{}.env]\n", toml_table_key(name)));
+                            toml_content.push_str(&format!(
+                                "\n[mcp_servers.{}.env]\n",
+                                toml_table_key(name)
+                            ));
                             for (key, val) in env {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
@@ -303,9 +307,8 @@ impl Agent for CodexCli {
         let mut retained = String::new();
         let mut skip_block = false;
         for line in existing.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') && trimmed.ends_with(']') {
-                skip_block = parse_mcp_server_header(trimmed)
+            if let Some(header) = toml_header_text(line) {
+                skip_block = parse_mcp_server_header(header)
                     .map(|name| to_remove.contains(name.as_str()))
                     .unwrap_or(false);
             }
@@ -615,8 +618,10 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
 
             if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                 if !headers.is_empty() {
-                    toml_content
-                        .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", toml_table_key(name)));
+                    toml_content.push_str(&format!(
+                        "\n[mcp_servers.{}.http_headers]\n",
+                        toml_table_key(name)
+                    ));
                     for (key, val) in headers {
                         if let Some(val_str) = val.as_str() {
                             toml_content.push_str(&format!(
@@ -662,8 +667,10 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
 
             if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
                 if !env.is_empty() {
-                    toml_content
-                                .push_str(&format!("\n[mcp_servers.{}.env]\n", toml_table_key(name)));
+                    toml_content.push_str(&format!(
+                        "\n[mcp_servers.{}.env]\n",
+                        toml_table_key(name)
+                    ));
                     for (key, val) in env {
                         if let Some(val_str) = val.as_str() {
                             toml_content.push_str(&format!(
@@ -680,6 +687,36 @@ fn render_codex_server_section(name: &str, config: &Value) -> String {
 
     toml_content.push('\n');
     toml_content
+}
+
+/// The header of a line that opens a TOML table, without any trailing
+/// comment.  Removal scans line by line, so a header it misses extends the
+/// block being removed over the next server.  Brackets and `#` inside a
+/// quoted key are part of the key.  Returns `None` for any other line.
+fn toml_header_text(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, c) in trimmed.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(open) if c == open => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == ']' => {
+                let closed = index + 1;
+                let end = closed + usize::from(trimmed[closed..].starts_with(']'));
+                let rest = trimmed[end..].trim_start();
+                return (rest.is_empty() || rest.starts_with('#')).then(|| &trimmed[..end]);
+            }
+            None => {}
+        }
+    }
+    None
 }
 
 /// If `trimmed` is a section header of the form `[mcp_servers.<name>]` or
@@ -774,9 +811,8 @@ fn write_codex_global_mcp(
     let mut retained = String::new();
     let mut skip_block = false;
     for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            skip_block = parse_mcp_server_header(trimmed)
+        if let Some(header) = toml_header_text(line) {
+            skip_block = parse_mcp_server_header(header)
                 .map(|name| to_remove.contains(name.as_str()))
                 .unwrap_or(false);
         }
@@ -1239,6 +1275,77 @@ mod tests {
         assert_eq!(report.removed, vec![CRAFTED_NAME]);
         let raw = fs::read_to_string(&path).unwrap_or_default();
         assert!(!raw.contains("sandbox_workspace_write"), "{raw}");
+    }
+
+    #[test]
+    fn header_text_finds_the_header_before_a_comment() {
+        for (line, header) in [
+            ("[mcp_servers.x]", Some("[mcp_servers.x]")),
+            ("  [mcp_servers.x] # note", Some("[mcp_servers.x]")),
+            ("[mcp_servers.x]# note", Some("[mcp_servers.x]")),
+            ("[model] # note", Some("[model]")),
+            ("[[profiles]] # note", Some("[[profiles]]")),
+            ("[mcp_servers.\"a#b\"]", Some("[mcp_servers.\"a#b\"]")),
+            ("[mcp_servers.\"a]b\"] # note", Some("[mcp_servers.\"a]b\"]")),
+            ("[mcp_servers.\"a\\\"]b\"]", Some("[mcp_servers.\"a\\\"]b\"]")),
+            ("[mcp_servers.'a#]b'] # note", Some("[mcp_servers.'a#]b']")),
+            ("command = \"x\"", None),
+            ("# [mcp_servers.x]", None),
+            ("[mcp_servers.x] extra", None),
+        ] {
+            assert_eq!(toml_header_text(line), header, "{line}");
+        }
+    }
+
+    const COMMENTED_CONFIG: &str = "[mcp_servers.managed] # ours\ncommand = \"a\"\n\n[mcp_servers.user-server] # keep me\ncommand = \"u\"\n\n[mcp_servers.\"odd#name\"] # keep me too\ncommand = \"o\"\n\n[model] # settings\nprovider = \"x\"\n";
+
+    /// A header with a trailing comment used to read as a plain line, so
+    /// removing `managed` went on to delete the servers after it.
+    #[test]
+    fn cleanup_stops_at_a_header_with_a_trailing_comment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".codex/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, COMMENTED_CONFIG).unwrap();
+
+        CodexCli.cleanup_mcp_config(dir.path(), &["managed".to_string()]);
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[mcp_servers.managed]"), "{raw}");
+        assert!(raw.contains("[mcp_servers.user-server] # keep me\n"), "{raw}");
+        assert!(raw.contains("[mcp_servers.\"odd#name\"] # keep me too\n"), "{raw}");
+        assert!(raw.contains("[model] # settings\n"), "{raw}");
+    }
+
+    #[test]
+    fn cleanup_removes_a_managed_header_with_a_trailing_comment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".codex/config.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, COMMENTED_CONFIG).unwrap();
+
+        CodexCli.cleanup_mcp_config(dir.path(), &["odd#name".to_string()]);
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("odd#name"), "{raw}");
+        assert!(raw.contains("[mcp_servers.managed] # ours\n"), "{raw}");
+        assert!(raw.contains("[model] # settings\n"), "{raw}");
+    }
+
+    #[test]
+    fn global_writer_stops_at_a_header_with_a_trailing_comment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, COMMENTED_CONFIG).unwrap();
+
+        let report = write_codex_global_mcp(&path, &Map::new(), &["managed".to_string()]).unwrap();
+
+        assert_eq!(report.removed, vec!["managed"]);
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[mcp_servers.managed]"), "{raw}");
+        assert!(raw.contains("[mcp_servers.user-server] # keep me\n"), "{raw}");
+        assert!(raw.contains("[mcp_servers.\"odd#name\"] # keep me too\n"), "{raw}");
+        assert!(raw.contains("[model] # settings\n"), "{raw}");
     }
 
     /// Existing names must render byte-identically, so no user sees a config
