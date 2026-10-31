@@ -113,7 +113,7 @@ struct DiscoveredSubAgents {
     custom_agents: Vec<CustomAgent>,
     /// One line per file that could not be imported, saying why.
     refused: Vec<String>,
-    /// The machine name of each of those files.
+    /// The library id of each of those files, where there is one.
     refused_names: Vec<String>,
 }
 
@@ -184,7 +184,16 @@ fn discover_sub_agents(
                         relative.display()
                     );
                     refused.push(format!("{}: {reason}", relative.display()));
-                    refused_names.push(fallback_id.to_string());
+                    // A library id need not match the file's machine name.
+                    refused_names.extend(
+                        global_user_agents
+                            .iter()
+                            .filter(|global| {
+                                core::agent_machine_name("Sub-agent", &global.content, &global.id)
+                                    .is_ok_and(|name| name == fallback_id)
+                            })
+                            .map(|global| global.id.clone()),
+                    );
                     stored_agent_with_machine_name(stored, fallback_id)
                 }
             };

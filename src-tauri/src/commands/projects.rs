@@ -4553,17 +4553,24 @@ mod adopt_custom_asset_tests {
                 p.agents = vec!["claude".into()];
             });
             let path = dir.join(".claude/agents/planner.md");
-            let content = "---\n\"name\": other\nautomatic-managed: true\n---\nBody.\n";
-            write(&path, content);
+            for name_line in [
+                "\"name\": other",
+                "name : other",
+                "  name: other",
+                "name: \"'planner'\"",
+            ] {
+                let content = format!("---\n{name_line}\nautomatic-managed: true\n---\nBody.\n");
+                write(&path, &content);
 
-            let preview = preview_rebuild_project("quoted-name").expect("preview");
-            rebuild_project("quoted-name").expect("rebuild");
+                let preview = preview_rebuild_project("quoted-name").expect("preview");
+                rebuild_project("quoted-name").expect("rebuild");
 
-            let raw = core::read_project("quoted-name").expect("read project");
-            let project: core::Project = serde_json::from_str(&raw).expect("project json");
-            assert!(project.custom_agents.is_none(), "{:?}", project.custom_agents);
-            assert!(preview.contains(".claude/agents/planner.md"), "{preview}");
-            assert_eq!(std::fs::read_to_string(&path).expect("read"), content);
+                let raw = core::read_project("quoted-name").expect("read project");
+                let project: core::Project = serde_json::from_str(&raw).expect("project json");
+                assert!(project.custom_agents.is_none(), "{name_line}");
+                assert!(preview.contains(".claude/agents/planner.md"), "{name_line}");
+                assert_eq!(std::fs::read_to_string(&path).expect("read"), content);
+            }
         });
     }
 
@@ -4613,10 +4620,10 @@ mod adopt_custom_asset_tests {
     #[test]
     fn rebuild_keeps_a_library_agent_whose_file_it_cannot_read() {
         with_temp_home(|_| {
-            core::save_subagent("planner", "Planner", STORED).expect("save library agent");
+            core::save_subagent("library-id", "Planner", STORED).expect("save library agent");
             let (_keep, dir) = make_project("big-library", |p| {
                 p.agents = vec!["claude".into()];
-                p.user_agents = vec!["planner".into()];
+                p.user_agents = vec!["library-id".into()];
             });
             write(&dir.join(".claude/agents/planner.md"), &oversized_managed_command());
 
@@ -4624,7 +4631,7 @@ mod adopt_custom_asset_tests {
 
             let raw = core::read_project("big-library").expect("read project");
             let project: core::Project = serde_json::from_str(&raw).expect("project json");
-            assert_eq!(project.user_agents, vec!["planner".to_string()]);
+            assert_eq!(project.user_agents, vec!["library-id".to_string()]);
         });
     }
 

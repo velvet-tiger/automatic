@@ -1444,6 +1444,18 @@ pub(crate) fn frontmatter_key_in_another_form(content: &str) -> Option<&'static 
             return Some(NAME);
         }
     }
+    // The parser and the name extractor must agree too: a repeated key, `name : x`
+    // and an indented `name: x` each read differently to one of them.
+    let (frontmatter, _) = parse_frontmatter(content);
+    let parsed_name = frontmatter
+        .get(NAME)
+        .map(String::as_str)
+        .filter(|name| !name.is_empty());
+    if top_level_frontmatter_key_count(content, NAME) > 1
+        || parsed_name != crate::core::extract_agent_name(content).as_deref()
+    {
+        return Some(NAME);
+    }
     None
 }
 

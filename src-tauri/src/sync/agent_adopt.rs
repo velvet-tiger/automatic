@@ -7,8 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::{self, Agent};
 use crate::core::{
-    agent_machine_name, agent_machine_slug, custom_agent_machine_name, extract_agent_name,
-    CustomAgent, Project,
+    agent_machine_name, agent_machine_slug, custom_agent_machine_name, CustomAgent, Project,
 };
 
 use super::helpers::{project_write_refusal, read_project_text, write_project_file};
@@ -118,16 +117,6 @@ fn whole_markdown_file(
     let disk = disk.strip_prefix('\u{feff}').unwrap_or(disk);
     if let Some(key) = agent::frontmatter_key_in_another_form(disk) {
         return Err(AdoptRefusal::CannotKeep(vec![key.to_string()]));
-    }
-    let (frontmatter, _) = agent::parse_frontmatter(disk);
-    let parsed_name = frontmatter
-        .get("name")
-        .map(String::as_str)
-        .filter(|name| !name.is_empty());
-    if agent::top_level_frontmatter_key_count(disk, "name") > 1
-        || parsed_name != extract_agent_name(disk).as_deref()
-    {
-        return Err(AdoptRefusal::CannotKeep(vec!["name".to_string()]));
     }
     if agent_machine_name("Custom agent", disk, &stored.name).as_deref() != Ok(machine_name) {
         return Err(AdoptRefusal::NameChanged);
