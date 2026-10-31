@@ -21,7 +21,7 @@ pub use helpers::{CustomAssetConflict, CustomAssetKind, McpConfigSyncNotes, McpS
 // core instruction and rule writers.
 pub(crate) use helpers::{
     create_project_dir, escaped_silent_dir, project_write_refusal, read_project_text,
-    remove_dropped_custom_agent_files, write_project_file, write_project_file_or_skip,
+    remove_dropped_agent_files, write_project_file, write_project_file_or_skip,
 };
 // Adopting a custom agent resolves the conflict the scan reported.
 pub(crate) use agent_adopt::{

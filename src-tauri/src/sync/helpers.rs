@@ -1130,10 +1130,11 @@ pub(crate) fn sync_user_agents(
                     continue;
                 };
                 // A managed file rebuild could not read is not stale.  Without
-                // this, rebuild dropping it would make sync delete it.
+                // this, rebuild dropping it would make sync delete it.  The
+                // guarded check goes first: the marker check has no size limit.
                 if expected_file_names.contains(file_name)
-                    || !crate::agent::is_managed_agent_file(&path)
                     || super::rebuild::agent_file_is_refused(root, agent, &path)
+                    || !crate::agent::is_managed_agent_file(&path)
                 {
                     continue;
                 }
@@ -1147,20 +1148,28 @@ pub(crate) fn sync_user_agents(
     Ok(written)
 }
 
-/// Delete the files of custom agents that `before` has and `after` does not.
-/// Call this before syncing `after`, so sync restores any file that another
-/// source now provides under the same name.
+/// The machine name and content of a library agent, or `None` when the
+/// library no longer holds it.
+fn library_agent(id: &str) -> Option<(String, String)> {
+    let raw = crate::core::read_subagent(id).ok()?;
+    let agent: crate::core::Subagent = serde_json::from_str(&raw).ok()?;
+    let machine_name = agent_machine_name("Sub-agent", &agent.content, id).ok()?;
+    Some((machine_name, agent.content))
+}
+
+/// Delete the files of custom and library agents that `before` has and
+/// `after` does not.  Call this before syncing `after`, so sync restores any
+/// file that another source now provides under the same name.
 ///
 /// Sync's stale sweep skips a file rebuild cannot read, and once this save
 /// lands nothing records what such a file was.  So this is the one point
 /// that can tell it apart from the user's own work.  Only a managed file that
-/// still matches the stored render goes.  Anything else stays and shows in
-/// drift.  Only agent tools in `after` are touched, because a tool the user
-/// removed with "Keep" has stopped being synced, not been emptied.
+/// still matches the stored render goes.  Anything else stays.  Only agent
+/// tools in `after` are touched, because a tool the user removed with "Keep"
+/// has stopped being synced, not been emptied.
 ///
-/// Returns the deleted paths.  A file that cannot be deleted is logged, and
-/// drift reports it.
-pub(crate) fn remove_dropped_custom_agent_files(
+/// Returns the deleted paths.  A file that cannot be deleted is logged.
+pub(crate) fn remove_dropped_agent_files(
     before: &Project,
     after: &Project,
     dir: &Path,
@@ -1171,13 +1180,26 @@ pub(crate) fn remove_dropped_custom_agent_files(
         .iter()
         .flatten()
         .filter_map(|agent| custom_agent_machine_name(agent).ok())
+        .chain(
+            after
+                .user_agents
+                .iter()
+                .filter_map(|id| library_agent(id).map(|(machine_name, _)| machine_name)),
+        )
         .collect();
 
+    let dropped_custom = before.custom_agents.iter().flatten().filter_map(|agent| {
+        let machine_name = custom_agent_machine_name(agent).ok()?;
+        Some((machine_name, agent.content.clone()))
+    });
+    let dropped_library = before
+        .user_agents
+        .iter()
+        .filter(|id| !after.user_agents.contains(id))
+        .filter_map(|id| library_agent(id));
+
     let mut removed = Vec::new();
-    for dropped in before.custom_agents.iter().flatten() {
-        let Ok(machine_name) = custom_agent_machine_name(dropped) else {
-            continue;
-        };
+    for (machine_name, content) in dropped_custom.chain(dropped_library) {
         if kept.contains(&machine_name) {
             continue;
         }
@@ -1189,7 +1211,7 @@ pub(crate) fn remove_dropped_custom_agent_files(
             let Ok(Some(disk)) = read_project_text(dir, &path) else {
                 continue;
             };
-            let expected = agent.convert_agent_content(&dropped.content, &machine_name);
+            let expected = agent.convert_agent_content(&content, &machine_name);
             if !crate::agent::is_managed_agent_content(&path, &disk)
                 || !agent.agent_file_differences(&disk, &expected).is_empty()
             {

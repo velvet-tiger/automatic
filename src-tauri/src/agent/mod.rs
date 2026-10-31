@@ -1350,6 +1350,56 @@ fn frontmatter_value_continues(lines: &[&str], index: usize) -> bool {
         .is_some_and(|next| next.starts_with([' ', '\t', '-']) || !next.contains(':'))
 }
 
+/// `true` for a top-level line that sets no key of its own: `_key: x`, an
+/// item of the list under the key before it, or the bracket closing a flow
+/// collection.
+fn continues_a_value(line: &str) -> bool {
+    let line = line.trim_end();
+    line.starts_with('_') || line == "-" || line.starts_with("- ") || matches!(line, "]" | "}")
+}
+
+/// `true` when `block` breaks a line in a way [`parse_frontmatter`] does not
+/// see: a lone carriage return, or a line break some YAML readers honour.  A
+/// comment or value could then hide a key behind it.
+fn holds_a_hidden_line_break(block: &str) -> bool {
+    // The block stops before the last line's `\n`, so a CRLF file ends in `\r`.
+    block
+        .trim_end_matches('\r')
+        .replace("\r\n", "\n")
+        .contains(['\r', '\u{85}', '\u{2028}', '\u{2029}'])
+}
+
+/// `true` when the value on a `key: value` line is set off from the colon.
+/// Without that, YAML reads the whole line as one scalar and finds no key.
+fn has_space_after_colon(line: &str) -> bool {
+    line.split_once(':').is_some_and(|(_, value)| {
+        value.is_empty() || value.starts_with([' ', '\t', '\r'])
+    })
+}
+
+/// `true` when a YAML reader and [`parse_frontmatter`] take the same text
+/// from a `name:` line.  The value must be one the gate would write as it
+/// stands, or be quoted with nothing inside to unescape.  So an alias, an
+/// anchor, an inline comment or a Unicode space at either end is refused.
+fn name_line_reads_the_same(line: &str) -> bool {
+    if !has_space_after_colon(line) {
+        return false;
+    }
+    let raw = line
+        .split_once(':')
+        .map_or("", |(_, value)| value.trim_matches([' ', '\t', '\r']));
+    if raw.is_empty() {
+        return true;
+    }
+    for quote in ['"', '\''] {
+        if raw.len() >= 2 && raw.starts_with(quote) && raw.ends_with(quote) {
+            let inner = &raw[1..raw.len() - 1];
+            return !inner.contains(quote) && !inner.contains('\\');
+        }
+    }
+    render_frontmatter_value(raw).as_deref() == Some(raw)
+}
+
 /// The key a YAML reader could see in `content` that [`parse_frontmatter`]
 /// cannot, when there is one.  The agent's name and managed marker decide
 /// where a file syncs and whether Automatic owns it, so both must read the
@@ -1362,12 +1412,21 @@ pub(crate) fn frontmatter_key_in_another_form(content: &str) -> Option<&'static 
     const NAME: &str = "name";
     const MANAGED: &str = "automatic-managed";
 
-    let lines: Vec<&str> = frontmatter_block(content)?.split('\n').collect();
+    let block = frontmatter_block(content)?;
+    if holds_a_hidden_line_break(block) {
+        return Some(NAME);
+    }
+    let lines: Vec<&str> = block.split('\n').collect();
     for (index, line) in lines.iter().enumerate() {
         if line.trim().is_empty() || line.starts_with([' ', '\t', '#']) {
             continue;
         }
-        if frontmatter_line_sets(line, NAME) && frontmatter_value_continues(&lines, index) {
+        if frontmatter_line_sets(line, MANAGED) && !has_space_after_colon(line) {
+            return Some(MANAGED);
+        }
+        if frontmatter_line_sets(line, NAME)
+            && (frontmatter_value_continues(&lines, index) || !name_line_reads_the_same(line))
+        {
             return Some(NAME);
         }
         let Some(first) = line.chars().next() else {
@@ -1381,7 +1440,7 @@ pub(crate) fn frontmatter_key_in_another_form(content: &str) -> Option<&'static 
             if key == NAME || key.contains('\\') {
                 return Some(NAME);
             }
-        } else if !first.is_alphanumeric() && first != '_' {
+        } else if !first.is_alphanumeric() && !continues_a_value(line) {
             return Some(NAME);
         }
     }
@@ -1595,6 +1654,26 @@ pub(crate) fn command_file_is_refused(root: &Path, path: &Path) -> bool {
     name_refused || crate::sync::read_project_text(root, path).is_err()
 }
 
+/// `true` for a regular file at `path` that rebuild cannot read, because it
+/// is too large or not UTF-8.  It may be the only copy of what it holds, so
+/// sync must not replace it.  Replacing a link loses nothing.
+fn is_unreadable_regular_file(root: &Path, path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+        && crate::sync::read_project_text(root, path).is_err()
+}
+
+/// Write one command file unless [`is_unreadable_regular_file`] says not to.
+fn write_command_file(root: &Path, path: &Path, rendered: String) -> Result<bool, String> {
+    if is_unreadable_regular_file(root, path) {
+        eprintln!(
+            "[automatic] sync: not replacing command '{}': it cannot be read",
+            path.display()
+        );
+        return Ok(false);
+    }
+    crate::sync::write_project_file_or_skip(root, path, rendered)
+}
+
 /// Sub-agent counterpart to [`is_managed_command_file`], with one extra
 /// branch: Kiro's format is JSON, which no command vendor uses. Each
 /// branch's marker matches the casing convention its own converter already
@@ -1717,7 +1796,7 @@ pub(crate) fn copy_commands_to_project(
     if !index_entries.is_empty() {
         let index_path = write_commands_index(root, project_commands_dir, &index_entries)?;
         written.push(index_path.display().to_string());
-    } else if let Some(index_path) = cleanup_commands_index(project_commands_dir)? {
+    } else if let Some(index_path) = cleanup_commands_index(root, project_commands_dir)? {
         written.push(index_path.display().to_string());
     }
 
@@ -1815,7 +1894,7 @@ pub(crate) fn sync_commands_to_dir(
         expected.insert(file_name.clone());
         let path = commands_dir.join(&file_name);
         let rendered = agent_instance.convert_command_content(content, name);
-        if crate::sync::write_project_file_or_skip(root, &path, rendered)? {
+        if write_command_file(root, &path, rendered)? {
             written.push(path.display().to_string());
         }
     }
@@ -1831,7 +1910,7 @@ pub(crate) fn sync_commands_to_dir(
         }
         let path = commands_dir.join(&file_name);
         let rendered = agent_instance.convert_command_content(&command.content, &command.name);
-        if crate::sync::write_project_file_or_skip(root, &path, rendered)? {
+        if write_command_file(root, &path, rendered)? {
             written.push(path.display().to_string());
         }
     }
@@ -1849,6 +1928,13 @@ fn sync_command_link(
     project_root: &Path,
     use_symlink: bool,
 ) -> Result<bool, String> {
+    if is_unreadable_regular_file(project_root, link_path) {
+        eprintln!(
+            "[automatic] sync: not replacing command '{}': it cannot be read",
+            link_path.display()
+        );
+        return Ok(false);
+    }
     if let Ok(meta) = link_path.symlink_metadata() {
         if meta.file_type().is_symlink() || meta.is_file() {
             fs::remove_file(link_path).map_err(|e| {
@@ -1938,9 +2024,11 @@ fn cleanup_stale_managed_command_files(
                 continue;
             };
 
+            // The guarded check goes first: the marker check reads the whole
+            // file with no size limit.
             if expected.contains(file_name)
-                || !is_managed_command_file(&path)
                 || command_file_is_refused(root, &path)
+                || !is_managed_command_file(&path)
             {
                 continue;
             }
@@ -2002,9 +2090,18 @@ fn commands_index_path(commands_dir: &Path) -> std::path::PathBuf {
         .unwrap_or_else(|| commands_dir.join("commands-index.md"))
 }
 
-fn cleanup_commands_index(commands_dir: &Path) -> Result<Option<std::path::PathBuf>, String> {
+fn cleanup_commands_index(
+    root: &Path,
+    commands_dir: &Path,
+) -> Result<Option<std::path::PathBuf>, String> {
     let index_path = commands_index_path(commands_dir);
-    if index_path.exists() && is_managed_command_file(&index_path) {
+    // A guarded read: a committed link to `/dev/zero` or a FIFO must not hang
+    // sync.  What cannot be read as project text is not Automatic's index.
+    let managed = crate::sync::read_project_text(root, &index_path)
+        .ok()
+        .flatten()
+        .is_some_and(|content| is_managed_command_content(&index_path, &content));
+    if managed {
         fs::remove_file(&index_path).map_err(|e| {
             format!(
                 "Failed to remove stale command index '{}': {}",

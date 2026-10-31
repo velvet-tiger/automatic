@@ -730,6 +730,17 @@ mod tests {
             ("name: >\n  planner\n", "name"),
             ("name: |\n  planner\n", "name"),
             ("name:\n  planner\n", "name"),
+            ("# note\rname: other\n", "name"),
+            ("# note\u{2028}name: other\n", "name"),
+            ("name: planner\ndescription: x\rname: other\n", "name"),
+            ("name: planner\n# n\rautomatic-managed: false\n", "name"),
+            ("name:planner\n", "name"),
+            ("name: planner\u{a0}\n", "name"),
+            ("name: *planner\n", "name"),
+            ("name: &a planner\n", "name"),
+            ("name: planner #x\n", "name"),
+            ("name: 'plan''ner'\n", "name"),
+            ("name: planner\nautomatic-managed:false\n", "automatic-managed"),
             ("name: planner\n\"automatic-managed\": false\n", "automatic-managed"),
             ("name: planner\n'automatic-managed': false\n", "automatic-managed"),
         ] {
@@ -745,7 +756,7 @@ mod tests {
 
     #[test]
     fn a_markdown_file_with_ordinary_keys_is_kept_whole() {
-        let disk = "---\r\nname: planner\r\n# note\r\n\"other key\": 1\r\nhooks:\r\n  - name: nested\r\n_private: x\r\n---\r\nBody.\r\n";
+        let disk = "---\r\nname: planner\r\n# note\r\n\"other key\": 1\r\nhooks:\r\n  - name: nested\r\ntools:\r\n- Read\r\n- Bash\r\nmodels: [\r\n  a\r\n]\r\n_private: x\r\n---\r\nBody.\r\n";
 
         assert_eq!(
             adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), disk, false).as_deref(),

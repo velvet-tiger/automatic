@@ -515,7 +515,7 @@ fn save_project_with(
 
         if !enriched.agents.is_empty() {
             let mut written = match &existing_project {
-                Some(existing) => sync::remove_dropped_custom_agent_files(
+                Some(existing) => sync::remove_dropped_agent_files(
                     existing,
                     &enriched,
                     &effective_project_dir(&enriched)?,
@@ -4510,15 +4510,121 @@ mod adopt_custom_asset_tests {
                     content: "Stored.\n".into(),
                 }]);
             });
-            write(&dir.join(".claude/commands/big.md"), &oversized_managed_command());
+            let path = dir.join(".claude/commands/big.md");
+            let oversized = oversized_managed_command();
+            write(&path, &oversized);
 
             rebuild_project("big-stored").expect("rebuild");
+            sync_project("big-stored").expect("sync");
 
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), oversized);
             let raw = core::read_project("big-stored").expect("read project");
             let project: core::Project = serde_json::from_str(&raw).expect("project json");
             let commands = project.custom_commands.expect("custom commands");
             assert_eq!(commands.len(), 1);
             assert_eq!(commands[0].content, "Stored.\n");
+        });
+    }
+
+    /// A committed index that links to a device must not hang the sync.
+    #[cfg(unix)]
+    #[test]
+    fn sync_with_no_commands_does_not_read_a_linked_index() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("linked-index", |p| {
+                p.agents = vec!["claude".into()];
+            });
+            std::fs::create_dir_all(dir.join(".agents")).expect("mkdir");
+            let index = dir.join(".agents/commands-index.md");
+            std::os::unix::fs::symlink("/dev/zero", &index).expect("link");
+
+            sync_project("linked-index").expect("sync");
+
+            assert!(index.symlink_metadata().is_ok());
+        });
+    }
+
+    /// Rebuild applies the same name check as adopt, so a file cannot reach
+    /// the project under a name a YAML reader disagrees with.
+    #[test]
+    fn rebuild_refuses_a_file_with_another_form_of_its_name() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("quoted-name", |p| {
+                p.agents = vec!["claude".into()];
+            });
+            let path = dir.join(".claude/agents/planner.md");
+            let content = "---\n\"name\": other\nautomatic-managed: true\n---\nBody.\n";
+            write(&path, content);
+
+            let preview = preview_rebuild_project("quoted-name").expect("preview");
+            rebuild_project("quoted-name").expect("rebuild");
+
+            let raw = core::read_project("quoted-name").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            assert!(project.custom_agents.is_none(), "{:?}", project.custom_agents);
+            assert!(preview.contains(".claude/agents/planner.md"), "{preview}");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), content);
+        });
+    }
+
+    /// The same for a tool whose commands are rendered rather than linked.
+    #[test]
+    fn sync_does_not_overwrite_a_rendered_command_it_cannot_read() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("big-gemini", |p| {
+                p.agents = vec!["gemini".into()];
+                p.custom_commands = Some(vec![core::CustomCommand {
+                    name: "big".into(),
+                    content: "Stored.\n".into(),
+                }]);
+            });
+            let path = dir.join(".gemini/commands/big.toml");
+            let oversized = format!("automatic_managed = true\n#{}\n", "x".repeat(1024 * 1024));
+            write(&path, &oversized);
+
+            sync_project("big-gemini").expect("sync");
+
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), oversized);
+        });
+    }
+
+    /// Detaching a library agent is the same as removing a custom one.
+    #[test]
+    fn detaching_a_library_agent_deletes_its_file_even_when_rebuild_refuses_it() {
+        with_temp_home(|_| {
+            core::save_subagent("planner", "Planner", REFUSED_STORED).expect("save library agent");
+            let (_keep, dir) = make_project("drop-library", |p| {
+                p.agents = vec!["codex".into()];
+                p.user_agents = vec!["planner".into()];
+            });
+            sync_project("drop-library").expect("sync");
+            let path = dir.join(".codex/agents/planner.toml");
+            assert!(path.exists());
+
+            save_edited("drop-library", |p| p.user_agents.clear());
+
+            assert!(!path.exists());
+            assert_eq!(drift_reasons("drop-library"), Vec::new());
+        });
+    }
+
+    /// A file rebuild cannot read cannot be matched to the library, and that
+    /// must not detach the agent.
+    #[test]
+    fn rebuild_keeps_a_library_agent_whose_file_it_cannot_read() {
+        with_temp_home(|_| {
+            core::save_subagent("planner", "Planner", STORED).expect("save library agent");
+            let (_keep, dir) = make_project("big-library", |p| {
+                p.agents = vec!["claude".into()];
+                p.user_agents = vec!["planner".into()];
+            });
+            write(&dir.join(".claude/agents/planner.md"), &oversized_managed_command());
+
+            rebuild_project("big-library").expect("rebuild");
+
+            let raw = core::read_project("big-library").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            assert_eq!(project.user_agents, vec!["planner".to_string()]);
         });
     }
 

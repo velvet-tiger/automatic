@@ -61,7 +61,8 @@ pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<
 
     let stored_agents = project.custom_agents.as_deref().unwrap_or(&[]);
     let found = discover_sub_agents(&rebuilt, stored_agents)?;
-    rebuilt.user_agents = found.user_agents;
+    rebuilt.user_agents =
+        with_refused_entries(found.user_agents, &project.user_agents, &found.refused_names);
     rebuilt.custom_agents = if found.custom_agents.is_empty() {
         None
     } else {
@@ -70,7 +71,11 @@ pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<
 
     let stored_commands = project.custom_commands.as_deref().unwrap_or(&[]);
     let commands = discover_sub_commands(&rebuilt, stored_commands)?;
-    rebuilt.user_commands = commands.user_commands;
+    rebuilt.user_commands = with_refused_entries(
+        commands.user_commands,
+        &project.user_commands,
+        &commands.refused_names,
+    );
     rebuilt.custom_commands = if commands.custom_commands.is_empty() {
         None
     } else {
@@ -84,12 +89,32 @@ pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<
     Ok((rebuilt, refused))
 }
 
+/// `found`, plus each `stored` library entry whose file rebuild refused.  A
+/// file that cannot be read cannot be matched to the library, so the entry
+/// would otherwise drop out of the project.
+fn with_refused_entries(
+    mut found: Vec<String>,
+    stored: &[String],
+    refused_names: &[String],
+) -> Vec<String> {
+    let missing: Vec<String> = stored
+        .iter()
+        .filter(|id| refused_names.contains(id) && !found.contains(id))
+        .cloned()
+        .collect();
+    found.extend(missing);
+    found.sort();
+    found
+}
+
 /// What rebuild found in the agents' directories.
 struct DiscoveredSubAgents {
     user_agents: Vec<String>,
     custom_agents: Vec<CustomAgent>,
     /// One line per file that could not be imported, saying why.
     refused: Vec<String>,
+    /// The machine name of each of those files.
+    refused_names: Vec<String>,
 }
 
 /// Find the sub-agents in each configured agent's directory.
@@ -109,6 +134,7 @@ fn discover_sub_agents(
     let mut custom_agents = Vec::new();
     let mut seen_custom_agent_ids = HashSet::new();
     let mut refused = Vec::new();
+    let mut refused_names = Vec::new();
 
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -158,6 +184,7 @@ fn discover_sub_agents(
                         relative.display()
                     );
                     refused.push(format!("{}: {reason}", relative.display()));
+                    refused_names.push(fallback_id.to_string());
                     stored_agent_with_machine_name(stored, fallback_id)
                 }
             };
@@ -177,6 +204,7 @@ fn discover_sub_agents(
         user_agents,
         custom_agents,
         refused,
+        refused_names,
     })
 }
 
@@ -254,6 +282,8 @@ struct DiscoveredSubCommands {
     custom_commands: Vec<CustomCommand>,
     /// One line per file that could not be imported, saying why.
     refused: Vec<String>,
+    /// The command name of each of those files.
+    refused_names: Vec<String>,
 }
 
 /// Find the commands in each configured agent's directory.  As with
@@ -277,6 +307,7 @@ fn discover_sub_commands(
     let mut custom_commands = Vec::new();
     let mut seen_custom_command_names = HashSet::new();
     let mut refused = Vec::new();
+    let mut refused_names = Vec::new();
 
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -322,6 +353,7 @@ fn discover_sub_commands(
                         relative.display()
                     );
                     refused.push(format!("{}: {reason}", relative.display()));
+                    refused_names.push(command_name.clone());
                     let keep = stored.iter().find(|command| command.name == command_name);
                     if let Some(command) = keep {
                         if seen_custom_command_names.insert(command_name) {
@@ -375,6 +407,7 @@ fn discover_sub_commands(
         user_commands,
         custom_commands,
         refused,
+        refused_names,
     })
 }
 
@@ -476,6 +509,9 @@ fn import_agent_file(
     else {
         return Ok(None);
     };
+    if let Some(key) = agent::frontmatter_key_in_another_form(&content) {
+        return Err(format!("its {key} does not read the same to every YAML reader"));
+    }
     let name = core::extract_agent_name(&content).unwrap_or_else(|| fallback_id.to_string());
     let custom_agent = CustomAgent { name, content };
     core::custom_agent_machine_name(&custom_agent)?;
