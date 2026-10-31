@@ -4634,6 +4634,35 @@ mod adopt_custom_asset_tests {
         });
     }
 
+    /// Older versions mixed line endings when rendering a CRLF copy.  This
+    /// `disk` string is what they wrote, so it stays literal.
+    #[test]
+    fn a_crlf_file_an_older_render_mixed_up_conflicts_until_overwritten() {
+        let stored = "---\r\nname: planner\r\n---\r\nBody.\r\n";
+        let disk = "---\n\nname: planner\r\nautomatic-managed: true\n---\r\nBody.\r\n";
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("older-crlf", |p| {
+                p.agents = vec!["claude".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: stored.into(),
+                }]);
+            });
+            write(&dir.join(".claude/agents/planner.md"), disk);
+            let raw = core::read_project("older-crlf").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let agents = project.custom_agents.clone().expect("agents");
+            assert!(matches!(
+                sync::scan_custom_agent(&project, &dir, &agents[0]),
+                Some(sync::CustomAgentFinding::Conflict { .. })
+            ));
+
+            overwrite_custom_asset("older-crlf", "agent", "Planner").expect("overwrite");
+
+            assert_no_conflict("older-crlf", &dir);
+        });
+    }
+
     /// A byte order mark must not leave a conflict behind: the stored copy
     /// drops it, and the file still on disk then matches.
     #[test]
