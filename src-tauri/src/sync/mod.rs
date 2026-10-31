@@ -15,10 +15,7 @@ pub use drift::{
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };
-pub use helpers::{
-    extract_agent_machine_name as extract_agent_machine_name_pub, CustomAssetConflict,
-    CustomAssetKind, McpConfigSyncNotes, McpServerNote,
-};
+pub use helpers::{CustomAssetConflict, CustomAssetKind, McpConfigSyncNotes, McpServerNote};
 // Contained project reads and writes, shared with the agent writers and the
 // core instruction and rule writers.
 pub(crate) use helpers::{
