@@ -179,6 +179,12 @@ export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolv
                   )}
                 </>
               )}
+              {file.reason === "refused" && (
+                <>
+                  <p className="text-[13px] font-medium text-text-base mb-2">Automatic cannot read this file</p>
+                  <p className="text-[12px]">It is no longer in the project, but Automatic will not delete a file it cannot read. Delete it yourself if you no longer need it.</p>
+                </>
+              )}
               {file.reason === "unreadable" && (
                 <>
                   <p className="text-[13px] font-medium text-text-base mb-2">File could not be read or edited</p>

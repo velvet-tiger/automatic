@@ -40,8 +40,9 @@ struct RebuildPreview {
     project_name: String,
     categories: Vec<RebuildPreviewCategory>,
     changed: bool,
-    /// Sub-agent files rebuild could not read, each with the reason.  They
-    /// stay on disk, and any stored version of them stays in the project.
+    /// Sub-agent and command files rebuild could not read, each with the
+    /// reason.  They stay on disk, and any stored version of them stays in
+    /// the project.
     refused_files: Vec<String>,
 }
 
@@ -513,7 +514,15 @@ fn save_project_with(
         core::save_project(name, &enriched_data)?;
 
         if !enriched.agents.is_empty() {
-            let written = sync::sync_project_without_autodetect(&mut enriched)?;
+            let mut written = match &existing_project {
+                Some(existing) => sync::remove_dropped_custom_agent_files(
+                    existing,
+                    &enriched,
+                    &effective_project_dir(&enriched)?,
+                )?,
+                None => Vec::new(),
+            };
+            written.extend(sync::sync_project_without_autodetect(&mut enriched)?);
             if !written.is_empty() {
                 let detail = format!(
                     "{} file{}",
@@ -4329,6 +4338,299 @@ mod adopt_custom_asset_tests {
             sync_project("stale").expect("sync");
 
             assert!(!path.exists());
+        });
+    }
+
+    /// Both quote kinds in a value that needs quoting: Codex stores it, but
+    /// rebuild refuses to read it back.
+    const REFUSED_STORED: &str =
+        "---\nname: planner\ndescription: it's: \"both\"\n---\nStored.\n";
+
+    /// A Codex project whose only agent renders to a file rebuild refuses.
+    fn refused_render_project(name: &str) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let (keep, dir) = make_project(name, |p| {
+            p.agents = vec!["codex".into()];
+            p.custom_agents = Some(vec![core::CustomAgent {
+                name: "Planner".into(),
+                content: REFUSED_STORED.into(),
+            }]);
+        });
+        sync_project(name).expect("sync");
+        let rendered = codex_render(REFUSED_STORED);
+        let path = dir.join(".codex/agents/planner.toml");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), rendered);
+        (keep, dir, rendered)
+    }
+
+    /// Save the project as stored, after `edit`.
+    fn save_edited(name: &str, edit: impl FnOnce(&mut core::Project)) {
+        let raw = core::read_project(name).expect("read project");
+        let mut project: core::Project = serde_json::from_str(&raw).expect("project json");
+        edit(&mut project);
+        let json = serde_json::to_string(&project).expect("project json");
+        save_project(name, &json, None).expect("save");
+    }
+
+    fn drift_reasons(name: &str) -> Vec<(String, String)> {
+        let raw = core::read_project(name).expect("read project");
+        let project: core::Project = serde_json::from_str(&raw).expect("project json");
+        sync::check_project_drift(&project)
+            .expect("drift")
+            .agents
+            .into_iter()
+            .flat_map(|agent| agent.files)
+            .map(|file| (file.path, file.reason))
+            .collect()
+    }
+
+    /// Sync's sweep leaves a file rebuild refuses, so the save that drops the
+    /// agent has to remove it.
+    #[test]
+    fn removing_an_agent_deletes_its_file_even_when_rebuild_refuses_it() {
+        with_temp_home(|_| {
+            let (_keep, dir, _) = refused_render_project("drop-refused");
+
+            save_edited("drop-refused", |p| p.custom_agents = None);
+
+            assert!(!dir.join(".codex/agents/planner.toml").exists());
+            assert_eq!(drift_reasons("drop-refused"), Vec::new());
+        });
+    }
+
+    /// A hand edit is not Automatic's to delete, and sync cannot clear it, so
+    /// drift says what it is instead of calling it stale.
+    #[test]
+    fn removing_an_agent_keeps_an_edited_file_and_drift_marks_it_refused() {
+        with_temp_home(|_| {
+            let (_keep, dir, rendered) = refused_render_project("drop-edited");
+            let path = dir.join(".codex/agents/planner.toml");
+            let edited = format!("# mine\n{rendered}");
+            write(&path, &edited);
+
+            save_edited("drop-edited", |p| p.custom_agents = None);
+            sync_project("drop-edited").expect("sync");
+
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), edited);
+            assert_eq!(
+                drift_reasons("drop-edited"),
+                vec![(".codex/agents/planner.toml".to_string(), "refused".to_string())]
+            );
+        });
+    }
+
+    /// Renaming in the editor drops the old machine name.
+    #[test]
+    fn renaming_an_agent_deletes_the_file_under_its_old_name() {
+        with_temp_home(|_| {
+            let (_keep, dir, _) = refused_render_project("rename-refused");
+
+            save_edited("rename-refused", |p| {
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Reviewer".into(),
+                    content: REFUSED_STORED.replace("name: planner", "name: reviewer"),
+                }]);
+            });
+
+            assert!(!dir.join(".codex/agents/planner.toml").exists());
+            assert!(dir.join(".codex/agents/reviewer.toml").exists());
+        });
+    }
+
+    /// An agent another entry still renders to the same file was not dropped.
+    #[test]
+    fn a_display_name_change_keeps_the_file() {
+        with_temp_home(|_| {
+            let (_keep, dir, rendered) = refused_render_project("same-machine-name");
+
+            save_edited("same-machine-name", |p| {
+                p.custom_agents.as_mut().expect("agents")[0].name = "The Planner".into();
+            });
+
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".codex/agents/planner.toml")).expect("read"),
+                rendered
+            );
+        });
+    }
+
+    /// A tool removed in the same save has stopped being synced.  Its files
+    /// are the agent-removal flow's business.
+    #[test]
+    fn removing_an_agent_leaves_the_files_of_a_tool_removed_with_it() {
+        with_temp_home(|_| {
+            let (_keep, dir, rendered) = refused_render_project("drop-with-tool");
+
+            save_edited("drop-with-tool", |p| {
+                p.custom_agents = None;
+                p.agents = vec!["claude".into()];
+            });
+
+            assert_eq!(
+                std::fs::read_to_string(dir.join(".codex/agents/planner.toml")).expect("read"),
+                rendered
+            );
+        });
+    }
+
+    /// One byte over the limit rebuild reads, marked as Automatic's.
+    fn oversized_managed_command() -> String {
+        let padding = "x".repeat(1024 * 1024);
+        format!("---\nautomatic-managed: true\n---\n{padding}\n")
+    }
+
+    /// Rebuild cannot read this file, and it may be the only copy of what is
+    /// in it, so sync must not take rebuild's silence for "stale".
+    #[test]
+    fn rebuild_and_sync_keep_a_command_rebuild_cannot_read() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("big-command", |p| {
+                p.agents = vec!["claude".into()];
+            });
+            let path = dir.join(".claude/commands/big.md");
+            let content = oversized_managed_command();
+            write(&path, &content);
+
+            let preview = preview_rebuild_project("big-command").expect("preview");
+            rebuild_project("big-command").expect("rebuild");
+            sync_project("big-command").expect("sync");
+
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), content);
+            assert!(preview.contains(".claude/commands/big.md"), "{preview}");
+        });
+    }
+
+    /// As for agents: the stored command stays when its file cannot be read.
+    #[test]
+    fn rebuild_keeps_a_stored_command_whose_file_it_cannot_read() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("big-stored", |p| {
+                p.agents = vec!["claude".into()];
+                p.custom_commands = Some(vec![core::CustomCommand {
+                    name: "big".into(),
+                    content: "Stored.\n".into(),
+                }]);
+            });
+            write(&dir.join(".claude/commands/big.md"), &oversized_managed_command());
+
+            rebuild_project("big-stored").expect("rebuild");
+
+            let raw = core::read_project("big-stored").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let commands = project.custom_commands.expect("custom commands");
+            assert_eq!(commands.len(), 1);
+            assert_eq!(commands[0].content, "Stored.\n");
+        });
+    }
+
+    /// A name rebuild refuses keeps the file too, and drift says so rather
+    /// than reporting something sync never clears as stale.
+    #[cfg(unix)]
+    #[test]
+    fn rebuild_and_sync_keep_a_command_with_a_refused_name() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("bad-command", |p| {
+                p.agents = vec!["claude".into()];
+            });
+            let path = dir.join(".claude/commands/back\\slash.md");
+            write(&path, "---\nautomatic-managed: true\n---\nKeep me.\n");
+
+            rebuild_project("bad-command").expect("rebuild");
+            sync_project("bad-command").expect("sync");
+
+            assert!(path.exists());
+            assert_eq!(
+                drift_reasons("bad-command"),
+                vec![(".claude/commands/back\\slash.md".to_string(), "refused".to_string())]
+            );
+        });
+    }
+
+    /// Quoting is written only by rebuild and adopt, so it never reaches an
+    /// untouched project, and it reads the same as the older form.  These
+    /// `disk` strings are what the previous version wrote, so they stay
+    /// literal.  A change here means every such project conflicts on upgrade.
+    #[test]
+    fn stored_values_older_versions_wrote_leave_no_conflict_after_upgrade() {
+        let head = "automatic_managed = true\nname = \"planner\"\n";
+        let body = "\ndeveloper_instructions = \"\"\"\nPlan.\n\"\"\"\n";
+        let cases = [
+            (
+                "---\nname: planner\ndescription: \nmodel: inherit\ntools: inherit\n---\n\nPlan.\n",
+                "description = \"\"\nmodel = \"inherit\"\nsandbox_mode = \"read-only\"\n",
+            ),
+            (
+                "---\nname: planner\ndescription: ''\nmodel: inherit\n---\n\nPlan.\n",
+                "description = \"\"\nmodel = \"inherit\"\n",
+            ),
+            (
+                "---\nname: planner\ndescription: 'true'\nmodel: '5'\nmaxTurns: 5\n---\n\nPlan.\n",
+                "description = \"true\"\nmodel = \"5\"\nmax_turns = 5\n",
+            ),
+            (
+                "---\nname: planner\ndescription: true\nmodel: 5\n---\n\nPlan.\n",
+                "description = \"true\"\nmodel = \"5\"\n",
+            ),
+        ];
+        with_temp_home(|_| {
+            for (index, (stored, fields)) in cases.into_iter().enumerate() {
+                let name = format!("upgrade-{index}");
+                let (_keep, dir) = make_project(&name, |p| {
+                    p.agents = vec!["codex".into()];
+                    p.custom_agents = Some(vec![core::CustomAgent {
+                        name: "Planner".into(),
+                        content: stored.into(),
+                    }]);
+                });
+                let disk = format!("{head}{fields}{body}");
+                write(&dir.join(".codex/agents/planner.toml"), &disk);
+
+                assert_eq!(codex_render(stored), disk, "{stored}");
+                assert_no_conflict(&name, &dir);
+            }
+        });
+    }
+
+    /// Older versions wrote these wrongly, or wrote TOML that does not load.
+    /// The file really differs from the render, so one conflict shows, and
+    /// Overwrite ends it.
+    #[test]
+    fn a_file_an_older_render_got_wrong_conflicts_until_overwritten() {
+        let older = "automatic_managed = true\nname = \"planner\"\ndescription = \"Plans\"\n";
+        let cases = [
+            (
+                "---\nname: planner\ndescription: Plans\n---\n\nMatch \\d here.\n",
+                format!("{older}\ndeveloper_instructions = \"\"\"\nMatch \\d here.\n\"\"\"\n"),
+            ),
+            (
+                "---\nname: planner\ndescription: Plans\nmaxTurns: many\n---\n\nPlan.\n",
+                format!("{older}max_turns = many\n\ndeveloper_instructions = \"\"\"\nPlan.\n\"\"\"\n"),
+            ),
+        ];
+        with_temp_home(|_| {
+            for (index, (stored, disk)) in cases.into_iter().enumerate() {
+                let name = format!("older-render-{index}");
+                let (_keep, dir) = make_project(&name, |p| {
+                    p.agents = vec!["codex".into()];
+                    p.custom_agents = Some(vec![core::CustomAgent {
+                        name: "Planner".into(),
+                        content: stored.into(),
+                    }]);
+                });
+                write(&dir.join(".codex/agents/planner.toml"), &disk);
+                let raw = core::read_project(&name).expect("read project");
+                let project: core::Project = serde_json::from_str(&raw).expect("project json");
+                assert!(
+                    matches!(
+                        sync::scan_custom_agent(&project, &dir, &project.custom_agents.clone().expect("agents")[0]),
+                        Some(sync::CustomAgentFinding::Conflict { .. })
+                    ),
+                    "{stored}"
+                );
+
+                overwrite_custom_asset(&name, "agent", "Planner").expect("overwrite");
+
+                assert_no_conflict(&name, &dir);
+            }
         });
     }
 

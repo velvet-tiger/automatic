@@ -168,7 +168,7 @@ export interface HookEntry {
 
 export interface DriftedFile {
   path: string;
-  reason: "missing" | "modified" | "stale" | "unreadable";
+  reason: "missing" | "modified" | "stale" | "unreadable" | "refused";
   /** Content Automatic would generate. Present when reason === "modified", and on every .gitignore entry. */
   expected?: string;
   /** Content currently on disk. Present when `expected` is. */

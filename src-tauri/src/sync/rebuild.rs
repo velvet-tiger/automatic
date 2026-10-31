@@ -17,8 +17,8 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     rebuild_project_with_refusals(project).map(|(rebuilt, _)| rebuilt)
 }
 
-/// [`rebuild_project_state`], plus why each sub-agent file it could not read
-/// was left out of the rebuild.
+/// [`rebuild_project_state`], plus why each sub-agent or command file it could
+/// not read was left out of the rebuild.
 pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<String>), String> {
     // The agent list is kept as configured.  Rebuild re-derives what those
     // agents have on disk; to rebuild another agent the user adds it first.
@@ -68,17 +68,20 @@ pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<
         Some(found.custom_agents)
     };
 
-    let (user_commands, custom_commands) = discover_sub_commands(&rebuilt)?;
-    rebuilt.user_commands = user_commands;
-    rebuilt.custom_commands = if custom_commands.is_empty() {
+    let stored_commands = project.custom_commands.as_deref().unwrap_or(&[]);
+    let commands = discover_sub_commands(&rebuilt, stored_commands)?;
+    rebuilt.user_commands = commands.user_commands;
+    rebuilt.custom_commands = if commands.custom_commands.is_empty() {
         None
     } else {
-        Some(custom_commands)
+        Some(commands.custom_commands)
     };
 
     rebuilt.updated_at = chrono::Utc::now().to_rfc3339();
 
-    Ok((rebuilt, found.refused))
+    let mut refused = found.refused;
+    refused.extend(commands.refused);
+    Ok((rebuilt, refused))
 }
 
 /// What rebuild found in the agents' directories.
@@ -240,33 +243,40 @@ fn sub_agent_candidates(
         .collect()
 }
 
-/// Read a file found in an agent's directory during rebuild, or `None` to
-/// skip it.  What is read here is imported into the project's committed
-/// config, so the read goes through [`read_project_text`]: a committed link
-/// out of the project (`notes.md -> ~/.ssh/id_rsa`), a FIFO or an oversized
-/// file is refused and logged, never imported.
-fn read_discovered_file(kind: &str, project_dir: &Path, path: &Path) -> Option<String> {
-    match read_project_text(project_dir, path) {
-        Ok(content) => content,
-        Err(reason) => {
-            eprintln!("[automatic] rebuild: not importing {kind} file: {reason}");
-            None
-        }
-    }
-}
-
 struct GlobalUserCommand {
     id: String,
     content: String,
 }
 
-fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCommand>), String> {
+/// What rebuild found in the agents' command directories.
+struct DiscoveredSubCommands {
+    user_commands: Vec<String>,
+    custom_commands: Vec<CustomCommand>,
+    /// One line per file that could not be imported, saying why.
+    refused: Vec<String>,
+}
+
+/// Find the commands in each configured agent's directory.  As with
+/// [`discover_sub_agents`], a file rebuild refuses must not simply drop out:
+/// its stored command in `stored` is kept, and
+/// [`agent::command_file_is_refused`] keeps the file out of sync's stale
+/// sweep.
+///
+/// What is read here is imported into the project's committed config, so the
+/// read goes through [`read_project_text`]: a committed link out of the
+/// project (`notes.md -> ~/.ssh/id_rsa`), a FIFO or an oversized file is
+/// refused, never imported.
+fn discover_sub_commands(
+    project: &Project,
+    stored: &[CustomCommand],
+) -> Result<DiscoveredSubCommands, String> {
     let project_dir = Path::new(&project.directory);
     let global_user_commands = load_global_user_commands()?;
 
     let mut user_command_ids = HashSet::new();
     let mut custom_commands = Vec::new();
     let mut seen_custom_command_names = HashSet::new();
+    let mut refused = Vec::new();
 
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -302,8 +312,24 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
                 continue;
             };
 
-            let Some(raw) = read_discovered_file("command", project_dir, &path) else {
-                continue;
+            let raw = match read_project_text(project_dir, &path) {
+                Ok(Some(raw)) => raw,
+                Ok(None) => continue,
+                Err(reason) => {
+                    let relative = path.strip_prefix(project_dir).unwrap_or(&path);
+                    eprintln!(
+                        "[automatic] rebuild: not importing {}: {reason}",
+                        relative.display()
+                    );
+                    refused.push(format!("{}: {reason}", relative.display()));
+                    let keep = stored.iter().find(|command| command.name == command_name);
+                    if let Some(command) = keep {
+                        if seen_custom_command_names.insert(command_name) {
+                            custom_commands.push(command.clone());
+                        }
+                    }
+                    continue;
+                }
             };
             if !agent::is_managed_command_content(&path, &raw) {
                 continue;
@@ -318,10 +344,15 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
 
             // Managed file that doesn't match any global command — treat as custom.
             if !crate::core::is_valid_asset_name(&command_name) {
+                let relative = path.strip_prefix(project_dir).unwrap_or(&path);
                 eprintln!(
                     "[automatic] rebuild: not adopting {}: its name cannot be used as a file name",
-                    path.display()
+                    relative.display()
                 );
+                refused.push(format!(
+                    "{}: its name cannot be used as a file name",
+                    relative.display()
+                ));
                 continue;
             }
 
@@ -340,7 +371,11 @@ fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCo
     user_commands.sort();
     custom_commands.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    Ok((user_commands, custom_commands))
+    Ok(DiscoveredSubCommands {
+        user_commands,
+        custom_commands,
+        refused,
+    })
 }
 
 fn load_global_user_commands() -> Result<Vec<GlobalUserCommand>, String> {
@@ -418,7 +453,11 @@ fn agent_file_to_markdown(
     fallback_id: &str,
 ) -> Result<Option<String>, String> {
     match agent_instance.agents_file_ext() {
-        "md" => Ok(Some(raw_disk_content.to_string())),
+        // A byte order mark would hide the frontmatter, and adopt drops it too.
+        "md" => {
+            let markdown = raw_disk_content.strip_prefix('\u{feff}');
+            Ok(Some(markdown.unwrap_or(raw_disk_content).to_string()))
+        }
         "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id).map(Some),
         _ => Ok(None),
     }
@@ -540,6 +579,11 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    fn commands_on_disk(project: &Project) -> (Vec<String>, Vec<CustomCommand>) {
+        let found = discover_sub_commands(project, &[]).unwrap();
+        (found.user_commands, found.custom_commands)
+    }
+
     fn make_project(dir: &std::path::Path) -> Project {
         Project {
             name: "test-project".into(),
@@ -554,7 +598,7 @@ mod tests {
         let project_dir = tempdir().unwrap();
         let project = make_project(project_dir.path());
 
-        let (user_cmds, custom_cmds) = discover_sub_commands(&project).unwrap();
+        let (user_cmds, custom_cmds) = commands_on_disk(&project);
         assert!(user_cmds.is_empty());
         assert!(custom_cmds.is_empty());
     }
@@ -570,7 +614,7 @@ mod tests {
         fs::write(commands_dir.join("my-command.md"), content).unwrap();
 
         let project = make_project(project_dir.path());
-        let (user_cmds, custom_cmds) = discover_sub_commands(&project).unwrap();
+        let (user_cmds, custom_cmds) = commands_on_disk(&project);
 
         // No global registry match, so it appears as a custom command
         assert!(user_cmds.is_empty());
@@ -609,7 +653,7 @@ mod tests {
         fs::write(commands_dir.join("user-cmd.md"), content).unwrap();
 
         let project = make_project(project_dir.path());
-        let (user_cmds, custom_cmds) = discover_sub_commands(&project).unwrap();
+        let (user_cmds, custom_cmds) = commands_on_disk(&project);
 
         assert!(user_cmds.is_empty());
         assert!(custom_cmds.is_empty());
@@ -654,7 +698,7 @@ mod tests {
         let mut project = make_project(project_dir.path());
         project.agents.push("claude-code".into());
 
-        let (_, custom_cmds) = discover_sub_commands(&project).unwrap();
+        let (_, custom_cmds) = commands_on_disk(&project);
         assert_eq!(custom_cmds.len(), 1, "same command should not appear twice");
     }
 
@@ -669,7 +713,7 @@ mod tests {
         fs::write(commands_dir.join("alpha-cmd.md"), content).unwrap();
 
         let project = make_project(project_dir.path());
-        let (_, custom_cmds) = discover_sub_commands(&project).unwrap();
+        let (_, custom_cmds) = commands_on_disk(&project);
 
         assert_eq!(custom_cmds.len(), 2);
         assert_eq!(custom_cmds[0].name, "alpha-cmd");
@@ -831,7 +875,7 @@ Inspect the repo carefully.\n\
                 agents: vec!["copilot".into()],
                 ..make_project(project_dir.path())
             };
-            let (_, custom_commands) = discover_sub_commands(&project).unwrap();
+            let (_, custom_commands) = commands_on_disk(&project);
             let names: Vec<&str> = custom_commands.iter().map(|c| c.name.as_str()).collect();
             assert_eq!(names, vec!["planner"]);
         });
@@ -862,7 +906,7 @@ Inspect the repo carefully.\n\
             let project = make_project(project_dir.path());
             let custom_agents = discover_sub_agents(&project, &[]).unwrap().custom_agents;
             assert!(custom_agents.is_empty(), "{custom_agents:?}");
-            let (_, custom_commands) = discover_sub_commands(&project).unwrap();
+            let (_, custom_commands) = commands_on_disk(&project);
             assert!(custom_commands.is_empty(), "{custom_commands:?}");
         });
     }
@@ -1003,6 +1047,21 @@ Inspect the repo carefully.\n\
                 &agents_dir.join("planner.json")
             ));
         });
+    }
+
+    /// Adopt drops a byte order mark, so rebuild must read the same name.
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_frontmatter() {
+        let imported = import_agent_file(
+            &ClaudeCode,
+            "\u{feff}---\nname: Planner\n---\nBody.\n",
+            "fallback",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(imported.name, "Planner");
+        assert_eq!(imported.content, "---\nname: Planner\n---\nBody.\n");
     }
 
     #[test]

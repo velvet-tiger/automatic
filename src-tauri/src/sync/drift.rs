@@ -8,6 +8,8 @@ use crate::agent;
 use crate::core::store_reads::StoreRead;
 use crate::core::{Project, ProjectMode, ProjectSummary};
 
+use super::rebuild::agent_file_is_refused;
+
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
     collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
@@ -420,7 +422,10 @@ fn join_words(items: &[String]) -> String {
 pub struct DriftedFile {
     /// Relative path from the project directory (e.g. `.mcp.json`).
     pub path: String,
-    /// Short description of why it's drifted: "missing", "modified", "stale", "unreadable".
+    /// Short description of why it's drifted: "missing", "modified", "stale",
+    /// "unreadable", or "refused": a file the project no longer lists but
+    /// rebuild cannot read, which sync will not delete, so only the user can
+    /// clear it.
     pub reason: String,
     /// The content Automatic would generate. Present for "modified" files, and
     /// for every `.gitignore` block entry (an absent block is an empty string).
@@ -1534,12 +1539,16 @@ fn collect_commands_drift(
                 if !agent::is_managed_command_content(&disk_path, &actual) {
                     continue;
                 }
-                let actual = Some(actual);
+                let reason = if agent::command_file_is_refused(dir, &disk_path) {
+                    "refused"
+                } else {
+                    "stale"
+                };
                 out.push(DriftedFile {
                     path: format!("{}/{}", relative.display(), file_name),
-                    reason: "stale".into(),
+                    reason: reason.into(),
                     expected: None,
-                    actual,
+                    actual: Some(actual),
                 });
             }
         }
@@ -1672,12 +1681,16 @@ fn collect_agents_drift(
                     continue;
                 }
                 let relative = path.strip_prefix(dir).unwrap_or(&path);
-                let actual = Some(actual);
+                let reason = if agent_file_is_refused(dir, agent_instance, &path) {
+                    "refused"
+                } else {
+                    "stale"
+                };
                 out.push(DriftedFile {
                     path: relative.display().to_string(),
-                    reason: "stale".into(),
+                    reason: reason.into(),
                     expected: None,
-                    actual,
+                    actual: Some(actual),
                 });
             }
         }

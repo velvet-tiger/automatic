@@ -1176,14 +1176,14 @@ struct FrontmatterSpan {
     start: usize,
     /// End of the frontmatter lines, before the newline of the closing `---`.
     end: usize,
-    /// First byte after the closing `---`.
+    /// First byte after the closing `---` and any spaces following it.
     body_start: usize,
 }
 
 /// Locate the frontmatter block.  The closing `---` must be a whole line, so
-/// `-----` or `---x` closes nothing.  `None` when there is no complete block.
-/// Every frontmatter reader goes through this, so they cannot disagree on
-/// where a block ends.
+/// `-----` or `---x` closes nothing, though YAML allows trailing spaces and
+/// tabs.  `None` when there is no complete block.  Every frontmatter reader
+/// goes through this, so they cannot disagree on where a block ends.
 fn frontmatter_span(content: &str) -> Option<FrontmatterSpan> {
     let start = if content.starts_with("---\r\n") {
         5
@@ -1198,11 +1198,12 @@ fn frontmatter_span(content: &str) -> Option<FrontmatterSpan> {
         let rest = &content[line_start..];
         let line_len = rest.find('\n').map_or(rest.len(), |newline| newline + 1);
         let line = rest[..line_len].trim_end_matches('\n');
-        if line.strip_suffix('\r').unwrap_or(line) == "---" {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.trim_end_matches([' ', '\t']) == "---" {
             return Some(FrontmatterSpan {
                 start,
                 end: line_start.saturating_sub(1).max(start),
-                body_start: line_start + 3,
+                body_start: line_start + line.len(),
             });
         }
         if line_len == 0 || line_start + line_len >= content.len() {
@@ -1347,6 +1348,44 @@ fn frontmatter_value_continues(lines: &[&str], index: usize) -> bool {
         .map(|line| line.trim_end())
         .find(|line| !line.is_empty() && !line.trim_start().starts_with('#'))
         .is_some_and(|next| next.starts_with([' ', '\t', '-']) || !next.contains(':'))
+}
+
+/// The key a YAML reader could see in `content` that [`parse_frontmatter`]
+/// cannot, when there is one.  The agent's name and managed marker decide
+/// where a file syncs and whether Automatic owns it, so both must read the
+/// same to every reader.  That rules out a quoted key, a `name:` that runs on
+/// to later lines, and any top-level line that is not a plain `key: value`:
+/// `? name`, `{name: x}`, `<<: {name: x}` and `&a name: x` all set a key this
+/// parser never sees.  Quoted keys are compared without unescaping, so one
+/// holding a backslash could spell anything and is reported too.
+pub(crate) fn frontmatter_key_in_another_form(content: &str) -> Option<&'static str> {
+    const NAME: &str = "name";
+    const MANAGED: &str = "automatic-managed";
+
+    let lines: Vec<&str> = frontmatter_block(content)?.split('\n').collect();
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() || line.starts_with([' ', '\t', '#']) {
+            continue;
+        }
+        if frontmatter_line_sets(line, NAME) && frontmatter_value_continues(&lines, index) {
+            return Some(NAME);
+        }
+        let Some(first) = line.chars().next() else {
+            continue;
+        };
+        if first == '"' || first == '\'' {
+            let key = line[1..].split(first).next().unwrap_or_default();
+            if key == MANAGED {
+                return Some(MANAGED);
+            }
+            if key == NAME || key.contains('\\') {
+                return Some(NAME);
+            }
+        } else if !first.is_alphanumeric() && first != '_' {
+            return Some(NAME);
+        }
+    }
+    None
 }
 
 /// Set or remove one top-level frontmatter key and leave every other byte
@@ -1543,6 +1582,19 @@ pub(crate) fn is_managed_command_content(path: &Path, content: &str) -> bool {
     }
 }
 
+/// `true` when rebuild refuses the command file at `path`, for its name or
+/// because it cannot be read as project text.  Sync must then leave the file
+/// alone: rebuild dropped it for being unreadable, not for being stale.  The
+/// whole file name stands in for the command name, because a refused
+/// character is refused in either, and `root` may be a hub with no agent.
+pub(crate) fn command_file_is_refused(root: &Path, path: &Path) -> bool {
+    let name_refused = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_none_or(|name| !crate::core::is_valid_asset_name(name));
+    name_refused || crate::sync::read_project_text(root, path).is_err()
+}
+
 /// Sub-agent counterpart to [`is_managed_command_file`], with one extra
 /// branch: Kiro's format is JSON, which no command vendor uses. Each
 /// branch's marker matches the casing convention its own converter already
@@ -1660,7 +1712,7 @@ pub(crate) fn copy_commands_to_project(
         });
     }
 
-    cleanup_stale_managed_command_files(project_commands_dir, &expected, &mut written)?;
+    cleanup_stale_managed_command_files(root, project_commands_dir, &expected, &mut written)?;
 
     if !index_entries.is_empty() {
         let index_path = write_commands_index(root, project_commands_dir, &index_entries)?;
@@ -1717,7 +1769,7 @@ pub(crate) fn symlink_commands_from_project(
         }
     }
 
-    cleanup_stale_managed_command_files(agent_commands_dir, &expected, &mut written)?;
+    cleanup_stale_managed_command_files(root, agent_commands_dir, &expected, &mut written)?;
 
     Ok(written)
 }
@@ -1784,7 +1836,7 @@ pub(crate) fn sync_commands_to_dir(
         }
     }
 
-    cleanup_stale_managed_command_files(commands_dir, &expected, &mut written)?;
+    cleanup_stale_managed_command_files(root, commands_dir, &expected, &mut written)?;
 
     Ok(written)
 }
@@ -1867,6 +1919,7 @@ fn sync_command_link(
 }
 
 fn cleanup_stale_managed_command_files(
+    root: &Path,
     commands_dir: &Path,
     expected: &HashSet<String>,
     written: &mut Vec<String>,
@@ -1885,7 +1938,10 @@ fn cleanup_stale_managed_command_files(
                 continue;
             };
 
-            if expected.contains(file_name) || !is_managed_command_file(&path) {
+            if expected.contains(file_name)
+                || !is_managed_command_file(&path)
+                || command_file_is_refused(root, &path)
+            {
                 continue;
             }
 
@@ -3597,6 +3653,41 @@ mod tests {
         }
     }
 
+    /// YAML allows spaces after the closing marker.  Anything else on the
+    /// line stops it being one.
+    #[test]
+    fn a_closing_line_may_have_trailing_spaces() {
+        for close in ["--- ", "---  ", "---\t", "--- \t "] {
+            for line_break in ["\n", "\r\n"] {
+                let content = format!("---{line_break}a: 1{line_break}{close}{line_break}Body.{line_break}");
+                let (frontmatter, body) = parse_frontmatter(&content);
+                assert_eq!(frontmatter.get("a").map(String::as_str), Some("1"), "{close:?}");
+                assert_eq!(body.trim(), "Body.", "{close:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_marker_closes_the_block() {
+        for close in ["---x", "-----", "--- x", " ---"] {
+            let content = format!("---\na: 1\n{close}\nBody.\n");
+            assert!(frontmatter_block(&content).is_none(), "{close:?}");
+        }
+    }
+
+    /// The edit keeps the closing line as the user wrote it.
+    #[test]
+    fn editing_keeps_a_closing_line_with_trailing_spaces() {
+        assert_eq!(
+            set_frontmatter_value("---\na: 1\n---  \nBody.\n", "a", Some("two")).unwrap(),
+            "---\na: two\n---  \nBody.\n"
+        );
+        assert_eq!(
+            replace_markdown_body("---\na: 1\n---  \nBody.\n", "New."),
+            "---\na: 1\n---  \nNew.\n"
+        );
+    }
+
     #[test]
     fn an_integer_stays_a_number_in_frontmatter() {
         assert_eq!(
@@ -3808,12 +3899,11 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_needs_a_closing_line_of_exactly_three_dashes() {
+    fn frontmatter_needs_a_closing_line_of_three_dashes() {
         for content in [
             "---\n-----\nBody\n",
             "---\n---x\nBody\n",
             "---\na: 1\n-----\nBody\n",
-            "---\na: 1\n--- \nBody\n",
             "---\na: 1\n",
             "---\n",
         ] {

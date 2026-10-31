@@ -1147,6 +1147,70 @@ pub(crate) fn sync_user_agents(
     Ok(written)
 }
 
+/// Delete the files of custom agents that `before` has and `after` does not.
+/// Call this before syncing `after`, so sync restores any file that another
+/// source now provides under the same name.
+///
+/// Sync's stale sweep skips a file rebuild cannot read, and once this save
+/// lands nothing records what such a file was.  So this is the one point
+/// that can tell it apart from the user's own work.  Only a managed file that
+/// still matches the stored render goes.  Anything else stays and shows in
+/// drift.  Only agent tools in `after` are touched, because a tool the user
+/// removed with "Keep" has stopped being synced, not been emptied.
+///
+/// Returns the deleted paths.  A file that cannot be deleted is logged, and
+/// drift reports it.
+pub(crate) fn remove_dropped_custom_agent_files(
+    before: &Project,
+    after: &Project,
+    dir: &Path,
+) -> Result<Vec<String>, String> {
+    crate::core::ensure_project_writable(after)?;
+    let kept: HashSet<String> = after
+        .custom_agents
+        .iter()
+        .flatten()
+        .filter_map(|agent| custom_agent_machine_name(agent).ok())
+        .collect();
+
+    let mut removed = Vec::new();
+    for dropped in before.custom_agents.iter().flatten() {
+        let Ok(machine_name) = custom_agent_machine_name(dropped) else {
+            continue;
+        };
+        if kept.contains(&machine_name) {
+            continue;
+        }
+        for agent in after.agents.iter().filter_map(|id| crate::agent::from_id(id)) {
+            let Some(agents_dir) = agent.agents_dir(dir) else {
+                continue;
+            };
+            let path = agents_dir.join(agent.agent_file_name(&machine_name));
+            let Ok(Some(disk)) = read_project_text(dir, &path) else {
+                continue;
+            };
+            let expected = agent.convert_agent_content(&dropped.content, &machine_name);
+            if !crate::agent::is_managed_agent_content(&path, &disk)
+                || !agent.agent_file_differences(&disk, &expected).is_empty()
+            {
+                continue;
+            }
+            if let Some(reason) = project_write_refusal(dir, &path) {
+                eprintln!("[automatic] sync: not removing a dropped agent's file: {reason}");
+                continue;
+            }
+            match fs::remove_file(&path) {
+                Ok(()) => removed.push(path.display().to_string()),
+                Err(e) => eprintln!(
+                    "[automatic] sync: failed to remove {}: {e}",
+                    path.display()
+                ),
+            }
+        }
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

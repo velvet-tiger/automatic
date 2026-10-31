@@ -116,6 +116,9 @@ fn whole_markdown_file(
     machine_name: &str,
 ) -> Result<String, AdoptRefusal> {
     let disk = disk.strip_prefix('\u{feff}').unwrap_or(disk);
+    if let Some(key) = agent::frontmatter_key_in_another_form(disk) {
+        return Err(AdoptRefusal::CannotKeep(vec![key.to_string()]));
+    }
     let (frontmatter, _) = agent::parse_frontmatter(disk);
     let parsed_name = frontmatter
         .get("name")
@@ -707,6 +710,47 @@ mod tests {
                 "{disk}"
             );
         }
+    }
+
+    /// Each of these sets a key a YAML reader sees and `parse_frontmatter`
+    /// does not, so the file would sync under one name and load as another.
+    #[test]
+    fn a_markdown_file_with_another_form_of_a_key_is_refused() {
+        for (block, key) in [
+            ("\"name\": other\n", "name"),
+            ("'name': other\n", "name"),
+            ("\"n\\x61me\": other\n", "name"),
+            ("name: planner\n? name\n: other\n", "name"),
+            ("{name: other}\n", "name"),
+            ("name: planner\n<<: {name: other}\n", "name"),
+            ("name: planner\n<<: *defaults\n", "name"),
+            ("&anchor name: other\n", "name"),
+            ("!!str name: other\n", "name"),
+            ("name: planner\n  and more\n", "name"),
+            ("name: >\n  planner\n", "name"),
+            ("name: |\n  planner\n", "name"),
+            ("name:\n  planner\n", "name"),
+            ("name: planner\n\"automatic-managed\": false\n", "automatic-managed"),
+            ("name: planner\n'automatic-managed': false\n", "automatic-managed"),
+        ] {
+            let disk = format!("---\n{block}---\nBody.\n");
+
+            assert_eq!(
+                adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), &disk, false),
+                Err(cannot_keep(key)),
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_markdown_file_with_ordinary_keys_is_kept_whole() {
+        let disk = "---\r\nname: planner\r\n# note\r\n\"other key\": 1\r\nhooks:\r\n  - name: nested\r\n_private: x\r\n---\r\nBody.\r\n";
+
+        assert_eq!(
+            adopted_agent_markdown(&ClaudeCode, &stored(PLAIN), disk, false).as_deref(),
+            Ok(disk)
+        );
     }
 
     #[test]
