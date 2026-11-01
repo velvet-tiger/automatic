@@ -1,3 +1,4 @@
+import { useProjectSweepFinished } from "../../lib/projectSweeps";
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
@@ -117,6 +118,10 @@ export default function Rules() {
       setError(`Failed to load rules: ${err}`);
     }
   };
+
+  useProjectSweepFinished(() => {
+    if (selectedId) void loadReferencingProjects(selectedId);
+  });
 
   // Load referencing projects with their actual on-disk sync status.
   const loadReferencingProjects = async (id: string) => {

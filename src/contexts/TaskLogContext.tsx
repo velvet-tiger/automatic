@@ -15,6 +15,8 @@
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { PROJECT_SWEEP_EVENT, ProjectSweepEvent, projectSweepMessage } from "../lib/projectSweeps";
 
 export type TaskLogStatus = "running" | "success" | "error" | "info";
 
@@ -46,8 +48,11 @@ interface TaskLogContextValue {
   isManuallyOpened: boolean;
   /** Push a new log entry; returns its generated id. */
   log: (message: string, status?: TaskLogStatus, agent?: string) => string;
-  /** Update an existing entry by id (e.g. change status from running → success). */
-  update: (id: string, message: string, status: TaskLogStatus) => void;
+  /**
+   * Update an existing entry by id (e.g. change status from running → success).
+   * Pass `persist: false` for a progress tick that need not reach disk.
+   */
+  update: (id: string, message: string, status: TaskLogStatus, persist?: boolean) => void;
   /** Clear all entries and hide the panel. */
   clear: () => void;
   /** Manually dismiss the panel (entries are preserved until next clear). */
@@ -167,18 +172,45 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
   );
 
   const update = useCallback(
-    (id: string, message: string, status: TaskLogStatus) => {
+    (id: string, message: string, status: TaskLogStatus, persist = true) => {
       cancelDismiss();
       setEntries((prev) => {
         const next = prev.map((e) => (e.id === id ? { ...e, message, status, timestamp: new Date() } : e));
         scheduleDismissIfIdle(next);
         const updated = next.find((e) => e.id === id);
-        if (updated) persistEntries([toPersistedEntry(updated)]);
+        if (updated && persist) persistEntries([toPersistedEntry(updated)]);
         return next;
       });
     },
     [cancelDismiss, scheduleDismissIfIdle]
   );
+
+  // ── Background project updates ─────────────────────────────────────────────
+  // One entry per job, updated in place. A job that touched no project shows
+  // nothing: most saves of an unused item should not open the panel.
+  useEffect(() => {
+    const entryForJob = new Map<number, string>();
+    const unlisten = listen<ProjectSweepEvent>(PROJECT_SWEEP_EVENT, ({ payload }) => {
+      if (payload.total === 0 && payload.failed.length === 0) return;
+
+      const message = projectSweepMessage(payload);
+      const status: TaskLogStatus = !payload.finished
+        ? "running"
+        : payload.failed.length > 0
+          ? "error"
+          : "success";
+      const entryId = entryForJob.get(payload.job_id);
+      if (entryId === undefined) {
+        entryForJob.set(payload.job_id, log(message, status));
+      } else {
+        update(entryId, message, status, payload.finished);
+      }
+      if (payload.finished) entryForJob.delete(payload.job_id);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [log, update]);
 
   const clear = useCallback(() => {
     cancelDismiss();

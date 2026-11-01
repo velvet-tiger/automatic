@@ -1,3 +1,4 @@
+import { useProjectSweepFinished } from "../../lib/projectSweeps";
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -207,6 +208,10 @@ export default function Profiles({
     } catch { /* picker stays empty */ }
   };
 
+  useProjectSweepFinished(() => {
+    if (selectedName) void loadReferencingProjects(selectedName);
+  });
+
   const loadReferencingProjects = async (name: string) => {
     try {
       const refs: ProjectRef[] = await invoke("get_projects_referencing_profile", { profileName: name });
@@ -284,7 +289,10 @@ export default function Profiles({
       setDirty(false);
       setError(null);
       notifyProfilesUpdated();
-      setSaveStatus(referencingProjects.length > 0 ? "Saved and projects updated" : "Saved");
+      const attached = referencingProjects.length;
+      setSaveStatus(
+        attached > 0 ? `Saved. Updating ${attached} project${attached === 1 ? "" : "s"}` : "Saved",
+      );
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
       setSaveStatus(null);
