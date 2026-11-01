@@ -372,9 +372,9 @@ pub fn get_sources_dir() -> Result<PathBuf, String> {
 /// a slug that is not two plain names.
 ///
 /// The slug arrives from a deep link or an RPC caller and becomes two folder
-/// names under the sources cache. An existing clone folder is deleted before
-/// each clone, so a slug such as `../..` would point that deletion at a
-/// folder outside the cache. The owner may hold letters, digits, `-` and
+/// names under the sources cache. A new clone moves the existing clone folder
+/// aside and deletes it, so a slug such as `../..` would point that deletion
+/// at a folder outside the cache. The owner may hold letters, digits, `-` and
 /// `_`, and must start with a letter or digit. The repository name may also
 /// hold `.`, and must not end with one: that rules out `.` and `..`, and
 /// Windows drops a trailing dot, so `...` would name the owner's folder.
@@ -419,7 +419,15 @@ pub fn source_clone_path(repo: &str) -> Result<PathBuf, String> {
 /// The directory is validated to ensure it does not escape the clone root via
 /// path traversal (e.g. `../../etc`).
 pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, String> {
-    let clone_path = source_clone_path(repo)?;
+    resolve_base_dir_in(&source_clone_path(repo)?, repo, directory)
+}
+
+/// [`resolve_base_dir`] for a clone at `clone_path`.
+fn resolve_base_dir_in(
+    clone_path: &Path,
+    repo: &str,
+    directory: Option<&str>,
+) -> Result<PathBuf, String> {
     match directory {
         Some(dir) if !dir.is_empty() => {
             // Reject obvious traversal components before touching the filesystem.
@@ -452,7 +460,7 @@ pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, 
             // Verify the resolved path is still inside the clone root.
             let canonical_clone = clone_path
                 .canonicalize()
-                .unwrap_or_else(|_| clone_path.clone());
+                .unwrap_or_else(|_| clone_path.to_path_buf());
             let canonical_base = base
                 .canonicalize()
                 .map_err(|e| format!("Failed to resolve directory '{}': {}", dir, e))?;
@@ -462,7 +470,7 @@ pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, 
 
             Ok(canonical_base)
         }
-        _ => Ok(clone_path),
+        _ => Ok(clone_path.to_path_buf()),
     }
 }
 
@@ -859,22 +867,84 @@ fn provenance_key(resource_type: &str, name: &str) -> String {
 
 // ── Git Operations ──────────────────────────────────────────────────────────
 
-/// Clone a repo to the sources cache directory.
+/// Clone a repo to the sources cache directory. An existing clone is replaced
+/// only once the new one is complete, so a failure leaves it in place.
 pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, String> {
-    let clone_path = source_clone_path(repo)?;
-    // Before the old clone is deleted, so a refused pin leaves it in place.
+    stage_source_clone(repo, pin)?.publish()
+}
+
+/// Marks a staging folder. `~` is refused in a repo name, see
+/// [`split_repo_slug`], so no clone can have a staging folder's name.
+const STAGING_MARKER: &str = "~staging-";
+
+/// The age at which a staging folder counts as left by a run that died. A
+/// clone and its pin fetch each stop at [`GIT_CLONE_LIMIT`], so a live run
+/// cannot be this old.
+const STALE_STAGING_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// A complete clone beside the sources cache entry it will replace. It is on
+/// the same filesystem, so the swap is two renames. Dropping it removes the
+/// staging folder and whatever is in it.
+#[derive(Debug)]
+struct StagedClone {
+    staging: tempfile::TempDir,
+    target: PathBuf,
+}
+
+impl StagedClone {
+    fn path(&self) -> PathBuf {
+        self.staging.path().join("clone")
+    }
+
+    /// Move the clone to the sources cache, replacing any clone there. The
+    /// old clone goes back if the new one cannot move in.
+    fn publish(self) -> Result<PathBuf, String> {
+        let previous = self.staging.path().join("previous");
+        // Not `exists`, which would miss a broken symlink.
+        let has_previous = fs::symlink_metadata(&self.target).is_ok();
+        if has_previous {
+            fs::rename(&self.target, &previous)
+                .map_err(|e| format!("Failed to move the existing clone aside: {}", e))?;
+        }
+
+        if let Err(e) = fs::rename(self.path(), &self.target) {
+            let failure = format!("Failed to move the new clone into place: {}", e);
+            if !has_previous {
+                return Err(failure);
+            }
+            if let Err(restore) = fs::rename(&previous, &self.target) {
+                let kept = self.staging.keep().join("previous");
+                return Err(format!(
+                    "{}. The existing clone could not be restored and is at {}: {}",
+                    failure,
+                    kept.display(),
+                    restore
+                ));
+            }
+            return Err(failure);
+        }
+        Ok(self.target)
+    }
+}
+
+/// Clone `repo` at `pin` into a staging folder beside its clone path, leaving
+/// any existing clone untouched.
+fn stage_source_clone(repo: &str, pin: &PinningConfig) -> Result<StagedClone, String> {
+    let target = source_clone_path(repo)?;
     validate_pin(pin)?;
 
-    // Remove existing clone if present
-    if clone_path.exists() {
-        fs::remove_dir_all(&clone_path)
-            .map_err(|e| format!("Failed to remove existing clone: {}", e))?;
-    }
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("No parent folder for the clone of {}", repo))?;
+    fs::create_dir_all(parent).map_err(|e| format!("Failed to create sources directory: {}", e))?;
 
-    if let Some(parent) = clone_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create sources directory: {}", e))?;
-    }
+    let (_, name) = split_repo_slug(repo)?;
+    remove_stale_staging(parent, name, STALE_STAGING_AGE);
+    let staging = tempfile::Builder::new()
+        .prefix(&format!("{}{}", name, STAGING_MARKER))
+        .tempdir_in(parent)
+        .map_err(|e| format!("Failed to create a staging folder for {}: {}", repo, e))?;
+    let staged = StagedClone { staging, target };
 
     let url = source_url(repo);
 
@@ -896,20 +966,53 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
 
     args.push("--".to_string());
     args.push(url.clone());
-    args.push(clone_path.to_string_lossy().to_string());
+    args.push(staged.path().to_string_lossy().to_string());
 
-    discard_failed_clone(&clone_path, run_git_clone(&args, repo))?;
+    run_git_clone(&args, repo)?;
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
-        discard_failed_clone(&clone_path, check_out_commit(&clone_path, pin, repo))?;
+        check_out_commit(&staged.path(), pin, repo)?;
     }
 
-    Ok(clone_path)
+    Ok(staged)
+}
+
+/// Remove `name`'s staging folders at least `min_age` old. The app quitting
+/// during a clone leaves one behind, and nothing else would ever remove it.
+/// A failure here only leaves a folder, so it does not stop the clone.
+fn remove_stale_staging(parent: &Path, name: &str, min_age: Duration) {
+    let prefix = format!("{}{}", name, STAGING_MARKER);
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!("[automatic] could not list {}: {}", parent.display(), e);
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+            continue;
+        }
+        let path = entry.path();
+        let is_stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age >= min_age));
+        if is_stale {
+            if let Err(e) = fs::remove_dir_all(&path) {
+                eprintln!(
+                    "[automatic] could not remove the staging folder {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
+    }
 }
 
 /// Run `git clone`. A clone whose transfer worked but whose checkout failed
-/// exits non-zero and leaves its folder behind, so the caller must not keep
+/// exits non-zero and leaves its folder behind, so the caller must not publish
 /// the folder on failure.
 fn run_git_clone(args: &[String], repo: &str) -> Result<(), String> {
     let output = run_git_limited(
@@ -927,7 +1030,7 @@ fn run_git_clone(args: &[String], repo: &str) -> Result<(), String> {
 }
 
 /// Move a fresh clone to the commit in `pin`. On failure the clone is still
-/// on the default branch, so the caller must not keep it.
+/// on the default branch, so the caller must not publish it.
 fn check_out_commit(clone_path: &Path, pin: &PinningConfig, repo: &str) -> Result<(), String> {
     let fetch_output = run_git_limited(
         Command::new("git")
@@ -1155,21 +1258,6 @@ fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> DrainedPipe
     DrainedPipe { bytes, closed }
 }
 
-/// Remove the clone folder if `result` failed: a clone or pin fetch cut short
-/// leaves a folder that looks installed.
-fn discard_failed_clone<T>(clone_path: &Path, result: Result<T, String>) -> Result<T, String> {
-    if result.is_err() && clone_path.exists() {
-        if let Err(e) = fs::remove_dir_all(clone_path) {
-            eprintln!(
-                "[automatic] could not remove the partial clone {}: {}",
-                clone_path.display(),
-                e
-            );
-        }
-    }
-    result
-}
-
 /// Get the current HEAD commit SHA for a cloned source.
 fn git_head_sha(clone_path: &Path) -> Result<String, String> {
     let output = Command::new("git")
@@ -1326,13 +1414,16 @@ pub fn fetch_source_manifest(
     directory: Option<&str>,
 ) -> Result<AutomaticManifest, String> {
     let pin = pin.unwrap_or_default();
-    let _clone_path = git_clone_source(repo, &pin)?;
-    let base_dir = resolve_base_dir(repo, directory)?;
+    let staged = stage_source_clone(repo, &pin)?;
+    let base_dir = resolve_base_dir_in(&staged.path(), repo, directory)?;
     // The frontend confirmation UI needs the full skill list and each
     // collection's slug. Without the skills the dialog reports "no
     // installable resources" for manifests that delegate their skill list to
     // a separate skill.json file.
-    resolve_manifest(&base_dir)
+    let manifest = resolve_manifest(&base_dir)?;
+    // Last, so a preview that fails leaves the existing clone in place.
+    staged.publish()?;
+    Ok(manifest)
 }
 
 /// Parse the manifest in `base_dir` with its `skill_json` resolved into its
@@ -3987,20 +4078,6 @@ mod tests {
 
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
         assert!(started.elapsed() < Duration::from_secs(7), "{:?}", started.elapsed());
-    }
-
-    #[test]
-    fn a_failed_clone_leaves_no_folder_and_a_good_one_stays() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let clone = dir.path().join("clone");
-        fs::create_dir_all(clone.join(".git")).expect("clone");
-
-        assert_eq!(discard_failed_clone(&clone, Ok(1)), Ok(1));
-        assert!(clone.exists());
-
-        let failed: Result<(), String> = Err("stopped".to_string());
-        assert_eq!(discard_failed_clone(&clone, failed.clone()), failed);
-        assert!(!clone.exists());
     }
 
     #[test]
@@ -7588,6 +7665,134 @@ mod tests {
             assert!(!source_clone_path(PIN_REPO).expect("path").exists());
             set_source_url_base(None);
         });
+    }
+
+    /// The folders beside `repo`'s clone that a clone left behind.
+    fn staging_folders(repo: &str) -> Vec<String> {
+        let clone = source_clone_path(repo).expect("path");
+        fs::read_dir(clone.parent().expect("parent"))
+            .expect("read owner folder")
+            .map(|entry| entry.expect("entry").file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(STAGING_MARKER))
+            .collect()
+    }
+
+    fn assert_old_clone_kept(repo: &str, content: &str) {
+        let clone = source_clone_path(repo).expect("path");
+        assert_eq!(fs::read_to_string(clone.join("rule.md")).expect("rule"), content);
+        assert!(clone.join(".git").exists());
+        assert_eq!(staging_folders(repo), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_failed_clone_keeps_the_old_clone_and_the_next_update_works() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            let source = fetch_and_install(None);
+            assert_eq!(source.pin.strategy, "branch");
+
+            let missing_commit = pin_for_ref("0123456789abcdef0123456789abcdef01234567");
+            let err = git_clone_source(PIN_REPO, &missing_commit).expect_err("no such commit");
+            assert!(err.contains("git fetch commit failed"), "{err}");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+
+            let err = git_clone_source(PIN_REPO, &pin_for_ref("no-such-branch"))
+                .expect_err("no such branch");
+            assert!(err.contains("git clone failed"), "{err}");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+
+            let unwritable = commit_unwritable_file(&origin);
+            let err =
+                git_clone_source(PIN_REPO, &pin_for_ref(&unwritable)).expect_err("bad clone");
+            assert!(err.contains("git clone failed"), "{err}");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+
+            git(&origin, &["reset", "-q", "--hard", "HEAD~1"]);
+            commit_rule(&origin, "# Two\n");
+            update_source(PIN_REPO).expect("update");
+            assert!(installed_rule().contains("# Two"), "{}", installed_rule());
+            assert_eq!(staging_folders(PIN_REPO), Vec::<String>::new());
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_preview_that_fails_keeps_the_old_clone() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            fetch_and_install(None);
+
+            let missing = pin_for_ref("0123456789abcdef0123456789abcdef01234567");
+            fetch_source_manifest(PIN_REPO, Some(missing), None).expect_err("no such commit");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+
+            let err = fetch_source_manifest(PIN_REPO, None, Some("no-such-folder"))
+                .expect_err("no such folder");
+            assert!(err.contains("no-such-folder"), "{err}");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+
+            fs::write(origin.join("automatic.json"), "{").expect("break manifest");
+            commit_rule(&origin, "# Two\n");
+            fetch_source_manifest(PIN_REPO, None, None).expect_err("bad manifest");
+            assert_old_clone_kept(PIN_REPO, "# One\n");
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_preview_that_works_replaces_the_clone() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            fetch_and_install(None);
+            commit_rule(&origin, "# Two\n");
+
+            fetch_source_manifest(PIN_REPO, None, None).expect("fetch");
+
+            assert_old_clone_kept(PIN_REPO, "# Two\n");
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_clone_that_cannot_move_into_place_puts_the_old_one_back() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("toolkit");
+        fs::create_dir_all(&target).expect("old clone");
+        fs::write(target.join("rule.md"), "old").expect("write");
+        // Nothing at the staged path, so the second rename fails.
+        let staged = StagedClone {
+            staging: tempfile::tempdir_in(dir.path()).expect("staging"),
+            target: target.clone(),
+        };
+        let staging = staged.staging.path().to_path_buf();
+
+        let err = staged.publish().expect_err("nothing to move");
+
+        assert!(err.contains("Failed to move the new clone into place"), "{err}");
+        assert_eq!(fs::read_to_string(target.join("rule.md")).expect("rule"), "old");
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn only_old_staging_folders_of_this_repo_are_removed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let clone = dir.path().join("toolkit");
+        let ours = dir.path().join(format!("toolkit{}abc", STAGING_MARKER));
+        let other = dir.path().join(format!("toolkit-two{}abc", STAGING_MARKER));
+        for path in [&clone, &ours, &other] {
+            fs::create_dir_all(path).expect("create");
+        }
+
+        remove_stale_staging(dir.path(), "toolkit", STALE_STAGING_AGE);
+        assert!(ours.exists(), "a fresh staging folder may be a running clone");
+
+        remove_stale_staging(dir.path(), "toolkit", Duration::ZERO);
+        assert!(!ours.exists());
+        assert!(clone.exists());
+        assert!(other.exists());
     }
 
     #[test]
