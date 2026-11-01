@@ -1,6 +1,8 @@
 # Testing a first run
 
-`make fresh` runs the app as a first-time user. It uses a throwaway home folder and deletes that folder when the app closes. Your real settings, projects and agent configs are not visible to the app.
+`make fresh` runs the app as a first-time user. It uses a throwaway home folder and deletes that folder when the command ends. Your real settings, projects and agent configs are not visible to the app.
+
+On macOS the red close button only hides the window. Press Cmd-Q, or Ctrl-C in the terminal, to end the run.
 
 ```bash
 make fresh
@@ -31,7 +33,8 @@ Each profile is a script in `scripts/fresh-profiles/` that fills the empty home 
 ## What changes in a fresh run
 
 - `HOME` and `CFFIXED_USER_HOME` point at the throwaway folder. This moves settings, agent configs, secrets and WebKit `localStorage`.
-- `PATH` holds system folders only, and the app skips its login shell probe. Agent CLIs on your machine are not detected.
+- The app starts from an empty environment, with a short list of variables in `scripts/fresh-runner.sh`. Shell settings such as `AUTOMATIC_KEYCHAIN` do not reach it.
+- `PATH` holds system folders only, and the app skips its login shell probe. Agent CLIs found through `PATH` are not detected, and the Claude plugin install is skipped.
 - Newsletter calls and analytics events are skipped and logged. Your `.env` may hold a real Attio key, and the wizard would otherwise create a real contact.
 
 cargo, npm and Vite keep your real home, so hot reload works. Only the app process is redirected, through `scripts/fresh-runner.sh`.
@@ -41,5 +44,8 @@ The guard is `is_fresh_run()` in `src-tauri/src/core/paths.rs`. Release builds i
 ## Limits
 
 - **Installed apps are still detected.** Several agents check fixed paths such as `/Applications/Cursor.app`, so `bare` shows those agents if they are installed on your Mac.
+- **Some actions can reach real files.** Choosing a real folder in a file dialog gives the app that folder, and sync writes into it. Installing the CLI from Settings writes a link to `/usr/local/bin`, which outlives the run.
+- **Secrets can outlive the run.** With `KEEP=1`, or if the script is killed, the folder stays in `$TMPDIR`. Any token you signed in with stays there in plain text.
 - **This is a debug build.** It does not test the installer, notarization, Gatekeeper or the macOS keychain. Use a second macOS user or a VM for those before a release.
-- **Other network calls still run,** such as the update check and marketplace requests.
+- **Other network calls still run,** such as the update check, library refresh and marketplace requests.
+- **Cloud sign-in is real.** It creates a real session against the webapp URL compiled into the build.

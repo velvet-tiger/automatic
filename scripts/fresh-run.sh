@@ -20,6 +20,12 @@ if [[ ! -f "$profile_script" ]]; then
   exit 2
 fi
 
+# Cargo splits a runner value on whitespace, so the runner path cannot hold any.
+if [[ "$repo_root" =~ [[:space:]] ]]; then
+  echo "error: this checkout's path contains a space: $repo_root" >&2
+  exit 1
+fi
+
 if lsof -nP -iTCP:"$vite_port" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "error: port $vite_port is in use, most likely by 'make dev'." >&2
   echo "Stop that server, then run this again." >&2
@@ -42,12 +48,17 @@ HOME="$fresh_home" bash "$profile_script"
 echo "[fresh] profile: $profile"
 echo "[fresh] home:    $fresh_home"
 
-runner="$repo_root/scripts/fresh-runner.sh"
 export AUTOMATIC_FRESH_HOME="$fresh_home"
-# These variables take priority over the runner in .cargo/config.toml.
-export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER="$runner"
-export CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER="$runner"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="$runner"
+
+# Without a runner the app would start in the real home, so stop if the host is
+# unknown. This variable takes priority over .cargo/config.toml.
+host="$(rustc -vV | sed -n 's/^host: //p')"
+if [[ -z "$host" ]]; then
+  echo "error: could not read the host target from rustc." >&2
+  exit 1
+fi
+runner_var="CARGO_TARGET_$(echo "$host" | tr 'a-z-' 'A-Z_')_RUNNER"
+export "$runner_var=$repo_root/scripts/fresh-runner.sh"
 
 cd "$repo_root"
 npm run tauri dev
