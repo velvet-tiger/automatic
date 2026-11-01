@@ -77,6 +77,10 @@ pub fn run() {
                 });
             }
 
+            // Library saves queue their project updates on this worker, so
+            // start it before the window can send one.
+            commands::project_sweeps::start_sweep_worker(app.handle().clone());
+
             // Ensure plugin marketplace exists on disk; register with Claude
             // Code if the CLI is available.  Runs on a background thread so
             // it never blocks the UI. The standalone `mcp-serve` process

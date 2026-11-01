@@ -126,6 +126,7 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -151,6 +152,7 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
 /// resolution UI.
 #[tauri::command]
 pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -179,6 +181,7 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
 /// conflict resolution UI.
 #[tauri::command]
 pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -323,6 +326,7 @@ pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
 /// projects with no instruction-capable agents without forcing a picker.
 #[tauri::command]
 pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;

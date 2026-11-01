@@ -5,6 +5,8 @@ use crate::sync;
 use serde::Serialize;
 use std::collections::HashMap;
 
+use super::project_sweeps::{hold_project_writes, SweepProgress};
+
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -300,6 +302,7 @@ fn save_project_with(
     creating: bool,
     recommendations: NewProjectRecommendations,
 ) -> Result<String, String> {
+    let _writes = hold_project_writes();
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     // Add Project wizard: refuse a directory another project owns, then give
@@ -607,13 +610,18 @@ pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> 
         return Ok(());
     }
     let ident = core::canonical_project_ident(name)?;
+    let writes = hold_project_writes();
     core::refresh_project_files(&ident).map_err(|e| {
         format!(
             "Read-only mode is off, but the project's files could not be updated: {}",
             e
         )
     })?;
-    reconcile_group_profiles_for_projects(std::slice::from_ref(&ident));
+    drop(writes);
+    reconcile_group_profiles_for_projects(
+        std::slice::from_ref(&ident),
+        &SweepProgress::silent(),
+    );
     reconcile_plugin_resources_in_projects();
     Ok(())
 }
@@ -652,6 +660,7 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     // Address the project by its unique identifier throughout: after the
     // rename, the new name may be shared with another project.
     let ident = &crate::core::canonical_project_ident(old_name)?;
@@ -720,6 +729,7 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_project(name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     // Deleting an unknown project still clears what it left behind, as before.
     let display_name = core::resolve_project_name(name)?;
     let name = &core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string());
@@ -810,6 +820,7 @@ pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn sync_project(name: &str) -> Result<String, String> {
+    let _writes = hold_project_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -834,6 +845,7 @@ pub fn sync_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn rebuild_project(name: &str) -> Result<String, String> {
+    let _writes = hold_project_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -950,6 +962,7 @@ pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Resu
 /// [`crate::agent::RemovalEntry`] describing what changed.
 #[tauri::command]
 pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    let _writes = hold_project_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
@@ -1001,6 +1014,7 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -1235,6 +1249,7 @@ fn adopt_activity_summary(kind: &str, rewrites: &Result<(), Vec<String>>) -> Str
 /// Favours the on-disk file over Automatic's stored copy.
 #[tauri::command]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
@@ -1354,6 +1369,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 /// re-sync so agent copies/symlinks match.
 #[tauri::command]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
@@ -1537,20 +1553,120 @@ pub(crate) fn with_each_writable_project_mut<F>(mut f: F)
 where
     F: FnMut(&str, &mut core::Project),
 {
-    with_each_project_mut(|project_name, project| {
-        if project.is_read_only_here() {
-            return;
-        }
-        f(project_name, project);
-    });
+    sweep_projects(
+        all_project_idents(),
+        &SweepProgress::silent(),
+        |_, _| true,
+        |project_name, project| {
+            f(project_name, project);
+            Ok(())
+        },
+    );
 }
 
-pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core::Project) {
-    if project.directory.is_empty() || project.agents.is_empty() || project.is_read_only_here() {
-        return;
-    }
+fn all_project_idents() -> Vec<String> {
+    core::list_project_idents().unwrap_or_else(|e| {
+        eprintln!("Failed to list projects for config updates: {}", e);
+        Vec::new()
+    })
+}
 
-    if let Err(e) = sync::sync_project_without_autodetect(project) {
+fn read_swept_project(ident: &str) -> Result<core::Project, String> {
+    let raw = core::read_project(ident)?;
+    serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))
+}
+
+/// Apply a change to each writable project in `idents` that `selects` picks.
+/// Projects are chosen first, so `progress` knows the total, and then handled
+/// one at a time. Each is read again under the project write lock, because
+/// anything read earlier may be stale by the time the sweep reaches it. A
+/// project that fails is recorded and the sweep carries on.
+///
+/// A project that cannot be read while choosing is logged and skipped: it may
+/// have nothing to do with this change, and each save would report it.
+pub(crate) fn sweep_projects<S, A>(
+    idents: Vec<String>,
+    progress: &SweepProgress,
+    selects: S,
+    mut apply: A,
+) where
+    S: Fn(&str, &core::Project) -> bool,
+    A: FnMut(&str, &mut core::Project) -> Result<(), String>,
+{
+    let wanted = |ident: &str, project: &core::Project| {
+        !project.is_read_only_here() && selects(ident, project)
+    };
+    let targets: Vec<String> = idents
+        .into_iter()
+        .filter(|ident| match read_swept_project(ident) {
+            Ok(project) => wanted(ident, &project),
+            Err(e) => {
+                eprintln!("Skipping project '{}' during update: {}", ident, e);
+                false
+            }
+        })
+        .collect();
+    progress.add_total(targets.len());
+
+    for ident in targets {
+        let mut shown = ident.clone();
+        let writes = hold_project_writes();
+        let outcome = read_swept_project(&ident).and_then(|mut project| {
+            shown = project.name.clone();
+            if wanted(&ident, &project) {
+                apply(&ident, &mut project)
+            } else {
+                Ok(())
+            }
+        });
+        drop(writes);
+        progress.project_finished(&shown, outcome);
+    }
+}
+
+/// Sweep `idents` with `mutate`, which reports whether it changed the
+/// project. It runs on a copy to choose projects, so the total counts only
+/// those that change. Each changed project is saved, then passed to `after`.
+fn sweep_project_changes<M, A>(
+    idents: Vec<String>,
+    progress: &SweepProgress,
+    what: &str,
+    mutate: M,
+    mut after: A,
+) where
+    M: Fn(&str, &mut core::Project) -> bool,
+    A: FnMut(&str, &mut core::Project) -> Result<(), String>,
+{
+    sweep_projects(
+        idents,
+        progress,
+        |ident, project| mutate(ident, &mut project.clone()),
+        |ident, project| {
+            if !mutate(ident, project) {
+                return Ok(());
+            }
+            persist_swept_project(ident, project, what)?;
+            after(ident, project)
+        },
+    );
+}
+
+/// Whether a project has somewhere to sync to.
+fn is_sync_target(project: &core::Project) -> bool {
+    !project.directory.is_empty() && !project.agents.is_empty() && !project.is_read_only_here()
+}
+
+/// Sync a project that has somewhere to sync to.
+pub(crate) fn sync_configured_project(project: &mut core::Project) -> Result<(), String> {
+    if !is_sync_target(project) {
+        return Ok(());
+    }
+    sync::sync_project_without_autodetect(project).map(|_| ())
+}
+
+/// [`sync_configured_project`] for callers that report nothing.
+pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core::Project) {
+    if let Err(e) = sync_configured_project(project) {
         eprintln!(
             "Failed to sync project '{}' after registry update: {}",
             project_name, e
@@ -1558,105 +1674,101 @@ pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core:
     }
 }
 
-pub(crate) fn sync_projects_referencing_skill(skill_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        if project.skills.iter().any(|skill| skill == skill_name) {
-            sync_project_if_configured(project_name, project);
-        }
+/// Sync every configured project for which `references` is true.
+fn sync_projects_where<R>(progress: &SweepProgress, references: R)
+where
+    R: Fn(&core::Project) -> bool,
+{
+    sweep_projects(
+        all_project_idents(),
+        progress,
+        |_, project| is_sync_target(project) && references(project),
+        |_, project| sync_configured_project(project),
+    );
+}
+
+pub(crate) fn sync_projects_referencing_skill(skill_name: &str, progress: &SweepProgress) {
+    sync_projects_referencing_skills(&[skill_name.to_string()], progress);
+}
+
+/// One sweep for several skills, so a project that uses two of them is
+/// synced once.
+pub(crate) fn sync_projects_referencing_skills(skill_names: &[String], progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project.skills.iter().any(|skill| skill_names.contains(skill))
     });
 }
 
-pub(crate) fn sync_projects_referencing_mcp_server(server_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        if project
+pub(crate) fn sync_projects_referencing_mcp_server(server_name: &str, progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project
             .mcp_servers
             .iter()
             .any(|server| server == server_name)
-        {
-            sync_project_if_configured(project_name, project);
-        }
     });
 }
 
-pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let referenced = project
+pub(crate) fn sync_projects_referencing_rule(rule_name: &str, progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project
             .file_rules
             .values()
-            .any(|rules| rules.iter().any(|r| r == rule_name));
-        if referenced {
-            sync_project_if_configured(project_name, project);
-        }
+            .any(|rules| rules.iter().any(|r| r == rule_name))
     });
 }
 
-pub(crate) fn sync_projects_referencing_subagent(machine_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        if project.user_agents.iter().any(|name| name == machine_name) {
-            sync_project_if_configured(project_name, project);
-        }
+pub(crate) fn sync_projects_referencing_subagent(machine_name: &str, progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project.user_agents.iter().any(|name| name == machine_name)
     });
 }
 
-pub(crate) fn sync_projects_referencing_user_command(machine_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        if project
+pub(crate) fn sync_projects_referencing_user_command(machine_name: &str, progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project
             .user_commands
             .iter()
             .any(|name| name == machine_name)
-        {
-            sync_project_if_configured(project_name, project);
-        }
     });
 }
 
-pub(crate) fn sync_projects_referencing_hook(machine_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        if project.hooks.iter().any(|name| name == machine_name) {
-            sync_project_if_configured(project_name, project);
-        }
+pub(crate) fn sync_projects_referencing_hook(machine_name: &str, progress: &SweepProgress) {
+    sync_projects_where(progress, |project| {
+        project.hooks.iter().any(|name| name == machine_name)
     });
 }
 
-/// Persist a project a sweep helper has mutated. Failures are logged, never
-/// returned: every sweep is best-effort, matching the other helpers here.
-fn persist_swept_project(project_name: &str, project: &mut core::Project, what: &str) {
+/// Persist a project a sweep helper has mutated.
+fn persist_swept_project(
+    project_name: &str,
+    project: &mut core::Project,
+    what: &str,
+) -> Result<(), String> {
     project.updated_at = chrono::Utc::now().to_rfc3339();
-    match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-        Ok(data) => {
-            if let Err(e) = core::save_project(project_name, &data) {
-                eprintln!(
-                    "Failed to update project '{}' after {}: {}",
-                    project_name, what, e
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "Failed to serialise project '{}' after {}: {}",
-                project_name, what, e
-            );
-        }
-    }
+    let data = serde_json::to_string_pretty(project)
+        .map_err(|e| format!("Could not serialise the project after {}: {}", what, e))?;
+    core::save_project(project_name, &data)
+        .map_err(|e| format!("Could not save the project after {}: {}", what, e))
 }
 
 /// Bring every project that references `profile_name` back in step with the
 /// profile and re-sync the ones that changed. Called after a profile is
 /// saved, and after a library asset it references is pruned or renamed.
-pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let referenced = project.profiles.iter().any(|p| p == profile_name)
-            || project.profile_contributions.contains_key(profile_name);
-        if !referenced {
-            return;
-        }
-        let report = core::reconcile_project_profiles(project);
-        if !report.changed {
-            return;
-        }
-        persist_swept_project(project_name, project, "profile reconcile");
-        sync_project_if_configured(project_name, project);
-    });
+pub(crate) fn reconcile_projects_referencing_profile(
+    profile_name: &str,
+    progress: &SweepProgress,
+) {
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "profile reconcile",
+        |_, project| {
+            let referenced = project.profiles.iter().any(|p| p == profile_name)
+                || project.profile_contributions.contains_key(profile_name);
+            referenced && core::reconcile_project_profiles(project).changed
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Bring the profiles of each named project in step with its groups, then
@@ -1664,111 +1776,99 @@ pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
 /// after a group is saved or deleted, with its members from before and
 /// after the change (`core::group_member_idents`).
 ///
-/// Per-project failures are logged and skipped so one unreadable project
-/// does not leave the rest out of step.
-pub(crate) fn reconcile_group_profiles_for_projects(project_idents: &[String]) {
+/// One unreadable project does not leave the rest out of step.
+pub(crate) fn reconcile_group_profiles_for_projects(
+    project_idents: &[String],
+    progress: &SweepProgress,
+) {
     let mut seen = std::collections::HashSet::new();
-    for ident in project_idents {
-        if !seen.insert(ident.as_str()) {
-            continue;
-        }
-        let parsed = core::read_project(ident).and_then(|raw| {
-            serde_json::from_str::<core::Project>(&raw).map_err(|e| e.to_string())
-        });
-        let mut project = match parsed {
-            Ok(project) => project,
-            Err(e) => {
-                eprintln!("group profiles reconcile: skipping project '{}': {}", ident, e);
-                continue;
-            }
-        };
-        if project.is_read_only_here() {
-            continue;
-        }
-        // Group profiles first: they decide which profiles are attached.
-        let groups_changed =
-            core::reconcile_group_profiles(&mut project, &core::groups_for_project(ident));
-        let report = core::reconcile_project_profiles(&mut project);
-        if !groups_changed && !report.changed {
-            continue;
-        }
-        persist_swept_project(ident, &mut project, "group profile reconcile");
-        sync_project_if_configured(ident, &mut project);
-    }
+    let unique = project_idents
+        .iter()
+        .filter(|ident| seen.insert(ident.as_str()))
+        .cloned()
+        .collect();
+    sweep_project_changes(
+        unique,
+        progress,
+        "group profile reconcile",
+        |ident, project| {
+            // Group profiles first: they decide which profiles are attached.
+            let groups_changed =
+                core::reconcile_group_profiles(project, &core::groups_for_project(ident));
+            let report = core::reconcile_project_profiles(project);
+            groups_changed || report.changed
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Detach `profile_name` from every group and every project, dropping every
 /// item the profile provides, then re-sync. Used before a profile is deleted.
 /// Groups are cleared too, or a group would put the missing profile back.
-pub(crate) fn detach_profile_from_projects(profile_name: &str) {
+pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepProgress) {
     core::prune_profile_from_groups(profile_name);
-    with_each_writable_project_mut(|project_name, project| {
-        let before = project.profiles.len();
-        project.profiles.retain(|p| p != profile_name);
-        let recorded = project.profile_contributions.contains_key(profile_name);
-        let group_recorded = core::strip_group_profile_contribution(project, profile_name);
-        if project.profiles.len() == before && !recorded && !group_recorded {
-            return;
-        }
-        core::reconcile_project_profiles(project);
-        persist_swept_project(project_name, project, "profile detach");
-        sync_project_if_configured(project_name, project);
-    });
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "profile detach",
+        |_, project| {
+            let before = project.profiles.len();
+            project.profiles.retain(|p| p != profile_name);
+            let recorded = project.profile_contributions.contains_key(profile_name);
+            let group_recorded = core::strip_group_profile_contribution(project, profile_name);
+            if project.profiles.len() == before && !recorded && !group_recorded {
+                return false;
+            }
+            core::reconcile_project_profiles(project);
+            true
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Rewrite `profiles` entries and contribution keys from `old_name` to
 /// `new_name` in every group and every project. Content is unchanged, so no
 /// sync is needed.
-pub(crate) fn rename_profile_in_projects(old_name: &str, new_name: &str) {
+pub(crate) fn rename_profile_in_projects(
+    old_name: &str,
+    new_name: &str,
+    progress: &SweepProgress,
+) {
     if old_name == new_name {
         return;
     }
     core::rename_profile_in_groups(old_name, new_name);
-    with_each_writable_project_mut(|project_name, project| {
-        if core::rename_profile_in_project(project, old_name, new_name) {
-            persist_swept_project(project_name, project, "profile rename");
-        }
-    });
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "profile rename",
+        |_, project| core::rename_profile_in_project(project, old_name, new_name),
+        |_, _| Ok(()),
+    );
 }
 
-pub(crate) fn prune_hook_from_projects(machine_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let before = project.hooks.len();
-        project.hooks.retain(|name| name != machine_name);
-        let stripped =
-            core::strip_contribution(project, core::ProfileResourceKind::Hook, machine_name);
-        if project.hooks.len() != before || stripped {
-            project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_project(project_name, &data) {
-                        eprintln!(
-                            "Failed to update project '{}' after detaching hook '{}': {}",
-                            project_name, machine_name, e
-                        );
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Failed to serialise project '{}' after detaching hook '{}': {}",
-                        project_name, machine_name, e
-                    );
-                }
-            }
-            sync_project_if_configured(project_name, project);
-        }
-    });
+pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgress) {
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "hook removal",
+        |_, project| {
+            let before = project.hooks.len();
+            project.hooks.retain(|name| name != machine_name);
+            let stripped =
+                core::strip_contribution(project, core::ProfileResourceKind::Hook, machine_name);
+            project.hooks.len() != before || stripped
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Re-sync every project that has both a configured directory and at least
-/// one agent. Used after upgrade-time bundled-asset reinstalls so any project
-/// that references the updated library copies picks up the new content
-/// without the user having to press "Sync now". Silent failures are logged
-/// to stderr; this is best-effort.
-pub(crate) fn resync_all_projects() {
-    with_each_writable_project_mut(|project_name, project| {
-        sync_project_if_configured(project_name, project);
-    });
+/// one agent. Used after bundled assets are reinstalled so any project that
+/// references the updated library copies picks up the new content without
+/// the user having to press "Sync now".
+pub(crate) fn resync_all_projects(progress: &SweepProgress) {
+    sync_projects_where(progress, |_| true);
 }
 
 /// Reconcile every project's plugin-owned rules and skills with its tools,
@@ -1810,103 +1910,83 @@ pub(crate) fn reconcile_plugin_resources_in_projects() {
     });
 }
 
-pub(crate) fn prune_skill_from_projects(skill_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let before = project.skills.len();
-        project.skills.retain(|skill| skill != skill_name);
-        let stripped =
-            core::strip_contribution(project, core::ProfileResourceKind::Skill, skill_name);
-
-        if project.skills.len() != before || stripped {
-            project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_project(project_name, &data) {
-                        eprintln!("Failed to update project '{}': {}", project_name, e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
-                }
-            }
-            sync_project_if_configured(project_name, project);
-        }
-    });
+pub(crate) fn prune_skill_from_projects(skill_name: &str, progress: &SweepProgress) {
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "skill removal",
+        |_, project| {
+            let before = project.skills.len();
+            project.skills.retain(|skill| skill != skill_name);
+            let stripped =
+                core::strip_contribution(project, core::ProfileResourceKind::Skill, skill_name);
+            project.skills.len() != before || stripped
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
-pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let before = project.mcp_servers.len();
-        project.mcp_servers.retain(|server| server != server_name);
-        project
-            .disabled_mcp_servers
-            .retain(|server| server != server_name);
-        let stripped = core::strip_contribution(
-            project,
-            core::ProfileResourceKind::McpServer,
-            server_name,
-        );
-
-        if project.mcp_servers.len() != before || stripped {
-            project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_project(project_name, &data) {
-                        eprintln!("Failed to update project '{}': {}", project_name, e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
-                }
-            }
-            sync_project_if_configured(project_name, project);
-        }
-    });
+pub(crate) fn prune_mcp_server_from_projects(server_name: &str, progress: &SweepProgress) {
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "MCP server removal",
+        |_, project| {
+            let before = project.mcp_servers.len();
+            project.mcp_servers.retain(|server| server != server_name);
+            project
+                .disabled_mcp_servers
+                .retain(|server| server != server_name);
+            let stripped = core::strip_contribution(
+                project,
+                core::ProfileResourceKind::McpServer,
+                server_name,
+            );
+            project.mcp_servers.len() != before || stripped
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Rewrite every project's `mcp_servers` and `disabled_mcp_servers` entries
 /// from `old_name` to `new_name`. Persists changed projects and re-syncs
 /// them so on-disk agent config matches the renamed server.
-pub(crate) fn rename_mcp_server_in_projects(old_name: &str, new_name: &str) {
+pub(crate) fn rename_mcp_server_in_projects(
+    old_name: &str,
+    new_name: &str,
+    progress: &SweepProgress,
+) {
     if old_name == new_name {
         return;
     }
-    with_each_writable_project_mut(|project_name, project| {
-        let mut changed = false;
-        for server in project.mcp_servers.iter_mut() {
-            if server == old_name {
-                *server = new_name.to_string();
-                changed = true;
-            }
-        }
-        for server in project.disabled_mcp_servers.iter_mut() {
-            if server == old_name {
-                *server = new_name.to_string();
-                changed = true;
-            }
-        }
-        changed |= core::rename_contribution(
-            project,
-            core::ProfileResourceKind::McpServer,
-            old_name,
-            new_name,
-        );
-
-        if changed {
-            project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_project(project_name, &data) {
-                        eprintln!("Failed to update project '{}': {}", project_name, e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "MCP server rename",
+        |_, project| {
+            let mut changed = false;
+            for server in project.mcp_servers.iter_mut() {
+                if server == old_name {
+                    *server = new_name.to_string();
+                    changed = true;
                 }
             }
-            sync_project_if_configured(project_name, project);
-        }
-    });
+            for server in project.disabled_mcp_servers.iter_mut() {
+                if server == old_name {
+                    *server = new_name.to_string();
+                    changed = true;
+                }
+            }
+            changed
+                | core::rename_contribution(
+                    project,
+                    core::ProfileResourceKind::McpServer,
+                    old_name,
+                    new_name,
+                )
+        },
+        |_, project| sync_configured_project(project),
+    );
 }
 
 /// Run `mutate` over every template in the library and persist the ones it
@@ -1991,32 +2071,26 @@ pub(crate) fn prune_rule_from_templates(rule_name: &str) {
     });
 }
 
-pub(crate) fn prune_rule_from_projects(rule_name: &str) {
-    with_each_writable_project_mut(|project_name, project| {
-        let mut changed = false;
-        for rules in project.file_rules.values_mut() {
-            let before = rules.len();
-            rules.retain(|r| r != rule_name);
-            if rules.len() != before {
-                changed = true;
-            }
-        }
-        // Remove empty entries
-        project.file_rules.retain(|_, rules| !rules.is_empty());
-        changed |= core::strip_contribution(project, core::ProfileResourceKind::Rule, rule_name);
-
-        if changed {
-            project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
-                Ok(data) => {
-                    if let Err(e) = core::save_project(project_name, &data) {
-                        eprintln!("Failed to update project '{}': {}", project_name, e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+pub(crate) fn prune_rule_from_projects(rule_name: &str, progress: &SweepProgress) {
+    sweep_project_changes(
+        all_project_idents(),
+        progress,
+        "rule removal",
+        |_, project| {
+            let mut changed = false;
+            for rules in project.file_rules.values_mut() {
+                let before = rules.len();
+                rules.retain(|r| r != rule_name);
+                if rules.len() != before {
+                    changed = true;
                 }
             }
+            // Remove empty entries
+            project.file_rules.retain(|_, rules| !rules.is_empty());
+            changed
+                | core::strip_contribution(project, core::ProfileResourceKind::Rule, rule_name)
+        },
+        |_, project| {
             // Re-inject rules for affected files, skipping any file whose rules
             // are managed via .claude/rules/ (inline injection must not happen there).
             for (filename, rules) in &project.file_rules {
@@ -2025,9 +2099,155 @@ pub(crate) fn prune_rule_from_projects(rule_name: &str) {
                 }
                 let _ = core::inject_rules_into_project_file(&project.directory, filename, rules);
             }
-            sync_project_if_configured(project_name, project);
+            sync_configured_project(project)
+        },
+    );
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::super::project_sweeps::tests::RecordingReporter;
+    use super::super::project_sweeps::SweepReporter;
+    use super::*;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    /// A project's files live in its folder, so each needs its own.
+    fn save_fixture(name: &str, home: &std::path::Path) {
+        let directory = home.join(name);
+        std::fs::create_dir_all(&directory).expect("project folder");
+        let project = core::Project {
+            name: name.to_string(),
+            directory: directory.to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            ..Default::default()
+        };
+        core::save_project(name, &serde_json::to_string_pretty(&project).expect("json"))
+            .expect("save");
+    }
+
+    fn read_fixture(name: &str) -> core::Project {
+        serde_json::from_str(&core::read_project(name).expect("read")).expect("parse")
+    }
+
+    fn with_home(test: impl FnOnce(&std::path::Path)) {
+        let home = tempdir().expect("tempdir");
+        core::with_test_home(home.path().to_path_buf(), || test(home.path()));
+    }
+
+    #[test]
+    fn one_failing_project_is_named_and_the_others_still_run() {
+        with_home(|home| {
+            for name in ["sweep-a", "sweep-b", "sweep-c"] {
+                save_fixture(name, home);
+            }
+            let recording = Arc::new(RecordingReporter::default());
+            let reporter: Arc<dyn SweepReporter> = recording.clone();
+            let progress = SweepProgress::reporting(reporter);
+
+            let mut visited = Vec::new();
+            sweep_projects(
+                vec!["sweep-a".into(), "sweep-b".into(), "sweep-c".into()],
+                &progress,
+                |_, _| true,
+                |ident, _| {
+                    visited.push(ident.to_string());
+                    if ident == "sweep-b" {
+                        Err("disk full".to_string())
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+
+            assert_eq!(visited, vec!["sweep-a", "sweep-b", "sweep-c"]);
+            let events = recording.events.lock().expect("events");
+            let last = events.last().expect("an event");
+            assert_eq!((last.done, last.total), (3, 3));
+            assert_eq!(last.failed.len(), 1);
+            assert_eq!(last.failed[0].project, "sweep-b");
+            assert_eq!(last.failed[0].error, "disk full");
+        });
+    }
+
+    #[test]
+    fn a_project_that_stops_matching_after_selection_is_left_alone() {
+        with_home(|home| {
+            save_fixture("sweep-gone", home);
+            let progress = SweepProgress::silent();
+            let chosen = std::cell::Cell::new(false);
+
+            sweep_projects(
+                vec!["sweep-gone".into()],
+                &progress,
+                |_, _| !chosen.replace(true),
+                |_, _| panic!("the project no longer matches"),
+            );
+        });
+    }
+
+    /// A save between selection and the sweep's turn: the worker must work
+    /// from the saved project, not from what it read while choosing.
+    #[test]
+    fn a_project_saved_during_a_sweep_is_not_overwritten() {
+        struct SaveWhenTotalIsKnown(String);
+        impl SweepReporter for SaveWhenTotalIsKnown {
+            fn report(&self, event: &super::super::project_sweeps::SweepEvent) {
+                if event.done == 0 && !event.finished {
+                    let mut project = read_fixture(&self.0);
+                    project.description = "saved by the user".to_string();
+                    let json = serde_json::to_string_pretty(&project).expect("json");
+                    core::save_project(&self.0, &json).expect("save");
+                }
+            }
         }
-    });
+
+        with_home(|home| {
+            core::save_rule("sweep-rule", "Rule", "Body.\n").expect("rule");
+            save_fixture("sweep-saved", home);
+            let mut project = read_fixture("sweep-saved");
+            project
+                .file_rules
+                .insert("_project".to_string(), vec!["sweep-rule".to_string()]);
+            let json = serde_json::to_string_pretty(&project).expect("json");
+            core::save_project("sweep-saved", &json).expect("save");
+
+            let progress = SweepProgress::reporting(Arc::new(SaveWhenTotalIsKnown(
+                "sweep-saved".to_string(),
+            )));
+            sync_projects_referencing_rule("sweep-rule", &progress);
+
+            assert_eq!(read_fixture("sweep-saved").description, "saved by the user");
+        });
+    }
+
+    #[test]
+    fn the_total_counts_only_projects_that_will_change() {
+        with_home(|home| {
+            core::save_rule("sweep-rule", "Rule", "Body.\n").expect("rule");
+            for (name, rules) in [("sweep-uses", vec!["sweep-rule"]), ("sweep-other", vec![])] {
+                save_fixture(name, home);
+                let mut project = read_fixture(name);
+                if !rules.is_empty() {
+                    project.file_rules.insert(
+                        "_project".to_string(),
+                        rules.iter().map(|r| r.to_string()).collect(),
+                    );
+                }
+                let json = serde_json::to_string_pretty(&project).expect("json");
+                core::save_project(name, &json).expect("save");
+            }
+            let recording = Arc::new(RecordingReporter::default());
+            let reporter: Arc<dyn SweepReporter> = recording.clone();
+            let progress = SweepProgress::reporting(reporter);
+
+            prune_rule_from_projects("sweep-rule", &progress);
+
+            let events = recording.events.lock().expect("events");
+            assert_eq!(events.last().expect("an event").total, 1);
+            assert!(read_fixture("sweep-uses").file_rules.is_empty());
+        });
+    }
 }
 
 #[cfg(test)]
@@ -2081,7 +2301,7 @@ pub(crate) mod propagation_tests {
             });
             let (_keep_b, dir_b) = make_project("project-b", |_| {});
 
-            sync_projects_referencing_rule("test-rule");
+            sync_projects_referencing_rule("test-rule", &SweepProgress::silent());
 
             assert!(
                 dir_a.join(".claude").exists(),
@@ -2174,7 +2394,7 @@ pub(crate) mod propagation_tests {
             });
             let (_keep_b, dir_b) = make_project("project-b", |_| {});
 
-            reconcile_projects_referencing_profile("baseline");
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
 
             let a = read_back("project-a");
             assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
@@ -2203,13 +2423,13 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 p.file_rules
                     .insert("_project".to_string(), vec!["own-rule".to_string()]);
             });
-            reconcile_projects_referencing_profile("baseline");
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
             assert_eq!(
                 read_back("project-a").file_rules["_project"],
                 vec!["own-rule", "profile-rule"]
             );
 
-            detach_profile_from_projects("baseline");
+            detach_profile_from_projects("baseline", &SweepProgress::silent());
 
             let a = read_back("project-a");
             assert!(a.profiles.is_empty());
@@ -2447,7 +2667,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let (_keep_a, dir_a) = make_project("project-a", |_| {});
             let (_keep_b, dir_b) = make_project("project-b", |_| {});
 
-            resync_all_projects();
+            resync_all_projects(&SweepProgress::silent());
 
             assert!(
                 dir_a.join(".claude").exists(),
@@ -2473,7 +2693,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             });
             let (_keep_b, dir_b) = make_project("project-b", |_| {});
 
-            sync_projects_referencing_user_command("review");
+            sync_projects_referencing_user_command("review", &SweepProgress::silent());
 
             assert!(
                 dir_a.join(".claude").exists(),
@@ -2892,7 +3112,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let (_keep, dir) = make_project("project-a", |p| {
                 p.mcp_servers = vec![name.to_string()];
             });
-            sync_projects_referencing_mcp_server(name);
+            sync_projects_referencing_mcp_server(name, &SweepProgress::silent());
             crate::sync::global_mcp::apply_global_mcp("cursor", vec![name.to_string()])
                 .expect("select globally");
             let mcp_json = || std::fs::read_to_string(dir.join(".mcp.json")).unwrap_or_default();
@@ -2960,7 +3180,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let (_keep, _dir) = make_project("project-a", |p| {
                 p.profiles = vec!["delete-profile".to_string()];
             });
-            reconcile_projects_referencing_profile("delete-profile");
+            reconcile_projects_referencing_profile("delete-profile", &SweepProgress::silent());
             assert_eq!(read_back("project-a").user_commands, vec!["delete-command"]);
 
             super::super::user_commands::delete_user_command("delete-command".to_string())
@@ -2986,7 +3206,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let (_keep, _dir) = make_project("project-a", |p| {
                 p.profiles = vec!["delete-profile".to_string()];
             });
-            reconcile_projects_referencing_profile("delete-profile");
+            reconcile_projects_referencing_profile("delete-profile", &SweepProgress::silent());
             assert_eq!(read_back("project-a").user_agents, vec!["delete-agent"]);
 
             super::super::subagents::delete_subagent("delete-agent".to_string())
@@ -3420,10 +3640,10 @@ mod read_only_tests {
 
             // Background fan-outs.
             core::save_rule("test-rule", "Test Rule", "Changed body.\n").expect("edit rule");
-            sync_projects_referencing_rule("test-rule");
-            resync_all_projects();
+            sync_projects_referencing_rule("test-rule", &SweepProgress::silent());
+            resync_all_projects(&SweepProgress::silent());
             reconcile_plugin_resources_in_projects();
-            prune_rule_from_projects("test-rule");
+            prune_rule_from_projects("test-rule", &SweepProgress::silent());
 
             // Direct writes are refused with the read-only error.
             let refused = |result: Result<(), String>, what: &str| {
@@ -3468,7 +3688,7 @@ mod read_only_tests {
             assert_ne!(snapshot(&dir), before, "the refresh rewrites the stale config");
 
             let before = snapshot(&dir);
-            resync_all_projects();
+            resync_all_projects(&SweepProgress::silent());
             assert_ne!(snapshot(&dir), before, "a resync writes the instruction file back");
         });
     }
@@ -3515,7 +3735,7 @@ mod read_only_tests {
             );
             nested_refusal(remove_stale_skill("inner", "stale"), "remove stale skill");
             nested_refusal(crate::commands::save_doc_note("inner", "note", "text"), "doc note");
-            resync_all_projects();
+            resync_all_projects(&SweepProgress::silent());
             core::refresh_all_project_files().expect("refresh");
             assert_eq!(snapshot(&inner_dir), before, "the nested folder is unchanged");
         });

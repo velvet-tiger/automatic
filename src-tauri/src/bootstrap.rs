@@ -218,7 +218,7 @@ pub fn run_startup_housekeeping() {
         eprintln!(
             "[automatic] bundled assets refreshed; re-syncing all projects to propagate updates"
         );
-        commands::resync_all_projects();
+        commands::resync_all_projects(&commands::project_sweeps::SweepProgress::silent());
     }
 
     match core::install_plugin_marketplace() {

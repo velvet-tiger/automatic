@@ -1,5 +1,6 @@
 use crate::core;
 
+use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
 use super::projects::{
     detach_profile_from_projects, reconcile_projects_referencing_profile,
     rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
@@ -26,27 +27,38 @@ pub fn read_project_profile(name: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn save_project_profile(name: &str, data: &str) -> Result<(), String> {
     core::save_project_profile(name, data)?;
-    reconcile_projects_referencing_profile(name);
+    let profile = name.to_string();
+    queue_sweep(
+        Some(format!("profile:{profile}")),
+        format!("profile {profile}"),
+        move |progress| reconcile_projects_referencing_profile(&profile, progress),
+    );
     Ok(())
 }
 
 /// Detach the profile from every project first so each one loses every entry
 /// the profile provides, then remove the file.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project_profile(name: &str) -> Result<(), String> {
-    detach_profile_from_projects(name);
-    core::delete_project_profile(name)
+    let profile = name.to_string();
+    run_sweep_and_wait(format!("deleted profile {profile}"), move |progress| {
+        detach_profile_from_projects(&profile, progress);
+        core::delete_project_profile(&profile)
+    })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_project_profile(old_name: &str, new_name: &str) -> Result<(), String> {
-    core::rename_project_profile(old_name, new_name)?;
-    rename_profile_in_projects(old_name, new_name);
-    Ok(())
+    let (old_name, new_name) = (old_name.to_string(), new_name.to_string());
+    run_sweep_and_wait(format!("renamed profile {new_name}"), move |progress| {
+        core::rename_project_profile(&old_name, &new_name)?;
+        rename_profile_in_projects(&old_name, &new_name, progress);
+        Ok(())
+    })
 }
 
 /// Every project that has the profile attached.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_projects_referencing_profile(
     profile_name: &str,
 ) -> Result<Vec<core::ProjectRef>, String> {
@@ -66,6 +78,7 @@ pub fn get_projects_referencing_profile(
 
 #[tauri::command]
 pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     core::read_project_profile_parsed(profile_name)?;
 
@@ -89,6 +102,7 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
 
 #[tauri::command]
 pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =

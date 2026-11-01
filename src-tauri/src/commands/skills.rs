@@ -1,6 +1,7 @@
 use crate::core;
 
-use super::projects::sync_projects_referencing_skill;
+use super::project_sweeps::{queue_sweep, run_sweep_and_wait, SweepProgress};
+use super::projects::{sync_projects_referencing_skill, sync_projects_referencing_skills};
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
@@ -27,23 +28,37 @@ pub fn get_skill_scan_state(name: &str) -> Result<Option<core::AssetSecurityScan
 #[tauri::command]
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     core::user_writes::save_skill(name, content)?;
-    sync_projects_referencing_skill(name);
+    queue_skill_sweep(name);
     Ok(())
 }
 
-#[tauri::command]
+/// Queue a re-sync of every project that uses a skill just written to the
+/// library.
+pub(crate) fn queue_skill_sweep(name: &str) {
+    let skill = name.to_string();
+    queue_sweep(
+        Some(format!("skill:{skill}")),
+        format!("skill {skill}"),
+        move |progress| sync_projects_referencing_skill(&skill, progress),
+    );
+}
+
+#[tauri::command(async)]
 pub fn delete_skill(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Skill, name)?;
-    core::user_writes::delete_skill(name)?;
-    prune_skill_references(name);
-    Ok(())
+    let skill = name.to_string();
+    run_sweep_and_wait(format!("deleted skill {skill}"), move |progress| {
+        core::user_writes::delete_skill(&skill)?;
+        prune_skill_references(&skill, progress);
+        Ok(())
+    })
 }
 
 /// Take a deleted skill out of every profile and project, and re-sync the
 /// projects that changed. Run after the skill is deleted.
-pub(crate) fn prune_skill_references(name: &str) {
+pub(crate) fn prune_skill_references(name: &str, progress: &SweepProgress) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::Skill, name);
-    super::projects::prune_skill_from_projects(name);
+    super::projects::prune_skill_from_projects(name, progress);
 }
 
 /// Import a skill from an external scan directory (e.g. `~/.agents/skills/`
@@ -76,11 +91,29 @@ pub fn get_skill_resources(name: &str) -> Result<core::SkillResources, String> {
 #[tauri::command]
 pub fn reinstall_default_skills() -> Result<(), String> {
     core::install_default_skills_inner(true)?;
-    super::projects::resync_all_projects();
+    queue_sweep(
+        Some("all-projects".to_string()),
+        "reinstalled defaults".to_string(),
+        super::projects::resync_all_projects,
+    );
     Ok(())
 }
 
 // ── Skill Import ─────────────────────────────────────────────────────────────
+
+/// Record each imported skill, then queue one re-sync for all of them.
+fn queue_imported_skills(names: Vec<String>) {
+    for name in &names {
+        core::record_recently_added("skills", name);
+    }
+    let label = match names.as_slice() {
+        [name] => format!("skill {name}"),
+        _ => format!("{} imported skills", names.len()),
+    };
+    queue_sweep(None, label, move |progress| {
+        sync_projects_referencing_skills(&names, progress)
+    });
+}
 
 /// Import a skill from a local file path or directory.
 /// Accepts:
@@ -92,10 +125,7 @@ pub fn reinstall_default_skills() -> Result<(), String> {
 #[tauri::command]
 pub fn import_skill_from_local_path(path: String) -> Result<String, String> {
     let imported = core::import_skill_from_local_path(&path)?;
-    for skill in &imported {
-        core::record_recently_added("skills", &skill.name);
-        sync_projects_referencing_skill(&skill.name);
-    }
+    queue_imported_skills(imported.iter().map(|skill| skill.name.clone()).collect());
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
 
@@ -112,10 +142,7 @@ pub async fn import_skill_from_repository(
     skill_name: Option<String>,
 ) -> Result<String, String> {
     let imported = core::import_skill_from_repository(&repo_url, skill_name.as_deref()).await?;
-    for skill in &imported {
-        core::record_recently_added("skills", &skill.name);
-        sync_projects_referencing_skill(&skill.name);
-    }
+    queue_imported_skills(imported.iter().map(|skill| skill.name.clone()).collect());
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
 
@@ -126,10 +153,7 @@ pub async fn import_skill_from_repository(
 #[tauri::command]
 pub fn import_skill_from_package(path: String) -> Result<String, String> {
     let imported = core::import_skill_from_package(&path)?;
-    for skill in &imported {
-        core::record_recently_added("skills", &skill.name);
-        sync_projects_referencing_skill(&skill.name);
-    }
+    queue_imported_skills(imported.iter().map(|skill| skill.name.clone()).collect());
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
 

@@ -24,7 +24,11 @@ pub fn reinstall_defaults() -> Result<(), String> {
     // Bundled skills/rules/instructions/subagents were just force-overwritten
     // in the library. Propagate them to every configured project so the update
     // never surfaces as drift.
-    crate::commands::projects::resync_all_projects();
+    crate::commands::project_sweeps::queue_sweep(
+        Some("all-projects".to_string()),
+        "reinstalled defaults".to_string(),
+        crate::commands::projects::resync_all_projects,
+    );
     Ok(())
 }
 

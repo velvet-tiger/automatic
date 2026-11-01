@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use crate::core;
 
+use super::project_sweeps::{
+    hold_project_writes, queue_sweep, run_sweep_and_wait, SweepProgress,
+};
 use super::projects::{
     prune_rule_from_projects, prune_rule_from_templates, sync_project_if_configured,
     sync_projects_referencing_rule, with_each_project_mut,
@@ -26,22 +29,30 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
     // instruction files stay in sync with the library content. Sync output
     // directories are excluded from the Vite dev watcher so this does not
     // trigger a frontend reload during `make dev`.
-    sync_projects_referencing_rule(machine_name);
+    let rule = machine_name.to_string();
+    queue_sweep(
+        Some(format!("rule:{rule}")),
+        format!("rule {rule}"),
+        move |progress| sync_projects_referencing_rule(&rule, progress),
+    );
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
-    core::user_writes::delete_rule(machine_name)?;
-    prune_rule_references(machine_name);
-    Ok(())
+    let rule = machine_name.to_string();
+    run_sweep_and_wait(format!("deleted rule {rule}"), move |progress| {
+        core::user_writes::delete_rule(&rule)?;
+        prune_rule_references(&rule, progress);
+        Ok(())
+    })
 }
 
 /// Take a deleted rule out of every profile, project and template, and
 /// re-sync the projects that changed. Run after the rule is deleted.
-pub(crate) fn prune_rule_references(machine_name: &str) {
+pub(crate) fn prune_rule_references(machine_name: &str, progress: &SweepProgress) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::Rule, machine_name);
-    prune_rule_from_projects(machine_name);
+    prune_rule_from_projects(machine_name, progress);
     prune_rule_from_templates(machine_name);
 }
 
@@ -63,7 +74,7 @@ pub struct RuleProjectStatus {
 
 /// Return all projects that reference `rule_name` together with whether
 /// their on-disk instruction files are already up to date.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectStatus>, String> {
     let mut referencing: Vec<RuleProjectStatus> = Vec::new();
     with_each_project_mut(|_, project| {
@@ -135,6 +146,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 /// write — no manual injection is needed here.
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     super::projects::ensure_writable(project_name)?;
     let raw = core::read_project(project_name)?;

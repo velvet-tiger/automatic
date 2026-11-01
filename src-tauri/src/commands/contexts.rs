@@ -32,11 +32,13 @@ pub fn save_context(context: core::Context) -> Result<core::Context, String> {
 
 #[tauri::command]
 pub fn delete_context(slug: &str) -> Result<core::ContextReferences, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     core::delete_context(slug)
 }
 
 #[tauri::command]
 pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<core::ContextReferences, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     core::rename_context(old_slug, new_slug)
 }
 
@@ -47,11 +49,13 @@ pub fn get_context_references(slug: &str) -> Result<core::ContextReferences, Str
 
 #[tauri::command]
 pub fn attach_context(target: core::ContextTarget, slug: &str) -> Result<bool, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     core::attach_context(&target, slug)
 }
 
 #[tauri::command]
 pub fn detach_context(target: core::ContextTarget, slug: &str) -> Result<bool, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     core::detach_context(&target, slug)
 }
 

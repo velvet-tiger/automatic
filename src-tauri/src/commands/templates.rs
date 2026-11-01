@@ -69,6 +69,7 @@ pub fn apply_templates_to_project(
     project_name: &str,
     template_names: Vec<String>,
 ) -> Result<String, String> {
+    let _writes = super::project_sweeps::hold_project_writes();
     super::projects::ensure_writable(project_name)?;
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let mut result = core::apply_templates_to_project(project_name, &template_names)?;

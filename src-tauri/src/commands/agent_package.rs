@@ -1,6 +1,7 @@
 use crate::core;
 
-use super::projects::{sync_projects_referencing_mcp_server, sync_projects_referencing_skill};
+use super::project_sweeps::queue_sweep;
+use super::projects::{sync_projects_referencing_mcp_server, sync_projects_referencing_skills};
 
 // ── Agent Plugin packages ────────────────────────────────────────────────────
 //
@@ -39,11 +40,15 @@ pub async fn import_agent_package(
         let result = core::import_agent_package(&path, &expected_digest)?;
         for name in &result.imported_skills {
             core::record_recently_added("skills", name);
-            sync_projects_referencing_skill(name);
         }
-        for name in &result.imported_mcp_servers {
-            sync_projects_referencing_mcp_server(name);
-        }
+        let skills = result.imported_skills.clone();
+        let servers = result.imported_mcp_servers.clone();
+        queue_sweep(None, "imported package".to_string(), move |progress| {
+            sync_projects_referencing_skills(&skills, progress);
+            for name in &servers {
+                sync_projects_referencing_mcp_server(name, progress);
+            }
+        });
         Ok(result)
     })
     .await

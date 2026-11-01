@@ -1,5 +1,6 @@
 use crate::core;
 
+use super::project_sweeps::{queue_sweep, run_sweep_and_wait, SweepProgress};
 use super::projects::{reconcile_projects_referencing_profile, sync_projects_referencing_subagent};
 
 // ── Sub-Agents (global registry) ─────────────────────────────────────────────
@@ -33,16 +34,22 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
     }
 
     core::user_writes::save_subagent(&machine_name, &name, &content)?;
-    sync_projects_referencing_subagent(&machine_name);
+    queue_sweep(
+        Some(format!("subagent:{machine_name}")),
+        format!("sub-agent {machine_name}"),
+        move |progress| sync_projects_referencing_subagent(&machine_name, progress),
+    );
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_subagent(machine_name: String) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Subagent, &machine_name)?;
-    core::user_writes::delete_subagent(&machine_name)?;
-    prune_subagent_references(&machine_name);
-    Ok(())
+    run_sweep_and_wait(format!("deleted sub-agent {machine_name}"), move |progress| {
+        core::user_writes::delete_subagent(&machine_name)?;
+        prune_subagent_references(&machine_name, progress);
+        Ok(())
+    })
 }
 
 /// Take a deleted sub-agent out of every profile, and bring the projects
@@ -50,17 +57,17 @@ pub fn delete_subagent(machine_name: String) -> Result<(), String> {
 ///
 /// Projects are not pruned for sub-agents (sync skips a missing one), but
 /// profiles must stop listing it or the next reconcile would re-add it.
-pub(crate) fn prune_subagent_references(machine_name: &str) {
+pub(crate) fn prune_subagent_references(machine_name: &str, progress: &SweepProgress) {
     for profile in
         core::prune_asset_from_profiles(core::ProfileResourceKind::UserAgent, machine_name)
     {
-        reconcile_projects_referencing_profile(&profile);
+        reconcile_projects_referencing_profile(&profile, progress);
     }
 }
 
 /// Return all projects that reference a sub-agent. For project-local sub-agents
 /// this returns projects that have the agent in their `custom_agents` list.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_projects_referencing_subagent(
     agent_machine_name: String,
 ) -> Result<Vec<core::ProjectRef>, String> {

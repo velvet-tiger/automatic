@@ -1,5 +1,6 @@
 use crate::core;
 
+use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
 use super::projects::{
     prune_hook_from_projects, sync_project_if_configured, sync_projects_referencing_hook,
 };
@@ -46,20 +47,29 @@ pub fn save_hook(
 
     // Library propagation invariant: every save resyncs all projects that
     // reference this hook so their on-disk agent config matches the library.
-    sync_projects_referencing_hook(machine_name);
+    let hook = machine_name.to_string();
+    queue_sweep(
+        Some(format!("hook:{hook}")),
+        format!("hook {hook}"),
+        move |progress| sync_projects_referencing_hook(&hook, progress),
+    );
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_hook(machine_name: &str) -> Result<(), String> {
-    core::delete_hook(machine_name)?;
-    core::prune_asset_from_profiles(core::ProfileResourceKind::Hook, machine_name);
-    prune_hook_from_projects(machine_name);
-    Ok(())
+    let hook = machine_name.to_string();
+    run_sweep_and_wait(format!("deleted hook {hook}"), move |progress| {
+        core::delete_hook(&hook)?;
+        core::prune_asset_from_profiles(core::ProfileResourceKind::Hook, &hook);
+        prune_hook_from_projects(&hook, progress);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
@@ -83,6 +93,7 @@ pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(),
 
 #[tauri::command]
 pub fn detach_hook_from_project(project_name: &str, hook_name: &str) -> Result<(), String> {
+    let _writes = hold_project_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
@@ -112,7 +123,7 @@ pub struct HookProjectStatus {
     pub local_key: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_projects_referencing_hook(hook_name: &str) -> Result<Vec<HookProjectStatus>, String> {
     let mut referencing = Vec::new();
     super::projects::with_each_project_mut(|_, project| {

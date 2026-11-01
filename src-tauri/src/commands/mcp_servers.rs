@@ -1,5 +1,8 @@
 use crate::core;
 
+use super::project_sweeps::{
+    hold_project_writes, queue_sweep, run_sweep_and_wait, SweepProgress,
+};
 use super::projects::{
     prune_mcp_server_from_projects, rename_mcp_server_in_projects,
     rename_mcp_server_in_templates, sync_projects_referencing_mcp_server,
@@ -25,20 +28,32 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     core::user_writes::save_mcp_server(name, data)?;
-    sync_projects_referencing_mcp_server(name);
-    // Global assignments render the same registry entry per agent, so an
-    // edit here should propagate to every agent that has this server
-    // assigned globally too.  Best-effort — individual failures are logged
-    // in the orchestrator, not propagated (mirrors the projects path).
-    crate::sync::global_mcp::reapply_agents_referencing(name);
+    queue_mcp_server_sweep(name);
     Ok(())
+}
+
+/// Queue a re-sync of every project and global assignment that uses a server.
+/// Global assignments render the same registry entry per agent, so a change
+/// should propagate to every agent that has this server assigned globally
+/// too.  Best-effort — individual failures are logged in the orchestrator,
+/// not propagated.
+pub(crate) fn queue_mcp_server_sweep(name: &str) {
+    let server = name.to_string();
+    queue_sweep(
+        Some(format!("mcp:{server}")),
+        format!("MCP server {server}"),
+        move |progress| {
+            sync_projects_referencing_mcp_server(&server, progress);
+            crate::sync::global_mcp::reapply_agents_referencing(&server);
+        },
+    );
 }
 
 /// Rename an MCP server and rewrite every reference to it. Returns warnings
 /// about parts of the rename that did not complete, such as moving the
 /// server's source ownership. The rename itself succeeded when this returns
 /// `Ok`, so every reference is rewritten whatever the warnings say.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
     if old_name == new_name {
         return Ok(Vec::new());
@@ -46,38 +61,47 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
     if core::is_builtin_mcp_server(old_name) {
         return Err(format!("Cannot rename built-in MCP server '{}'", old_name));
     }
-    let warnings = core::rename_mcp_server_config(old_name, new_name)?;
+    let (old_name, new_name) = (old_name.to_string(), new_name.to_string());
+    run_sweep_and_wait(format!("renamed MCP server {new_name}"), move |progress| {
+        // The rename can rewrite projects that reference the server.
+        let writes = hold_project_writes();
+        let warnings = core::rename_mcp_server_config(&old_name, &new_name)?;
+        drop(writes);
 
-    // Rewrite every project and template that referenced the old name so no
-    // dangling references remain. Projects are re-synced from within the
-    // project helper so on-disk agent config reflects the new name.
-    core::rename_asset_in_profiles(core::ProfileResourceKind::McpServer, old_name, new_name);
-    rename_mcp_server_in_projects(old_name, new_name);
-    rename_mcp_server_in_templates(old_name, new_name);
+        // Rewrite every project and template that referenced the old name so no
+        // dangling references remain. Projects are re-synced from within the
+        // project helper so on-disk agent config reflects the new name.
+        core::rename_asset_in_profiles(core::ProfileResourceKind::McpServer, &old_name, &new_name);
+        rename_mcp_server_in_projects(&old_name, &new_name, progress);
+        rename_mcp_server_in_templates(&old_name, &new_name);
 
-    // Rewrite global-MCP selections and re-apply for every agent that had
-    // this server assigned globally, then reapply for the new name in case
-    // any downstream renderer needs the freshly-named entry propagated.
-    crate::sync::global_mcp::rename_server_in_global(old_name, new_name);
-    crate::sync::global_mcp::reapply_agents_referencing(new_name);
+        // Rewrite global-MCP selections and re-apply for every agent that had
+        // this server assigned globally, then reapply for the new name in case
+        // any downstream renderer needs the freshly-named entry propagated.
+        crate::sync::global_mcp::rename_server_in_global(&old_name, &new_name);
+        crate::sync::global_mcp::reapply_agents_referencing(&new_name);
 
-    Ok(warnings)
+        Ok(warnings)
+    })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::McpServer, name)?;
-    core::user_writes::delete_mcp_server(name)?;
-    prune_mcp_server_references(name);
-    Ok(())
+    let server = name.to_string();
+    run_sweep_and_wait(format!("deleted MCP server {server}"), move |progress| {
+        core::user_writes::delete_mcp_server(&server)?;
+        prune_mcp_server_references(&server, progress);
+        Ok(())
+    })
 }
 
 /// Take a deleted MCP server out of every profile, project and global
 /// selection, and re-sync what changed. Run after the server's config is
 /// deleted.
-pub(crate) fn prune_mcp_server_references(name: &str) {
+pub(crate) fn prune_mcp_server_references(name: &str, progress: &SweepProgress) {
     core::prune_asset_from_profiles(core::ProfileResourceKind::McpServer, name);
-    prune_mcp_server_from_projects(name);
+    prune_mcp_server_from_projects(name, progress);
     // Drop the server from every agent's global selection and rewrite the
     // affected files so the entry disappears from any place Automatic
     // manages it.

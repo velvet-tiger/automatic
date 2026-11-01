@@ -1,6 +1,6 @@
 use crate::core;
 
-use super::projects::sync_projects_referencing_skill;
+use super::skills::queue_skill_sweep;
 
 // ── Skills Store ─────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ pub async fn import_remote_skill(
         installed_version,
         installed_at,
     )?;
-    sync_projects_referencing_skill(&name);
+    queue_skill_sweep(&name);
     Ok(())
 }
 
@@ -64,6 +64,6 @@ pub async fn check_skill_update(name: String) -> Result<core::SkillUpdateStatus,
 #[tauri::command]
 pub async fn update_skill_from_source(name: String) -> Result<core::SkillUpdateStatus, String> {
     let status = core::update_skill_from_source(&name).await?;
-    sync_projects_referencing_skill(&name);
+    queue_skill_sweep(&name);
     Ok(status)
 }

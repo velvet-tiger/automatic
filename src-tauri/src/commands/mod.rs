@@ -23,6 +23,7 @@ mod oauth;
 mod profile;
 mod project_files;
 mod project_profiles;
+pub(crate) mod project_sweeps;
 mod projects;
 mod recommendations;
 mod remote_sources;

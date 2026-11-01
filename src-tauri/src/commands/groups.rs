@@ -1,5 +1,6 @@
 use crate::core;
 
+use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
 use super::projects::reconcile_group_profiles_for_projects;
 
 // ── Project Groups ────────────────────────────────────────────────────────────
@@ -23,23 +24,39 @@ pub fn read_group(name: &str) -> Result<String, String> {
 /// members in step. Members whose profiles changed are re-synced.
 /// `projects` holds `local_key`s (ids are accepted too); they are stored as
 /// project ids. Any other value is stored unchanged.
+/// Queue a reconcile of `members`. It has no merge key: each save names its
+/// own old and new members, and merging two would drop one set.
+fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
+    queue_sweep(None, format!("group {group_name}"), move |progress| {
+        reconcile_group_profiles_for_projects(&members, progress)
+    });
+}
+
 #[tauri::command]
 pub fn save_group(name: &str, data: &str) -> Result<(), String> {
     let mut affected = core::group_member_idents(name);
+    // Saving a group writes its contexts into the member projects.
+    let writes = hold_project_writes();
     core::save_group_reconciling_contexts(name, data)?;
+    drop(writes);
     affected.extend(core::group_member_idents(name));
-    reconcile_group_profiles_for_projects(&affected);
+    queue_group_reconcile(name, affected);
     Ok(())
 }
 
 /// Delete a group and release the contexts and profiles it provided to its
 /// members. Members that lose a profile are re-synced.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_group(name: &str) -> Result<(), String> {
-    let members = core::group_member_idents(name);
-    core::delete_group_reconciling_contexts(name)?;
-    reconcile_group_profiles_for_projects(&members);
-    Ok(())
+    let group = name.to_string();
+    run_sweep_and_wait(format!("deleted group {group}"), move |progress| {
+        let members = core::group_member_idents(&group);
+        let writes = hold_project_writes();
+        core::delete_group_reconciling_contexts(&group)?;
+        drop(writes);
+        reconcile_group_profiles_for_projects(&members, progress);
+        Ok(())
+    })
 }
 
 // ── Group profiles ───────────────────────────────────────────────────────────
@@ -50,7 +67,7 @@ pub fn delete_group(name: &str) -> Result<(), String> {
 /// members are brought in step either way.
 pub(crate) fn attach_group_profile(group_name: &str, profile_name: &str) -> Result<bool, String> {
     let changed = core::add_profile_to_group(group_name, profile_name)?;
-    reconcile_group_profiles_for_projects(&core::group_member_idents(group_name));
+    queue_group_reconcile(group_name, core::group_member_idents(group_name));
     Ok(changed)
 }
 
@@ -60,7 +77,7 @@ pub(crate) fn attach_group_profile(group_name: &str, profile_name: &str) -> Resu
 /// profile; members are brought in step either way.
 pub(crate) fn detach_group_profile(group_name: &str, profile_name: &str) -> Result<bool, String> {
     let changed = core::remove_profile_from_group(group_name, profile_name)?;
-    reconcile_group_profiles_for_projects(&core::group_member_idents(group_name));
+    queue_group_reconcile(group_name, core::group_member_idents(group_name));
     Ok(changed)
 }
 

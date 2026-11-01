@@ -1,5 +1,7 @@
 use crate::core::remote_sources;
 
+use super::project_sweeps::{run_sweep_and_wait, SweepProgress};
+
 // ── Tauri Commands for Remote Sources ───────────────────────────────────────
 
 /// Fetch a remote source manifest without installing.
@@ -61,7 +63,7 @@ fn parse_selected(
 /// Update a previously installed source (pull latest + re-install).
 /// Each resource the update removed is pruned the way its delete command
 /// prunes it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_remote_source(repo: String) -> Result<String, String> {
     update_remote_source_with(&repo, remote_sources::update_source)
 }
@@ -73,28 +75,35 @@ fn update_remote_source_with(
     update: impl FnOnce(&str) -> Result<remote_sources::UpdateResult, String>,
 ) -> Result<String, String> {
     let result = update(repo)?;
-    prune_update_removals(&result);
+    let result = run_sweep_and_wait(format!("updated source {repo}"), move |progress| {
+        prune_update_removals(&result, progress);
+        Ok(result)
+    })?;
     serde_json::to_string(&result).map_err(|e| format!("Failed to serialize update result: {}", e))
 }
 
 /// Remove a source and all resources it provided. Each removed resource is
 /// pruned the way its delete command prunes it. A resource that could not
 /// be removed is left everywhere it is used.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_remote_source(repo: String) -> Result<String, String> {
-    let result = remote_sources::remove_source(&repo)?;
-    for key in &result.removed {
-        if let Some((resource_type, name)) = key.split_once(':') {
-            prune_removed_resource(resource_type, name);
+    let label = format!("removed source {repo}");
+    let result = run_sweep_and_wait(label, move |progress| {
+        let result = remote_sources::remove_source(&repo)?;
+        for key in &result.removed {
+            if let Some((resource_type, name)) = key.split_once(':') {
+                prune_removed_resource(resource_type, name, progress);
+            }
         }
-    }
+        Ok(result)
+    })?;
     serde_json::to_string(&result).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
-fn prune_update_removals(result: &remote_sources::UpdateResult) {
+fn prune_update_removals(result: &remote_sources::UpdateResult, progress: &SweepProgress) {
     for (resource_type, names) in &result.removed {
         for name in names {
-            prune_removed_resource(resource_type, name);
+            prune_removed_resource(resource_type, name, progress);
         }
     }
 }
@@ -105,14 +114,14 @@ fn prune_update_removals(result: &remote_sources::UpdateResult) {
 ///
 /// A skill name that still resolves to a skill in another skill folder,
 /// such as `~/.agents/skills`, is the user's skill, so its references stay.
-fn prune_removed_resource(resource_type: &str, name: &str) {
+fn prune_removed_resource(resource_type: &str, name: &str, progress: &SweepProgress) {
     match resource_type {
         "skills" | "skill" if remote_sources::skill_resolves_outside_library(name) => {}
-        "skills" | "skill" => super::skills::prune_skill_references(name),
-        "mcp_servers" | "mcp_server" => super::mcp_servers::prune_mcp_server_references(name),
-        "rules" | "rule" => super::rules::prune_rule_references(name),
-        "commands" | "command" => super::user_commands::prune_user_command_references(name),
-        "agents" | "agent" => super::subagents::prune_subagent_references(name),
+        "skills" | "skill" => super::skills::prune_skill_references(name, progress),
+        "mcp_servers" | "mcp_server" => super::mcp_servers::prune_mcp_server_references(name, progress),
+        "rules" | "rule" => super::rules::prune_rule_references(name, progress),
+        "commands" | "command" => super::user_commands::prune_user_command_references(name, progress),
+        "agents" | "agent" => super::subagents::prune_subagent_references(name, progress),
         _ => {}
     }
 }
@@ -244,7 +253,7 @@ mod tests {
             let (_keep, dir) = make_project("source-remove-project", |p| {
                 p.profiles = vec![PROFILE.to_string()];
             });
-            super::super::projects::reconcile_projects_referencing_profile(PROFILE);
+            super::super::projects::reconcile_projects_referencing_profile(PROFILE, &SweepProgress::silent());
             crate::sync::global_mcp::apply_global_mcp("cursor", vec![SERVER.to_string()])
                 .expect("select globally");
 
@@ -375,7 +384,7 @@ mod tests {
                 warnings: Vec::new(),
                 old_version: "1.0.0".to_string(),
                 new_version: "2.0.0".to_string(),
-            });
+            }, &SweepProgress::silent());
 
             let after = read_back("source-remove-project");
             assert_eq!(after.file_rules["_project"], vec!["source-remove-cmd-kept"]);
