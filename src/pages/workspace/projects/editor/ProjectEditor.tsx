@@ -562,8 +562,6 @@ export function ProjectEditor({
   // Counts edits, so a save that finishes after a newer edit does not replace
   // that edit with what it read back from disk.
   const editSeq = useRef(0);
-  // Orders every save_project call from this editor: the last one requested
-  // is the last one written.
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
   const projectFileBusy = useRef(false);
@@ -2825,10 +2823,11 @@ export function ProjectEditor({
   // can pass the already-computed new value without waiting for a React state flush.
   const saveProjectSnapshot = async (snapshot: Project): Promise<boolean> => {
     const folderFallback = snapshot.directory?.split("/").filter(Boolean).pop() ?? "";
-    // The wizard's stub is addressed by its chosen name; a saved project by
-    // its local_key. The display name is never replaced by the key.
+    // The wizard's stub is addressed by its key, as in the full save, so one
+    // project has one save order; a saved project by its local_key. The
+    // display name is never replaced by the key.
     const displayName = isCreating ? (newName.trim() || folderFallback) : snapshot.name;
-    const name = isCreating ? displayName : selectedKey;
+    const name = isCreating ? (wizardStubKey.current ?? displayName) : selectedKey;
     if (!name || !displayName) return false;
     const seq = editSeq.current;
     // The turn covers the re-read, so `saved` is this save and not a later one.
