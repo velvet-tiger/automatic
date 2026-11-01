@@ -17,7 +17,7 @@
 //! `mcp-serve` process, which shares these commands) jobs run inline on the
 //! calling thread.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard, OnceLock};
@@ -183,20 +183,25 @@ fn without_home(text: &str) -> String {
 }
 
 fn replace_home(text: &str, home: &str) -> String {
+    let home = home.trim_end_matches('/');
     if home.is_empty() {
         return text.to_string();
     }
+    let in_a_name = |c: char| c.is_alphanumeric() || "-_.+~@%=".contains(c);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    let mut before = None;
     while let Some(at) = rest.find(home) {
-        let after = &rest[at + home.len()..];
-        // `/Users/sam` must not match inside `/Users/samuel`.
-        let whole = !after
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
-        out.push_str(&rest[..at]);
-        out.push_str(if whole { "~" } else { home });
+        let (head, tail) = rest.split_at(at);
+        let after = &tail[home.len()..];
+        let preceding = head.chars().next_back().or(before);
+        // A match is only the home folder if a path starts here and ends
+        // here: `/backup/Users/sam` and `/Users/sam+work` are other folders.
+        let starts = !preceding.is_some_and(|c: char| in_a_name(c) || c == '/');
+        let ends = !after.chars().next().is_some_and(in_a_name);
+        out.push_str(head);
+        out.push_str(if starts && ends { "~" } else { home });
+        before = home.chars().next_back();
         rest = after;
     }
     out.push_str(rest);
@@ -224,9 +229,12 @@ struct QueuedJob {
 struct QueueState {
     waiting: VecDeque<QueuedJob>,
     next_id: u64,
-    /// Merge keys of deletes queued or running.
-    deleting: HashSet<String>,
+    /// Merge keys of deletes queued or running, each with how many.
+    deleting: HashMap<String, usize>,
     marker_written: bool,
+    /// The last run left a marker and its repair is not queued yet. The
+    /// marker must outlive any job that drains the queue before then.
+    repair_owed: bool,
 }
 
 /// Jobs in the order they were queued.
@@ -239,11 +247,24 @@ struct SweepQueue {
 }
 
 impl SweepQueue {
+    /// A queue that records outstanding work at `marker`. A marker already
+    /// there means the last run quit early, so a repair is owed.
     fn with_marker(marker: PathBuf) -> Self {
+        let interrupted = marker.exists();
         Self {
+            state: Mutex::new(QueueState {
+                marker_written: interrupted,
+                repair_owed: interrupted,
+                ..QueueState::default()
+            }),
             marker: Some(marker),
             ..Self::default()
         }
+    }
+
+    /// Whether a repair was owed. The caller queues it.
+    fn take_repair_owed(&self) -> bool {
+        std::mem::take(&mut lock_ignoring_poison(&self.state).repair_owed)
     }
 
     /// Add a job, unless one with the same `key` is still waiting. That job
@@ -279,7 +300,7 @@ impl SweepQueue {
     /// does, so a job cannot be queued between the check and the removal.
     fn job_finished(&self) {
         let mut state = lock_ignoring_poison(&self.state);
-        if !state.waiting.is_empty() || !state.marker_written {
+        if !state.waiting.is_empty() || !state.marker_written || state.repair_owed {
             return;
         }
         if let Some(marker) = &self.marker {
@@ -310,16 +331,24 @@ impl SweepQueue {
         T: Send + 'static,
         F: FnOnce(&SweepProgress) -> Result<T, String> + Send + 'static,
     {
-        lock_ignoring_poison(&self.state)
+        *lock_ignoring_poison(&self.state)
             .deleting
-            .insert(key.clone());
+            .entry(key.clone())
+            .or_default() += 1;
         let result = self.run_and_wait(label, body);
-        lock_ignoring_poison(&self.state).deleting.remove(&key);
+        let mut state = lock_ignoring_poison(&self.state);
+        match state.deleting.get_mut(&key) {
+            Some(count) if *count > 1 => *count -= 1,
+            _ => {
+                state.deleting.remove(&key);
+            }
+        }
+        drop(state);
         result
     }
 
     fn is_deleting(&self, key: &str) -> bool {
-        lock_ignoring_poison(&self.state).deleting.contains(key)
+        lock_ignoring_poison(&self.state).deleting.contains_key(key)
     }
 
     /// Queue `body` and block until the worker has run it. Never call this
@@ -395,19 +424,15 @@ fn pending_marker_path() -> Result<PathBuf, String> {
 
 /// Start the worker. Without it jobs run inline, which is slower for the
 /// caller but still correct, so a failure here does not stop the app. A
-/// marker left by the last run queues the repair.
+/// marker left by the last run owes a repair: see [`queue_owed_repair`].
 pub(crate) fn start_sweep_worker(app: tauri::AppHandle) {
-    let (queue, interrupted) = match pending_marker_path() {
-        Ok(marker) => {
-            let interrupted = marker.exists();
-            (SweepQueue::with_marker(marker), interrupted)
-        }
+    let queue = Arc::new(match pending_marker_path() {
+        Ok(marker) => SweepQueue::with_marker(marker),
         Err(e) => {
             eprintln!("[automatic] updates will not survive a quit: {}", e);
-            (SweepQueue::default(), false)
+            SweepQueue::default()
         }
-    };
-    let queue = Arc::new(queue);
+    });
     let worker_queue = Arc::clone(&queue);
     let reporter: Arc<dyn SweepReporter> = Arc::new(TauriSweepReporter(app));
     let spawned = std::thread::Builder::new()
@@ -422,10 +447,14 @@ pub(crate) fn start_sweep_worker(app: tauri::AppHandle) {
                 "[automatic] could not start the project update worker: {}",
                 e
             );
-            return;
         }
     }
-    if interrupted {
+}
+
+/// Queue the repair the last run left owing, if any. Call once startup
+/// housekeeping has finished, so it cannot run during library migrations.
+pub(crate) fn queue_owed_repair() {
+    if current_queue().is_some_and(|queue| queue.take_repair_owed()) {
         queue_sweep(
             Some("interrupted-update".to_string()),
             "an interrupted update".to_string(),
@@ -711,6 +740,67 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_marker_from_the_last_run_survives_until_the_repair_is_queued() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join(PENDING_MARKER);
+        std::fs::write(&marker, "").expect("marker");
+        let queue = SweepQueue::with_marker(marker.clone());
+        let (_recording, shared) = reporter();
+
+        queue.push(None, "an early save".into(), Box::new(|_| {}));
+        run_next(&queue, &shared);
+        assert!(marker.exists(), "the repair has not run yet");
+
+        assert!(queue.take_repair_owed());
+        assert!(!queue.take_repair_owed(), "owed once");
+        queue.push(None, "the repair".into(), Box::new(|_| {}));
+        run_next(&queue, &shared);
+        assert!(!marker.exists(), "cleared once the repair has run");
+    }
+
+    #[test]
+    fn a_queue_with_no_marker_owes_no_repair() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let queue = SweepQueue::with_marker(dir.path().join(PENDING_MARKER));
+        assert!(!queue.take_repair_owed());
+    }
+
+    #[test]
+    fn two_deletes_of_one_item_refuse_saves_until_both_end() {
+        let queue = Arc::new(SweepQueue::default());
+        let (_recording, shared) = reporter();
+        let worker_queue = Arc::clone(&queue);
+        std::thread::spawn(move || run_worker(&worker_queue, shared));
+        let (first_started_tx, first_started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+
+        let blocked = Arc::clone(&queue);
+        let first = std::thread::spawn(move || {
+            blocked.delete_and_wait("rule:a".into(), "first".into(), move |_| {
+                first_started_tx.send(()).expect("send");
+                release_rx.recv().expect("recv");
+                Ok(())
+            })
+        });
+        first_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first started");
+
+        let waiting = Arc::clone(&queue);
+        let second = std::thread::spawn(move || {
+            waiting.delete_and_wait("rule:a".into(), "second".into(), |_| Ok(()))
+        });
+        while lock_ignoring_poison(&queue.state).deleting.get("rule:a") != Some(&2) {
+            std::thread::yield_now();
+        }
+
+        release_tx.send(()).expect("send");
+        first.join().expect("join").expect("first");
+        second.join().expect("join").expect("second");
+        assert!(!queue.is_deleting("rule:a"));
+    }
+
+    #[test]
     fn a_job_still_running_keeps_the_marker() {
         let dir = tempfile::tempdir().expect("tempdir");
         let marker = dir.path().join(PENDING_MARKER);
@@ -764,6 +854,20 @@ pub(crate) mod tests {
             "/Users/samuel/a and ~/b"
         );
         assert_eq!(replace_home("text", ""), "text");
+        assert_eq!(replace_home("/Users/sam/a", "/Users/sam/"), "~/a");
+        assert_eq!(
+            replace_home("/backup/Users/sam/x", "/Users/sam"),
+            "/backup/Users/sam/x"
+        );
+        assert_eq!(
+            replace_home("/Users/sam+work/x", "/Users/sam"),
+            "/Users/sam+work/x"
+        );
+        assert_eq!(
+            replace_home("a:/Users/sam/x (/Users/sam)", "/Users/sam"),
+            "a:~/x (~)"
+        );
+        assert_eq!(replace_home("anything", "/"), "anything");
     }
 
     #[test]
@@ -773,7 +877,7 @@ pub(crate) mod tests {
             let queue = Arc::new(SweepQueue::default());
             lock_ignoring_poison(&queue.state)
                 .deleting
-                .insert("rule:going".to_string());
+                .insert("rule:going".to_string(), 1);
             TEST_QUEUE.with(|current| *current.borrow_mut() = Some(queue));
 
             let refused = crate::commands::save_rule("going", "going", "Body.\n");

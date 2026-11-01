@@ -256,7 +256,7 @@ fn probe_shell(shell: &str, timeout: Duration) -> Result<String, String> {
 /// `killpg`, so `/bin/kill` sends the group signal; `Child::kill` is the
 /// fallback for the shell itself.
 #[cfg(unix)]
-fn kill_process_group(child: &mut std::process::Child) {
+pub(crate) fn kill_process_group(child: &mut std::process::Child) {
     let group = format!("-{}", child.id());
     let _ = crate::spawn_safe::safe_command("/bin/kill")
         .args(["-KILL", "--", &group])

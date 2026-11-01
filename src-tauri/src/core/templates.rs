@@ -406,6 +406,7 @@ pub async fn import_bundled_template(name: &str) -> Result<(), String> {
     };
 
     let json = serde_json::to_string_pretty(&pt).map_err(|e| e.to_string())?;
+    let _writes = super::hold_library_writes();
     save_template(&bundled.name, &json)
 }
 

@@ -87,7 +87,10 @@ pub fn run() {
             // (see main.rs) runs the same housekeeping synchronously, since
             // it has no GUI event loop to block and needs the repair done
             // before it starts serving.
-            std::thread::spawn(bootstrap::run_startup_housekeeping);
+            std::thread::spawn(|| {
+                bootstrap::run_startup_housekeeping();
+                commands::project_sweeps::queue_owed_repair();
+            });
 
             // Background library-refresh loop. Runs one check ~30s
             // after startup (grace period lets the boot-time seed

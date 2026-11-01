@@ -1,5 +1,6 @@
 use crate::core;
 
+use super::project_sweeps::ensure_not_being_deleted;
 use super::skills::queue_skill_sweep;
 
 // ── Skills Store ─────────────────────────────────────────────────────────────
@@ -24,6 +25,7 @@ pub async fn import_remote_skill(
     source: String,
     id: String,
 ) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("skill:{name}"), &name)?;
     core::user_writes::save_skill(&name, &content)?;
     let installed_sha = Some(core::sha256_hex(&content));
     // skill.json is best-effort: many published skills do not include one,

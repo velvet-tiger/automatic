@@ -90,14 +90,14 @@ pub(crate) fn detach_group_profile(group_name: &str, profile_name: &str) -> Resu
 
 /// Attach a profile to a group. Every member project receives it and is
 /// re-synced. Idempotent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_profile_to_group(group_name: &str, profile_name: &str) -> Result<(), String> {
     attach_group_profile(group_name, profile_name).map(|_| ())
 }
 
 /// Detach a profile from a group. Member projects lose it, unless another
 /// of their groups provides it, and are re-synced. Idempotent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detach_profile_from_group(group_name: &str, profile_name: &str) -> Result<(), String> {
     detach_group_profile(group_name, profile_name).map(|_| ())
 }

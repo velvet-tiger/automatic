@@ -151,7 +151,11 @@ pub fn run_startup_housekeeping() {
     // (references to deleted projects). Runs after the store migration
     // above, which turns member names into ids. Members it cannot
     // classify, such as names, are never removed. Idempotent.
-    match core::scrub_orphan_project_references() {
+    let scrubbed = {
+        let _writes = core::hold_library_writes();
+        core::scrub_orphan_project_references()
+    };
+    match scrubbed {
         Ok(affected) if !affected.is_empty() => eprintln!(
             "[automatic] scrubbed orphan project references from groups: {:?}",
             affected
@@ -232,6 +236,7 @@ pub fn run_startup_housekeeping() {
             // This keeps MCP config files and skill directories in sync
             // without requiring the user to press "Sync now".
             for project_name in projects_to_sync {
+                let _writes = core::hold_library_writes();
                 match core::read_project(&project_name) {
                     Ok(raw) => match serde_json::from_str::<core::Project>(&raw) {
                         Ok(mut project) => {

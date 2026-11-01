@@ -1896,12 +1896,62 @@ pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgr
 }
 
 /// Finish whatever a quit interrupted: bring every project in step with its
-/// groups and profiles, then re-sync them all. Safe to run again at any point.
-/// A project that matches already is written with the same content.
+/// groups and profiles, re-sync them all and re-apply global MCP selections.
+/// Safe to run again at any point. A project that matches already is written
+/// with the same content.
+///
+/// A rename or delete cut short is not replayed. It can leave a project
+/// naming an item the library no longer has, which sync skips without a
+/// word, so those are reported for the user to fix.
 pub(crate) fn repair_interrupted_sweep(progress: &SweepProgress) {
     let idents = all_project_idents(progress);
     reconcile_group_profiles_for_projects(&idents, progress);
     resync_all_projects(progress);
+    for (agent, error) in sync::global_mcp::reapply_all_agents() {
+        progress.report_failure(&agent, error);
+    }
+    with_each_project_mut(|_, project| {
+        let missing = missing_library_references(project);
+        if !project.is_read_only_here() && !missing.is_empty() {
+            progress.report_failure(
+                &project.name,
+                format!("Uses items not in the library: {}", missing.join(", ")),
+            );
+        }
+    });
+}
+
+/// What `project` names that the library cannot supply, as "kind name".
+fn missing_library_references(project: &core::Project) -> Vec<String> {
+    let rules: std::collections::BTreeSet<&String> = project.file_rules.values().flatten().collect();
+    let mut missing: Vec<String> = Vec::new();
+    let mut note = |kind: &str, name: &str, present: bool| {
+        if !present {
+            missing.push(format!("{kind} {name}"));
+        }
+    };
+    for name in rules {
+        note("rule", name, core::read_rule(name).is_ok());
+    }
+    for name in &project.skills {
+        // A skill with no file reads as empty, not as an error.
+        let present = core::read_skill(name).is_ok_and(|content| !content.is_empty());
+        note("skill", name, present);
+    }
+    for name in &project.mcp_servers {
+        let present = core::is_builtin_mcp_server(name) || core::read_mcp_server_config(name).is_ok();
+        note("MCP server", name, present);
+    }
+    for name in &project.user_agents {
+        note("sub-agent", name, core::read_subagent(name).is_ok());
+    }
+    for name in &project.user_commands {
+        note("command", name, core::read_user_command(name).is_ok());
+    }
+    for name in &project.hooks {
+        note("hook", name, core::read_hook(name).is_ok());
+    }
+    missing
 }
 
 /// Re-sync every project that has both a configured directory and at least
@@ -2475,6 +2525,35 @@ mod sweep_race_tests {
             let again = read_fixture("interrupted");
             assert_eq!(again.file_rules, repaired.file_rules);
             assert_eq!(again.profile_contributions, repaired.profile_contributions);
+        });
+    }
+
+    #[test]
+    fn repair_names_references_to_items_the_library_lost() {
+        with_temp_home(|_| {
+            core::save_rule("kept-rule", "Rule", "Body.\n").expect("rule");
+            let (_keep_a, _dir_a) = make_project("dangling", |p| {
+                p.file_rules.insert(
+                    "_project".to_string(),
+                    vec!["kept-rule".to_string(), "lost-rule".to_string()],
+                );
+                p.skills = vec!["lost-skill".to_string()];
+            });
+            let (_keep_b, _dir_b) = make_project("whole", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec!["kept-rule".to_string()]);
+            });
+
+            let (recording, progress) = recording_progress();
+            repair_interrupted_sweep(&progress);
+
+            let events = recording.events.lock().expect("events");
+            let failed = &events.last().expect("an event").failed;
+            assert_eq!(failed.len(), 1, "{:?}", failed);
+            assert_eq!(failed[0].project, "dangling");
+            assert!(failed[0].error.contains("rule lost-rule"), "{:?}", failed);
+            assert!(failed[0].error.contains("skill lost-skill"), "{:?}", failed);
+            assert!(!failed[0].error.contains("kept-rule"), "{:?}", failed);
         });
     }
 

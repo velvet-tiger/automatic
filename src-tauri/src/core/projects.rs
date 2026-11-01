@@ -251,6 +251,7 @@ pub fn read_project(name: &str) -> Result<String, String> {
 /// renames a project a teammate renamed upstream. A read-only project is
 /// skipped.
 pub fn refresh_project_files(name: &str) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
     let resolved = resolve_project(name)?;
     let project = resolved.project;
     if project.directory.is_empty() || project.directory_missing || project_is_read_only(&project)? {

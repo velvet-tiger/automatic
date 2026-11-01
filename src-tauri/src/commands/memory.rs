@@ -13,7 +13,7 @@ pub fn get_project_memories(project: &str) -> Result<memory::MemoryDb, String> {
     memory::get_all_memories(&project.id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn store_memory(
     project: &str,
     key: &str,
@@ -42,13 +42,13 @@ pub fn search_memories(project: &str, query: &str) -> Result<String, String> {
     memory::search_memories(project, query)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_memory(project: &str, key: &str) -> Result<String, String> {
     let project = &crate::core::project_store_keys(project)?;
     memory::delete_memory(project, key)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_memories(
     project: &str,
     pattern: Option<&str>,

@@ -1,6 +1,6 @@
 use crate::core::remote_sources;
 
-use super::project_sweeps::{run_sweep_and_wait, SweepProgress};
+use super::project_sweeps::{ensure_not_being_deleted, run_sweep_and_wait, SweepProgress};
 
 // ── Tauri Commands for Remote Sources ───────────────────────────────────────
 
@@ -27,7 +27,7 @@ pub fn fetch_remote_source(
 /// `overrides` holds the `type:name` key of each conflict the user confirmed
 /// replacing, from [`check_source_conflicts`]. With an unconfirmed conflict
 /// nothing is installed and the result lists the conflicts.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_remote_source(
     repo: String,
     selected: Option<String>,
@@ -37,15 +37,40 @@ pub fn install_remote_source(
     let base_dir = remote_sources::resolve_base_dir(&repo, dir.as_deref())?;
     let manifest = remote_sources::parse_manifest(&base_dir)?;
     let selected_resources = parse_selected(selected)?;
+    match &selected_resources {
+        Some(selected) => ensure_install_not_being_deleted(selected)?,
+        None => ensure_install_not_being_deleted(&remote_sources::select_all(&manifest))?,
+    }
 
-    let result = remote_sources::install_source(
-        &repo,
-        &manifest,
-        selected_resources,
-        dir.as_deref(),
-        &overrides.unwrap_or_default(),
-    )?;
+    let result = run_sweep_and_wait(format!("installed source {repo}"), move |_| {
+        remote_sources::install_source(
+            &repo,
+            &manifest,
+            selected_resources,
+            dir.as_deref(),
+            &overrides.unwrap_or_default(),
+        )
+    })?;
     serde_json::to_string(&result).map_err(|e| format!("Failed to serialize install result: {}", e))
+}
+
+/// Refuse an install that would write an item being deleted.
+fn ensure_install_not_being_deleted(
+    selected: &remote_sources::SelectedResources,
+) -> Result<(), String> {
+    let lists = [
+        ("skill", &selected.skills),
+        ("mcp", &selected.mcp_servers),
+        ("rule", &selected.rules),
+        ("command", &selected.commands),
+        ("subagent", &selected.agents),
+    ];
+    for (kind, names) in lists {
+        for name in names {
+            ensure_not_being_deleted(&format!("{kind}:{name}"), name)?;
+        }
+    }
+    Ok(())
 }
 
 /// Parse an optional JSON-encoded SelectedResources.

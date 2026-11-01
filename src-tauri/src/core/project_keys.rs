@@ -417,6 +417,7 @@ fn ensure_keys_for_project(path: &Path) -> Result<bool, String> {
     let entry = registry_entry_at(path)?;
     let ident = entry_ident(&entry);
     let name = ident.as_str();
+    let _writes = super::hold_library_writes();
     let directory = entry.directory()?.unwrap_or_default();
     // Probe the stored keys first, so a project with both keys is not read
     // and enriched on every start.

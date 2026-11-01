@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use super::asset_security::{
     enforce_text_asset, resolve_path_within_root, should_scan_text_file,
@@ -896,10 +897,12 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     args.push(url.clone());
     args.push(clone_path.to_string_lossy().to_string());
 
-    let output = Command::new("git")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run git clone: {}", e))?;
+    let output = run_git_limited(
+        Command::new("git").args(&args),
+        GIT_CLONE_LIMIT,
+        "clone",
+        repo,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -908,18 +911,21 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
-        let checkout_output = Command::new("git")
-            .args([
-                "fetch",
-                "--depth",
-                "1",
-                "--end-of-options",
-                "origin",
-                &pin.git_ref,
-            ])
-            .current_dir(&clone_path)
-            .output()
-            .map_err(|e| format!("Failed to fetch commit: {}", e))?;
+        let checkout_output = run_git_limited(
+            Command::new("git")
+                .args([
+                    "fetch",
+                    "--depth",
+                    "1",
+                    "--end-of-options",
+                    "origin",
+                    &pin.git_ref,
+                ])
+                .current_dir(&clone_path),
+            GIT_CLONE_LIMIT,
+            "fetch",
+            repo,
+        )?;
 
         if !checkout_output.status.success() {
             let stderr = String::from_utf8_lossy(&checkout_output.stderr);
@@ -1028,6 +1034,85 @@ fn source_url(repo: &str) -> String {
     format!("https://github.com/{}.git", repo)
 }
 
+/// A clone of a large repository on a slow link can be legitimately slow.
+const GIT_CLONE_LIMIT: Duration = Duration::from_secs(10 * 60);
+/// A pull of an existing clone moves far less data.
+const GIT_PULL_LIMIT: Duration = Duration::from_secs(5 * 60);
+
+/// Run a network git command, killing it if it outlasts `limit`. These run
+/// on the single project update worker, so a stalled connection would stop
+/// every later save from reaching its projects. `what` and `repo` name the
+/// work in the error.
+fn run_git_limited(
+    command: &mut Command,
+    limit: Duration,
+    what: &str,
+    repo: &str,
+) -> Result<std::process::Output, String> {
+    #[cfg(unix)]
+    {
+        // git hands the network to a child process, which must die with it.
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run git {} for {}: {}", what, repo, e))?;
+
+    // Drain both pipes as it runs, or git blocks once one fills up.
+    let stdout = drain_pipe(child.stdout.take());
+    let stderr = drain_pipe(child.stderr.take());
+
+    let started = Instant::now();
+    let status = loop {
+        let polled = child
+            .try_wait()
+            .map_err(|e| format!("Failed to wait for git {} for {}: {}", what, repo, e))?;
+        if let Some(status) = polled {
+            break status;
+        }
+        if started.elapsed() >= limit {
+            #[cfg(unix)]
+            crate::path_env::kill_process_group(&mut child);
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            return Err(format!(
+                "git {} for {} was stopped after {} seconds with no result. \
+                 Check your connection and try again.",
+                what,
+                repo,
+                limit.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+fn drain_pipe<R: std::io::Read + Send + 'static>(
+    pipe: Option<R>,
+) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            // What was read before a failure is still the best report of
+            // what git said.
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
+}
+
 /// Get the current HEAD commit SHA for a cloned source.
 fn git_head_sha(clone_path: &Path) -> Result<String, String> {
     let output = Command::new("git")
@@ -1102,11 +1187,14 @@ pub fn git_update_source(repo: &str) -> Result<String, String> {
         return Err(format!("Source not cloned: {}", repo));
     }
 
-    let output = Command::new("git")
-        .args(["pull", "--ff-only"])
-        .current_dir(&clone_path)
-        .output()
-        .map_err(|e| format!("Failed to git pull: {}", e))?;
+    let output = run_git_limited(
+        Command::new("git")
+            .args(["pull", "--ff-only"])
+            .current_dir(&clone_path),
+        GIT_PULL_LIMIT,
+        "pull",
+        repo,
+    )?;
 
     if !output.status.success() {
         // If ff-only fails, re-clone
@@ -2924,7 +3012,7 @@ fn list_once(listed: &mut HashMap<String, Vec<String>>, resource_type: &str, nam
 // ── Resource Installation Helpers ───────────────────────────────────────────
 
 /// Build a SelectedResources that includes everything in the manifest.
-fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
+pub(crate) fn select_all(manifest: &AutomaticManifest) -> SelectedResources {
     let mut sel = SelectedResources::default();
 
     // Inline entries. `install_source`, the conflict check and an update
@@ -3800,6 +3888,36 @@ pub fn parse_install_uri(uri: &str) -> Result<InstallUriParams, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_past_its_limit_is_stopped_with_an_error_naming_the_repo() {
+        let started = Instant::now();
+        let err = run_git_limited(
+            Command::new("sh").args(["-c", "sleep 30"]),
+            Duration::from_millis(200),
+            "pull",
+            "owner/stalled",
+        )
+        .expect_err("stopped");
+
+        assert!(err.contains("git pull for owner/stalled"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(10), "it did not wait");
+    }
+
+    #[test]
+    fn git_within_its_limit_returns_its_output() {
+        let output = run_git_limited(
+            Command::new("sh").args(["-c", "echo out; echo err >&2; exit 3"]),
+            Duration::from_secs(30),
+            "clone",
+            "owner/repo",
+        )
+        .expect("ran");
+
+        assert_eq!(output.status.code(), Some(3));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
+        assert_eq!(String::from_utf8_lossy(&output.stderr).trim(), "err");
+    }
 
     #[test]
     fn test_parse_install_uri_basic() {

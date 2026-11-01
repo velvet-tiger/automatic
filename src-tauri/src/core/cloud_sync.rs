@@ -840,6 +840,7 @@ fn write_project_template_asset(machine_name: &str, payload: &Value) -> Result<(
         .ok_or_else(|| "project_template payload missing `content`".to_string())?;
     let data = serde_json::to_string(content)
         .map_err(|e| format!("failed to serialise project_template: {}", e))?;
+    let _writes = super::hold_library_writes();
     super::templates::save_template(machine_name, &data)
 }
 
