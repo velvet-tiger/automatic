@@ -915,50 +915,53 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
-        let checkout_output = discard_failed_clone(
-            &clone_path,
-            run_git_limited(
-                Command::new("git")
-                    .args([
-                        "fetch",
-                        "--depth",
-                        "1",
-                        "--end-of-options",
-                        "origin",
-                        &pin.git_ref,
-                    ])
-                    .current_dir(&clone_path),
-                GIT_CLONE_LIMIT,
-                "fetch",
-                repo,
-            ),
-        )?;
-
-        if !checkout_output.status.success() {
-            let stderr = String::from_utf8_lossy(&checkout_output.stderr);
-            return Err(format!("git fetch commit failed: {}", stderr.trim()));
-        }
-
-        let checkout_output = Command::new("git")
-            .args(["checkout", "--detach", "--end-of-options", &pin.git_ref])
-            .current_dir(&clone_path)
-            .output()
-            .map_err(|e| format!("Failed to checkout commit: {}", e))?;
-
-        if !checkout_output.status.success() {
-            let stderr = String::from_utf8_lossy(&checkout_output.stderr);
-            return Err(format!("git checkout failed: {}", stderr.trim()));
-        }
-        // A tag can name the same commit. The marker keeps the pin a commit,
-        // as the user asked for, see [`git_checked_out_pin`].
-        fs::write(
-            clone_path.join(".git").join(COMMIT_PIN_MARKER),
-            &pin.git_ref,
-        )
-        .map_err(|e| format!("Failed to record the fetched commit: {}", e))?;
+        discard_failed_clone(&clone_path, check_out_commit(&clone_path, pin, repo))?;
     }
 
     Ok(clone_path)
+}
+
+/// Move a fresh clone to the commit in `pin`. On failure the clone is still
+/// on the default branch, so the caller must not keep it.
+fn check_out_commit(clone_path: &Path, pin: &PinningConfig, repo: &str) -> Result<(), String> {
+    let fetch_output = run_git_limited(
+        Command::new("git")
+            .args([
+                "fetch",
+                "--depth",
+                "1",
+                "--end-of-options",
+                "origin",
+                &pin.git_ref,
+            ])
+            .current_dir(clone_path),
+        GIT_CLONE_LIMIT,
+        "fetch",
+        repo,
+    )?;
+
+    if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        return Err(format!("git fetch commit failed: {}", stderr.trim()));
+    }
+
+    let checkout_output = Command::new("git")
+        .args(["checkout", "--detach", "--end-of-options", &pin.git_ref])
+        .current_dir(clone_path)
+        .output()
+        .map_err(|e| format!("Failed to checkout commit: {}", e))?;
+
+    if !checkout_output.status.success() {
+        let stderr = String::from_utf8_lossy(&checkout_output.stderr);
+        return Err(format!("git checkout failed: {}", stderr.trim()));
+    }
+    // A tag can name the same commit. The marker keeps the pin a commit,
+    // as the user asked for, see [`git_checked_out_pin`].
+    fs::write(
+        clone_path.join(".git").join(COMMIT_PIN_MARKER),
+        &pin.git_ref,
+    )
+    .map_err(|e| format!("Failed to record the fetched commit: {}", e))
 }
 
 /// The file in a clone's `.git` folder that records a commit the user
@@ -1042,15 +1045,14 @@ fn source_url(repo: &str) -> String {
 }
 
 /// A clone of a large repository on a slow link can be legitimately slow.
-const GIT_CLONE_LIMIT: Duration = Duration::from_secs(10 * 60);
+pub(crate) const GIT_CLONE_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// A pull of an existing clone moves far less data.
 const GIT_PULL_LIMIT: Duration = Duration::from_secs(5 * 60);
 
-/// Run a network git command, killing it if it outlasts `limit`. These run
-/// on the single project update worker, so a stalled connection would stop
-/// every later save from reaching its projects. `what` and `repo` name the
-/// work in the error.
-fn run_git_limited(
+/// Run a network git command, killing it if it outlasts `limit`, so a stalled
+/// connection cannot hold its caller forever. `what` and `repo` name the work
+/// in the error.
+pub(crate) fn run_git_limited(
     command: &mut Command,
     limit: Duration,
     what: &str,
@@ -7522,6 +7524,21 @@ mod tests {
         assert_eq!(pin_for_ref("v1.0").strategy, "tag");
         assert_eq!(pin_for_ref("develop").strategy, "tag");
         assert_eq!(pin_for_ref("0123abc").strategy, "tag");
+    }
+
+    #[test]
+    fn a_commit_that_cannot_be_fetched_leaves_no_clone_on_the_default_branch() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            make_origin(&sandbox, "# One\n");
+            let missing = pin_for_ref("0123456789abcdef0123456789abcdef01234567");
+
+            let err = git_clone_source(PIN_REPO, &missing).expect_err("no such commit");
+
+            assert!(err.contains("git fetch commit failed"), "{err}");
+            assert!(!source_clone_path(PIN_REPO).expect("path").exists());
+            set_source_url_base(None);
+        });
     }
 
     #[test]

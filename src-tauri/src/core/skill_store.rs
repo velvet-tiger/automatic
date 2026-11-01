@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 
+use super::remote_sources::{run_git_limited, GIT_CLONE_LIMIT};
 use super::types::SkillsJson;
 use super::*;
 
@@ -127,8 +128,8 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let clone_url = format!("https://github.com/{}.git", source);
-    let clone_result = std::process::Command::new("git")
-        .args([
+    let clone_result = run_git_limited(
+        std::process::Command::new("git").args([
             "clone",
             "--depth",
             "1",
@@ -137,20 +138,24 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
             "--quiet",
             &clone_url,
             tmp_dir.to_str().unwrap_or(""),
-        ])
-        .output();
+        ]),
+        GIT_CLONE_LIMIT,
+        "clone",
+        source,
+    );
 
-    let clone_ok = match &clone_result {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    };
-
-    if !clone_ok {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        return Err(format!(
+    let clone_error = match clone_result {
+        Ok(out) if out.status.success() => None,
+        Ok(_) => Some(format!(
             "Could not clone '{}': git clone failed (is git installed?)",
             source
-        ));
+        )),
+        Err(e) => Some(e),
+    };
+
+    if let Some(error) = clone_error {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(error);
     }
 
     // Get the flat file list from the local clone.
