@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -403,6 +403,7 @@ export default function Subagents() {
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
+  const referencingRequest = useRef(0);
   // Every registered project, only to label duplicated names with their folder.
   const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
   const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
@@ -430,11 +431,16 @@ export default function Subagents() {
     }
   };
 
+  // Only the newest request counts: an older one may answer last, for
+  // another sub-agent.
   const loadReferencingProjects = async (id: string) => {
+    const request = ++referencingRequest.current;
     try {
       const refs: ProjectRef[] = await invoke("get_projects_referencing_subagent", { agentMachineName: id });
+      if (request !== referencingRequest.current) return;
       setReferencingProjects(refs.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (err: any) {
+      if (request !== referencingRequest.current) return;
       console.error("Failed to load referencing projects:", err);
       setReferencingProjects([]);
     }

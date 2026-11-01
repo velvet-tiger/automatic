@@ -12,13 +12,14 @@
  *   "success"  — green dot
  *   "error"    — red dot
  *   "info"     — grey dot (default)
+ *   "interrupted" — the app quit while it was running
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { PROJECT_SWEEP_EVENT, ProjectSweepEvent, projectSweepMessage } from "../lib/projectSweeps";
 
-export type TaskLogStatus = "running" | "success" | "error" | "info";
+export type TaskLogStatus = "running" | "success" | "error" | "info" | "interrupted";
 
 export interface TaskLogEntry {
   id: string;
@@ -30,7 +31,7 @@ export interface TaskLogEntry {
 }
 
 // Shape expected by the Rust backend (Date → ISO string).
-interface PersistedEntry {
+export interface PersistedEntry {
   id: string;
   timestamp: string;
   message: string;
@@ -87,12 +88,15 @@ function toPersistedEntry(entry: TaskLogEntry): PersistedEntry {
   };
 }
 
-function fromPersistedEntry(p: PersistedEntry): TaskLogEntry {
+export function fromPersistedEntry(p: PersistedEntry): TaskLogEntry {
+  const status = (p.status as TaskLogStatus) ?? "info";
   return {
     id: p.id,
     timestamp: new Date(p.timestamp),
     message: p.message,
-    status: (p.status as TaskLogStatus) ?? "info",
+    // Nothing from an earlier run is still running. Left as it was, the entry
+    // would hold the panel open for good.
+    status: status === "running" ? "interrupted" : status,
     ...(p.agent !== undefined ? { agent: p.agent } : {}),
   };
 }
@@ -112,6 +116,9 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
   const [isManuallyOpened, setIsManuallyOpened] = useState(false);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isManuallyOpenedRef = useRef(false);
+  // Task Log entry for each background job. `null` marks one the user
+  // cleared: its progress stays hidden, but its result still gets an entry.
+  const sweepEntries = useRef(new Map<number, string | null>());
 
   // ── Load persisted entries on mount ────────────────────────────────────────
   useEffect(() => {
@@ -189,7 +196,7 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
   // One entry per job, updated in place. A job that touched no project shows
   // nothing: most saves of an unused item should not open the panel.
   useEffect(() => {
-    const entryForJob = new Map<number, string>();
+    const entryForJob = sweepEntries.current;
     const unlisten = listen<ProjectSweepEvent>(PROJECT_SWEEP_EVENT, ({ payload }) => {
       if (payload.total === 0 && payload.failed.length === 0) return;
 
@@ -200,9 +207,9 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
           ? "error"
           : "success";
       const entryId = entryForJob.get(payload.job_id);
-      if (entryId === undefined) {
+      if (entryId === undefined || (entryId === null && payload.finished)) {
         entryForJob.set(payload.job_id, log(message, status));
-      } else {
+      } else if (entryId !== null) {
         update(entryId, message, status, payload.finished);
       }
       if (payload.finished) entryForJob.delete(payload.job_id);
@@ -216,6 +223,7 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
     cancelDismiss();
     isManuallyOpenedRef.current = false;
     setIsManuallyOpened(false);
+    for (const job of sweepEntries.current.keys()) sweepEntries.current.set(job, null);
     setEntries([]);
     setIsVisible(false);
   }, [cancelDismiss]);

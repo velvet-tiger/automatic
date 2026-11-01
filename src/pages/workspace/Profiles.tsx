@@ -1,5 +1,5 @@
 import { useProjectSweepFinished } from "../../lib/projectSweeps";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -114,6 +114,7 @@ export default function Profiles({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const referencingRequest = useRef(0);
 
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [availableUserAgents, setAvailableUserAgents] = useState<{ id: string; name: string }[]>([]);
@@ -212,18 +213,22 @@ export default function Profiles({
     if (selectedName) void loadReferencingProjects(selectedName);
   });
 
+  // Only the newest request counts: an older one may answer last, for
+  // another profile.
   const loadReferencingProjects = async (name: string) => {
+    const request = ++referencingRequest.current;
+    const isCurrent = () => request === referencingRequest.current;
     try {
       const refs: ProjectRef[] = await invoke("get_projects_referencing_profile", { profileName: name });
-      setReferencingProjects(refs);
+      if (isCurrent()) setReferencingProjects(refs);
     } catch {
-      setReferencingProjects([]);
+      if (isCurrent()) setReferencingProjects([]);
     }
     try {
       const groups: string[] = await invoke("get_groups_referencing_profile", { profileName: name });
-      setReferencingGroups(groups);
+      if (isCurrent()) setReferencingGroups(groups);
     } catch {
-      setReferencingGroups([]);
+      if (isCurrent()) setReferencingGroups([]);
     }
   };
 

@@ -5,7 +5,7 @@
  * Driven entirely by TaskLogContext — mount this once in App.tsx.
  */
 import { useEffect, useRef, useState } from "react";
-import { X, CheckCircle, XCircle, Info, Loader, Copy, Check } from "lucide-react";
+import { X, CheckCircle, XCircle, Info, Loader, Copy, Check, CircleSlash } from "lucide-react";
 import { useTaskLog, TaskLogStatus, TaskLogEntry } from "../contexts/TaskLogContext";
 
 // ── Status indicator ─────────────────────────────────────────────────────────
@@ -22,6 +22,8 @@ function StatusIcon({ status }: StatusIconProps) {
       return <CheckCircle size={12} className="text-success flex-shrink-0" />;
     case "error":
       return <XCircle size={12} className="text-danger flex-shrink-0" />;
+    case "interrupted":
+      return <CircleSlash size={12} className="text-text-muted flex-shrink-0" />;
     case "info":
     default:
       return <Info size={12} className="text-text-muted flex-shrink-0" />;

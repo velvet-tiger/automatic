@@ -1,5 +1,5 @@
 import { useProjectSweepFinished } from "../../lib/projectSweeps";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -95,6 +95,7 @@ export default function Rules() {
   const [referencingProjects, setReferencingProjects] = useState<{ key: string; name: string }[]>([]);
   const [projectSyncState, setProjectSyncState] = useState<Record<string, SyncState>>({});
   const [syncAllState, setSyncAllState] = useState<SyncState>("needs-sync");
+  const referencingRequest = useRef(0);
   // Every registered project, only to label duplicated names with their folder.
   const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
   const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
@@ -120,13 +121,17 @@ export default function Rules() {
   };
 
   useProjectSweepFinished(() => {
-    if (selectedId) void loadReferencingProjects(selectedId);
+    if (selectedId) void loadReferencingProjects(selectedId, true);
   });
 
-  // Load referencing projects with their actual on-disk sync status.
-  const loadReferencingProjects = async (id: string) => {
+  // Load referencing projects with their actual on-disk sync status. Only the
+  // newest request counts: an older one may answer last, for another rule.
+  // `keepRows` is for a refresh, which must not undo a row's own sync.
+  const loadReferencingProjects = async (id: string, keepRows = false) => {
+    const request = ++referencingRequest.current;
     try {
       const statuses: RuleProjectStatus[] = await invoke("get_projects_referencing_rule", { ruleName: id });
+      if (request !== referencingRequest.current) return;
       const sorted = statuses.sort((a, b) => a.name.localeCompare(b.name));
       const refs = sorted.map(s => ({ key: s.local_key || s.name, name: s.name }));
       setReferencingProjects(refs);
@@ -134,11 +139,19 @@ export default function Rules() {
       for (const s of sorted) {
         initial[s.local_key || s.name] = s.read_only ? "read-only" : s.synced ? "synced" : "needs-sync";
       }
-      setProjectSyncState(initial);
+      setProjectSyncState(prev => {
+        if (!keepRows) return initial;
+        const next = { ...initial };
+        for (const key of Object.keys(next)) {
+          if (prev[key] === "syncing" || prev[key] === "error") next[key] = prev[key];
+        }
+        return next;
+      });
       // Aggregate: all writable projects synced → "synced", otherwise "needs-sync".
       const allSynced = sorted.length > 0 && sorted.every(s => s.read_only || s.synced);
-      setSyncAllState(allSynced ? "synced" : "needs-sync");
+      setSyncAllState(prev => (keepRows && prev === "syncing" ? prev : allSynced ? "synced" : "needs-sync"));
     } catch (err: any) {
+      if (request !== referencingRequest.current) return;
       // Non-fatal — the usage panel just won't show.
       console.error("Failed to load referencing projects:", err);
       setReferencingProjects([]);
