@@ -1,3 +1,4 @@
+import { projectSaveKey, saveProject, takeSaveTurn } from "../../../../lib/projectSaves";
 import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
@@ -563,7 +564,6 @@ export function ProjectEditor({
   const editSeq = useRef(0);
   // Orders every save_project call from this editor: the last one requested
   // is the last one written.
-  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
   const projectFileBusy = useRef(false);
@@ -1998,7 +1998,7 @@ export function ProjectEditor({
       // so save_project_file on the backend reads up-to-date rule assignments.
       // This also handles the case where rules were toggled on a not-yet-existing file.
       const toSave = { ...project, updated_at: new Date().toISOString() };
-      await invoke("save_project", { name: selectedKey, data: JSON.stringify(toSave, null, 2) });
+      await saveProject(selectedKey, JSON.stringify(toSave, null, 2));
       setDirty(false);
 
       await invoke("save_project_file", {
@@ -2409,11 +2409,11 @@ export function ProjectEditor({
       // save_project writes the project config AND syncs all agent configs
       // (skills, MCP servers) in one atomic backend call.
       // Returns the saved project's local_key (its name while it has none).
-      const savedKey = await invoke<string | undefined>("save_project", {
-        name: identifier,
-        data: JSON.stringify(toSave, null, 2),
-        ...(isCreating && stubKey === null ? { creating: true } : {}),
-      });
+      const savedKey = await saveProject<string | undefined>(
+        identifier,
+        JSON.stringify(toSave, null, 2),
+        isCreating && stubKey === null,
+      );
       // From here on the project exists, so address it by its key.
       const name = isCreating ? (savedKey || identifier) : identifier;
       setSelectedKey(name);
@@ -2480,7 +2480,7 @@ export function ProjectEditor({
             ...latestProj,
             file_rules: { ...(latestProj.file_rules || {}), _project: combinedRules },
           };
-          await invoke("save_project", { name, data: JSON.stringify(withRules, null, 2) });
+          await saveProject(name, JSON.stringify(withRules, null, 2));
         }
         if (mergedContent.trim()) {
           await invoke("save_project_file", {
@@ -2679,11 +2679,7 @@ export function ProjectEditor({
       if (userId && !stub.created_by) stub.created_by = userId;
       // The create returns the new project's local_key. Everything after
       // addresses the stub by it, since another project may share the name.
-      const stubKey = await invoke<string>("save_project", {
-        name,
-        data: JSON.stringify(stub, null, 2),
-        creating: true,
-      });
+      const stubKey = await saveProject<string>(name, JSON.stringify(stub, null, 2), true);
       wizardStubKey.current = stubKey;
       const raw: string = await invoke("autodetect_project_dependencies", { name: stubKey });
       const detected = JSON.parse(raw) as Project;
@@ -2835,10 +2831,8 @@ export function ProjectEditor({
     const name = isCreating ? displayName : selectedKey;
     if (!name || !displayName) return false;
     const seq = editSeq.current;
-    const previous = saveChain.current;
-    let release: () => void = () => {};
-    saveChain.current = new Promise<void>((resolve) => { release = resolve; });
-    await previous;
+    // The turn covers the re-read, so `saved` is this save and not a later one.
+    const release = await takeSaveTurn(projectSaveKey(name));
     try {
       const toSave = { ...snapshot, name: displayName, updated_at: new Date().toISOString() };
       await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
@@ -3572,10 +3566,7 @@ export function ProjectEditor({
                       setDirty(false);
                       setSyncStatus("syncing");
                       try {
-                        await invoke("save_project", {
-                          name: selectedKey,
-                          data: JSON.stringify(updatedProject),
-                        });
+                        await saveProject(selectedKey, JSON.stringify(updatedProject));
                         await reloadProject(selectedKey);
                         setSyncStatus("saved");
                         setTimeout(() => setSyncStatus(null), 4000);

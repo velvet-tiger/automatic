@@ -221,6 +221,7 @@ export default function Rules() {
         setSelectedId(id);
         setDisplayName(name);
         setRuleAuthor(null);
+        referencingRequest.current++;
         setReferencingProjects([]);
         setProjectSyncState({});
         setSyncAllState("needs-sync");
@@ -266,6 +267,7 @@ export default function Rules() {
     setRuleAuthor(null);
     setIsEditing(false);
     setIsCreating(false);
+    referencingRequest.current++;
     setReferencingProjects([]);
     setProjectSyncState({});
     setSyncAllState("needs-sync");
@@ -338,6 +340,7 @@ export default function Rules() {
     setIsEditing(true);
     setNewMachineName("");
     setNewDisplayName("");
+    referencingRequest.current++;
     setReferencingProjects([]);
     setProjectSyncState({});
     setSyncAllState("needs-sync");

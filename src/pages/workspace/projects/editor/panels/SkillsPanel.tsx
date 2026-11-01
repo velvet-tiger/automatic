@@ -1,5 +1,6 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
+import { saveProject } from "../../../../../lib/projectSaves";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, Code, Edit2, Plus, RefreshCw, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { SkillSelector } from "../../../../../components/SkillSelector";
@@ -64,10 +65,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
     setProject(toSave);
     try {
       setSyncStatus("syncing");
-      await invoke("save_project", {
-        name: selectedKey,
-        data: JSON.stringify(toSave, null, 2),
-      });
+      await saveProject(selectedKey, JSON.stringify(toSave, null, 2));
       setProjectDetailsMap((prev) => new Map(prev).set(selectedKey, toSave));
       setDirty(false);
       setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
@@ -299,10 +297,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
                 updated_at: new Date().toISOString(),
               };
               setProject(forkedProject);
-              await invoke("save_project", {
-                name: selectedKey,
-                data: JSON.stringify(forkedProject, null, 2),
-              });
+              await saveProject(selectedKey, JSON.stringify(forkedProject, null, 2));
               setProjectDetailsMap((prev) => new Map(prev).set(selectedKey, forkedProject));
               setDirty(false);
               notifyProjectUpdated();

@@ -1,5 +1,6 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
+import { saveProject } from "../../../../../lib/projectSaves";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Check, Edit2, FileText, Files, LayoutTemplate, Plus, RefreshCw, Sparkles, SplitSquareHorizontal } from "lucide-react";
@@ -82,7 +83,7 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
                     const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
                     setProject(updated);
                     setDirty(false);
-                    await invoke("save_project", { name: selectedKey, data: JSON.stringify(updated, null, 2) });
+                    await saveProject(selectedKey, JSON.stringify(updated, null, 2));
                     await loadProjectFiles(selectedKey);
                     notifyProjectUpdated();
                     return;
@@ -104,7 +105,7 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
                     const updated = { ...project, instruction_mode: "per-agent", updated_at: new Date().toISOString() };
                     setProject(updated);
                     setDirty(false);
-                    await invoke("save_project", { name: selectedKey, data: JSON.stringify(updated, null, 2) });
+                    await saveProject(selectedKey, JSON.stringify(updated, null, 2));
                     await loadProjectFiles(selectedKey);
                     notifyProjectUpdated();
                   }

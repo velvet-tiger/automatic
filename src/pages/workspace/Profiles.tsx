@@ -442,6 +442,7 @@ export default function Profiles({
     setSelectedName(null);
     setProfile(emptyProfile(""));
     setSavedProfile(null);
+    referencingRequest.current++;
     setReferencingProjects([]);
     setReferencingGroups([]);
     setDirty(true);

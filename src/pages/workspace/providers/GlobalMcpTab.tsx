@@ -1,3 +1,4 @@
+import { inSaveOrder } from "../../../lib/projectSaves";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -168,10 +169,11 @@ export function GlobalMcpTab({ agent }: GlobalMcpTabProps) {
         }
       }
 
-      const report = (await invoke("set_global_mcp_servers", {
-        agentId: agent.id,
-        servers: nextSelection,
-      })) as GlobalMcpApplyReport;
+      // Each save carries the whole selection, so an older one landing last
+      // would undo the newer one.
+      const report = (await inSaveOrder(`global-mcp:${agent.id}`, () =>
+        invoke("set_global_mcp_servers", { agentId: agent.id, servers: nextSelection }),
+      )) as GlobalMcpApplyReport;
       setLastReport(report);
       await load();
     } catch (e) {

@@ -500,6 +500,7 @@ export default function Subagents() {
         const newEntry: SubagentEntry = { id, name };
         setAgents(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
         setSelectedId(id);
+        referencingRequest.current++;
         setReferencingProjects([]);
         setRecentRefresh(prev => prev + 1);
       } else {
@@ -525,6 +526,7 @@ export default function Subagents() {
     setDraft(null);
     setIsEditing(false);
     setIsCreating(false);
+    referencingRequest.current++;
     setReferencingProjects([]);
     setError(null);
     setSecurityNotice(null);
@@ -594,6 +596,7 @@ export default function Subagents() {
     setDraft(newAgentDraft());
     setIsCreating(true);
     setIsEditing(true);
+    referencingRequest.current++;
     setReferencingProjects([]);
     setSecurityNotice(null);
     setCurrentScan(null);
