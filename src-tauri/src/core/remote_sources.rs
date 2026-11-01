@@ -912,22 +912,35 @@ impl StagedClone {
             if !has_previous {
                 return Err(failure);
             }
-            if let Err(restore) = fs::rename(&previous, &self.target) {
-                // A clone running alongside this one got there first, so the
-                // old clone is out of date and can go with the staging folder.
-                if fs::symlink_metadata(&self.target).is_ok() {
-                    return Err(failure);
-                }
-                return Err(format!(
-                    "{}. The existing clone could not be restored and is at {}: {}",
-                    failure,
-                    keep_previous_clone(self.staging).display(),
-                    restore
-                ));
-            }
-            return Err(failure);
+            return Err(self.restore_previous(failure));
         }
         Ok(self.target)
+    }
+
+    /// Put the old clone back after a failed swap, and return `failure` with
+    /// anything the user needs to know about where the old clone is.
+    fn restore_previous(self, failure: String) -> String {
+        let previous = self.staging.path().join("previous");
+        let Err(restore) = fs::rename(&previous, &self.target) else {
+            return failure;
+        };
+        // A clone running alongside this one got there first, so the old
+        // clone is out of date and can go with the staging folder.
+        if fs::symlink_metadata(&self.target).is_ok() {
+            return failure;
+        }
+        match keep_previous_clone(self.staging) {
+            Ok(kept) => format!(
+                "{}. The existing clone could not be restored and is at {}: {}",
+                failure,
+                kept.display(),
+                restore
+            ),
+            Err(temporary) => format!(
+                "{}. The existing clone could not be restored: {}. {}",
+                failure, restore, temporary
+            ),
+        }
     }
 
     /// Show `error` with the clone path a user can find, as the staging
@@ -943,23 +956,25 @@ impl StagedClone {
     }
 }
 
-/// Keep the old clone from `staging` when it could not go back. It moves to a
-/// name [`remove_stale_staging`] leaves alone, and the path it ended up at is
-/// returned.
-fn keep_previous_clone(staging: tempfile::TempDir) -> PathBuf {
+/// Keep the old clone from `staging` when it could not go back, at a name
+/// [`remove_stale_staging`] leaves alone. If it cannot move there, the error
+/// says where it is and that the sweep will remove it.
+fn keep_previous_clone(staging: tempfile::TempDir) -> Result<PathBuf, String> {
     let kept = staging.keep();
     let previous = kept.join("previous");
-    let recovered = match kept.file_name() {
-        Some(name) => kept.with_file_name(
-            name.to_string_lossy()
-                .replace(STAGING_MARKER, "~recovered-"),
-        ),
-        None => return previous,
-    };
-    match fs::rename(&previous, &recovered) {
-        Ok(()) => recovered,
-        Err(_) => previous,
-    }
+    let name = kept
+        .file_name()
+        .map(|name| name.to_string_lossy().replace(STAGING_MARKER, "~recovered-"))
+        .unwrap_or_else(|| "recovered".to_string());
+    let recovered = kept.with_file_name(name);
+    fs::rename(&previous, &recovered).map_err(|e| {
+        format!(
+            "It is at {}, which is removed after an hour. It could not be moved: {}",
+            previous.display(),
+            e
+        )
+    })?;
+    Ok(recovered)
 }
 
 /// Clone `repo` at `pin` into a staging folder beside its clone path, leaving
@@ -1003,11 +1018,11 @@ fn stage_source_clone(repo: &str, pin: &PinningConfig) -> Result<StagedClone, St
     args.push(url.clone());
     args.push(staged.path().to_string_lossy().to_string());
 
-    run_git_clone(&args, repo)?;
+    run_git_clone(&args, repo).map_err(|e| staged.name_target_in(e))?;
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
-        check_out_commit(&staged.path(), pin, repo)?;
+        check_out_commit(&staged.path(), pin, repo).map_err(|e| staged.name_target_in(e))?;
     }
 
     Ok(staged)
@@ -7842,6 +7857,26 @@ mod tests {
     }
 
     #[test]
+    fn an_old_clone_is_dropped_when_another_clone_took_its_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("toolkit");
+        fs::create_dir_all(&target).expect("winner");
+        fs::write(target.join("rule.md"), "new").expect("write");
+        let staged = StagedClone {
+            staging: tempfile::tempdir_in(dir.path()).expect("staging"),
+            target: target.clone(),
+        };
+        fs::create_dir_all(staged.staging.path().join("previous")).expect("previous");
+        let staging = staged.staging.path().to_path_buf();
+
+        let error = staged.restore_previous("failed".to_string());
+
+        assert_eq!(error, "failed");
+        assert_eq!(fs::read_to_string(target.join("rule.md")).expect("rule"), "new");
+        assert!(!staging.exists());
+    }
+
+    #[test]
     fn an_old_clone_that_could_not_go_back_is_kept_away_from_the_sweep() {
         let dir = tempfile::tempdir().expect("tempdir");
         let owner = dir.path().join("acme");
@@ -7853,7 +7888,7 @@ mod tests {
         fs::create_dir_all(staging.path().join("previous")).expect("previous");
         fs::write(staging.path().join("previous").join("rule.md"), "old").expect("write");
 
-        let kept = keep_previous_clone(staging);
+        let kept = keep_previous_clone(staging).expect("keep");
         remove_stale_staging(dir.path(), Duration::ZERO);
 
         assert_eq!(fs::read_to_string(kept.join("rule.md")).expect("rule"), "old");
