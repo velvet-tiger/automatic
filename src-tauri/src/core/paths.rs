@@ -30,6 +30,15 @@ pub fn get_automatic_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// True when `make fresh` started this process in a throwaway home folder.
+///
+/// A fresh run must not reach real services or find the developer's tools.
+/// Release builds ignore the variable, so it can never switch off a real
+/// user's newsletter sign-up or PATH setup.
+pub fn is_fresh_run() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("AUTOMATIC_FRESH_RUN").is_some()
+}
+
 /// Root of Automatic's managed library — the single namespace under which
 /// all reusable assets (skills, rules, instructions, templates, sub-agents,
 /// commands, MCP servers, tools) live. Per-project sync copies items from
