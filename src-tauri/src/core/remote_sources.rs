@@ -898,20 +898,7 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     args.push(url.clone());
     args.push(clone_path.to_string_lossy().to_string());
 
-    let output = discard_failed_clone(
-        &clone_path,
-        run_git_limited(
-            Command::new("git").args(&args),
-            GIT_CLONE_LIMIT,
-            "clone",
-            repo,
-        ),
-    )?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("git clone failed for {}: {}", repo, stderr.trim()));
-    }
+    discard_failed_clone(&clone_path, run_git_clone(&args, repo))?;
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
@@ -919,6 +906,24 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     }
 
     Ok(clone_path)
+}
+
+/// Run `git clone`. A clone whose transfer worked but whose checkout failed
+/// exits non-zero and leaves its folder behind, so the caller must not keep
+/// the folder on failure.
+fn run_git_clone(args: &[String], repo: &str) -> Result<(), String> {
+    let output = run_git_limited(
+        Command::new("git").args(args),
+        GIT_CLONE_LIMIT,
+        "clone",
+        repo,
+    )?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git clone failed for {}: {}", repo, stderr.trim()));
+    }
+    Ok(())
 }
 
 /// Move a fresh clone to the commit in `pin`. On failure the clone is still
@@ -7502,6 +7507,16 @@ mod tests {
         git(origin, &["commit", "-q", "-m", content]);
     }
 
+    /// Commit a file whose name no filesystem accepts, and return the commit.
+    /// git can store this tree but cannot check it out.
+    fn commit_unwritable_file(origin: &Path) -> String {
+        let blob = git(origin, &["hash-object", "-w", "rule.md"]);
+        let entry = format!("100644,{},{}", blob, "x".repeat(300));
+        git(origin, &["update-index", "--add", "--cacheinfo", &entry]);
+        git(origin, &["commit", "-q", "-m", "unwritable"]);
+        git(origin, &["rev-parse", "HEAD"])
+    }
+
     fn installed_rule() -> String {
         fs::read_to_string(library_path("rules", "vel385-pin-rule")).expect("read rule")
     }
@@ -7536,6 +7551,40 @@ mod tests {
             let err = git_clone_source(PIN_REPO, &missing).expect_err("no such commit");
 
             assert!(err.contains("git fetch commit failed"), "{err}");
+            assert!(!source_clone_path(PIN_REPO).expect("path").exists());
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_commit_that_cannot_be_checked_out_leaves_no_clone_on_the_default_branch() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            let unwritable = commit_unwritable_file(&origin);
+            // A branch keeps the commit fetchable once main moves back.
+            git(&origin, &["branch", "unwritable"]);
+            git(&origin, &["reset", "-q", "--hard", "HEAD~1"]);
+
+            let err =
+                git_clone_source(PIN_REPO, &pin_for_ref(&unwritable)).expect_err("bad checkout");
+
+            assert!(err.contains("git checkout failed"), "{err}");
+            assert!(!source_clone_path(PIN_REPO).expect("path").exists());
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_clone_that_cannot_be_checked_out_leaves_no_folder() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            commit_unwritable_file(&origin);
+
+            let err = git_clone_source(PIN_REPO, &PinningConfig::default()).expect_err("bad checkout");
+
+            assert!(err.contains("git clone failed"), "{err}");
             assert!(!source_clone_path(PIN_REPO).expect("path").exists());
             set_source_url_base(None);
         });

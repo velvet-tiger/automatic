@@ -146,9 +146,10 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
 
     let clone_error = match clone_result {
         Ok(out) if out.status.success() => None,
-        Ok(_) => Some(format!(
-            "Could not clone '{}': git clone failed (is git installed?)",
-            source
+        Ok(out) => Some(format!(
+            "Could not clone '{}': {}",
+            source,
+            String::from_utf8_lossy(&out.stderr).trim()
         )),
         Err(e) => Some(e),
     };
@@ -992,7 +993,11 @@ pub async fn import_skill_from_repository(
     // `.claude-plugin/marketplace.json` instead of a `skill.json`). Every
     // SKILL.md found is imported; each still goes through the same
     // asset-security scan as any other import, via `save_skill`.
-    if let Ok((paths, branch)) = clone_and_list_skill_md_paths(&source) {
+    let scan = clone_and_list_skill_md_paths(&source);
+    if let Err(e) = &scan {
+        last_error.get_or_insert_with(|| e.clone());
+    }
+    if let Ok((paths, branch)) = scan {
         if !paths.is_empty() {
             let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
             let mut imported = Vec::new();
