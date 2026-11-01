@@ -913,17 +913,52 @@ impl StagedClone {
                 return Err(failure);
             }
             if let Err(restore) = fs::rename(&previous, &self.target) {
-                let kept = self.staging.keep().join("previous");
+                // A clone running alongside this one got there first, so the
+                // old clone is out of date and can go with the staging folder.
+                if fs::symlink_metadata(&self.target).is_ok() {
+                    return Err(failure);
+                }
                 return Err(format!(
                     "{}. The existing clone could not be restored and is at {}: {}",
                     failure,
-                    kept.display(),
+                    keep_previous_clone(self.staging).display(),
                     restore
                 ));
             }
             return Err(failure);
         }
         Ok(self.target)
+    }
+
+    /// Show `error` with the clone path a user can find, as the staging
+    /// folder is gone by the time they read it.
+    fn name_target_in(&self, error: String) -> String {
+        let target = self.target.to_string_lossy();
+        let staged = self.path();
+        let error = error.replace(staged.to_string_lossy().as_ref(), target.as_ref());
+        match staged.canonicalize() {
+            Ok(real) => error.replace(real.to_string_lossy().as_ref(), target.as_ref()),
+            Err(_) => error,
+        }
+    }
+}
+
+/// Keep the old clone from `staging` when it could not go back. It moves to a
+/// name [`remove_stale_staging`] leaves alone, and the path it ended up at is
+/// returned.
+fn keep_previous_clone(staging: tempfile::TempDir) -> PathBuf {
+    let kept = staging.keep();
+    let previous = kept.join("previous");
+    let recovered = match kept.file_name() {
+        Some(name) => kept.with_file_name(
+            name.to_string_lossy()
+                .replace(STAGING_MARKER, "~recovered-"),
+        ),
+        None => return previous,
+    };
+    match fs::rename(&previous, &recovered) {
+        Ok(()) => recovered,
+        Err(_) => previous,
     }
 }
 
@@ -939,7 +974,7 @@ fn stage_source_clone(repo: &str, pin: &PinningConfig) -> Result<StagedClone, St
     fs::create_dir_all(parent).map_err(|e| format!("Failed to create sources directory: {}", e))?;
 
     let (_, name) = split_repo_slug(repo)?;
-    remove_stale_staging(parent, name, STALE_STAGING_AGE);
+    remove_stale_staging(&get_sources_dir()?, STALE_STAGING_AGE);
     let staging = tempfile::Builder::new()
         .prefix(&format!("{}{}", name, STAGING_MARKER))
         .tempdir_in(parent)
@@ -978,34 +1013,39 @@ fn stage_source_clone(repo: &str, pin: &PinningConfig) -> Result<StagedClone, St
     Ok(staged)
 }
 
-/// Remove `name`'s staging folders at least `min_age` old. The app quitting
-/// during a clone leaves one behind, and nothing else would ever remove it.
-/// A failure here only leaves a folder, so it does not stop the clone.
-fn remove_stale_staging(parent: &Path, name: &str, min_age: Duration) {
-    let prefix = format!("{}{}", name, STAGING_MARKER);
-    let entries = match fs::read_dir(parent) {
-        Ok(entries) => entries,
+/// Remove the staging folders under `sources_dir` at least `min_age` old. The
+/// app quitting during a clone leaves one behind, for a repo that may never be
+/// cloned again, so this covers every repo. A failure here only leaves a
+/// folder, so it does not stop the clone.
+fn remove_stale_staging(sources_dir: &Path, min_age: Duration) {
+    let owners = match fs::read_dir(sources_dir) {
+        Ok(owners) => owners,
         Err(e) => {
-            eprintln!("[automatic] could not list {}: {}", parent.display(), e);
+            eprintln!("[automatic] could not list {}: {}", sources_dir.display(), e);
             return;
         }
     };
-    for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+    for owner in owners.flatten() {
+        let Ok(entries) = fs::read_dir(owner.path()) else {
             continue;
-        }
-        let path = entry.path();
-        let is_stale = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age >= min_age));
-        if is_stale {
-            if let Err(e) = fs::remove_dir_all(&path) {
-                eprintln!(
-                    "[automatic] could not remove the staging folder {}: {}",
-                    path.display(),
-                    e
-                );
+        };
+        for entry in entries.flatten() {
+            if !entry.file_name().to_string_lossy().contains(STAGING_MARKER) {
+                continue;
+            }
+            let path = entry.path();
+            let is_stale = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age >= min_age));
+            if is_stale {
+                if let Err(e) = fs::remove_dir_all(&path) {
+                    eprintln!(
+                        "[automatic] could not remove the staging folder {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
             }
         }
     }
@@ -1329,7 +1369,11 @@ pub fn pin_for_ref(git_ref: &str) -> PinningConfig {
 pub fn git_update_source(repo: &str) -> Result<String, String> {
     let clone_path = source_clone_path(repo)?;
     if !clone_path.exists() {
-        return Err(format!("Source not cloned: {}", repo));
+        // A clone lost to a failed re-clone on an older version, or to a run
+        // that died mid-swap, would otherwise stop every update of a branch.
+        let source = get_source(repo)?.ok_or_else(|| format!("Source not cloned: {}", repo))?;
+        git_clone_source(repo, &source.pin)?;
+        return git_head_sha(&clone_path);
     }
 
     let output = run_git_limited(
@@ -1420,7 +1464,7 @@ pub fn fetch_source_manifest(
     // collection's slug. Without the skills the dialog reports "no
     // installable resources" for manifests that delegate their skill list to
     // a separate skill.json file.
-    let manifest = resolve_manifest(&base_dir)?;
+    let manifest = resolve_manifest(&base_dir).map_err(|e| staged.name_target_in(e))?;
     // Last, so a preview that fails leaves the existing clone in place.
     staged.publish()?;
     Ok(manifest)
@@ -7777,22 +7821,89 @@ mod tests {
     }
 
     #[test]
-    fn only_old_staging_folders_of_this_repo_are_removed() {
+    fn only_old_staging_folders_are_removed_for_every_repo() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let clone = dir.path().join("toolkit");
-        let ours = dir.path().join(format!("toolkit{}abc", STAGING_MARKER));
-        let other = dir.path().join(format!("toolkit-two{}abc", STAGING_MARKER));
-        for path in [&clone, &ours, &other] {
+        let clone = dir.path().join("acme").join("toolkit");
+        let ours = dir.path().join("acme").join(format!("toolkit{}abc", STAGING_MARKER));
+        let other = dir.path().join("other").join(format!("tools{}abc", STAGING_MARKER));
+        let recovered = dir.path().join("acme").join("toolkit~recovered-abc");
+        for path in [&clone, &ours, &other, &recovered] {
             fs::create_dir_all(path).expect("create");
         }
 
-        remove_stale_staging(dir.path(), "toolkit", STALE_STAGING_AGE);
+        remove_stale_staging(dir.path(), STALE_STAGING_AGE);
         assert!(ours.exists(), "a fresh staging folder may be a running clone");
 
-        remove_stale_staging(dir.path(), "toolkit", Duration::ZERO);
+        remove_stale_staging(dir.path(), Duration::ZERO);
         assert!(!ours.exists());
+        assert!(!other.exists());
         assert!(clone.exists());
-        assert!(other.exists());
+        assert!(recovered.exists());
+    }
+
+    #[test]
+    fn an_old_clone_that_could_not_go_back_is_kept_away_from_the_sweep() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let owner = dir.path().join("acme");
+        fs::create_dir_all(&owner).expect("owner");
+        let staging = tempfile::Builder::new()
+            .prefix(&format!("toolkit{}", STAGING_MARKER))
+            .tempdir_in(&owner)
+            .expect("staging");
+        fs::create_dir_all(staging.path().join("previous")).expect("previous");
+        fs::write(staging.path().join("previous").join("rule.md"), "old").expect("write");
+
+        let kept = keep_previous_clone(staging);
+        remove_stale_staging(dir.path(), Duration::ZERO);
+
+        assert_eq!(fs::read_to_string(kept.join("rule.md")).expect("rule"), "old");
+    }
+
+    #[test]
+    fn an_update_repairs_a_branch_source_whose_clone_is_gone() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            fetch_and_install(None);
+            fs::remove_dir_all(source_clone_path(PIN_REPO).expect("path")).expect("lose clone");
+            commit_rule(&origin, "# Two\n");
+
+            update_source(PIN_REPO).expect("update");
+
+            assert!(installed_rule().contains("# Two"), "{}", installed_rule());
+            set_source_url_base(None);
+        });
+    }
+
+    #[test]
+    fn a_source_that_was_never_registered_is_not_cloned_by_an_update() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let err = git_update_source(PIN_REPO).expect_err("not registered");
+
+            assert!(err.contains("Source not cloned"), "{err}");
+            assert!(!source_clone_path(PIN_REPO).expect("path").exists());
+        });
+    }
+
+    #[test]
+    fn a_preview_error_names_the_clone_path_and_not_the_staging_folder() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let origin = make_origin(&sandbox, "# One\n");
+            fs::remove_file(origin.join("automatic.json")).expect("remove manifest");
+            commit_rule(&origin, "# Two\n");
+
+            let err = fetch_source_manifest(PIN_REPO, None, None).expect_err("no manifest");
+
+            assert!(err.contains("No automatic.json"), "{err}");
+            assert!(!err.contains(STAGING_MARKER), "{err}");
+            assert!(
+                err.contains(&source_clone_path(PIN_REPO).expect("path").display().to_string()),
+                "{err}"
+            );
+            set_source_url_base(None);
+        });
     }
 
     #[test]
