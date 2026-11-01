@@ -44,7 +44,7 @@ The guard is `is_fresh_run()` in `src-tauri/src/core/paths.rs`. Release builds i
 ## Limits
 
 - **Installed apps are still detected.** Several agents check fixed paths such as `/Applications/Cursor.app`, so `bare` shows those agents if they are installed on your Mac.
-- **Some actions can reach real files.** Choosing a real folder in a file dialog gives the app that folder, and sync writes into it. Installing the CLI from Settings writes a link to `/usr/local/bin`, which outlives the run.
+- **Some actions can reach real files.** Choosing a real folder in a file dialog gives the app that folder, and sync writes into it. Installing the CLI from Settings writes a link to `/usr/local/bin` when that folder is writable, and the link outlives the run.
 - **Secrets can outlive the run.** With `KEEP=1`, or if the script is killed, the folder stays in `$TMPDIR`. Any token you signed in with stays there in plain text.
 - **This is a debug build.** It does not test the installer, notarization, Gatekeeper or the macOS keychain. Use a second macOS user or a VM for those before a release.
 - **Other network calls still run,** such as the update check, library refresh and marketplace requests.

@@ -26,6 +26,13 @@ if [[ "$repo_root" =~ [[:space:]] ]]; then
   exit 1
 fi
 
+# The runner below is set for the host target only. Any other target would run
+# the app with no sandbox.
+if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
+  echo "error: unset CARGO_BUILD_TARGET before running this." >&2
+  exit 1
+fi
+
 if lsof -nP -iTCP:"$vite_port" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "error: port $vite_port is in use, most likely by 'make dev'." >&2
   echo "Stop that server, then run this again." >&2
