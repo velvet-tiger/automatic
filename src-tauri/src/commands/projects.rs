@@ -2529,6 +2529,22 @@ mod sweep_race_tests {
     }
 
     #[test]
+    fn repair_reports_global_servers_an_apply_rejected() {
+        with_temp_home(|_| {
+            let config = r#"{"command":"npx","args":["--dir","${workspaceFolder}"]}"#;
+            core::save_mcp_server_config("needs-a-folder", config).expect("save server");
+            sync::global_mcp::apply_global_mcp("cursor", vec!["needs-a-folder".to_string()])
+                .expect("apply");
+
+            let failures = sync::global_mcp::reapply_all_agents();
+
+            assert_eq!(failures.len(), 1, "{:?}", failures);
+            assert_eq!(failures[0].0, "cursor");
+            assert!(failures[0].1.contains("needs-a-folder"), "{:?}", failures);
+        });
+    }
+
+    #[test]
     fn repair_names_references_to_items_the_library_lost() {
         with_temp_home(|_| {
             core::save_rule("kept-rule", "Rule", "Body.\n").expect("rule");

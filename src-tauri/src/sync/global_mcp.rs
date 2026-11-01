@@ -212,22 +212,25 @@ pub fn reapply_agents_referencing(server_name: &str) {
 }
 
 /// Re-apply every agent's saved selection. Returns the agents that failed,
-/// each with its error.
+/// and one entry for each server an agent's apply rejected, each with its
+/// error.
 pub fn reapply_all_agents() -> Vec<(String, String)> {
     let _writes = crate::core::hold_library_writes();
     let state = match load_global_mcp_state() {
         Ok(state) => state,
         Err(e) => return vec![("Global MCP".to_string(), e)],
     };
-    state
-        .agents
-        .iter()
-        .filter_map(|(agent_id, agent_state)| {
-            apply_global_mcp(agent_id, agent_state.selected.clone())
-                .err()
-                .map(|e| (agent_id.clone(), e))
-        })
-        .collect()
+    let mut failures = Vec::new();
+    for (agent_id, agent_state) in &state.agents {
+        match apply_global_mcp(agent_id, agent_state.selected.clone()) {
+            Ok(report) => failures.extend(report.rejected.iter().map(|server| {
+                let error = format!("Server '{}' was not applied: {}", server.name, server.reason);
+                (agent_id.clone(), error)
+            })),
+            Err(e) => failures.push((agent_id.clone(), e)),
+        }
+    }
+    failures
 }
 
 /// Registry rename: rewrite every agent's selection so `old_name` becomes

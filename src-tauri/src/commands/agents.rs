@@ -200,17 +200,31 @@ pub fn import_agent_global_skills(agent_ids: Vec<String>) -> Result<String, Stri
             None => continue,
         };
 
-        for (name, content) in agent::collect_new_skills_from_extra_dirs(agent) {
-            super::project_sweeps::ensure_not_being_deleted(&format!("skill:{name}"), &name)?;
-            core::user_writes::save_skill(&name, &content)?;
-            imported.push(name);
-        }
+        save_agent_skills(agent::collect_new_skills_from_extra_dirs(agent), &mut imported)?;
     }
 
     imported.sort();
     imported.dedup();
 
     serde_json::to_string(&imported).map_err(|e| e.to_string())
+}
+
+/// Save each skill, adding its name to `imported`. A skill being deleted is
+/// skipped: one refusal must not cost the user the rest of the import.
+pub(crate) fn save_agent_skills(
+    skills: Vec<(String, String)>,
+    imported: &mut Vec<String>,
+) -> Result<(), String> {
+    for (name, content) in skills {
+        let key = format!("skill:{name}");
+        if let Err(e) = super::project_sweeps::ensure_not_being_deleted(&key, &name) {
+            eprintln!("[automatic] skipped importing a skill: {}", e);
+            continue;
+        }
+        core::user_writes::save_skill(&name, &content)?;
+        imported.push(name);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

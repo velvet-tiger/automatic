@@ -36,7 +36,7 @@ pub fn get_feature_with_updates(
     crate::plugins::build::features::get_feature_with_updates(project, feature_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_feature(
     project: &str,
     title: &str,
@@ -64,7 +64,7 @@ pub fn create_feature(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_feature(
     project: &str,
     feature_id: &str,
@@ -74,13 +74,13 @@ pub fn update_feature(
     crate::plugins::build::features::update_feature(project, feature_id, patch)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_feature_state(project: &str, feature_id: &str, state: &str) -> Result<Feature, String> {
     let project = &crate::core::project_store_keys(project)?;
     crate::plugins::build::features::set_feature_state(project, feature_id, state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn move_feature(
     project: &str,
     feature_id: &str,
@@ -91,19 +91,19 @@ pub fn move_feature(
     crate::plugins::build::features::move_feature(project, feature_id, new_state, new_position)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
     let project = &crate::core::project_store_keys(project)?;
     crate::plugins::build::features::delete_feature(project, feature_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     let project = &crate::core::project_store_keys(project)?;
     crate::plugins::build::features::archive_feature(project, feature_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     let project = &crate::core::project_store_keys(project)?;
     crate::plugins::build::features::unarchive_feature(project, feature_id)

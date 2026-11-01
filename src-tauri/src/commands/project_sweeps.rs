@@ -187,7 +187,8 @@ fn replace_home(text: &str, home: &str) -> String {
     if home.is_empty() {
         return text.to_string();
     }
-    let in_a_name = |c: char| c.is_alphanumeric() || "-_.+~@%=".contains(c);
+    let in_a_word = |c: char| c.is_alphanumeric() || "-_.".contains(c);
+    let in_a_name = |c: char| in_a_word(c) || "+~@%=".contains(c);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     let mut before = None;
@@ -197,7 +198,8 @@ fn replace_home(text: &str, home: &str) -> String {
         let preceding = head.chars().next_back().or(before);
         // A match is only the home folder if a path starts here and ends
         // here: `/backup/Users/sam` and `/Users/sam+work` are other folders.
-        let starts = !preceding.is_some_and(|c: char| in_a_name(c) || c == '/');
+        let starts = head.ends_with("file://")
+            || !preceding.is_some_and(|c: char| in_a_word(c) || c == '/');
         let ends = !after.chars().next().is_some_and(in_a_name);
         out.push_str(head);
         out.push_str(if starts && ends { "~" } else { home });
@@ -868,6 +870,8 @@ pub(crate) mod tests {
             "a:~/x (~)"
         );
         assert_eq!(replace_home("anything", "/"), "anything");
+        assert_eq!(replace_home("path=/Users/sam/x", "/Users/sam"), "path=~/x");
+        assert_eq!(replace_home("file:///Users/sam/x", "/Users/sam"), "file://~/x");
     }
 
     #[test]
@@ -890,6 +894,31 @@ pub(crate) mod tests {
             );
             assert_eq!(other, Ok(()));
             assert!(core::read_rule("going").is_err(), "nothing was written");
+        });
+    }
+
+    #[test]
+    fn a_global_skill_import_skips_a_skill_being_deleted_and_keeps_the_rest() {
+        let home = tempfile::tempdir().expect("tempdir");
+        core::with_test_home(home.path().to_path_buf(), || {
+            let queue = Arc::new(SweepQueue::default());
+            lock_ignoring_poison(&queue.state)
+                .deleting
+                .insert("skill:going".to_string(), 1);
+            TEST_QUEUE.with(|current| *current.borrow_mut() = Some(queue));
+
+            let mut imported = Vec::new();
+            let saved = crate::commands::save_agent_skills(
+                vec![
+                    ("going".to_string(), "---\nname: going\n---\nBody.\n".to_string()),
+                    ("staying".to_string(), "---\nname: staying\n---\nBody.\n".to_string()),
+                ],
+                &mut imported,
+            );
+
+            TEST_QUEUE.with(|current| *current.borrow_mut() = None);
+            saved.expect("the import carries on");
+            assert_eq!(imported, vec!["staying"]);
         });
     }
 

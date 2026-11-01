@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::asset_security::{
@@ -897,11 +898,14 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
     args.push(url.clone());
     args.push(clone_path.to_string_lossy().to_string());
 
-    let output = run_git_limited(
-        Command::new("git").args(&args),
-        GIT_CLONE_LIMIT,
-        "clone",
-        repo,
+    let output = discard_failed_clone(
+        &clone_path,
+        run_git_limited(
+            Command::new("git").args(&args),
+            GIT_CLONE_LIMIT,
+            "clone",
+            repo,
+        ),
     )?;
 
     if !output.status.success() {
@@ -911,20 +915,23 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
 
     // For commit pinning, checkout the specific SHA
     if pin.strategy == "commit" {
-        let checkout_output = run_git_limited(
-            Command::new("git")
-                .args([
-                    "fetch",
-                    "--depth",
-                    "1",
-                    "--end-of-options",
-                    "origin",
-                    &pin.git_ref,
-                ])
-                .current_dir(&clone_path),
-            GIT_CLONE_LIMIT,
-            "fetch",
-            repo,
+        let checkout_output = discard_failed_clone(
+            &clone_path,
+            run_git_limited(
+                Command::new("git")
+                    .args([
+                        "fetch",
+                        "--depth",
+                        "1",
+                        "--end-of-options",
+                        "origin",
+                        &pin.git_ref,
+                    ])
+                    .current_dir(&clone_path),
+                GIT_CLONE_LIMIT,
+                "fetch",
+                repo,
+            ),
         )?;
 
         if !checkout_output.status.success() {
@@ -1055,7 +1062,10 @@ fn run_git_limited(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    // No terminal is attached, so a prompt could only sit until the limit.
     let mut child = command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1094,23 +1104,63 @@ fn run_git_limited(
 
     Ok(std::process::Output {
         status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout: stdout.finish(),
+        stderr: stderr.finish(),
     })
 }
 
-fn drain_pipe<R: std::io::Read + Send + 'static>(
-    pipe: Option<R>,
-) -> std::thread::JoinHandle<Vec<u8>> {
+/// How long to wait for a pipe to close after git has exited. A descendant
+/// can hold one open long after, and that must not hold the worker.
+const GIT_PIPE_GRACE: Duration = Duration::from_secs(2);
+
+/// Output read from a pipe on its own thread.
+struct DrainedPipe {
+    bytes: Arc<Mutex<Vec<u8>>>,
+    closed: mpsc::Receiver<()>,
+}
+
+impl DrainedPipe {
+    /// What was read, once the pipe closes or the grace period ends. Past
+    /// that the thread stays parked until the descendant lets go.
+    fn finish(self) -> Vec<u8> {
+        let _ = self.closed.recv_timeout(GIT_PIPE_GRACE);
+        let mut bytes = self.bytes.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut bytes)
+    }
+}
+
+fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> DrainedPipe {
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let (closed_tx, closed) = mpsc::channel();
+    let sink = Arc::clone(&bytes);
     std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(mut pipe) = pipe {
-            // What was read before a failure is still the best report of
-            // what git said.
-            let _ = pipe.read_to_end(&mut bytes);
+        let Some(mut pipe) = pipe else { return };
+        let mut chunk = [0u8; 4096];
+        // A read error ends the output: what came before it is still the
+        // best report of what git said.
+        while let Ok(read @ 1..) = pipe.read(&mut chunk) {
+            sink.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend_from_slice(&chunk[..read]);
         }
-        bytes
-    })
+        let _ = closed_tx.send(());
+    });
+    DrainedPipe { bytes, closed }
+}
+
+/// Remove the clone folder if `result` failed: a clone or pin fetch cut short
+/// leaves a folder that looks installed.
+fn discard_failed_clone<T>(clone_path: &Path, result: Result<T, String>) -> Result<T, String> {
+    if result.is_err() && clone_path.exists() {
+        if let Err(e) = fs::remove_dir_all(clone_path) {
+            eprintln!(
+                "[automatic] could not remove the partial clone {}: {}",
+                clone_path.display(),
+                e
+            );
+        }
+    }
+    result
 }
 
 /// Get the current HEAD commit SHA for a cloned source.
@@ -3902,6 +3952,48 @@ mod tests {
 
         assert!(err.contains("git pull for owner/stalled"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(10), "it did not wait");
+    }
+
+    #[test]
+    fn git_cannot_prompt_for_input() {
+        let output = run_git_limited(
+            Command::new("sh").args(["-c", "echo \"$GIT_TERMINAL_PROMPT\"; cat"]),
+            Duration::from_secs(10),
+            "clone",
+            "owner/repo",
+        )
+        .expect("ran");
+
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
+
+    #[test]
+    fn a_descendant_holding_a_pipe_does_not_hold_the_caller() {
+        let started = Instant::now();
+        let output = run_git_limited(
+            Command::new("sh").args(["-c", "echo out; sleep 8 & exit 0"]),
+            Duration::from_secs(30),
+            "pull",
+            "owner/repo",
+        )
+        .expect("ran");
+
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
+        assert!(started.elapsed() < Duration::from_secs(7), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_failed_clone_leaves_no_folder_and_a_good_one_stays() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let clone = dir.path().join("clone");
+        fs::create_dir_all(clone.join(".git")).expect("clone");
+
+        assert_eq!(discard_failed_clone(&clone, Ok(1)), Ok(1));
+        assert!(clone.exists());
+
+        let failed: Result<(), String> = Err("stopped".to_string());
+        assert_eq!(discard_failed_clone(&clone, failed.clone()), failed);
+        assert!(!clone.exists());
     }
 
     #[test]
