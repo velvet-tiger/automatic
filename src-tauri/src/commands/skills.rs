@@ -1,6 +1,8 @@
 use crate::core;
 
-use super::project_sweeps::{queue_sweep, run_sweep_and_wait, SweepProgress};
+use super::project_sweeps::{
+    ensure_not_being_deleted, queue_sweep, run_delete_and_wait, SweepProgress,
+};
 use super::projects::{sync_projects_referencing_skill, sync_projects_referencing_skills};
 
 // ── Skills ───────────────────────────────────────────────────────────────────
@@ -27,6 +29,7 @@ pub fn get_skill_scan_state(name: &str) -> Result<Option<core::AssetSecurityScan
 
 #[tauri::command]
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("skill:{name}"), name)?;
     core::user_writes::save_skill(name, content)?;
     queue_skill_sweep(name);
     Ok(())
@@ -47,11 +50,15 @@ pub(crate) fn queue_skill_sweep(name: &str) {
 pub fn delete_skill(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Skill, name)?;
     let skill = name.to_string();
-    run_sweep_and_wait(format!("deleted skill {skill}"), move |progress| {
-        core::user_writes::delete_skill(&skill)?;
-        prune_skill_references(&skill, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("skill:{skill}"),
+        format!("deleted skill {skill}"),
+        move |progress| {
+            core::user_writes::delete_skill(&skill)?;
+            prune_skill_references(&skill, progress);
+            Ok(())
+        },
+    )
 }
 
 /// Take a deleted skill out of every profile and project, and re-sync the

@@ -5,7 +5,7 @@ use crate::sync;
 use serde::Serialize;
 use std::collections::HashMap;
 
-use super::project_sweeps::{hold_project_writes, SweepProgress};
+use super::project_sweeps::{hold_library_writes, SweepProgress};
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
@@ -284,7 +284,7 @@ enum NewProjectRecommendations {
 /// name). Returns the saved project's `local_key` (its name while it has no
 /// key), which the Add Project wizard uses to address the project it just
 /// created: the name may be shared with another project.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<String, String> {
     save_project_with(
         name,
@@ -302,7 +302,7 @@ fn save_project_with(
     creating: bool,
     recommendations: NewProjectRecommendations,
 ) -> Result<String, String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     // Add Project wizard: refuse a directory another project owns, then give
@@ -603,14 +603,16 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 /// library items made in the meantime are not replayed; the project keeps
 /// the names its committed config uses. Agent files are not synced here, so
 /// any drift shows and the user syncs when ready.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> {
+    // A sweep holds this while it works on a project, so the toggle lands
+    // between projects, never during one.
+    let writes = hold_library_writes();
     core::set_project_read_only(name, read_only)?;
     if read_only {
         return Ok(());
     }
     let ident = core::canonical_project_ident(name)?;
-    let writes = hold_project_writes();
     core::refresh_project_files(&ident).map_err(|e| {
         format!(
             "Read-only mode is off, but the project's files could not be updated: {}",
@@ -630,8 +632,9 @@ pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> 
 /// `.automatic/project.json`) as a registered project. Returns the adopted
 /// project's `{name, local_key}`: open it by the key, since another project
 /// may share the name.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_existing_project(directory: &str) -> Result<core::ImportedProject, String> {
+    let _writes = hold_library_writes();
     let imported = core::import_existing_project(directory)?;
     // Write the new checkout's keys into the folder now, as a save would.
     // The import itself only writes the registry pointer. The refresh skips
@@ -658,9 +661,9 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
     core::delete_project_config(directory)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     // Address the project by its unique identifier throughout: after the
     // rename, the new name may be shared with another project.
     let ident = &crate::core::canonical_project_ident(old_name)?;
@@ -727,9 +730,9 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project(name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     // Deleting an unknown project still clears what it left behind, as before.
     let display_name = core::resolve_project_name(name)?;
     let name = &core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string());
@@ -818,9 +821,9 @@ pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
 
 // ── Project Sync ─────────────────────────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_project(name: &str) -> Result<String, String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -843,9 +846,9 @@ pub fn sync_project(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rebuild_project(name: &str) -> Result<String, String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -960,9 +963,9 @@ pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Resu
 /// config from the project directory) or `"keep"` (stop syncing it and leave
 /// every file in place).  Returns a JSON array of
 /// [`crate::agent::RemovalEntry`] describing what changed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
@@ -1012,9 +1015,9 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 ///
 /// Call this when the user chooses "Add to project" in the drift resolution UI
 /// for a stale skill directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -1053,8 +1056,9 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 ///
 /// Call this when the user chooses "Remove from disk" in the drift resolution UI
 /// for a stale skill directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
     // The name is joined into a path that is then deleted recursively.
     core::ensure_valid_asset_name("Skill", skill_name)?;
     ensure_writable(name)?;
@@ -1247,9 +1251,9 @@ fn adopt_activity_summary(kind: &str, rewrites: &Result<(), Vec<String>>) -> Str
 ///
 /// `kind` is one of `"skill"`, `"rule"`, `"agent"`, `"command"`.
 /// Favours the on-disk file over Automatic's stored copy.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
@@ -1367,9 +1371,9 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 
 /// Overwrite the on-disk custom asset with Automatic's stored snapshot, then
 /// re-sync so agent copies/symlinks match.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     ensure_custom_asset_name(kind, asset_name)?;
     ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
@@ -1553,9 +1557,11 @@ pub(crate) fn with_each_writable_project_mut<F>(mut f: F)
 where
     F: FnMut(&str, &mut core::Project),
 {
+    let progress = SweepProgress::silent();
     sweep_projects(
-        all_project_idents(),
-        &SweepProgress::silent(),
+        all_project_idents(&progress),
+        &progress,
+        Unreadable::Log,
         |_, _| true,
         |project_name, project| {
             f(project_name, project);
@@ -1564,16 +1570,32 @@ where
     );
 }
 
-fn all_project_idents() -> Vec<String> {
+fn all_project_idents(progress: &SweepProgress) -> Vec<String> {
     core::list_project_idents().unwrap_or_else(|e| {
-        eprintln!("Failed to list projects for config updates: {}", e);
+        progress.report_failure("Project list", format!("Could not list projects: {}", e));
         Vec::new()
     })
 }
 
+/// Sweep errors reach the Task Log, so the detail stays in stderr: a parse
+/// error means nothing there and can quote the file.
 fn read_swept_project(ident: &str) -> Result<core::Project, String> {
-    let raw = core::read_project(ident)?;
-    serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))
+    core::read_project(ident)
+        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| e.to_string()))
+        .map_err(|e| {
+            eprintln!("Failed to read project '{}': {}", ident, e);
+            "The project's settings could not be read.".to_string()
+        })
+}
+
+/// What a sweep does with a project it cannot read while choosing.
+#[derive(Clone, Copy, PartialEq)]
+enum Unreadable {
+    /// Log it. It may have nothing to do with this change, and every save
+    /// would otherwise report it.
+    Log,
+    /// Report it. A delete or rename would leave it naming the old item.
+    Report,
 }
 
 /// Apply a change to each writable project in `idents` that `selects` picks.
@@ -1581,12 +1603,10 @@ fn read_swept_project(ident: &str) -> Result<core::Project, String> {
 /// one at a time. Each is read again under the project write lock, because
 /// anything read earlier may be stale by the time the sweep reaches it. A
 /// project that fails is recorded and the sweep carries on.
-///
-/// A project that cannot be read while choosing is logged and skipped: it may
-/// have nothing to do with this change, and each save would report it.
-pub(crate) fn sweep_projects<S, A>(
+fn sweep_projects<S, A>(
     idents: Vec<String>,
     progress: &SweepProgress,
+    unreadable: Unreadable,
     selects: S,
     mut apply: A,
 ) where
@@ -1600,6 +1620,10 @@ pub(crate) fn sweep_projects<S, A>(
         .into_iter()
         .filter(|ident| match read_swept_project(ident) {
             Ok(project) => wanted(ident, &project),
+            Err(e) if unreadable == Unreadable::Report => {
+                progress.report_failure(ident, e);
+                false
+            }
             Err(e) => {
                 eprintln!("Skipping project '{}' during update: {}", ident, e);
                 false
@@ -1610,7 +1634,7 @@ pub(crate) fn sweep_projects<S, A>(
 
     for ident in targets {
         let mut shown = ident.clone();
-        let writes = hold_project_writes();
+        let writes = hold_library_writes();
         let outcome = read_swept_project(&ident).and_then(|mut project| {
             shown = project.name.clone();
             if wanted(&ident, &project) {
@@ -1630,6 +1654,7 @@ pub(crate) fn sweep_projects<S, A>(
 fn sweep_project_changes<M, A>(
     idents: Vec<String>,
     progress: &SweepProgress,
+    unreadable: Unreadable,
     what: &str,
     mutate: M,
     mut after: A,
@@ -1640,6 +1665,7 @@ fn sweep_project_changes<M, A>(
     sweep_projects(
         idents,
         progress,
+        unreadable,
         |ident, project| mutate(ident, &mut project.clone()),
         |ident, project| {
             if !mutate(ident, project) {
@@ -1680,8 +1706,9 @@ where
     R: Fn(&core::Project) -> bool,
 {
     sweep_projects(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Log,
         |_, project| is_sync_target(project) && references(project),
         |_, project| sync_configured_project(project),
     );
@@ -1759,8 +1786,9 @@ pub(crate) fn reconcile_projects_referencing_profile(
     progress: &SweepProgress,
 ) {
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Log,
         "profile reconcile",
         |_, project| {
             let referenced = project.profiles.iter().any(|p| p == profile_name)
@@ -1790,6 +1818,7 @@ pub(crate) fn reconcile_group_profiles_for_projects(
     sweep_project_changes(
         unique,
         progress,
+        Unreadable::Log,
         "group profile reconcile",
         |ident, project| {
             // Group profiles first: they decide which profiles are attached.
@@ -1808,8 +1837,9 @@ pub(crate) fn reconcile_group_profiles_for_projects(
 pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepProgress) {
     core::prune_profile_from_groups(profile_name);
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "profile detach",
         |_, project| {
             let before = project.profiles.len();
@@ -1839,8 +1869,9 @@ pub(crate) fn rename_profile_in_projects(
     }
     core::rename_profile_in_groups(old_name, new_name);
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "profile rename",
         |_, project| core::rename_profile_in_project(project, old_name, new_name),
         |_, _| Ok(()),
@@ -1849,8 +1880,9 @@ pub(crate) fn rename_profile_in_projects(
 
 pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgress) {
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "hook removal",
         |_, project| {
             let before = project.hooks.len();
@@ -1861,6 +1893,15 @@ pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgr
         },
         |_, project| sync_configured_project(project),
     );
+}
+
+/// Finish whatever a quit interrupted: bring every project in step with its
+/// groups and profiles, then re-sync them all. Safe to run again at any point.
+/// A project that matches already is written with the same content.
+pub(crate) fn repair_interrupted_sweep(progress: &SweepProgress) {
+    let idents = all_project_idents(progress);
+    reconcile_group_profiles_for_projects(&idents, progress);
+    resync_all_projects(progress);
 }
 
 /// Re-sync every project that has both a configured directory and at least
@@ -1912,8 +1953,9 @@ pub(crate) fn reconcile_plugin_resources_in_projects() {
 
 pub(crate) fn prune_skill_from_projects(skill_name: &str, progress: &SweepProgress) {
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "skill removal",
         |_, project| {
             let before = project.skills.len();
@@ -1928,8 +1970,9 @@ pub(crate) fn prune_skill_from_projects(skill_name: &str, progress: &SweepProgre
 
 pub(crate) fn prune_mcp_server_from_projects(server_name: &str, progress: &SweepProgress) {
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "MCP server removal",
         |_, project| {
             let before = project.mcp_servers.len();
@@ -1960,8 +2003,9 @@ pub(crate) fn rename_mcp_server_in_projects(
         return;
     }
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "MCP server rename",
         |_, project| {
             let mut changed = false;
@@ -1994,6 +2038,7 @@ pub(crate) fn rename_mcp_server_in_projects(
 /// used by the other propagation helpers. `action` names the caller in those
 /// log lines.
 fn update_each_template(action: &str, mutate: impl Fn(&mut core::ProjectTemplate) -> bool) {
+    let _writes = hold_library_writes();
     let template_names = match core::list_templates() {
         Ok(names) => names,
         Err(e) => {
@@ -2073,8 +2118,9 @@ pub(crate) fn prune_rule_from_templates(rule_name: &str) {
 
 pub(crate) fn prune_rule_from_projects(rule_name: &str, progress: &SweepProgress) {
     sweep_project_changes(
-        all_project_idents(),
+        all_project_idents(progress),
         progress,
+        Unreadable::Report,
         "rule removal",
         |_, project| {
             let mut changed = false;
@@ -2149,6 +2195,7 @@ mod sweep_tests {
             sweep_projects(
                 vec!["sweep-a".into(), "sweep-b".into(), "sweep-c".into()],
                 &progress,
+                Unreadable::Log,
                 |_, _| true,
                 |ident, _| {
                     visited.push(ident.to_string());
@@ -2180,6 +2227,7 @@ mod sweep_tests {
             sweep_projects(
                 vec!["sweep-gone".into()],
                 &progress,
+                Unreadable::Log,
                 |_, _| !chosen.replace(true),
                 |_, _| panic!("the project no longer matches"),
             );
@@ -2246,6 +2294,289 @@ mod sweep_tests {
             let events = recording.events.lock().expect("events");
             assert_eq!(events.last().expect("an event").total, 1);
             assert!(read_fixture("sweep-uses").file_rules.is_empty());
+        });
+    }
+}
+
+#[cfg(test)]
+mod sweep_race_tests {
+    use super::super::project_sweeps::tests::{with_real_worker, RecordingReporter};
+    use super::super::project_sweeps::SweepReporter;
+    use super::propagation_tests::{make_project, with_temp_home};
+    use super::*;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    fn read_fixture(name: &str) -> core::Project {
+        serde_json::from_str(&core::read_project(name).expect("read")).expect("parse")
+    }
+
+    fn save_fixture(project: &core::Project) {
+        let json = serde_json::to_string_pretty(project).expect("json");
+        core::save_project(&project.name, &json).expect("save");
+    }
+
+    fn recording_progress() -> (Arc<RecordingReporter>, SweepProgress) {
+        let recording = Arc::new(RecordingReporter::default());
+        let reporter: Arc<dyn SweepReporter> = recording.clone();
+        (recording, SweepProgress::reporting(reporter))
+    }
+
+    fn save_profile(profile: &str, rule: &str) {
+        core::save_rule(rule, "Profile Rule", "Profile rule body.\n").expect("save rule");
+        let data = serde_json::to_string(&core::ProjectProfile {
+            name: profile.to_string(),
+            rules: vec![rule.to_string()],
+            ..Default::default()
+        })
+        .expect("profile json");
+        core::save_project_profile(profile, &data).expect("save profile");
+    }
+
+    /// Run `other` on its own thread, in `home`, starting once the sweep has
+    /// read the project, and give it time to reach the lock before the sweep
+    /// writes back.
+    fn sweep_with_a_rival(
+        home: &std::path::Path,
+        name: &str,
+        other: impl FnOnce() + Send + 'static,
+    ) {
+        let (started_tx, started_rx) = mpsc::channel();
+        let rival_home = home.to_path_buf();
+        let rival = std::thread::spawn(move || {
+            core::with_test_home(rival_home, || {
+                started_rx.recv().expect("recv");
+                other();
+            })
+        });
+        sweep_projects(
+            vec![name.to_string()],
+            &SweepProgress::silent(),
+            Unreadable::Log,
+            |_, _| true,
+            |ident, project| {
+                started_tx.send(()).expect("send");
+                std::thread::sleep(Duration::from_millis(150));
+                project.description = "changed by the sweep".to_string();
+                persist_swept_project(ident, project, "test")
+            },
+        );
+        rival.join().expect("rival");
+    }
+
+    #[test]
+    fn activity_logged_during_a_sweep_keeps_both_changes() {
+        with_temp_home(|home| {
+            let (_keep, _dir) = make_project("sweep-logged", |_| {});
+
+            sweep_with_a_rival(home, "sweep-logged", || {
+                activity::log(
+                    "sweep-logged",
+                    ActivityEvent::ProjectUpdated,
+                    "Logged",
+                    "during a sweep",
+                );
+            });
+
+            let saved = read_fixture("sweep-logged");
+            assert_eq!(saved.description, "changed by the sweep");
+            assert!(saved.last_activity.is_some(), "the log's write survives");
+        });
+    }
+
+    #[test]
+    fn a_read_only_toggle_during_a_project_sweep_survives_its_write() {
+        with_temp_home(|home| {
+            let (_keep, _dir) = make_project("sweep-toggled", |_| {});
+
+            sweep_with_a_rival(home, "sweep-toggled", || {
+                core::set_project_read_only("sweep-toggled", true).expect("toggle");
+            });
+
+            let saved = read_fixture("sweep-toggled");
+            assert_eq!(saved.description, "changed by the sweep");
+            assert!(saved.is_read_only_here(), "the toggle was not undone");
+        });
+    }
+
+    #[test]
+    fn a_project_made_read_only_after_selection_is_not_written() {
+        struct ToggleWhenTotalIsKnown;
+        impl SweepReporter for ToggleWhenTotalIsKnown {
+            fn report(&self, event: &super::super::project_sweeps::SweepEvent) {
+                if event.done == 0 && !event.finished {
+                    core::set_project_read_only("sweep-late", true).expect("toggle");
+                }
+            }
+        }
+
+        with_temp_home(|_| {
+            core::save_rule("late-rule", "Rule", "Body.\n").expect("rule");
+            let (_keep, dir) = make_project("sweep-late", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec!["late-rule".to_string()]);
+            });
+
+            let progress = SweepProgress::reporting(Arc::new(ToggleWhenTotalIsKnown));
+            sync_projects_referencing_rule("late-rule", &progress);
+
+            assert!(read_fixture("sweep-late").is_read_only_here());
+            assert!(!dir.join(".claude").exists(), "the sweep left it alone");
+        });
+    }
+
+    #[test]
+    fn a_profile_sweep_syncs_only_the_projects_that_changed() {
+        with_temp_home(|_| {
+            save_profile("baseline", "profile-rule");
+            let attach = |p: &mut core::Project| p.profiles = vec!["baseline".to_string()];
+            let (_keep_a, dir_a) = make_project("in-step", attach);
+            let (_keep_b, dir_b) = make_project("behind", attach);
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
+
+            let mut behind = read_fixture("behind");
+            behind.file_rules.clear();
+            behind.profile_contributions.clear();
+            save_fixture(&behind);
+            std::fs::remove_dir_all(dir_a.join(".claude")).expect("clear a");
+            std::fs::remove_dir_all(dir_b.join(".claude")).expect("clear b");
+
+            let (recording, progress) = recording_progress();
+            reconcile_projects_referencing_profile("baseline", &progress);
+
+            assert!(!dir_a.join(".claude").exists(), "in step, so not synced");
+            assert!(dir_b.join(".claude").exists(), "changed, so synced");
+            let events = recording.events.lock().expect("events");
+            assert_eq!(events.last().expect("an event").total, 1);
+        });
+    }
+
+    #[test]
+    fn repair_finishes_an_interrupted_update_and_can_run_twice() {
+        with_temp_home(|_| {
+            save_profile("baseline", "profile-rule");
+            let (_keep_a, dir_a) = make_project("interrupted", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let (_keep_b, dir_b) = make_project("read-only", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            core::set_project_read_only("read-only", true).expect("toggle");
+
+            repair_interrupted_sweep(&SweepProgress::silent());
+
+            let repaired = read_fixture("interrupted");
+            assert_eq!(repaired.file_rules["_project"], vec!["profile-rule"]);
+            assert!(dir_a.join(".claude").exists());
+            assert!(read_fixture("read-only").file_rules.is_empty());
+            assert!(!dir_b.join(".claude").exists(), "read-only stays untouched");
+
+            repair_interrupted_sweep(&SweepProgress::silent());
+            let again = read_fixture("interrupted");
+            assert_eq!(again.file_rules, repaired.file_rules);
+            assert_eq!(again.profile_contributions, repaired.profile_contributions);
+        });
+    }
+
+    #[test]
+    fn deletes_report_projects_they_cannot_read_and_saves_only_log_them() {
+        with_temp_home(|_| {
+            let sweep = |unreadable| {
+                let (recording, progress) = recording_progress();
+                sweep_projects(
+                    vec!["no-such-project".to_string()],
+                    &progress,
+                    unreadable,
+                    |_, _| true,
+                    |_, _| Ok(()),
+                );
+                let failed = recording
+                    .events
+                    .lock()
+                    .expect("events")
+                    .last()
+                    .map(|event| event.failed.len());
+                failed
+            };
+
+            assert_eq!(sweep(Unreadable::Log), None);
+            assert_eq!(sweep(Unreadable::Report), Some(1));
+        });
+    }
+
+    #[test]
+    fn a_save_runs_its_sweep_on_a_real_worker() {
+        with_temp_home(|home| {
+            core::save_rule("worker-rule", "Rule", "Old body.\n").expect("rule");
+            let (_keep, dir) = make_project("worker-project", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec!["worker-rule".to_string()]);
+            });
+
+            let (saved, recording) = with_real_worker(home, 1, || {
+                crate::commands::save_rule("worker-rule", "Rule", "New body.\n")
+            });
+
+            saved.expect("save");
+            let events = recording.events.lock().expect("events");
+            let last = events.last().expect("an event");
+            assert!(last.finished);
+            assert_eq!((last.done, last.total), (1, 1));
+            assert!(last.failed.is_empty(), "{:?}", last.failed);
+            assert!(
+                contains_in_tree(&dir, "New body."),
+                "the worker synced the new content"
+            );
+        });
+    }
+
+    fn contains_in_tree(dir: &std::path::Path, needle: &str) -> bool {
+        std::fs::read_dir(dir).expect("read dir").flatten().any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                contains_in_tree(&path, needle)
+            } else {
+                std::fs::read_to_string(&path).is_ok_and(|text| text.contains(needle))
+            }
+        })
+    }
+
+    #[test]
+    fn a_broken_project_file_keeps_its_parse_detail_out_of_the_task_log() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("sweep-broken", |_| {});
+            std::fs::write(dir.join(".automatic.json"), "{ not json").expect("break");
+
+            let (recording, progress) = recording_progress();
+            sweep_projects(
+                vec!["sweep-broken".to_string()],
+                &progress,
+                Unreadable::Report,
+                |_, _| true,
+                |_, _| Ok(()),
+            );
+
+            let events = recording.events.lock().expect("events");
+            let failed = &events.last().expect("an event").failed;
+            assert_eq!(failed[0].error, "The project's settings could not be read.");
+        });
+    }
+
+    #[test]
+    fn a_delete_returns_its_result_through_a_real_worker() {
+        with_temp_home(|home| {
+            core::save_rule("gone-rule", "Rule", "Body.\n").expect("rule");
+            let (_keep, _dir) = make_project("gone-project", |p| {
+                p.file_rules
+                    .insert("_project".to_string(), vec!["gone-rule".to_string()]);
+            });
+
+            let (deleted, _recording) =
+                with_real_worker(home, 1, || crate::commands::delete_rule("gone-rule"));
+
+            deleted.expect("delete");
+            assert!(read_fixture("gone-project").file_rules.is_empty());
+            assert!(core::read_rule("gone-rule").is_err());
         });
     }
 }

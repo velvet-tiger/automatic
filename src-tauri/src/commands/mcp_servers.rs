@@ -1,7 +1,8 @@
 use crate::core;
 
 use super::project_sweeps::{
-    hold_project_writes, queue_sweep, run_sweep_and_wait, SweepProgress,
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
+    run_sweep_and_wait, SweepProgress,
 };
 use super::projects::{
     prune_mcp_server_from_projects, rename_mcp_server_in_projects,
@@ -27,6 +28,7 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
     core::user_writes::save_mcp_server(name, data)?;
     queue_mcp_server_sweep(name);
     Ok(())
@@ -64,7 +66,7 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
     let (old_name, new_name) = (old_name.to_string(), new_name.to_string());
     run_sweep_and_wait(format!("renamed MCP server {new_name}"), move |progress| {
         // The rename can rewrite projects that reference the server.
-        let writes = hold_project_writes();
+        let writes = hold_library_writes();
         let warnings = core::rename_mcp_server_config(&old_name, &new_name)?;
         drop(writes);
 
@@ -89,11 +91,15 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<Vec<St
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::McpServer, name)?;
     let server = name.to_string();
-    run_sweep_and_wait(format!("deleted MCP server {server}"), move |progress| {
-        core::user_writes::delete_mcp_server(&server)?;
-        prune_mcp_server_references(&server, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("mcp:{server}"),
+        format!("deleted MCP server {server}"),
+        move |progress| {
+            core::user_writes::delete_mcp_server(&server)?;
+            prune_mcp_server_references(&server, progress);
+            Ok(())
+        },
+    )
 }
 
 /// Take a deleted MCP server out of every profile, project and global

@@ -1,6 +1,8 @@
 use crate::core;
 
-use super::project_sweeps::{queue_sweep, run_sweep_and_wait, SweepProgress};
+use super::project_sweeps::{
+    ensure_not_being_deleted, queue_sweep, run_delete_and_wait, SweepProgress,
+};
 use super::projects::{reconcile_projects_referencing_profile, sync_projects_referencing_subagent};
 
 // ── Sub-Agents (global registry) ─────────────────────────────────────────────
@@ -17,6 +19,8 @@ pub fn read_subagent(machine_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_subagent(machine_name: String, name: String, content: String) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("subagent:{machine_name}"), &name)?;
+
     // Codex agents are read-only.
     if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
         return Err("Cannot modify Codex OpenAI agents. Duplicate to create a local copy.".into());
@@ -45,11 +49,15 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
 #[tauri::command(async)]
 pub fn delete_subagent(machine_name: String) -> Result<(), String> {
     core::ensure_deletable(core::LibraryAssetKind::Subagent, &machine_name)?;
-    run_sweep_and_wait(format!("deleted sub-agent {machine_name}"), move |progress| {
-        core::user_writes::delete_subagent(&machine_name)?;
-        prune_subagent_references(&machine_name, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("subagent:{machine_name}"),
+        format!("deleted sub-agent {machine_name}"),
+        move |progress| {
+            core::user_writes::delete_subagent(&machine_name)?;
+            prune_subagent_references(&machine_name, progress);
+            Ok(())
+        },
+    )
 }
 
 /// Take a deleted sub-agent out of every profile, and bring the projects

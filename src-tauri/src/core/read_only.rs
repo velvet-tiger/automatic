@@ -288,6 +288,7 @@ pub fn set_project_read_only(ident: &str, read_only: bool) -> Result<(), String>
     if !is_valid_name(ident) {
         return Err("Invalid project name".into());
     }
+    let _writes = super::hold_library_writes();
     let entry =
         resolve_registry_entry(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))?;
     // Read-only mode protects a folder. A project without one has nothing

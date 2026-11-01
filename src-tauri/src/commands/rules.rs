@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::core;
 
 use super::project_sweeps::{
-    hold_project_writes, queue_sweep, run_sweep_and_wait, SweepProgress,
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait, SweepProgress,
 };
 use super::projects::{
     prune_rule_from_projects, prune_rule_from_templates, sync_project_if_configured,
@@ -24,6 +24,7 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("rule:{machine_name}"), name)?;
     core::user_writes::save_rule(machine_name, name, content)?;
     // Propagate to every project that references this rule so on-disk
     // instruction files stay in sync with the library content. Sync output
@@ -41,11 +42,15 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
 #[tauri::command(async)]
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     let rule = machine_name.to_string();
-    run_sweep_and_wait(format!("deleted rule {rule}"), move |progress| {
-        core::user_writes::delete_rule(&rule)?;
-        prune_rule_references(&rule, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("rule:{rule}"),
+        format!("deleted rule {rule}"),
+        move |progress| {
+            core::user_writes::delete_rule(&rule)?;
+            prune_rule_references(&rule, progress);
+            Ok(())
+        },
+    )
 }
 
 /// Take a deleted rule out of every profile, project and template, and
@@ -144,9 +149,9 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 /// The full project sync (which correctly routes rules to `.claude/rules/`
 /// or inline depending on the project's agent options) handles the actual
 /// write — no manual injection is needed here.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     super::projects::ensure_writable(project_name)?;
     let raw = core::read_project(project_name)?;

@@ -124,9 +124,9 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -150,9 +150,9 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
 ///
 /// Call this when the user chooses "Use existing file" in the conflict
 /// resolution UI.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -179,9 +179,9 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
 ///
 /// Call this when the user chooses "Overwrite with Automatic content" in the
 /// conflict resolution UI.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
@@ -324,9 +324,9 @@ pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
 /// When the project has no agent instruction files, `source_filename` may be
 /// empty: only the `instruction_mode` flag is updated.  This permits switching
 /// projects with no instruction-capable agents without forcing a picker.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     super::projects::ensure_writable(name)?;
     let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;

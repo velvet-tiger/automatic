@@ -72,10 +72,14 @@ pub fn update_remote_source(repo: String) -> Result<String, String> {
 /// run the rest without git.
 fn update_remote_source_with(
     repo: &str,
-    update: impl FnOnce(&str) -> Result<remote_sources::UpdateResult, String>,
+    update: impl FnOnce(&str) -> Result<remote_sources::UpdateResult, String> + Send + 'static,
 ) -> Result<String, String> {
-    let result = update(repo)?;
-    let result = run_sweep_and_wait(format!("updated source {repo}"), move |progress| {
+    // The update runs in turn with queued jobs, network time included, so
+    // it cannot rewrite the library under a sweep.
+    let label = format!("updated source {repo}");
+    let repo = repo.to_string();
+    let result = run_sweep_and_wait(label, move |progress| {
+        let result = update(&repo)?;
         prune_update_removals(&result, progress);
         Ok(result)
     })?;

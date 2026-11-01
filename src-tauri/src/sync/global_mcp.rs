@@ -96,6 +96,7 @@ pub fn apply_global_mcp(
     agent_id: &str,
     selection: Vec<String>,
 ) -> Result<GlobalMcpApplyReport, String> {
+    let _writes = crate::core::hold_library_writes();
     let mut state = load_global_mcp_state()?;
     let entry = state.agents.entry(agent_id.to_string()).or_default();
     entry.selected = dedupe_preserving_order(selection);
@@ -189,6 +190,7 @@ pub fn preview_global_mcp(
 /// the new bytes.  Best-effort: individual failures are logged, never
 /// propagated (mirrors `sync_projects_referencing_mcp_server`).
 pub fn reapply_agents_referencing(server_name: &str) {
+    let _writes = crate::core::hold_library_writes();
     let state = match load_global_mcp_state() {
         Ok(s) => s,
         Err(e) => {
@@ -213,6 +215,7 @@ pub fn reapply_agents_referencing(server_name: &str) {
 /// `new_name`, then re-apply so the change lands in whatever file each agent
 /// manages the entry in. Best-effort, matches `prune_server_from_global`.
 pub fn rename_server_in_global(old_name: &str, new_name: &str) {
+    let _writes = crate::core::hold_library_writes();
     if old_name == new_name {
         return;
     }
@@ -250,6 +253,7 @@ pub fn rename_server_in_global(old_name: &str, new_name: &str) {
 /// Registry deletion: drop `server_name` from every agent's selection and
 /// re-apply so the entry disappears from any file where it is managed.
 pub fn prune_server_from_global(server_name: &str) {
+    let _writes = crate::core::hold_library_writes();
     let state = match load_global_mcp_state() {
         Ok(s) => s,
         Err(e) => {

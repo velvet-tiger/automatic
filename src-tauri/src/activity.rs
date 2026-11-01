@@ -196,6 +196,7 @@ fn log_inner(project: &str, event: ActivityEvent, label: &str, detail: &str) -> 
 
     // Keep project's last_activity in sync with the newest activity timestamp.
     // This is best-effort metadata update and should not fail activity logging.
+    let _writes = crate::core::hold_library_writes();
     if let Ok(raw) = crate::core::read_project(project) {
         if let Ok(mut parsed) = serde_json::from_str::<crate::core::Project>(&raw) {
             parsed.last_activity = Some(ts);

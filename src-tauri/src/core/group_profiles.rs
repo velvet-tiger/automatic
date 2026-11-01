@@ -83,6 +83,7 @@ fn edit_group_profiles(
     group_name: &str,
     edit: impl FnOnce(&mut Vec<String>) -> bool,
 ) -> Result<bool, String> {
+    let _writes = super::hold_library_writes();
     let mut group = read_group_parsed(group_name)?;
     if !edit(&mut group.profiles) {
         return Ok(false);
@@ -128,6 +129,7 @@ fn rewrite_groups_listing_profile(
     profile_name: &str,
     edit: impl Fn(&mut Vec<String>),
 ) -> Vec<String> {
+    let _writes = super::hold_library_writes();
     let names = match groups_referencing_profile(profile_name) {
         Ok(names) => names,
         Err(e) => {

@@ -16,18 +16,21 @@ pub fn read_template(name: &str) -> Result<String, String> {
     core::read_template(name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_template(name: &str, data: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
     core::user_writes::save_template(name, data)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_template(name: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
     core::user_writes::delete_template(name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_template(old_name: &str, new_name: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
     core::rename_template(old_name, new_name)
 }
 
@@ -64,12 +67,12 @@ pub fn check_template_dependencies(name: String) -> Result<String, String> {
 /// Merge one or more project templates into an existing project.
 /// Syncs the project to disk immediately so there is no drift.
 /// Returns the updated project and any pending unified instruction entries.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn apply_templates_to_project(
     project_name: &str,
     template_names: Vec<String>,
 ) -> Result<String, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     super::projects::ensure_writable(project_name)?;
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let mut result = core::apply_templates_to_project(project_name, &template_names)?;

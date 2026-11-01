@@ -99,7 +99,7 @@ pub fn preview_global_mcp_apply(
 }
 
 /// Persist the new selection and apply it immediately.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_global_mcp_servers(
     agent_id: String,
     servers: Vec<String>,
@@ -108,8 +108,9 @@ pub fn set_global_mcp_servers(
 }
 
 /// Re-apply the persisted selection for `agent_id` (Re-apply button on the tab).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reapply_global_mcp(agent_id: String) -> Result<GlobalMcpApplyReport, String> {
+    let _writes = crate::core::hold_library_writes();
     let state = load_global_mcp_state()?;
     let selection = state
         .agents

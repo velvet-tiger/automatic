@@ -1,6 +1,8 @@
 use crate::core;
 
-use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
+use super::project_sweeps::{
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
+};
 use super::projects::{
     prune_hook_from_projects, sync_project_if_configured, sync_projects_referencing_hook,
 };
@@ -32,6 +34,7 @@ pub fn save_hook(
     handler: serde_json::Value,
     timeout_sec: Option<u32>,
 ) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("hook:{machine_name}"), name)?;
     let handler: core::HookHandler = serde_json::from_value(handler)
         .map_err(|e| format!("Invalid hook handler payload: {}", e))?;
 
@@ -59,17 +62,21 @@ pub fn save_hook(
 #[tauri::command(async)]
 pub fn delete_hook(machine_name: &str) -> Result<(), String> {
     let hook = machine_name.to_string();
-    run_sweep_and_wait(format!("deleted hook {hook}"), move |progress| {
-        core::delete_hook(&hook)?;
-        core::prune_asset_from_profiles(core::ProfileResourceKind::Hook, &hook);
-        prune_hook_from_projects(&hook, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("hook:{hook}"),
+        format!("deleted hook {hook}"),
+        move |progress| {
+            core::delete_hook(&hook)?;
+            core::prune_asset_from_profiles(core::ProfileResourceKind::Hook, &hook);
+            prune_hook_from_projects(&hook, progress);
+            Ok(())
+        },
+    )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
@@ -91,9 +98,9 @@ pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(),
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detach_hook_from_project(project_name: &str, hook_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =

@@ -1,6 +1,8 @@
 use crate::core;
 
-use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
+use super::project_sweeps::{
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
+};
 use super::projects::reconcile_group_profiles_for_projects;
 
 // ── Project Groups ────────────────────────────────────────────────────────────
@@ -32,11 +34,12 @@ fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
     });
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_group(name: &str, data: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("group:{name}"), name)?;
     let mut affected = core::group_member_idents(name);
     // Saving a group writes its contexts into the member projects.
-    let writes = hold_project_writes();
+    let writes = hold_library_writes();
     core::save_group_reconciling_contexts(name, data)?;
     drop(writes);
     affected.extend(core::group_member_idents(name));
@@ -49,14 +52,18 @@ pub fn save_group(name: &str, data: &str) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn delete_group(name: &str) -> Result<(), String> {
     let group = name.to_string();
-    run_sweep_and_wait(format!("deleted group {group}"), move |progress| {
-        let members = core::group_member_idents(&group);
-        let writes = hold_project_writes();
-        core::delete_group_reconciling_contexts(&group)?;
-        drop(writes);
-        reconcile_group_profiles_for_projects(&members, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("group:{group}"),
+        format!("deleted group {group}"),
+        move |progress| {
+            let members = core::group_member_idents(&group);
+            let writes = hold_library_writes();
+            core::delete_group_reconciling_contexts(&group)?;
+            drop(writes);
+            reconcile_group_profiles_for_projects(&members, progress);
+            Ok(())
+        },
+    )
 }
 
 // ── Group profiles ───────────────────────────────────────────────────────────

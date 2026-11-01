@@ -7,23 +7,33 @@
 //! order and reports progress through a [`SweepReporter`].
 //!
 //! The main thread used to keep sweeps and project saves apart by accident.
-//! [`hold_project_writes`] now does that on purpose: everything that reads a
+//! [`hold_library_writes`] now does that on purpose: everything that reads a
 //! project, changes it and writes it back holds the lock across all three.
+//!
+//! A marker file records that jobs are outstanding. If the app quits before
+//! the queue drains, the next start finds it and queues a repair.
 //!
 //! The GUI starts the worker in `setup`. Without one (tests, and the
 //! `mcp-serve` process, which shares these commands) jobs run inline on the
 //! calling thread.
 
-use std::cell::Cell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use serde::Serialize;
 
+use crate::core;
+
+pub(crate) use crate::core::hold_library_writes;
+
 /// Tauri event carrying each [`SweepEvent`].
 const SWEEP_EVENT: &str = "project-sweep-progress";
+
+/// Exists under the Automatic home while jobs are outstanding.
+const PENDING_MARKER: &str = "pending-project-sweeps";
 
 /// One project a sweep could not update.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -110,11 +120,19 @@ impl SweepProgress {
         self.update(|tally| tally.total += projects, false);
     }
 
+    /// Record a failure outside any selected project: one the sweep could
+    /// not start on, or a project it could not read. Counts as one project.
+    pub(crate) fn report_failure(&self, project: &str, error: String) {
+        self.add_total(1);
+        self.project_finished(project, Err(error));
+    }
+
     /// Record one project's result. `project` is its display name.
     pub(crate) fn project_finished(&self, project: &str, outcome: Result<(), String>) {
         if let Err(error) = &outcome {
             eprintln!("Failed to update project '{}': {}", project, error);
         }
+        let outcome = outcome.map_err(|error| without_home(&error));
         self.update(
             |tally| {
                 tally.done += 1;
@@ -155,6 +173,36 @@ impl SweepProgress {
     }
 }
 
+/// `text` with the home folder written as `~`. Events end up in the Task Log,
+/// which people copy into bug reports.
+fn without_home(text: &str) -> String {
+    match core::home_dir() {
+        Ok(home) => replace_home(text, &home.to_string_lossy()),
+        Err(_) => text.to_string(),
+    }
+}
+
+fn replace_home(text: &str, home: &str) -> String {
+    if home.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(home) {
+        let after = &rest[at + home.len()..];
+        // `/Users/sam` must not match inside `/Users/samuel`.
+        let whole = !after
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        out.push_str(&rest[..at]);
+        out.push_str(if whole { "~" } else { home });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// A panic in one job must not stop the queue or every later save, and what
 /// these mutexes guard is still usable after one: a tally, a job list.
 fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -176,6 +224,9 @@ struct QueuedJob {
 struct QueueState {
     waiting: VecDeque<QueuedJob>,
     next_id: u64,
+    /// Merge keys of deletes queued or running.
+    deleting: HashSet<String>,
+    marker_written: bool,
 }
 
 /// Jobs in the order they were queued.
@@ -183,9 +234,18 @@ struct QueueState {
 struct SweepQueue {
     state: Mutex<QueueState>,
     ready: Condvar,
+    /// Where to record outstanding work. `None` keeps no record.
+    marker: Option<PathBuf>,
 }
 
 impl SweepQueue {
+    fn with_marker(marker: PathBuf) -> Self {
+        Self {
+            marker: Some(marker),
+            ..Self::default()
+        }
+    }
+
     /// Add a job, unless one with the same `key` is still waiting. That job
     /// reads the library when it starts, so it picks up this change too. A
     /// running job may already have passed some projects, so it never
@@ -203,8 +263,31 @@ impl SweepQueue {
             label,
             body,
         });
+        if let (Some(marker), false) = (&self.marker, state.marker_written) {
+            // Without the marker a quit loses only the repair, so the save
+            // carries on.
+            match std::fs::write(marker, "") {
+                Ok(()) => state.marker_written = true,
+                Err(e) => eprintln!("[automatic] could not record pending updates: {}", e),
+            }
+        }
         self.ready.notify_one();
         true
+    }
+
+    /// Clear the marker if nothing is left. Takes the state lock, as `push`
+    /// does, so a job cannot be queued between the check and the removal.
+    fn job_finished(&self) {
+        let mut state = lock_ignoring_poison(&self.state);
+        if !state.waiting.is_empty() || !state.marker_written {
+            return;
+        }
+        if let Some(marker) = &self.marker {
+            if let Err(e) = std::fs::remove_file(marker) {
+                eprintln!("[automatic] could not clear pending updates: {}", e);
+            }
+        }
+        state.marker_written = false;
     }
 
     fn next_job(&self) -> QueuedJob {
@@ -220,14 +303,34 @@ impl SweepQueue {
         }
     }
 
+    /// [`Self::run_and_wait`] for a delete. Until it ends, saves of the same
+    /// item are refused: the delete would remove what they wrote.
+    fn delete_and_wait<T, F>(&self, key: String, label: String, body: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&SweepProgress) -> Result<T, String> + Send + 'static,
+    {
+        lock_ignoring_poison(&self.state)
+            .deleting
+            .insert(key.clone());
+        let result = self.run_and_wait(label, body);
+        lock_ignoring_poison(&self.state).deleting.remove(&key);
+        result
+    }
+
+    fn is_deleting(&self, key: &str) -> bool {
+        lock_ignoring_poison(&self.state).deleting.contains(key)
+    }
+
     /// Queue `body` and block until the worker has run it. Never call this
-    /// from a job, or while holding [`hold_project_writes`]: the worker needs
+    /// from a job, or while holding [`hold_library_writes`]: the worker needs
     /// both to get to `body`.
     fn run_and_wait<T, F>(&self, label: String, body: F) -> Result<T, String>
     where
         T: Send + 'static,
         F: FnOnce(&SweepProgress) -> Result<T, String> + Send + 'static,
     {
+        debug_assert!(!core::holds_library_writes(), "the worker needs this lock");
         let (result_tx, result_rx) = mpsc::channel();
         let stopped = format!("The update for {} stopped before it finished", label);
         self.push(
@@ -255,18 +358,56 @@ fn run_job(job: QueuedJob, reporter: &Arc<dyn SweepReporter>) {
     progress.finish();
 }
 
+fn run_next(queue: &SweepQueue, reporter: &Arc<dyn SweepReporter>) {
+    run_job(queue.next_job(), reporter);
+    queue.job_finished();
+}
+
 fn run_worker(queue: &SweepQueue, reporter: Arc<dyn SweepReporter>) -> ! {
     loop {
-        run_job(queue.next_job(), &reporter);
+        run_next(queue, &reporter);
     }
 }
 
 static QUEUE: OnceLock<Arc<SweepQueue>> = OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    /// Stands in for [`QUEUE`] on this thread, so a test can run a command
+    /// through a real worker. The global would leak between parallel tests.
+    static TEST_QUEUE: std::cell::RefCell<Option<Arc<SweepQueue>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn current_queue() -> Option<Arc<SweepQueue>> {
+    TEST_QUEUE.with(|queue| queue.borrow().clone())
+}
+
+#[cfg(not(test))]
+fn current_queue() -> Option<Arc<SweepQueue>> {
+    QUEUE.get().cloned()
+}
+
+fn pending_marker_path() -> Result<PathBuf, String> {
+    Ok(core::get_automatic_dir()?.join(PENDING_MARKER))
+}
+
 /// Start the worker. Without it jobs run inline, which is slower for the
-/// caller but still correct, so a failure here does not stop the app.
+/// caller but still correct, so a failure here does not stop the app. A
+/// marker left by the last run queues the repair.
 pub(crate) fn start_sweep_worker(app: tauri::AppHandle) {
-    let queue = Arc::new(SweepQueue::default());
+    let (queue, interrupted) = match pending_marker_path() {
+        Ok(marker) => {
+            let interrupted = marker.exists();
+            (SweepQueue::with_marker(marker), interrupted)
+        }
+        Err(e) => {
+            eprintln!("[automatic] updates will not survive a quit: {}", e);
+            (SweepQueue::default(), false)
+        }
+    };
+    let queue = Arc::new(queue);
     let worker_queue = Arc::clone(&queue);
     let reporter: Arc<dyn SweepReporter> = Arc::new(TauriSweepReporter(app));
     let spawned = std::thread::Builder::new()
@@ -276,10 +417,20 @@ pub(crate) fn start_sweep_worker(app: tauri::AppHandle) {
         Ok(_) => {
             let _ = QUEUE.set(queue);
         }
-        Err(e) => eprintln!(
-            "[automatic] could not start the project update worker: {}",
-            e
-        ),
+        Err(e) => {
+            eprintln!(
+                "[automatic] could not start the project update worker: {}",
+                e
+            );
+            return;
+        }
+    }
+    if interrupted {
+        queue_sweep(
+            Some("interrupted-update".to_string()),
+            "an interrupted update".to_string(),
+            super::projects::repair_interrupted_sweep,
+        );
     }
 }
 
@@ -291,7 +442,7 @@ pub(crate) fn queue_sweep<F>(key: Option<String>, label: String, body: F)
 where
     F: FnOnce(&SweepProgress) + Send + 'static,
 {
-    match QUEUE.get() {
+    match current_queue() {
         Some(queue) => {
             queue.push(key, label, Box::new(body));
         }
@@ -307,45 +458,32 @@ where
     T: Send + 'static,
     F: FnOnce(&SweepProgress) -> Result<T, String> + Send + 'static,
 {
-    match QUEUE.get() {
+    match current_queue() {
         Some(queue) => queue.run_and_wait(label, body),
         None => body(&SweepProgress::silent()),
     }
 }
 
-// ── Project write lock ───────────────────────────────────────────────────────
-
-/// Guards no data of its own, so a panicking holder leaves nothing broken.
-static PROJECT_WRITES: Mutex<()> = Mutex::new(());
-
-thread_local! {
-    static HOLDS_PROJECT_WRITES: Cell<bool> = const { Cell::new(false) };
-}
-
-/// While alive, no other thread is reading, changing and writing a project.
-pub(crate) struct ProjectWriteGuard {
-    outer: Option<MutexGuard<'static, ()>>,
-}
-
-impl Drop for ProjectWriteGuard {
-    fn drop(&mut self) {
-        if self.outer.take().is_some() {
-            HOLDS_PROJECT_WRITES.with(|held| held.set(false));
-        }
+/// [`run_sweep_and_wait`] for a delete of the item with merge key `key`.
+pub(crate) fn run_delete_and_wait<T, F>(key: String, label: String, body: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&SweepProgress) -> Result<T, String> + Send + 'static,
+{
+    match current_queue() {
+        Some(queue) => queue.delete_and_wait(key, label, body),
+        None => body(&SweepProgress::silent()),
     }
 }
 
-/// Take the project write lock, before reading a project that will be
-/// written back. Hold it for one project at a time, because the main thread
-/// can be waiting. A thread that already holds it gets a guard that does
-/// nothing, so a command may call code that takes the lock too.
-pub(crate) fn hold_project_writes() -> ProjectWriteGuard {
-    if HOLDS_PROJECT_WRITES.with(Cell::get) {
-        return ProjectWriteGuard { outer: None };
+/// Refuse a save of `name`, with merge key `key`, while it is being deleted.
+pub(crate) fn ensure_not_being_deleted(key: &str, name: &str) -> Result<(), String> {
+    match current_queue() {
+        Some(queue) if queue.is_deleting(key) => Err(format!(
+            "'{name}' is still being deleted. Try again in a moment."
+        )),
+        _ => Ok(()),
     }
-    let outer = lock_ignoring_poison(&PROJECT_WRITES);
-    HOLDS_PROJECT_WRITES.with(|held| held.set(true));
-    ProjectWriteGuard { outer: Some(outer) }
 }
 
 #[cfg(test)]
@@ -552,14 +690,139 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_marker_stays_until_the_queue_drains() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join(PENDING_MARKER);
+        let queue = SweepQueue::with_marker(marker.clone());
+        let (_recording, shared) = reporter();
+
+        queue.push(None, "one".into(), Box::new(|_| {}));
+        queue.push(None, "two".into(), Box::new(|_| {}));
+        assert!(marker.exists(), "written when a job is queued");
+
+        run_next(&queue, &shared);
+        assert!(marker.exists(), "a job is still waiting");
+
+        run_next(&queue, &shared);
+        assert!(!marker.exists(), "cleared when the queue drains");
+
+        queue.push(None, "three".into(), Box::new(|_| {}));
+        assert!(marker.exists(), "written again for later work");
+    }
+
+    #[test]
+    fn a_job_still_running_keeps_the_marker() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join(PENDING_MARKER);
+        let queue = SweepQueue::with_marker(marker.clone());
+        queue.push(None, "running".into(), Box::new(|_| {}));
+
+        let _running = queue.next_job();
+
+        assert!(marker.exists(), "a quit now must still repair");
+    }
+
+    #[test]
+    fn a_delete_is_tracked_until_it_ends() {
+        let queue = Arc::new(SweepQueue::default());
+        let (_recording, shared) = reporter();
+        let worker_queue = Arc::clone(&queue);
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || run_next(&worker_queue, &shared));
+
+        let deleter_queue = Arc::clone(&queue);
+        let deleter = std::thread::spawn(move || {
+            deleter_queue.delete_and_wait("rule:a".into(), "rule a".into(), move |_| {
+                seen_tx.send(()).expect("send");
+                go_rx.recv().expect("recv");
+                Ok(())
+            })
+        });
+
+        seen_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("started");
+        assert!(queue.is_deleting("rule:a"));
+        assert!(!queue.is_deleting("rule:b"));
+
+        go_tx.send(()).expect("send");
+        deleter.join().expect("join").expect("delete");
+        worker.join().expect("join");
+        assert!(!queue.is_deleting("rule:a"));
+    }
+
+    #[test]
+    fn replace_home_writes_a_tilde_for_the_whole_folder_only() {
+        assert_eq!(
+            replace_home("Failed to read /Users/sam/a.json", "/Users/sam"),
+            "Failed to read ~/a.json"
+        );
+        assert_eq!(replace_home("in '/Users/sam'", "/Users/sam"), "in '~'");
+        assert_eq!(
+            replace_home("/Users/samuel/a and /Users/sam/b", "/Users/sam"),
+            "/Users/samuel/a and ~/b"
+        );
+        assert_eq!(replace_home("text", ""), "text");
+    }
+
+    #[test]
+    fn a_save_is_refused_while_the_same_item_is_being_deleted() {
+        let home = tempfile::tempdir().expect("tempdir");
+        core::with_test_home(home.path().to_path_buf(), || {
+            let queue = Arc::new(SweepQueue::default());
+            lock_ignoring_poison(&queue.state)
+                .deleting
+                .insert("rule:going".to_string());
+            TEST_QUEUE.with(|current| *current.borrow_mut() = Some(queue));
+
+            let refused = crate::commands::save_rule("going", "going", "Body.\n");
+            let other = ensure_not_being_deleted("rule:staying", "staying");
+
+            TEST_QUEUE.with(|current| *current.borrow_mut() = None);
+            assert_eq!(
+                refused,
+                Err("'going' is still being deleted. Try again in a moment.".to_string())
+            );
+            assert_eq!(other, Ok(()));
+            assert!(core::read_rule("going").is_err(), "nothing was written");
+        });
+    }
+
+    /// Run `command` on this thread with a real worker, on its own thread,
+    /// taking `jobs` jobs in `home`.
+    pub(crate) fn with_real_worker<T>(
+        home: &std::path::Path,
+        jobs: usize,
+        command: impl FnOnce() -> T,
+    ) -> (T, Arc<RecordingReporter>) {
+        let queue = Arc::new(SweepQueue::default());
+        let (recording, shared) = reporter();
+        let worker_queue = Arc::clone(&queue);
+        let worker_home = home.to_path_buf();
+        let worker = std::thread::spawn(move || {
+            core::with_test_home(worker_home, || {
+                for _ in 0..jobs {
+                    run_next(&worker_queue, &shared);
+                }
+            })
+        });
+        TEST_QUEUE.with(|current| *current.borrow_mut() = Some(queue));
+        let result = command();
+        TEST_QUEUE.with(|current| *current.borrow_mut() = None);
+        worker.join().expect("worker");
+        (result, recording)
+    }
+
+    #[test]
     fn the_write_lock_keeps_threads_apart_and_can_be_taken_twice_on_one() {
-        let first = hold_project_writes();
-        let nested = hold_project_writes();
+        let first = hold_library_writes();
+        let nested = hold_library_writes();
         drop(nested);
 
         let (taken_tx, taken_rx) = mpsc::channel();
         let other = std::thread::spawn(move || {
-            let _guard = hold_project_writes();
+            let _guard = hold_library_writes();
             taken_tx.send(()).expect("send");
         });
         assert!(

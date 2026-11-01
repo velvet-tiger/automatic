@@ -174,6 +174,9 @@ pub(crate) fn registry_pointer(project: &Project) -> serde_json::Value {
 /// does not. `project` may have been read before another process turned
 /// read-only mode on, and only `set_project_read_only` may turn it off.
 pub(crate) fn write_registry_pointer(registry_path: &Path, project: &Project) -> Result<(), String> {
+    // Held across the check of the file and the write, so a toggle cannot
+    // land between them and be undone.
+    let _writes = super::hold_library_writes();
     let mut pointer = registry_pointer(project);
     if !project.local_read_only && pointer_file_is_read_only(registry_path) {
         if let Some(map) = pointer.as_object_mut() {

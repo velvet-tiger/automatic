@@ -30,15 +30,15 @@ pub fn save_context(context: core::Context) -> Result<core::Context, String> {
     core::save_context(context)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_context(slug: &str) -> Result<core::ContextReferences, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     core::delete_context(slug)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<core::ContextReferences, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     core::rename_context(old_slug, new_slug)
 }
 
@@ -47,15 +47,15 @@ pub fn get_context_references(slug: &str) -> Result<core::ContextReferences, Str
     core::find_context_references(slug)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_context(target: core::ContextTarget, slug: &str) -> Result<bool, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     core::attach_context(&target, slug)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detach_context(target: core::ContextTarget, slug: &str) -> Result<bool, String> {
-    let _writes = super::project_sweeps::hold_project_writes();
+    let _writes = super::project_sweeps::hold_library_writes();
     core::detach_context(&target, slug)
 }
 

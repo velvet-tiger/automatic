@@ -1,6 +1,9 @@
 use crate::core;
 
-use super::project_sweeps::{hold_project_writes, queue_sweep, run_sweep_and_wait};
+use super::project_sweeps::{
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
+    run_sweep_and_wait,
+};
 use super::projects::{
     detach_profile_from_projects, reconcile_projects_referencing_profile,
     rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
@@ -24,9 +27,12 @@ pub fn read_project_profile(name: &str) -> Result<String, String> {
 
 /// Save a profile, then bring every attached project back in step and
 /// re-sync the ones that changed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_profile(name: &str, data: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("profile:{name}"), name)?;
+    let writes = hold_library_writes();
     core::save_project_profile(name, data)?;
+    drop(writes);
     let profile = name.to_string();
     queue_sweep(
         Some(format!("profile:{profile}")),
@@ -41,10 +47,14 @@ pub fn save_project_profile(name: &str, data: &str) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn delete_project_profile(name: &str) -> Result<(), String> {
     let profile = name.to_string();
-    run_sweep_and_wait(format!("deleted profile {profile}"), move |progress| {
-        detach_profile_from_projects(&profile, progress);
-        core::delete_project_profile(&profile)
-    })
+    run_delete_and_wait(
+        format!("profile:{profile}"),
+        format!("deleted profile {profile}"),
+        move |progress| {
+            detach_profile_from_projects(&profile, progress);
+            core::delete_project_profile(&profile)
+        },
+    )
 }
 
 #[tauri::command(async)]
@@ -76,9 +86,9 @@ pub fn get_projects_referencing_profile(
     Ok(referencing)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     core::read_project_profile_parsed(profile_name)?;
 
@@ -100,9 +110,9 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Result<(), String> {
-    let _writes = hold_project_writes();
+    let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =

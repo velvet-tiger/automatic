@@ -1,7 +1,8 @@
 use crate::core;
 
 use super::project_sweeps::{
-    hold_project_writes, queue_sweep, run_sweep_and_wait, SweepProgress,
+    ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
+    run_sweep_and_wait, SweepProgress,
 };
 use super::projects::{
     reconcile_projects_referencing_profile, sync_projects_referencing_user_command,
@@ -19,6 +20,7 @@ pub fn read_user_command(machine_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_user_command(machine_name: String, content: String) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("command:{machine_name}"), &machine_name)?;
     core::user_writes::save_user_command(&machine_name, &content)?;
     queue_sweep(
         Some(format!("command:{machine_name}")),
@@ -32,7 +34,7 @@ pub fn save_user_command(machine_name: String, content: String) -> Result<(), St
 pub fn rename_user_command(old_name: String, new_name: String) -> Result<(), String> {
     run_sweep_and_wait(format!("renamed command {new_name}"), move |progress| {
         // The rename rewrites each project that selected the command.
-        let writes = hold_project_writes();
+        let writes = hold_library_writes();
         core::rename_user_command(&old_name, &new_name)?;
         drop(writes);
         for profile in core::rename_asset_in_profiles(
@@ -52,11 +54,15 @@ pub fn rename_user_command(old_name: String, new_name: String) -> Result<(), Str
 
 #[tauri::command(async)]
 pub fn delete_user_command(machine_name: String) -> Result<(), String> {
-    run_sweep_and_wait(format!("deleted command {machine_name}"), move |progress| {
-        core::user_writes::delete_user_command(&machine_name)?;
-        prune_user_command_references(&machine_name, progress);
-        Ok(())
-    })
+    run_delete_and_wait(
+        format!("command:{machine_name}"),
+        format!("deleted command {machine_name}"),
+        move |progress| {
+            core::user_writes::delete_user_command(&machine_name)?;
+            prune_user_command_references(&machine_name, progress);
+            Ok(())
+        },
+    )
 }
 
 /// Take a deleted command out of every profile, and bring the projects that

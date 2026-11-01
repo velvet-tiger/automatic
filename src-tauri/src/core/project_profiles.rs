@@ -477,6 +477,7 @@ pub(crate) fn rename_asset_in_profiles(
 }
 
 fn rewrite_profiles(mut edit: impl FnMut(&mut ProjectProfile) -> bool) -> Vec<String> {
+    let _writes = super::hold_library_writes();
     let names = match list_project_profiles() {
         Ok(names) => names,
         Err(e) => {
