@@ -143,6 +143,16 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - **Drift alerts** — manually editing synced files triggers drift detection until re-synced, this is expected behavior
 - **Command name coupling** — frontend TypeScript and Rust command names must match exactly, typos break invokes silently
 
+## Working Protocols
+
+- **Operating mode:** Plan and Review when the owner requests the work directly. Unsupervised for weekly routines, minor bug fixes, and dependency upgrades.
+- **Branches:** yes, on every change
+- **Worktrees:** yes
+- **Pull requests:** no
+- **Merge target:** main. Requested work merges after the owner has reviewed and approved it, and the worktree is then deleted. Unsupervised routines merge to main when done.
+- **Human review:** not required for diffs. The owner approves requested work before it merges.
+- **Handoff:** after verification, for the owner's review and approval of requested work
+
 <!-- automatic:rules:start -->
 # Working with the Automatic MCP Service
 
