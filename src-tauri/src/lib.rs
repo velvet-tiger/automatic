@@ -294,6 +294,7 @@ pub fn run() {
             discover_projects,
             add_discovered_projects,
             import_existing_project,
+            preview_project_library_use,
             set_project_read_only,
             delete_project_config,
             rename_project,

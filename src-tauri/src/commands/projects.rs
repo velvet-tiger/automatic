@@ -161,13 +161,21 @@ pub struct AddedDiscoveredProject {
 /// adopts the agents found on disk and runs the first sync. A folder with an
 /// unregistered Automatic config is imported and keeps that config. One
 /// failure does not stop the rest; each folder reports its own result.
+/// `import_read_only` holds the user's mode choice for folders that are
+/// imported. A folder it omits is imported read only: nobody reviewed it, and
+/// its committed `read_only` hint cannot be trusted to ask for that.
 #[tauri::command]
 pub async fn add_discovered_projects(
     directories: Vec<String>,
     created_by: Option<String>,
+    import_read_only: HashMap<String, bool>,
 ) -> Result<Vec<AddedDiscoveredProject>, String> {
     tokio::task::spawn_blocking(move || {
-        Ok(add_discovered_folders(directories, created_by.as_deref()))
+        Ok(add_discovered_folders(
+            directories,
+            created_by.as_deref(),
+            &import_read_only,
+        ))
     })
     .await
     .map_err(|e| format!("Adding projects failed: {}", e))?
@@ -177,24 +185,28 @@ pub async fn add_discovered_projects(
 fn add_discovered_folders(
     directories: Vec<String>,
     created_by: Option<&str>,
+    import_read_only: &HashMap<String, bool>,
 ) -> Vec<AddedDiscoveredProject> {
     directories
         .into_iter()
-        .map(|directory| match add_discovered_project(&directory, created_by) {
-            Ok(added) => AddedDiscoveredProject {
-                directory,
-                local_key: Some(added.local_key),
-                name: Some(added.name),
-                read_only: added.read_only,
-                error: None,
-            },
-            Err(e) => AddedDiscoveredProject {
-                directory,
-                local_key: None,
-                name: None,
-                read_only: false,
-                error: Some(e),
-            },
+        .map(|directory| {
+            let read_only = import_read_only.get(&directory).copied();
+            match add_discovered_project(&directory, created_by, read_only) {
+                Ok(added) => AddedDiscoveredProject {
+                    directory,
+                    local_key: Some(added.local_key),
+                    name: Some(added.name),
+                    read_only: added.read_only,
+                    error: None,
+                },
+                Err(e) => AddedDiscoveredProject {
+                    directory,
+                    local_key: None,
+                    name: None,
+                    read_only: false,
+                    error: Some(e),
+                },
+            }
         })
         .collect()
 }
@@ -205,6 +217,7 @@ fn add_discovered_folders(
 fn add_discovered_project(
     directory: &str,
     created_by: Option<&str>,
+    read_only: Option<bool>,
 ) -> Result<core::ImportedProject, String> {
     let path = std::path::Path::new(directory);
     if !path.is_absolute() {
@@ -239,7 +252,7 @@ fn add_discovered_project(
             return Err(format!("Already added as project '{}'.", name));
         }
         core::DirectoryStatus::OrphanConfig { .. } => {
-            return import_existing_project(directory);
+            return import_existing_project(directory, Some(read_only.unwrap_or(true)));
         }
     }
 
@@ -630,14 +643,25 @@ pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> 
     Ok(())
 }
 
+/// Report what the Automatic config in `directory` would use from this
+/// machine's library. Writes nothing, so it runs before the user chooses how
+/// to add the project.
+#[tauri::command(async)]
+pub fn preview_project_library_use(directory: &str) -> Result<core::ProjectLibraryUse, String> {
+    core::preview_project_library_use(directory)
+}
+
 /// Adopt an existing on-disk project config (`.automatic.json`, or a legacy
 /// `.automatic/project.json`) as a registered project. Returns the adopted
 /// project's `{name, local_key}`: open it by the key, since another project
 /// may share the name.
 #[tauri::command(async)]
-pub fn import_existing_project(directory: &str) -> Result<core::ImportedProject, String> {
+pub fn import_existing_project(
+    directory: &str,
+    read_only: Option<bool>,
+) -> Result<core::ImportedProject, String> {
     let _writes = hold_library_writes();
-    let imported = core::import_existing_project(directory)?;
+    let imported = core::import_existing_project(directory, read_only)?;
     // Write the new checkout's keys into the folder now, as a save would.
     // The import itself only writes the registry pointer. The refresh skips
     // a project added in read-only mode.
@@ -1844,11 +1868,9 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepP
         Unreadable::Report,
         "profile detach",
         |_, project| {
-            let before = project.profiles.len();
-            project.profiles.retain(|p| p != profile_name);
-            let recorded = project.profile_contributions.contains_key(profile_name);
+            let released = core::release_profile(project, profile_name);
             let group_recorded = core::strip_group_profile_contribution(project, profile_name);
-            if project.profiles.len() == before && !recorded && !group_recorded {
+            if !released && !group_recorded {
                 return false;
             }
             core::reconcile_project_profiles(project);
@@ -2794,6 +2816,157 @@ pub(crate) mod propagation_tests {
         });
     }
 
+    /// Run `body` as one machine: `home` is its `~/.automatic`.
+    fn on_machine<T>(home: &std::path::Path, body: impl FnOnce() -> T) -> T {
+        crate::core::with_test_home(home.to_path_buf(), body)
+    }
+
+    fn save_shared_profile(skills: &[&str]) {
+        let data = serde_json::to_string(&core::ProjectProfile {
+            name: "shared".to_string(),
+            skills: skills.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        })
+        .expect("profile json");
+        core::save_project_profile("shared", &data).expect("save profile");
+    }
+
+    /// Stand in for a git push and pull: only the committed file travels.
+    fn pull_config(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::copy(from.join(".automatic.json"), to.join(".automatic.json")).expect("pull");
+    }
+
+    /// An edit in the app: read the project and save it back unchanged.
+    fn autosave(ident: &str) {
+        let data = core::read_project(ident).expect("read");
+        save_project_with(ident, &data, false, NewProjectRecommendations::Skip).expect("save");
+    }
+
+    /// Two people each have their own `shared` profile. Neither may remove
+    /// what the other's profile added.
+    #[test]
+    fn teammates_with_different_same_name_profiles_keep_each_others_entries() {
+        let alex_home = tempfile::tempdir().expect("home");
+        let sam_home = tempfile::tempdir().expect("home");
+        let alex_repo = tempfile::tempdir().expect("repo");
+        let sam_repo = tempfile::tempdir().expect("repo");
+        let alex_dir = alex_repo.path().to_str().unwrap().to_string();
+        let sam_dir = sam_repo.path().to_str().unwrap().to_string();
+
+        let alex = on_machine(alex_home.path(), || {
+            save_shared_profile(&["react", "vitest"]);
+            let project = serde_json::json!({
+                "name": "demo",
+                "directory": alex_dir,
+                "profiles": ["shared"],
+                "agents": ["claude"],
+            });
+            let ident = save_project_with(
+                "demo",
+                &project.to_string(),
+                true,
+                NewProjectRecommendations::Skip,
+            )
+            .expect("create");
+            assert_eq!(read_back(&ident).skills, vec!["react", "vitest"]);
+            ident
+        });
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        let sam = on_machine(sam_home.path(), || {
+            save_shared_profile(&["react", "python"]);
+            let ident = core::import_existing_project(&sam_dir, None).expect("import").local_key;
+            autosave(&ident);
+            let skills = read_back(&ident).skills;
+            assert!(skills.contains(&"vitest".to_string()), "Sam removed vitest: {skills:?}");
+            assert!(skills.contains(&"python".to_string()), "Sam lacks python: {skills:?}");
+            ident
+        });
+
+        pull_config(sam_repo.path(), alex_repo.path());
+        let committed = std::fs::read(alex_repo.path().join(".automatic.json")).unwrap();
+        on_machine(alex_home.path(), || autosave(&alex));
+        assert_eq!(
+            std::fs::read(alex_repo.path().join(".automatic.json")).unwrap(),
+            committed,
+            "Alex's save rewrote the committed config"
+        );
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        on_machine(sam_home.path(), || autosave(&sam));
+        assert_eq!(
+            std::fs::read(sam_repo.path().join(".automatic.json")).unwrap(),
+            committed,
+            "Sam's save rewrote the committed config"
+        );
+    }
+
+    /// Import a clone whose committed config attaches `shared`. It has no
+    /// state file, so this checkout has no record yet.
+    fn import_clone_with_shared_profile(repo: &std::path::Path) -> String {
+        save_shared_profile(&["react"]);
+        std::fs::write(
+            repo.join(".automatic.json"),
+            r#"{"name":"demo","profiles":["shared"],"skills":["react"]}"#,
+        )
+        .unwrap();
+        core::import_existing_project(repo.to_str().unwrap(), None).expect("import").local_key
+    }
+
+    #[test]
+    fn detach_command_removes_entries_on_a_checkout_with_no_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let ident = import_clone_with_shared_profile(repo.path());
+
+            crate::commands::detach_profile_from_project(&ident, "shared").expect("detach");
+
+            let project = read_back(&ident);
+            assert!(project.profiles.is_empty());
+            assert!(project.skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn profile_delete_sweep_removes_entries_on_a_checkout_with_no_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let ident = import_clone_with_shared_profile(repo.path());
+
+            detach_profile_from_projects("shared", &SweepProgress::silent());
+
+            assert!(read_back(&ident).skills.is_empty());
+        });
+    }
+
+    /// `.gitignore` does not stop a repository tracking `.automatic/`, so a
+    /// clone can arrive with a state file that claims a record.
+    #[test]
+    fn committed_state_file_cannot_supply_a_profile_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let dir = repo.path().to_str().unwrap();
+            std::fs::write(repo.path().join(".automatic.json"), r#"{"name":"demo"}"#).unwrap();
+            std::fs::create_dir(repo.path().join(".automatic")).unwrap();
+            std::fs::write(
+                repo.path().join(".automatic").join("project.json"),
+                r#"{
+                    "profile_contributions": {"ghost": {"hooks": ["secret-scan"]}},
+                    "group_profile_contributions": {"ghost": ["shared"]},
+                    "group_context_contributions": {"ghost": ["policy"]}
+                }"#,
+            )
+            .unwrap();
+
+            let ident = core::import_existing_project(dir, None).expect("import").local_key;
+
+            let project = read_back(&ident);
+            assert!(project.profile_contributions.is_empty());
+            assert!(project.group_profile_contributions.is_empty());
+            assert!(project.group_context_contributions.is_empty());
+        });
+    }
+
     pub(crate) fn read_back(name: &str) -> core::Project {
         serde_json::from_str(&core::read_project(name).expect("read project")).expect("parse")
     }
@@ -3292,7 +3465,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             std::fs::write(project_dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
             let dir = project_dir.display().to_string();
 
-            let added = add_discovered_project(&dir, Some("user_1")).expect("add");
+            let added = add_discovered_project(&dir, Some("user_1"), None).expect("add");
             assert_eq!(added.name, "my-app");
             assert!(!added.read_only);
 
@@ -3303,7 +3476,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert_eq!(saved.created_by.as_deref(), Some("user_1"));
             assert_eq!(saved.instruction_mode, "per-agent");
 
-            let err = add_discovered_project(&dir, None).expect_err("second add");
+            let err = add_discovered_project(&dir, None, None).expect_err("second add");
             assert!(err.contains("Already added as project 'my-app'"), "{err}");
         });
     }
@@ -3311,19 +3484,19 @@ fn detach_profile_from_projects_removes_provided_entries() {
     #[test]
     fn adding_a_discovered_folder_rejects_bad_paths() {
         with_temp_home(|_| {
-            assert!(add_discovered_project("relative/dir", None).is_err());
+            assert!(add_discovered_project("relative/dir", None, None).is_err());
 
             let parent = tempdir().expect("parent");
             let base = parent.path().canonicalize().expect("canonical");
             std::fs::create_dir_all(base.join("x")).expect("mkdir");
             std::fs::create_dir_all(base.join("y")).expect("mkdir");
             let dotted = format!("{}/x/../y", base.display());
-            let err = add_discovered_project(&dotted, None).expect_err("dotted path");
+            let err = add_discovered_project(&dotted, None, None).expect_err("dotted path");
             assert!(err.contains("symlink or '..'"), "{err}");
 
             let file = base.join("file.txt");
             std::fs::write(&file, "x").expect("write");
-            assert!(add_discovered_project(&file.display().to_string(), None).is_err());
+            assert!(add_discovered_project(&file.display().to_string(), None, None).is_err());
 
             #[cfg(unix)]
             {
@@ -3331,11 +3504,11 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 std::fs::create_dir_all(&target).expect("mkdir");
                 let link = base.join("link");
                 std::os::unix::fs::symlink(&target, &link).expect("symlink");
-                assert!(add_discovered_project(&link.display().to_string(), None).is_err());
+                assert!(add_discovered_project(&link.display().to_string(), None, None).is_err());
                 // A symlink higher up the path is caught too.
                 std::fs::create_dir_all(target.join("inner")).expect("mkdir");
                 let through = link.join("inner");
-                assert!(add_discovered_project(&through.display().to_string(), None).is_err());
+                assert!(add_discovered_project(&through.display().to_string(), None, None).is_err());
             }
         });
     }
@@ -3359,10 +3532,10 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 core::DirectoryStatus::OrphanConfig { .. }
             ));
 
-            let added = add_discovered_project(&dir_str, None).expect("import");
+            let added = add_discovered_project(&dir_str, None, None).expect("import");
 
             assert_eq!(added.name, "ambient");
-            assert!(!added.read_only);
+            assert!(added.read_only, "a folder with no recorded choice starts read only");
             let saved = read_back(&added.local_key);
             assert_eq!(saved.name, "ambient");
             assert_eq!(saved.id, "proj-ambient-1");
@@ -3371,6 +3544,25 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 core::inspect_project_directory(&dir_str).expect("inspect"),
                 core::DirectoryStatus::RegisteredHere { .. }
             ));
+        });
+    }
+
+    /// The choice on the folder's row decides the mode, over the committed hint.
+    #[test]
+    fn adding_a_discovered_folder_follows_the_recorded_choice() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("chosen");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(dir.join(".automatic.json"), r#"{"name":"chosen","read_only":true}"#)
+                .expect("write config");
+            let directory = dir.display().to_string();
+
+            let choices = HashMap::from([(directory.clone(), false)]);
+            let added = add_discovered_folders(vec![directory], None, &choices);
+
+            assert!(added[0].local_key.is_some(), "{:?}", added[0].error);
+            assert!(!added[0].read_only);
         });
     }
 
@@ -3387,7 +3579,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             )
             .expect("write config");
 
-            let added = add_discovered_project(&dir.display().to_string(), None).expect("import");
+            let added = add_discovered_project(&dir.display().to_string(), None, None).expect("import");
 
             assert!(added.read_only);
         });
@@ -3401,7 +3593,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let home = home.canonicalize().expect("canonical");
             std::fs::write(home.join("CLAUDE.md"), "# global").expect("write");
 
-            let err = add_discovered_project(&home.display().to_string(), None)
+            let err = add_discovered_project(&home.display().to_string(), None, None)
                 .expect_err("home must be refused");
             assert!(err.contains("home folder"), "{err}");
         });
@@ -3419,6 +3611,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let results = add_discovered_folders(
                 vec![missing.display().to_string(), good.display().to_string()],
                 None,
+                &HashMap::new(),
             );
 
             assert_eq!(results.len(), 2);
