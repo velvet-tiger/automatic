@@ -2,7 +2,7 @@
 
 This project is managed by Automatic, a desktop hub that provides skills, rules, hooks, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
 
-The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`.
+The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`. Contexts and project details can be read only for the registered project containing the folder the server runs in, and for the projects in the groups it joined.
 
 ## Session Start
 
@@ -17,8 +17,8 @@ The server knows which project you are working in. Omit the `project` argument (
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
 - **Enabling and Disabling MCP Servers** — Call `automatic_set_mcp_server_enabled` with `server` and `enabled` to switch one of a project's attached MCP servers off or on. A disabled server stays attached and `automatic_read_project` lists it under `disabled_mcp_servers`. The call does not sync to disk on its own. Call `automatic_sync_project` afterwards to remove the server from the agent config files, or to write it back. The call is refused for a server that is not attached, for the `automatic` server, and for a server an attached profile provides.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
-- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
-- **Other Projects** — Call `automatic_list_projects` to see every project registered in Automatic. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
+- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this checkout joined. This is the authoritative source — related projects are intentionally not written into the instruction file.
+- **Other Projects** — Call `automatic_list_projects` to see this project and the projects in the groups it joined. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
 - **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
 
 ## Rules
@@ -55,11 +55,11 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 
 Contexts hold what the user wants agents to know about this project. Before you decide on conventions, architecture, product behaviour, or wording, check whether an attached context covers it. The context wins over your assumptions and over general best practice.
 
-- `automatic_list_contexts` — lists the contexts attached to this project. Pass `all: true` to list every context in the library. Each attached context carries `group` when a project group provides it.
-- Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs.
+- `automatic_list_contexts` — lists the contexts attached to this project. The library cannot be listed. Each attached context carries `group` when a project group provides it.
+- Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs. Only contexts attached to this project can be read.
 - If a context and the code disagree, say so to the user. Don't silently pick one.
 - If a read fails (for example, a cloud context when the user is signed out), tell the user and carry on without it.
-- `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. A context a group provides must be detached from the group.
+- `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. You can attach a context this project can already read, or one you created in this session. The user attaches any other context in the Automatic app. A context a group provides must be detached from the group.
 - Writing: `automatic_create_context` creates a local context. `automatic_write_context_page` creates or replaces a page by `title` and optional `folder`, or replaces one by `path`. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages. Write only when the user asks, or to record something durable the user has agreed, such as a decision. Search the existing pages first and update one rather than adding a near-duplicate.
 - Linking: `automatic_add_context_folder` links a local folder or file, and `automatic_add_context_web_page` links a web page. `automatic_remove_context_source` removes a linked source. Link or remove only when the user asks. The user's settings decide which folders you may link. By default that is folders inside registered projects. Hidden, credential and system folders are always refused. Web pages you add may only reach public addresses until the user keeps them. Only the user can add cloud sources, in the Automatic app.
 

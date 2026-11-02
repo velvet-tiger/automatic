@@ -31,6 +31,8 @@ Automatic exposes the following tools via the `automatic` MCP server (configured
 
 **The current project.** The server knows which project you are working in. Every tool that takes a `project` (or `name` on `automatic_read_project` and `automatic_sync_project`) uses that project when you omit it. Pass it only to act on another project. It accepts a project's `name`, `local_key` or `id` from `automatic_list_projects`. When a name or id matches several folders, the error lists each one with its `local_key`; pass that key.
 
+**What can be read.** Contexts and project details are limited by the folder the server runs in. It must be inside a registered project. From there you can read that project, the contexts attached to it, and the projects in the groups it joined. A shared `id`, `AUTOMATIC_PROJECT` and the `project` argument do not widen this.
+
 ### `automatic_list_skills`
 
 List all skill names currently registered in the user's skill registry (`~/.automatic/library/skills/`, with `~/.agents/skills/` and `~/.claude/skills/` scanned read-only).
@@ -90,18 +92,18 @@ The call is refused for a server that is not attached to the project, for the `a
 
 ### `automatic_list_projects`
 
-List every project registered in Automatic. Each entry has `name`, `local_key` (one folder on this machine), `id` (the project, shared by every folder of it, such as git worktrees), `directory`, and `current`. `current` marks the project you are working in.
+List this project and the projects in the groups it joined. An unregistered folder lists nothing. Each entry has `name`, `local_key` (one folder on this machine), `id` (the project, shared by every folder of it, such as git worktrees), `directory`, and `current`. `current` marks the project you are working in.
 
-**When to use:** When you need to find out which projects the user has configured, or to act on a project other than the current one.
+**When to use:** When you need the keys of this project or its peers, or to act on a peer.
 
 ---
 
 ### `automatic_get_related_projects`
 
-Return the peer projects of every Project Group this project belongs to. Each peer has its name, description, directory, and the relative path from this project's directory.
+Return the peer projects of every Project Group this checkout joined. Each peer has its name, description, directory, and the relative path from this project's directory.
 
 ```
-project?: string  — defaults to the current project
+project?: string  — can only name this folder's project
 ```
 
 **When to use:** Before searching the filesystem or asking the user for sibling projects. This is the authoritative source. Related projects are not written into the instruction file.
@@ -110,7 +112,7 @@ project?: string  — defaults to the current project
 
 ### `automatic_read_project`
 
-Read the full configuration for a project: description, directory path, assigned skills, MCP servers, `disabled_mcp_servers` (attached servers that are switched off; absent when none are), providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), `group_context_contributions` (which of those contexts each project group provides), and `group_profile_contributions` (which of the attached profiles each project group provides).
+Read the full configuration of this project or a project in a group it joined: description, directory path, assigned skills, MCP servers, `disabled_mcp_servers` (attached servers that are switched off; absent when none are), providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), `group_context_contributions` (which of those contexts each project group provides), and `group_profile_contributions` (which of the attached profiles each project group provides).
 
 ```
 name?: string  — defaults to the current project
@@ -248,11 +250,9 @@ A hook an attached profile provides is re-attached on the next save, so detach t
 List the contexts attached to a project. A context is a named collection of reference material that agents read on demand: documentation pages, local files, URLs, or sources in the Automatic cloud. Nothing from a context is written into the project. Each entry carries `group` when a project group provides it.
 
 ```
-project?: string  — defaults to the current project
-all?: boolean     — list every context in the library instead
+project?: string  — can only name this folder's project
+all?: boolean     — refused; the library cannot be listed
 ```
-
-With no current project and no `project`, every context in the library is listed.
 
 **When to use:** At the start of work in a project, to find the reference material the user attached to it.
 
@@ -284,7 +284,7 @@ path: string     — the entry path (read only)
 
 ### `automatic_attach_context` / `automatic_detach_context`
 
-Attach a context to a project or a project group, or detach it. Give `project` or `group`, not both. Give neither to use the current project. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
+Attach a context to a project or a project group, or detach it. You can attach a context this project can already read, or one this server created. The user attaches any other context in the Automatic app. Give `project` or `group`, not both. Give neither to use the current project. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
 
 ```
 context: string   — the context slug
@@ -408,7 +408,7 @@ The `automatic_*_feature` tools track work items on a project's Build board. The
 1. **On session start** — make these four calls:
    - `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources.
    - `automatic_search_memories` with relevant keywords to retrieve past learnings for the current project.
-   - `automatic_read_project` to load the current project's configured skills, MCP servers, agents, and directory. To work on another project, find it with `automatic_list_projects` first.
+   - `automatic_read_project` to load the current project's configured skills, MCP servers, agents, and directory. To work on a peer, find it with `automatic_list_projects` first.
    - `automatic_list_contexts` to see the reference material attached to the project.
 
 2. **Before project-specific decisions** — consult the relevant contexts before deciding on conventions, architecture, product behaviour, or wording. For sibling projects, call `automatic_get_related_projects` before searching the filesystem.

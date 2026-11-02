@@ -213,6 +213,36 @@ where
     }
 }
 
+/// The checkout a tool may read for: the deepest registered folder containing
+/// `folder`, the server's working directory. `AUTOMATIC_PROJECT` plays no part,
+/// because a repository commits it in `.mcp.json`, and neither does a tool's
+/// `project` argument, because the agent chooses it.
+pub fn resolve_reading_checkout<F>(
+    folder: Option<&Path>,
+    summaries: &[ProjectSummary],
+    canonical: F,
+) -> Option<ProjectSummary>
+where
+    F: Fn(&str) -> PathBuf,
+{
+    folder.and_then(|folder| deepest_containing(folder, summaries.iter(), &canonical)).cloned()
+}
+
+/// [`resolve_reading_checkout`] against registered directories on disk.
+pub fn reading_checkout_of(
+    folder: Option<&Path>,
+    summaries: &[ProjectSummary],
+) -> Option<ProjectSummary> {
+    resolve_reading_checkout(folder, summaries, canonical_or_raw)
+}
+
+/// The canonical working directory, which `reading_checkout_of` resolves on
+/// each call so that a folder registered after startup is seen.
+pub fn detect_reading_folder() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    Some(std::fs::canonicalize(&cwd).unwrap_or(cwd))
+}
+
 /// The candidate whose directory contains `cwd` with the most path
 /// components. `Path::starts_with` compares whole components, so `/a/web`
 /// does not contain `/a/website`. The first candidate wins a tie.
@@ -476,6 +506,18 @@ mod tests {
             CurrentProject::Checkout(s) => Some(s.local_key.as_str()),
             _ => None,
         }
+    }
+
+    fn reading(cwd: Option<&str>) -> Option<String> {
+        resolve_reading_checkout(cwd.map(Path::new), &registry(), identity)
+            .map(|summary| summary.local_key)
+    }
+
+    #[test]
+    fn the_reading_checkout_comes_from_the_folder_alone() {
+        assert_eq!(reading(Some("/work/site/src")).as_deref(), Some(KEY_A1));
+        assert_eq!(reading(Some("/unregistered")), None);
+        assert_eq!(reading(None), None);
     }
 
     #[test]

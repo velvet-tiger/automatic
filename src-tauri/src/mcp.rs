@@ -335,13 +335,11 @@ pub struct DetachProfileParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ListContextsParams {
-    /// The project whose attached contexts to list, each with the group
-    /// that provides it (if any). Omit it to use the current project, the
-    /// one this agent is working in. Accepts a local_key, an id or a name.
+    /// Can only name this folder's own project, which is the default.
+    /// Accepts a local_key, an id or a name.
     #[serde(default)]
     pub project: Option<String>,
-    /// List every context in the library instead of one project's. Ignores
-    /// `project`.
+    /// Refused. The library cannot be listed through MCP.
     #[serde(default)]
     pub all: Option<bool>,
 }
@@ -976,6 +974,119 @@ fn related_peers(
     peers
 }
 
+// ── Reading scope ────────────────────────────────────────────────────────────
+
+const NO_READING_CHECKOUT: &str = "This folder is not a project registered in Automatic, so \
+     Automatic will not share contexts or project details here. Ask the user to add the folder \
+     in the Automatic app.";
+
+/// What the folder this server runs in may read. A repository can commit any
+/// `id` or `AUTOMATIC_PROJECT`, and an agent can pass any `project`, so neither
+/// decides this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ReadingScope {
+    /// The registered checkout containing the server's working directory.
+    checkout: Option<crate::core::ProjectSummary>,
+    /// Checkouts of the other projects in the groups `checkout` joined.
+    peers: Vec<crate::core::ProjectSummary>,
+    /// Context slugs offered to `checkout`.
+    contexts: Vec<String>,
+}
+
+impl ReadingScope {
+    fn own_checkout(&self) -> Result<&crate::core::ProjectSummary, String> {
+        self.checkout.as_ref().ok_or_else(|| NO_READING_CHECKOUT.to_string())
+    }
+
+    /// The checkout `explicit` names among those this scope can see, or the
+    /// reading checkout when it is omitted. The refusal lists nothing, so it
+    /// cannot be used to find other projects.
+    fn project(&self, explicit: Option<&str>) -> Result<&crate::core::ProjectSummary, String> {
+        let own = self.own_checkout()?;
+        let Some(ident) = explicit.map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(own);
+        };
+        std::iter::once(own)
+            .chain(&self.peers)
+            .find(|s| {
+                s.local_key == ident
+                    || (!s.id.is_empty() && s.id == ident)
+                    || crate::core::same_project_name(&s.name, ident)
+            })
+            .ok_or_else(|| {
+                format!(
+                    "Project '{}' is not readable from this folder. A project can read itself \
+                     and the projects in the groups it joined.",
+                    ident
+                )
+            })
+    }
+
+    /// The reading checkout, refusing `explicit` when it names another one.
+    fn own_project(&self, explicit: Option<&str>) -> Result<&crate::core::ProjectSummary, String> {
+        let own = self.own_checkout()?;
+        let named = self.project(explicit)?;
+        if named == own {
+            return Ok(own);
+        }
+        Err(format!("Only this folder's own project '{}' can be used here.", own.name))
+    }
+
+    /// Whether `slug` is offered to this folder. The slug is compared exactly:
+    /// a case-insensitive filesystem must not widen it.
+    fn check_context(&self, slug: &str) -> Result<(), String> {
+        self.own_checkout()?;
+        if self.contexts.iter().any(|c| c == slug) {
+            return Ok(());
+        }
+        Err(format!("Context '{}' is not attached to this project.", slug))
+    }
+
+    /// Whether this folder may attach `slug`: it can see it already, or this
+    /// server created it. Otherwise an attach would open any context to a read.
+    fn check_attach(&self, slug: &str, created: &[String]) -> Result<(), String> {
+        self.own_checkout()?;
+        if created.iter().any(|c| c == slug) {
+            return Ok(());
+        }
+        self.check_context(slug).map_err(|_| {
+            format!(
+                "Context '{}' cannot be attached from this folder. Ask the user to attach it \
+                 in the Automatic app.",
+                slug
+            )
+        })
+    }
+}
+
+/// Build the scope of `checkout`. No file in a repository can widen it: joins
+/// live in the registry pointer.
+fn reading_scope_of(
+    checkout: Option<crate::core::ProjectSummary>,
+    index: &crate::core::ProjectKeyIndex,
+) -> Result<ReadingScope, String> {
+    let Some(checkout) = checkout else {
+        return Ok(ReadingScope::default());
+    };
+    let project = load_project(&checkout)?;
+    let mut peers = Vec::new();
+    for group in crate::core::joined_groups(&project) {
+        for peer in related_peers(index, &group.projects, &checkout) {
+            let found = index.summaries().iter().find(|s| crate::core::checkout_ident(s) == peer.ident);
+            if let Some(summary) = found {
+                if !peers.contains(summary) {
+                    peers.push(summary.clone());
+                }
+            }
+        }
+    }
+    let contexts = crate::core::project_context_entries(&project)
+        .into_iter()
+        .map(|entry| entry.slug)
+        .collect();
+    Ok(ReadingScope { checkout: Some(checkout), peers, contexts })
+}
+
 // ── MCP Server Handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -984,12 +1095,37 @@ pub struct AutomaticMcpServer {
     /// The project this `mcp-serve` process works for, resolved once at
     /// startup. Tools use it when the `project` argument is omitted.
     current_project: crate::core::CurrentProject,
+    /// The folder this server runs in, which decides what it may read. See
+    /// [`ReadingScope`].
+    reading_folder: Option<std::path::PathBuf>,
+    /// Contexts this server created, which it may attach.
+    created_contexts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// How a tool's `project` argument becomes the project it acts on. The
 /// registry is read on every call, so a project registered, renamed or
 /// removed since startup is seen.
 impl AutomaticMcpServer {
+    /// What this server's folder may read. The registry is read on every
+    /// call, like [`Self::project_target`].
+    fn reading_scope(&self) -> Result<ReadingScope, String> {
+        let index = crate::core::ProjectKeyIndex::load()
+            .map_err(|e| format!("Failed to read the project registry: {}", e))?;
+        let checkout =
+            crate::core::reading_checkout_of(self.reading_folder.as_deref(), index.summaries());
+        reading_scope_of(checkout, &index)
+    }
+
+    /// The context `slug`, when this server's folder may read it.
+    fn readable_context(&self, slug: &str) -> Result<crate::core::Context, String> {
+        self.reading_scope()?.check_context(slug)?;
+        crate::core::read_context(slug)
+    }
+
+    fn created_contexts(&self) -> Vec<String> {
+        self.created_contexts.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
     /// Resolve `explicit`, or the current project when it is omitted.
     fn project_target(&self, explicit: Option<&str>) -> Result<crate::core::ProjectTarget, String> {
         let summaries = crate::core::get_project_summaries()
@@ -1066,7 +1202,15 @@ impl AutomaticMcpServer {
         Self {
             tool_router: Self::tool_router(),
             current_project,
+            reading_folder: None,
+            created_contexts: Default::default(),
         }
+    }
+
+    /// Set the folder that decides what this server may read.
+    pub fn with_reading_folder(mut self, folder: Option<std::path::PathBuf>) -> Self {
+        self.reading_folder = folder;
+        self
     }
 
     // ── Read-only tools ──────────────────────────────────────────────────
@@ -1186,17 +1330,21 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_projects",
-        description = "List every project registered in Automatic. Each entry has `name`, \
-                       `local_key` (one checkout on this machine), `id` (the project, shared \
-                       by every checkout of it), `directory`, and `current`. `current` is true \
-                       for the project this agent is working in, which tools use when \
-                       `project` is omitted. When that is a project with several checkouts \
-                       and none contains the working directory, every checkout is marked. \
-                       Any of `local_key`, `id` or `name` can be passed as `project`."
+        description = "List the project this folder belongs to and the projects in the \
+                       groups it joined. An unregistered folder lists nothing. Each entry has \
+                       `name`, `local_key` (one checkout on this machine), `id` (the project, \
+                       shared by every checkout of it), `directory`, and `current`. `current` \
+                       is true for the project this agent is working in, which tools use when \
+                       `project` is omitted. Any of `local_key`, `id` or `name` can be passed \
+                       as `project`."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
-        match crate::core::get_project_summaries() {
-            Ok(summaries) => Ok(tool_json(&project_list_rows(&summaries, &self.current_project))),
+        match self.reading_scope() {
+            Ok(scope) => {
+                let readable: Vec<_> =
+                    scope.checkout.iter().chain(&scope.peers).cloned().collect();
+                Ok(tool_json(&project_list_rows(&readable, &self.current_project)))
+            }
             Err(e) => Ok(tool_error(format!("Failed to list projects: {}", e))),
         }
     }
@@ -1204,7 +1352,8 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_read_project",
         description = "Read the full configuration for a project (skills, MCP servers, agents, \
-                       directory, description). Omit `name` to read the current project. \
+                       directory, description). Omit `name` to read this folder's project. \
+                       Only that project and the projects in the groups it joined can be read. \
                        `disabled_mcp_servers` lists the attached MCP servers that are \
                        switched off and left out of the agent config files; the field is \
                        absent when none are. \
@@ -1222,11 +1371,15 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadProjectParams>,
     ) -> Result<CallToolResult, McpError> {
-        let checkout = match self.project_checkout(params.0.name.as_deref()) {
+        let scope = match self.reading_scope() {
+            Ok(scope) => scope,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let checkout = match scope.project(params.0.name.as_deref()) {
             Ok(checkout) => checkout,
             Err(e) => return Ok(tool_error(e)),
         };
-        match crate::core::read_project(crate::core::checkout_ident(&checkout)) {
+        match crate::core::read_project(crate::core::checkout_ident(checkout)) {
             Ok(content) => Ok(tool_success(content)),
             Err(e) => Ok(tool_error(format!(
                 "Failed to read project '{}': {}",
@@ -1257,23 +1410,25 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_get_related_projects",
-        description = "Return all projects related to the current project, or to `project` \
-                       when given, via Project Groups, \
+        description = "Return the projects related to this folder's project through the \
+                       Project Groups it joined, \
                        including each peer's name, description, directory, and relative path \
-                       from this project's directory. Use this to discover sibling projects \
-                       you can explore or reference."
+                       from this project's directory. `project` can only name this folder's \
+                       own project. Use this to discover sibling projects you can explore or \
+                       reference."
     )]
     async fn get_related_projects(
         &self,
         params: Parameters<GetRelatedProjectsParams>,
     ) -> Result<CallToolResult, McpError> {
-        // Groups hold project ids, so a project with several checkouts is
-        // enough. Relative paths are computed from its first checkout.
-        let target = match self.project_target(params.0.project.as_deref()) {
-            Ok(target) => target,
+        let scope = match self.reading_scope() {
+            Ok(scope) => scope,
             Err(e) => return Ok(tool_error(e)),
         };
-        let this = target.representative().clone();
+        let this = match scope.own_project(params.0.project.as_deref()) {
+            Ok(checkout) => checkout.clone(),
+            Err(e) => return Ok(tool_error(e)),
+        };
         let this_dir = this.directory.as_str();
 
         let project = match load_project(&this) {
@@ -2247,44 +2402,35 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_contexts",
-        description = "List contexts: named collections of reference material \
-                       (documentation pages, local files, URLs, cloud sources) \
-                       that agents read on demand. Returns `slug`, \
-                       `display_name`, `description` and `location` (`local` or \
-                       `cloud`). Lists the contexts attached to the current \
-                       project, or to `project` when given; each then carries \
-                       `group` when a project group provides it. Pass \
-                       `all: true`, or run with no current project, to list \
-                       every context in the library. Call \
-                       automatic_read_context next."
+        description = "List the contexts attached to this folder's project: named collections \
+                       of reference material (documentation pages, local files, URLs, cloud \
+                       sources) that agents read on demand. Returns `slug`, `display_name`, \
+                       `description` and `location` (`local` or `cloud`), and `group` when a \
+                       project group provides the context. `all: true` and another `project` \
+                       are refused. Call automatic_read_context next."
     )]
     async fn list_contexts(
         &self,
         params: Parameters<ListContextsParams>,
     ) -> Result<CallToolResult, McpError> {
-        // The whole library when asked for, or when nothing names a project
-        // (no argument and no current project), which is what this tool
-        // listed before it had a current project.
-        let whole_library = params.0.all.unwrap_or(false)
-            || (params.0.project.is_none()
-                && self.current_project == crate::core::CurrentProject::None);
-        let slugs = if whole_library {
-            match crate::core::list_contexts() {
-                Ok(slugs) => slugs
-                    .into_iter()
-                    .map(|slug| crate::core::ProjectContextEntry { slug, group: None })
-                    .collect(),
-                Err(e) => return Ok(tool_error(format!("Failed to list contexts: {}", e))),
-            }
-        } else {
-            let checkout = match self.project_checkout(params.0.project.as_deref()) {
-                Ok(checkout) => checkout,
-                Err(e) => return Ok(tool_error(e)),
-            };
-            match load_project(&checkout) {
-                Ok(p) => crate::core::project_context_entries(&p),
-                Err(e) => return Ok(tool_error(e)),
-            }
+        if params.0.all.unwrap_or(false) {
+            return Ok(tool_error(
+                "The context library cannot be listed from here. Ask the user which context \
+                 to attach in the Automatic app."
+                    .to_string(),
+            ));
+        }
+        let scope = match self.reading_scope() {
+            Ok(scope) => scope,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let checkout = match scope.own_project(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let slugs = match load_project(checkout) {
+            Ok(p) => crate::core::project_context_entries(&p),
+            Err(e) => return Ok(tool_error(e)),
         };
         let entries: Vec<serde_json::Value> = slugs
             .into_iter()
@@ -2312,7 +2458,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_read_context",
-        description = "Read a context by slug. Returns its description and \
+        description = "Read a context attached to this folder's project by slug. Returns its description and \
                        `sources`: each has an `id`, a `kind` (`documentation`, \
                        `local`, `url`, `cloud`, or a webapp kind for cloud \
                        contexts), and a display name and description. Call \
@@ -2323,7 +2469,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let context = match crate::core::read_context(&params.0.context) {
+        let context = match self.readable_context(&params.0.context) {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2346,7 +2492,8 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_context_entries",
-        description = "List the readable entries of one source in a context. \
+        description = "List the readable entries of one source in a context attached to this \
+                       folder's project. \
                        Returns `entries` (each with `path`, and `title` or \
                        `size` when known) and `truncated` when the source holds \
                        more than the listing limit. A URL source has one entry, \
@@ -2356,7 +2503,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListContextEntriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let context = match crate::core::read_context(&params.0.context) {
+        let context = match self.readable_context(&params.0.context) {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2371,7 +2518,8 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_read_context_entry",
-        description = "Read the text of one entry in a context source. Local \
+        description = "Read the text of one entry in a source of a context attached to this \
+                       folder's project. Local \
                        files are confined to the source's folder, and every \
                        entry is capped at 512,000 bytes of UTF-8 text. URL \
                        sources are served from cache while fresh; a failed \
@@ -2382,7 +2530,7 @@ impl AutomaticMcpServer {
         params: Parameters<ReadContextEntryParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
-        let context = match crate::core::read_context(&p.context) {
+        let context = match self.readable_context(&p.context) {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2401,8 +2549,10 @@ impl AutomaticMcpServer {
                        Give `project`, `group`, or neither for the current \
                        project. A group's \
                        contexts are added to every member project and recorded \
-                       as provided by that group. Idempotent. Contexts are read \
-                       through MCP only, so no sync is needed."
+                       as provided by that group. Idempotent. Only a context \
+                       this folder can already read, or one this server \
+                       created, can be attached. Contexts are read through MCP \
+                       only, so no sync is needed."
     )]
     async fn attach_context(
         &self,
@@ -2413,6 +2563,12 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         let slug = &params.0.context;
+        if let Err(e) = self
+            .reading_scope()
+            .and_then(|scope| scope.check_attach(slug, &self.created_contexts()))
+        {
+            return Ok(tool_error(e));
+        }
         match crate::core::attach_context(&target, slug) {
             Ok(true) => Ok(tool_success(format!(
                 "Attached context '{}' to {}.",
@@ -2476,12 +2632,17 @@ impl AutomaticMcpServer {
         params: Parameters<CreateContextParams>,
     ) -> Result<CallToolResult, McpError> {
         match crate::core::create_local_context(&params.0.name, &params.0.description) {
-            Ok(context) => Ok(tool_success(format!(
-                "Created context '{}' with slug '{}'. Add pages with \
-                 automatic_write_context_page, and attach it with \
-                 automatic_attach_context.",
-                context.display_name, context.slug
-            ))),
+            Ok(context) => {
+                if let Ok(mut created) = self.created_contexts.lock() {
+                    created.push(context.slug.clone());
+                }
+                Ok(tool_success(format!(
+                    "Created context '{}' with slug '{}'. Add pages with \
+                     automatic_write_context_page, and attach it with \
+                     automatic_attach_context.",
+                    context.display_name, context.slug
+                )))
+            }
             Err(e) => Ok(tool_error(format!("Failed to create context: {}", e))),
         }
     }
@@ -3260,7 +3421,9 @@ impl ServerHandler for AutomaticMcpServer {
                  Automatic knows which project this agent is working in. Omit the `project` \
                  argument (`name` on automatic_read_project and automatic_sync_project) to act \
                  on that project. Pass it only to act on a different project; it accepts a \
-                 local_key, an id or a name from automatic_list_projects.",
+                 local_key, an id or a name from automatic_list_projects. Contexts and project \
+                 details are readable only for the registered project containing the folder \
+                 this server runs in, and the groups that project joined.",
             )
             .with_server_info(server_info)
     }
@@ -3271,7 +3434,8 @@ impl ServerHandler for AutomaticMcpServer {
 pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     // Resolved once. Agents start one `mcp-serve` per session, and the
     // working directory and `AUTOMATIC_PROJECT` do not change during it.
-    let server = AutomaticMcpServer::with_current_project(crate::core::detect_current_project());
+    let server = AutomaticMcpServer::with_current_project(crate::core::detect_current_project())
+        .with_reading_folder(crate::core::detect_reading_folder());
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 
@@ -3602,6 +3766,8 @@ mod tests {
     #[test]
     fn related_projects_are_listed_by_name() {
         let home = tempfile::tempdir().expect("tempdir");
+        let folder = tempfile::tempdir().expect("tempdir");
+        let site_dir = std::fs::canonicalize(folder.path()).expect("canonical");
         with_test_home(home.path().to_path_buf(), || {
             for (name, id, key) in [
                 ("site", "5b1f0c7e-0000-4000-8000-0000000000c1", "5b1f0c7e-0000-4000-8000-0000000000d1"),
@@ -3611,6 +3777,7 @@ mod tests {
                     name: name.into(),
                     id: id.into(),
                     local_key: key.into(),
+                    directory: if name == "site" { site_dir.display().to_string() } else { String::new() },
                     ..Default::default()
                 };
                 crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
@@ -3621,7 +3788,7 @@ mod tests {
             crate::core::confirm_project_group("5b1f0c7e-0000-4000-8000-0000000000d1", "team")
                 .expect("join");
 
-            let server = AutomaticMcpServer::new();
+            let server = AutomaticMcpServer::new().with_reading_folder(Some(site_dir));
             let result = tauri::async_runtime::block_on(server.get_related_projects(Parameters(
                 GetRelatedProjectsParams { project: Some("site".into()) },
             )))
@@ -3629,33 +3796,6 @@ mod tests {
             let text = format!("{:?}", result.content);
             assert!(text.contains("**api**"), "{text}");
             assert!(!text.contains("0000000000c2"), "no id leaks: {text}");
-        });
-    }
-
-    #[test]
-    fn a_checkout_sees_no_peers_until_it_joins() {
-        let home = tempfile::tempdir().expect("tempdir");
-        with_test_home(home.path().to_path_buf(), || {
-            save_registry();
-            let group = serde_json::json!({"name": "team", "projects": [SITE_ID, API_ID]});
-            crate::core::save_group("team", &group.to_string()).expect("save group");
-            crate::core::confirm_project_group(SITE_KEY, "team").expect("join");
-
-            let related = |key: &str| {
-                let params = GetRelatedProjectsParams { project: Some(key.into()) };
-                let result = tauri::async_runtime::block_on(
-                    AutomaticMcpServer::new().get_related_projects(Parameters(params)),
-                )
-                .expect("tool call");
-                format!("{:?}", result.content)
-            };
-            assert!(related(SITE_KEY).contains("**api**"));
-            let copy = related(SITE_WT_KEY);
-            assert!(!copy.contains("**api**"), "{copy}");
-            assert!(!copy.contains("team"), "{copy}");
-
-            crate::core::confirm_project_group(SITE_WT_KEY, "team").expect("join");
-            assert!(related(SITE_WT_KEY).contains("**api**"));
         });
     }
 
@@ -3668,13 +3808,270 @@ mod tests {
     const SITE_WT_KEY: &str = "5b1f0c7e-0000-4000-8000-0000000001b3";
 
     fn save_checkout(name: &str, id: &str, local_key: &str) {
+        save_checkout_in(name, id, local_key, "");
+    }
+
+    fn save_checkout_in(name: &str, id: &str, local_key: &str, directory: &str) {
         let project = crate::core::Project {
             name: name.into(),
             id: id.into(),
             local_key: local_key.into(),
+            directory: directory.into(),
             ..Default::default()
         };
         crate::core::save_project(name, &serde_json::to_string(&project).unwrap()).expect("save");
+    }
+
+    /// Folders for `api`, `site` and `site-wt`, the checkouts of
+    /// [`save_registry`], and one no project owns.
+    struct Folders {
+        _root: tempfile::TempDir,
+        api: std::path::PathBuf,
+        site: std::path::PathBuf,
+        site_wt: std::path::PathBuf,
+        outside: std::path::PathBuf,
+    }
+
+    fn save_registry_in_folders() -> Folders {
+        let root = tempfile::tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(root.path()).expect("canonical");
+        let folder = |name: &str| {
+            let dir = base.join(name);
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            dir
+        };
+        let (api, site, site_wt, outside) =
+            (folder("api"), folder("site"), folder("site-wt"), folder("outside"));
+        save_checkout_in("api", API_ID, API_KEY, api.to_str().unwrap());
+        save_checkout_in("site", SITE_ID, SITE_KEY, site.to_str().unwrap());
+        save_checkout_in("site-wt", SITE_ID, SITE_WT_KEY, site_wt.to_str().unwrap());
+        Folders { _root: root, api, site, site_wt, outside }
+    }
+
+    /// A server that a repository pointed at `env` with `AUTOMATIC_PROJECT`,
+    /// running in `folder`.
+    fn server_in(folder: &std::path::Path, env: Option<&str>) -> AutomaticMcpServer {
+        let summaries = crate::core::get_project_summaries().expect("summaries");
+        let current = crate::core::resolve_current_project(
+            env,
+            Some(folder),
+            &summaries,
+            |dir: &str| std::path::PathBuf::from(dir),
+        );
+        AutomaticMcpServer::with_current_project(current)
+            .with_reading_folder(Some(folder.to_path_buf()))
+    }
+
+    fn call<T>(future: impl std::future::Future<Output = Result<T, McpError>>) -> T {
+        tauri::async_runtime::block_on(future).expect("tool call")
+    }
+
+    fn slugs_listed(server: &AutomaticMcpServer) -> Result<Vec<String>, String> {
+        let params = ListContextsParams { project: None, all: None };
+        let result = call(server.list_contexts(Parameters(params)));
+        if result.is_error == Some(true) {
+            return Err(result_text(&result));
+        }
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&result_text(&result)).expect("a JSON array");
+        Ok(rows.iter().map(|r| r["slug"].as_str().unwrap().to_string()).collect())
+    }
+
+    fn read_slug(server: &AutomaticMcpServer, slug: &str) -> CallToolResult {
+        call(server.read_context(Parameters(ReadContextParams { context: slug.into() })))
+    }
+
+    fn entries_of(server: &AutomaticMcpServer, slug: &str) -> CallToolResult {
+        call(server.list_context_entries(Parameters(ListContextEntriesParams {
+            context: slug.into(),
+            source: "pages".into(),
+        })))
+    }
+
+    fn entry_of(server: &AutomaticMcpServer, slug: &str) -> CallToolResult {
+        call(server.read_context_entry(Parameters(ReadContextEntryParams {
+            context: slug.into(),
+            source: "pages".into(),
+            path: "index.md".into(),
+        })))
+    }
+
+    fn attach(server: &AutomaticMcpServer, slug: &str, group: Option<&str>) -> CallToolResult {
+        call(server.attach_context(Parameters(AttachContextParams {
+            context: slug.into(),
+            project: None,
+            group: group.map(String::from),
+        })))
+    }
+
+    fn related(server: &AutomaticMcpServer, project: Option<&str>) -> CallToolResult {
+        let params = GetRelatedProjectsParams { project: project.map(String::from) };
+        call(server.get_related_projects(Parameters(params)))
+    }
+
+    fn listed_keys(server: &AutomaticMcpServer) -> Vec<String> {
+        let result = call(server.list_projects());
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&result_text(&result)).expect("a JSON array");
+        rows.iter().map(|r| r["local_key"].as_str().unwrap().to_string()).collect()
+    }
+
+    /// A group of `site` and `api`, stored by `id`, with one private context.
+    /// `site` and `api` joined. `site-wt` shares the `id` and did not.
+    fn save_private_group() {
+        crate::core::create_local_context("private", "").expect("context");
+        crate::core::write_documentation_page("private", "pages", "index.md", "Secret notes")
+            .expect("page");
+        let group = serde_json::json!({
+            "name": "team",
+            "projects": [SITE_ID, API_ID],
+            "contexts": ["private"],
+        });
+        crate::core::confirm_project_group(SITE_KEY, "team").expect("join");
+        crate::core::confirm_project_group(API_KEY, "team").expect("join");
+        crate::core::save_group_reconciling_contexts("team", &group.to_string()).expect("group");
+    }
+
+    fn assert_refused(result: &CallToolResult) {
+        assert_eq!(result.is_error, Some(true), "{}", result_text(result));
+        assert!(!result_text(result).contains("Secret notes"), "{}", result_text(result));
+    }
+
+    #[test]
+    fn scope_resolves_only_what_it_holds() {
+        let summary = |name: &str, id: &str, key: &str| crate::core::ProjectSummary {
+            name: name.into(),
+            id: id.into(),
+            local_key: key.into(),
+            directory: String::new(),
+            read_only: false,
+        };
+        let empty = ReadingScope::default();
+        assert_eq!(empty.project(None), Err(NO_READING_CHECKOUT.to_string()));
+        assert!(empty.check_context("x").is_err());
+        assert!(empty.check_attach("x", &["x".to_string()]).is_err(), "no folder, no attach");
+
+        let scope = ReadingScope {
+            checkout: Some(summary("site", SITE_ID, SITE_KEY)),
+            peers: vec![summary("api", API_ID, API_KEY)],
+            contexts: vec!["shared".into()],
+        };
+        assert_eq!(scope.project(None).unwrap().local_key, SITE_KEY);
+        assert_eq!(scope.project(Some(API_KEY)).unwrap().local_key, API_KEY);
+        assert_eq!(scope.project(Some(API_ID)).unwrap().local_key, API_KEY);
+        assert_eq!(scope.project(Some("Api")).unwrap().local_key, API_KEY);
+        assert_eq!(scope.project(Some(SITE_ID)).unwrap().local_key, SITE_KEY);
+        assert!(scope.project(Some(SITE_WT_KEY)).is_err());
+        assert!(scope.own_project(Some(API_KEY)).is_err());
+        assert!(scope.own_project(Some(SITE_KEY)).is_ok());
+        assert!(scope.check_context("shared").is_ok());
+        assert!(scope.check_context("Shared").is_err(), "compared exactly");
+        assert!(scope.check_context("other").is_err());
+        assert!(scope.check_attach("shared", &[]).is_ok());
+        assert!(scope.check_attach("other", &[]).is_err());
+        assert!(scope.check_attach("other", &["other".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn an_unregistered_folder_with_a_member_id_reads_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            // One checkout has this id, so the repository's value alone
+            // makes the member the current project.
+            let server = server_in(&folders.outside, Some(API_ID));
+            assert!(matches!(&server.current_project, crate::core::CurrentProject::Checkout(s) if s.local_key == API_KEY));
+
+            assert_eq!(slugs_listed(&server).unwrap_err(), NO_READING_CHECKOUT);
+            assert_refused(&read_slug(&server, "private"));
+            assert_refused(&entries_of(&server, "private"));
+            assert_refused(&entry_of(&server, "private"));
+            assert_refused(&attach(&server, "private", None));
+            assert_refused(&related(&server, None));
+            assert_refused(&read(&server, None));
+            assert_refused(&read(&server, Some(API_KEY)));
+            assert!(listed_keys(&server).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_clone_reads_nothing_of_the_group_until_it_joins() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let member = server_in(&folders.site, Some(SITE_ID));
+            assert_eq!(slugs_listed(&member).unwrap(), vec!["private"]);
+            assert_ne!(read_slug(&member, "private").is_error, Some(true));
+            assert_ne!(entry_of(&member, "private").is_error, Some(true));
+            assert!(result_text(&related(&member, None)).contains("**api**"));
+
+            let clone = server_in(&folders.site_wt, Some(SITE_ID));
+            assert!(slugs_listed(&clone).unwrap().is_empty());
+            assert_refused(&read_slug(&clone, "private"));
+            assert_refused(&entries_of(&clone, "private"));
+            assert_refused(&entry_of(&clone, "private"));
+            let peers = related(&clone, None);
+            assert!(!result_text(&peers).contains("**api**"), "{}", result_text(&peers));
+            assert!(!result_text(&peers).contains("team"), "{}", result_text(&peers));
+            assert_refused(&related(&clone, Some(SITE_KEY)));
+            assert_refused(&read(&clone, Some(API_KEY)));
+            assert_refused(&read(&clone, Some(SITE_KEY)));
+            assert_eq!(listed_keys(&clone), vec![SITE_WT_KEY]);
+
+            crate::core::confirm_project_group(SITE_WT_KEY, "team").expect("join");
+            crate::core::reconcile_group_contexts_for_projects(&[SITE_WT_KEY.to_string()])
+                .expect("reconcile");
+            assert_eq!(slugs_listed(&clone).unwrap(), vec!["private"]);
+            assert_ne!(read_slug(&clone, "private").is_error, Some(true));
+            assert!(result_text(&related(&clone, None)).contains("**api**"));
+            assert_ne!(read(&clone, Some(API_KEY)).is_error, Some(true));
+            assert_eq!(listed_keys(&clone), vec![SITE_WT_KEY, API_KEY]);
+        });
+    }
+
+    #[test]
+    fn the_library_cannot_be_listed_and_no_other_project_named() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let server = server_in(&folders.site, None);
+            let all = ListContextsParams { project: None, all: Some(true) };
+            assert_refused(&call(server.list_contexts(Parameters(all))));
+            let peer = ListContextsParams { project: Some(API_KEY.into()), all: None };
+            assert_refused(&call(server.list_contexts(Parameters(peer))));
+            let own = ListContextsParams { project: Some(SITE_ID.into()), all: None };
+            assert_ne!(call(server.list_contexts(Parameters(own))).is_error, Some(true));
+        });
+    }
+
+    #[test]
+    fn attach_cannot_open_a_context_to_a_read() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let clone = server_in(&folders.site_wt, None);
+
+            assert_refused(&attach(&clone, "private", None));
+            assert_refused(&attach(&clone, "private", Some("team")));
+            assert_refused(&read_slug(&clone, "private"));
+            assert!(crate::core::read_project(SITE_WT_KEY).unwrap().contains("site-wt"));
+
+            let created = call(clone.create_context(Parameters(CreateContextParams {
+                name: "Notes".into(),
+                description: String::new(),
+            })));
+            assert_ne!(created.is_error, Some(true), "{}", result_text(&created));
+            let attached = attach(&clone, "notes", None);
+            assert_ne!(attached.is_error, Some(true), "{}", result_text(&attached));
+            assert_eq!(slugs_listed(&clone).unwrap(), vec!["notes"]);
+
+            let other = server_in(&folders.api, None);
+            assert_refused(&attach(&other, "notes", None));
+        });
     }
 
     /// `api` has one checkout. `site` and `site-wt` are two checkouts of one
@@ -3727,8 +4124,8 @@ mod tests {
     fn an_omitted_project_uses_the_current_project() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            let summaries = save_registry();
-            let server = AutomaticMcpServer::with_current_project(current_for(API_ID, &summaries));
+            let folders = save_registry_in_folders();
+            let server = server_in(&folders.api, Some(API_ID));
 
             let stored = store(&server, None, "k");
             assert_ne!(stored.is_error, Some(true), "{}", result_text(&stored));
@@ -3754,9 +4151,6 @@ mod tests {
             let site = crate::memory::get_all_memories(SITE_ID).unwrap();
             assert!(["by-key", "by-id", "by-name"].iter().all(|k| site.contains_key(*k)), "{site:?}");
             assert!(crate::memory::get_all_memories(API_ID).unwrap().is_empty());
-
-            let project = read(&server, Some(SITE_WT_KEY));
-            assert!(result_text(&project).contains("site-wt"), "{}", result_text(&project));
         });
     }
 
@@ -3786,15 +4180,13 @@ mod tests {
             let server =
                 AutomaticMcpServer::with_current_project(current_for(SITE_ID, &summaries));
 
-            let result = read(&server, None);
-            assert_eq!(result.is_error, Some(true));
-            let text = result_text(&result);
+            let text = server.project_checkout(None).unwrap_err();
             assert!(text.contains(&format!("site — no folder ({})", SITE_KEY)), "{text}");
             assert!(text.contains(&format!("site-wt — no folder ({})", SITE_WT_KEY)), "{text}");
 
             let explicit_id = AutomaticMcpServer::new();
-            let result = read(&explicit_id, Some(SITE_ID));
-            assert_eq!(result.is_error, Some(true), "an explicit shared id is ambiguous too");
+            let result = explicit_id.project_checkout(Some(SITE_ID));
+            assert!(result.is_err(), "an explicit shared id is ambiguous too");
         });
     }
 
@@ -3804,12 +4196,12 @@ mod tests {
         with_test_home(home.path().to_path_buf(), || {
             save_registry();
             let server = AutomaticMcpServer::new();
-            for result in [store(&server, None, "k"), read(&server, None)] {
-                assert_eq!(result.is_error, Some(true));
-                let text = result_text(&result);
-                assert!(text.contains("Pass `project`"), "{text}");
-                assert!(text.contains("automatic_list_projects"), "{text}");
-            }
+            let result = store(&server, None, "k");
+            assert_eq!(result.is_error, Some(true));
+            let text = result_text(&result);
+            assert!(text.contains("Pass `project`"), "{text}");
+            assert!(text.contains("automatic_list_projects"), "{text}");
+            assert_eq!(result_text(&read(&server, None)), NO_READING_CHECKOUT);
         });
     }
 
@@ -3817,9 +4209,9 @@ mod tests {
     fn list_projects_returns_keys_and_marks_the_current_checkout() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            let summaries = save_registry();
-            let server =
-                AutomaticMcpServer::with_current_project(current_for(SITE_WT_KEY, &summaries));
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let server = server_in(&folders.site, Some(SITE_ID));
 
             let result = tauri::async_runtime::block_on(server.list_projects()).expect("tool call");
             let rows: Vec<serde_json::Value> =
@@ -3827,9 +4219,8 @@ mod tests {
             assert_eq!(
                 rows,
                 vec![
-                    serde_json::json!({"name": "api", "local_key": API_KEY, "id": API_ID, "directory": "", "current": false}),
-                    serde_json::json!({"name": "site", "local_key": SITE_KEY, "id": SITE_ID, "directory": "", "current": false}),
-                    serde_json::json!({"name": "site-wt", "local_key": SITE_WT_KEY, "id": SITE_ID, "directory": "", "current": true}),
+                    serde_json::json!({"name": "site", "local_key": SITE_KEY, "id": SITE_ID, "directory": folders.site, "current": true}),
+                    serde_json::json!({"name": "api", "local_key": API_KEY, "id": API_ID, "directory": folders.api, "current": false}),
                 ]
             );
         });

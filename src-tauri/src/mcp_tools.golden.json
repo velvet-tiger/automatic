@@ -134,7 +134,7 @@
     "name": "automatic_archive_feature"
   },
   {
-    "description": "Attach a context to a project or to a project group. Give `project`, `group`, or neither for the current project. A group's contexts are added to every member project and recorded as provided by that group. Idempotent. Contexts are read through MCP only, so no sync is needed.",
+    "description": "Attach a context to a project or to a project group. Give `project`, `group`, or neither for the current project. A group's contexts are added to every member project and recorded as provided by that group. Idempotent. Only a context this folder can already read, or one this server created, can be attached. Contexts are read through MCP only, so no sync is needed.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -763,7 +763,7 @@
     "name": "automatic_get_memory"
   },
   {
-    "description": "Return all projects related to the current project, or to `project` when given, via Project Groups, including each peer's name, description, directory, and relative path from this project's directory. Use this to discover sibling projects you can explore or reference.",
+    "description": "Return the projects related to this folder's project through the Project Groups it joined, including each peer's name, description, directory, and relative path from this project's directory. `project` can only name this folder's own project. Use this to discover sibling projects you can explore or reference.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -780,7 +780,7 @@
     "name": "automatic_get_related_projects"
   },
   {
-    "description": "List the readable entries of one source in a context. Returns `entries` (each with `path`, and `title` or `size` when known) and `truncated` when the source holds more than the listing limit. A URL source has one entry, `content`. Call automatic_read_context_entry with a path.",
+    "description": "List the readable entries of one source in a context attached to this folder's project. Returns `entries` (each with `path`, and `title` or `size` when known) and `truncated` when the source holds more than the listing limit. A URL source has one entry, `content`. Call automatic_read_context_entry with a path.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -802,13 +802,13 @@
     "name": "automatic_list_context_entries"
   },
   {
-    "description": "List contexts: named collections of reference material (documentation pages, local files, URLs, cloud sources) that agents read on demand. Returns `slug`, `display_name`, `description` and `location` (`local` or `cloud`). Lists the contexts attached to the current project, or to `project` when given; each then carries `group` when a project group provides it. Pass `all: true`, or run with no current project, to list every context in the library. Call automatic_read_context next.",
+    "description": "List the contexts attached to this folder's project: named collections of reference material (documentation pages, local files, URLs, cloud sources) that agents read on demand. Returns `slug`, `display_name`, `description` and `location` (`local` or `cloud`), and `group` when a project group provides the context. `all: true` and another `project` are refused. Call automatic_read_context next.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "all": {
           "default": null,
-          "description": "List every context in the library instead of one project's. Ignores\n`project`.",
+          "description": "Refused. The library cannot be listed through MCP.",
           "type": [
             "boolean",
             "null"
@@ -816,7 +816,7 @@
         },
         "project": {
           "default": null,
-          "description": "The project whose attached contexts to list, each with the group\nthat provides it (if any). Omit it to use the current project, the\none this agent is working in. Accepts a local_key, an id or a name.",
+          "description": "Can only name this folder's own project, which is the default.\nAccepts a local_key, an id or a name.",
           "type": [
             "string",
             "null"
@@ -907,7 +907,7 @@
     "name": "automatic_list_profiles"
   },
   {
-    "description": "List every project registered in Automatic. Each entry has `name`, `local_key` (one checkout on this machine), `id` (the project, shared by every checkout of it), `directory`, and `current`. `current` is true for the project this agent is working in, which tools use when `project` is omitted. When that is a project with several checkouts and none contains the working directory, every checkout is marked. Any of `local_key`, `id` or `name` can be passed as `project`.",
+    "description": "List the project this folder belongs to and the projects in the groups it joined. An unregistered folder lists nothing. Each entry has `name`, `local_key` (one checkout on this machine), `id` (the project, shared by every checkout of it), `directory`, and `current`. `current` is true for the project this agent is working in, which tools use when `project` is omitted. Any of `local_key`, `id` or `name` can be passed as `project`.",
     "inputSchema": {
       "properties": {},
       "type": "object"
@@ -994,7 +994,7 @@
     "name": "automatic_read_claude_memory"
   },
   {
-    "description": "Read a context by slug. Returns its description and `sources`: each has an `id`, a `kind` (`documentation`, `local`, `url`, `cloud`, or a webapp kind for cloud contexts), and a display name and description. Call automatic_list_context_entries with a source id next. Cloud contexts need the user to be signed in.",
+    "description": "Read a context attached to this folder's project by slug. Returns its description and `sources`: each has an `id`, a `kind` (`documentation`, `local`, `url`, `cloud`, or a webapp kind for cloud contexts), and a display name and description. Call automatic_list_context_entries with a source id next. Cloud contexts need the user to be signed in.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -1011,7 +1011,7 @@
     "name": "automatic_read_context"
   },
   {
-    "description": "Read the text of one entry in a context source. Local files are confined to the source's folder, and every entry is capped at 512,000 bytes of UTF-8 text. URL sources are served from cache while fresh; a failed fetch is an error rather than stale content.",
+    "description": "Read the text of one entry in a source of a context attached to this folder's project. Local files are confined to the source's folder, and every entry is capped at 512,000 bytes of UTF-8 text. URL sources are served from cache while fresh; a failed fetch is an error rather than stale content.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -1072,7 +1072,7 @@
     "name": "automatic_read_profile"
   },
   {
-    "description": "Read the full configuration for a project (skills, MCP servers, agents, directory, description). Omit `name` to read the current project. `disabled_mcp_servers` lists the attached MCP servers that are switched off and left out of the agent config files; the field is absent when none are. `profiles` lists the attached profiles and `profile_contributions` records which entries each profile provides, including entries the project had before the profile was attached; those entries are owned by the profile and are re-attached on the next save if removed directly. `contexts` lists attached context slugs and `group_context_contributions` records which of them each project group provides. `group_profile_contributions` records which entries in `profiles` each project group provides; those can only be detached from the group.",
+    "description": "Read the full configuration for a project (skills, MCP servers, agents, directory, description). Omit `name` to read this folder's project. Only that project and the projects in the groups it joined can be read. `disabled_mcp_servers` lists the attached MCP servers that are switched off and left out of the agent config files; the field is absent when none are. `profiles` lists the attached profiles and `profile_contributions` records which entries each profile provides, including entries the project had before the profile was attached; those entries are owned by the profile and are re-attached on the next save if removed directly. `contexts` lists attached context slugs and `group_context_contributions` records which of them each project group provides. `group_profile_contributions` records which entries in `profiles` each project group provides; those can only be detached from the group.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

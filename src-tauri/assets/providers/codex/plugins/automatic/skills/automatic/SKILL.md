@@ -20,7 +20,7 @@ Use Automatic when you need to:
 ## Recommended workflow
 
 1. Call `automatic_list_projects` and `automatic_read_project` to confirm the project you are working in.
-2. Call `automatic_list_contexts` with the project name, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
+2. Call `automatic_list_contexts`, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
 3. Call `automatic_list_skills` and `automatic_read_skill` when the task may benefit from a project or domain skill.
 4. Call `automatic_search_memories` before making assumptions and `automatic_store_memory` before wrapping up meaningful discoveries.
 5. Call `automatic_list_features` when work should be aligned with planned tasks. Move features through `automatic_set_feature_state` and log progress with `automatic_add_feature_update`.
@@ -38,7 +38,7 @@ Use Automatic when you need to:
 
 ### Contexts
 
-- `automatic_list_contexts` (pass `project` for the contexts attached to it)
+- `automatic_list_contexts` (this folder's project only)
 - `automatic_read_context`
 - `automatic_list_context_entries`
 - `automatic_read_context_entry`
