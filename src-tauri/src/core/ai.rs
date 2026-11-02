@@ -203,26 +203,29 @@ fn api_key_from(
 // ── Active client factory ─────────────────────────────────────────────────────
 
 /// Build the client for a resolved route, applying any Cloudflare gateway.
-fn client_for(route: AgentRoute) -> Box<dyn AgentClientDyn> {
+fn client_for(route: AgentRoute) -> Result<Box<dyn AgentClientDyn>, String> {
     match route {
         AgentRoute::Provider { agent_id, key } => {
-            let gateway = load_active_gateway(&agent_id);
-            super::agents::active_client_with_key(&agent_id, key, gateway)
+            let gateway = load_active_gateway(&agent_id)?;
+            Ok(super::agents::active_client_with_key(&agent_id, key, gateway))
         }
-        AgentRoute::CustomGateway(route) => super::agents::custom_gateway_client(route),
+        AgentRoute::CustomGateway(route) => Ok(super::agents::custom_gateway_client(route)),
     }
 }
 
 /// Build the active agent client from the caller's key, if any.
 fn active_client(explicit_key: Option<&str>) -> Result<Box<dyn AgentClientDyn>, String> {
-    resolve_route(explicit_key).map(client_for)
+    resolve_route(explicit_key).and_then(client_for)
 }
 
-/// Read the AI Gateway config for the given agent from settings, if any.
-fn load_active_gateway(agent_id: &str) -> Option<GatewayConfig> {
+/// Read the AI Gateway config for the given agent from settings, if any, with
+/// its token ready for a request.
+fn load_active_gateway(agent_id: &str) -> Result<Option<GatewayConfig>, String> {
     super::settings::read_settings()
         .ok()
         .and_then(|s| s.agent_gateways.get(agent_id).cloned())
+        .map(|gateway| gateway.with_stored_token(agent_id))
+        .transpose()
 }
 
 // ── Public AI operations ──────────────────────────────────────────────────────

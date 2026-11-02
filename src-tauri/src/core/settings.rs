@@ -4,6 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use super::agents::credential::delete_gateway_token;
 use super::agents::GatewayConfig;
 use super::custom_gateway::{ClearedCustomGateway, GatewayErase};
 use super::paths::get_automatic_dir;
@@ -165,6 +166,27 @@ pub fn read_settings() -> Result<Settings, String> {
     Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
+/// [`read_settings`] for a caller that writes the result back.
+///
+/// An unparsable file is an error here, not defaults, because writing defaults
+/// back would lose every setting. The error gives the position only: the
+/// parser's own message can quote a value from the file.
+pub fn read_settings_to_update() -> Result<Settings, String> {
+    let path = get_automatic_dir()?.join("settings.json");
+    if !path.exists() {
+        return Ok(Settings::default());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "{} could not be parsed (line {}, column {})",
+            path.display(),
+            e.line(),
+            e.column()
+        )
+    })
+}
+
 /// Write settings. A file that cannot be parsed is replaced, so it heals, and a
 /// copy stays beside it as `settings.json.damaged` for anyone who wants what
 /// was in it.
@@ -233,7 +255,32 @@ pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
 }
 
 pub fn reset_settings() -> Result<(), String> {
+    delete_all_gateway_tokens()?;
     write_settings(&Settings::default())
+}
+
+/// Remove the secret store token of every configured gateway. Runs before a
+/// reset or an erase removes the record of them.
+///
+/// A recorded token that cannot be removed stops the wipe, and the user can
+/// try again. A gateway with no recorded token never does: reset and erase
+/// are how a user recovers a broken setup, which can include a store that
+/// does not work. The lenient read is deliberate for the same reason. A
+/// corrupt file must not block a reset, though its tokens then stay behind.
+fn delete_all_gateway_tokens() -> Result<(), String> {
+    for (agent_id, gateway) in read_settings()?.agent_gateways {
+        match delete_gateway_token(&agent_id) {
+            Err(e) if gateway.cf_token_stored => {
+                return Err(format!(
+                    "could not remove the gateway token for '{}': {}",
+                    agent_id, e
+                ));
+            }
+            Err(e) => eprintln!("[automatic] could not check for a gateway token: {}", e),
+            Ok(()) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
@@ -263,6 +310,7 @@ pub fn erase_app_data() -> Result<ClearedCustomGateway, String> {
     if let GatewayErase::FileNotCleared(error) = gateway {
         return Err(error);
     }
+    delete_all_gateway_tokens()?;
 
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {

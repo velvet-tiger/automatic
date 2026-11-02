@@ -35,6 +35,25 @@ fn needs_reinstall(installed: Option<&str>, bundled: &str) -> bool {
     }
 }
 
+/// Move Cloudflare AI Gateway tokens from settings.json, where older versions
+/// kept them, to the secret store. Failures are reported to stderr, and the
+/// next launch tries again.
+///
+/// The GUI runs this, and `run_startup_housekeeping` does not. That function
+/// also runs in every `mcp-serve`, which would wait on a keychain dialog
+/// nobody may answer before it serves, and on every launch while a move
+/// keeps failing. Several of them starting together would also race to
+/// rewrite settings.json.
+pub fn move_gateway_tokens() {
+    match core::migrate_gateway_tokens() {
+        Ok(moved) if moved > 0 => {
+            eprintln!("[automatic] moved {} gateway token(s) to the secret store", moved)
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[automatic] gateway token migration error: {}", e),
+    }
+}
+
 /// Run all startup housekeeping synchronously.
 ///
 /// Idempotent: every step either no-ops when already done or safely

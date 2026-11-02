@@ -6343,3 +6343,198 @@ mod tests {
         assert!(ensure_custom_asset_name("rule", "CI/CD").is_ok());
     }
 }
+
+#[cfg(test)]
+mod teammate_skill_registry_tests {
+    use super::*;
+
+    const SKILL: &str = "shared-skill";
+
+    /// Run `body` as one machine: `home` is its `~/.automatic`.
+    fn on_machine<T>(home: &std::path::Path, body: impl FnOnce() -> T) -> T {
+        crate::core::with_test_home(home.to_path_buf(), body)
+    }
+
+    /// Stand in for a git push and pull: only the committed file travels.
+    fn pull_config(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::copy(from.join(".automatic.json"), to.join(".automatic.json")).expect("pull");
+    }
+
+    /// An edit in the app: read the project and save it back unchanged.
+    fn autosave(ident: &str) {
+        let data = core::read_project(ident).expect("read");
+        save_project_with(ident, &data, false, NewProjectRecommendations::Skip).expect("save");
+    }
+
+    fn committed(repo: &std::path::Path) -> String {
+        std::fs::read_to_string(repo.join(".automatic.json")).expect("config")
+    }
+
+    fn create_project(directory: &str) -> String {
+        let project = serde_json::json!({
+            "name": "demo",
+            "directory": directory,
+            "skills": [SKILL],
+            "agents": ["claude"],
+        });
+        save_project_with("demo", &project.to_string(), true, NewProjectRecommendations::Skip)
+            .expect("create")
+    }
+
+    /// Alex creates the project, Sam clones it, and each then saves it
+    /// unchanged in turn. Once both have saved, neither save may change the
+    /// committed file.
+    fn assert_saves_settle(alex_setup: fn(), sam_setup: fn()) {
+        let alex_home = tempfile::tempdir().expect("home");
+        let sam_home = tempfile::tempdir().expect("home");
+        let alex_repo = tempfile::tempdir().expect("repo");
+        let sam_repo = tempfile::tempdir().expect("repo");
+        let alex_dir = alex_repo.path().to_str().unwrap().to_string();
+        let sam_dir = sam_repo.path().to_str().unwrap().to_string();
+
+        let alex = on_machine(alex_home.path(), || {
+            alex_setup();
+            create_project(&alex_dir)
+        });
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        let sam = on_machine(sam_home.path(), || {
+            sam_setup();
+            let ident = import_existing_project(&sam_dir, Some(false)).expect("import").local_key;
+            autosave(&ident);
+            ident
+        });
+
+        pull_config(sam_repo.path(), alex_repo.path());
+        let before = committed(alex_repo.path());
+        on_machine(alex_home.path(), || autosave(&alex));
+        let after_alex = committed(alex_repo.path());
+        assert_eq!(after_alex, before, "Alex's save rewrote the committed config");
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        on_machine(sam_home.path(), || autosave(&sam));
+        assert_eq!(
+            committed(sam_repo.path()),
+            after_alex,
+            "Sam's save rewrote the committed config"
+        );
+    }
+
+    fn no_registry_entry() {}
+
+    fn source_from_acme() {
+        core::record_skill_source(SKILL, "acme/skills", "acme/skills/shared-skill", "github")
+            .expect("record");
+    }
+
+    fn source_from_fork() {
+        core::record_skill_source(SKILL, "fork/skills", "fork/skills/shared-skill", "github")
+            .expect("record");
+    }
+
+    fn source_from_acme_with_install_record() {
+        core::record_skill_source_with_meta(
+            SKILL,
+            "acme/skills",
+            "acme/skills/shared-skill",
+            "github",
+            Some("abc123".to_string()),
+            Some("1.0.0".to_string()),
+            Some("2026-11-02T00:00:00Z".to_string()),
+        )
+        .expect("record");
+    }
+
+    fn collection_frontend() {
+        core::set_skill_collection(SKILL, "frontend").expect("collection");
+    }
+
+    fn collection_tooling() {
+        core::set_skill_collection(SKILL, "tooling").expect("collection");
+    }
+
+    #[test]
+    fn different_skill_sources_leave_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme, source_from_fork);
+    }
+
+    #[test]
+    fn different_skill_collections_leave_the_committed_config_alone() {
+        assert_saves_settle(collection_frontend, collection_tooling);
+    }
+
+    #[test]
+    fn same_skill_source_with_an_install_record_leaves_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme_with_install_record, no_registry_entry);
+    }
+
+    #[test]
+    fn registry_entry_on_one_machine_only_leaves_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme, no_registry_entry);
+    }
+
+    /// A cloned repo must not write into this machine's registries. Update
+    /// checks and "Update Now" trust them, so a committed source could point a
+    /// library skill at another repository.
+    #[test]
+    fn opening_a_clone_leaves_this_machines_registries_alone() {
+        let home = tempfile::tempdir().expect("home");
+        let repo = tempfile::tempdir().expect("repo");
+        std::fs::write(
+            repo.path().join(".automatic.json"),
+            serde_json::json!({
+                "name": "demo",
+                "skills": [SKILL],
+                "skill_sources": {
+                    SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
+                },
+                "skill_collections": { SKILL: "frontend" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        on_machine(home.path(), || {
+            let ident = import_existing_project(repo.path().to_str().unwrap(), Some(false))
+                .expect("import")
+                .local_key;
+            autosave(&ident);
+            assert!(core::read_skill_sources().expect("sources").is_empty());
+            assert!(core::read_skill_collections().expect("collections").is_empty());
+        });
+        let config = committed(repo.path());
+        assert!(!config.contains("skill_sources"), "{config}");
+        assert!(!config.contains("skill_collections"), "{config}");
+    }
+
+    /// A repo can commit a state file. An unreadable registry must not leave
+    /// its values in what the project reports.
+    #[test]
+    fn unreadable_registries_do_not_keep_a_committed_state_files_values() {
+        let home = tempfile::tempdir().expect("home");
+        let repo = tempfile::tempdir().expect("repo");
+        let directory = repo.path().to_str().unwrap().to_string();
+
+        on_machine(home.path(), || {
+            let ident = create_project(&directory);
+            let state_path = repo.path().join(".automatic").join("project.json");
+            let mut state: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+            state["skill_sources"] = serde_json::json!({
+                SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
+            });
+            state["skill_collections"] = serde_json::json!({ SKILL: "frontend" });
+            std::fs::write(&state_path, state.to_string()).unwrap();
+            let automatic_dir = core::get_automatic_dir().expect("automatic dir");
+            std::fs::create_dir_all(&automatic_dir).unwrap();
+            for file in ["skills.json", "skill-collections.json"] {
+                std::fs::write(automatic_dir.join(file), "{ not json").unwrap();
+            }
+
+            let raw = core::read_project(&ident).expect("read");
+            let project: core::Project = serde_json::from_str(&raw).expect("parse");
+            assert!(project.skill_sources.is_empty());
+            assert!(project.skill_collections.is_empty());
+        });
+    }
+}

@@ -280,9 +280,7 @@ struct ResolvedProject {
     registry_name: String,
 }
 
-/// Resolve a project by identifier without writing to its folder. Seeds
-/// missing user-level registry entries from the project's metadata (see
-/// `restore_to_user_registries`).
+/// Resolve a project by identifier. Writes nothing.
 fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -352,12 +350,6 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
         project.directory_missing = true;
     }
 
-    // Restore: write project-level metadata back into user-level registries
-    // for any entries that are missing locally.  This is the key portability
-    // mechanism — when a project arrives on a new machine, its resolved data
-    // seeds the local registries so skills regain their provenance.
-    restore_to_user_registries(&project);
-
     // Enrich with current user-level metadata so callers see the current
     // snapshot. Saves and `refresh_project_files` persist it.
     enrich_project(&mut project);
@@ -368,52 +360,11 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     })
 }
 
-// ── Restore from project to user-level registries ───────────────────────────
-//
-// When a project is opened on a machine that doesn't have the original
-// user-level registry entries (e.g. cloned repo, different Automatic
-// instance), this function seeds the local registries from the resolved
-// metadata stored in project.json.  Only missing entries are written —
-// existing local entries are never overwritten, so local state wins.
-
-fn restore_to_user_registries(project: &Project) {
-    restore_skill_sources(project);
-    restore_skill_collections(project);
-}
-
-fn restore_skill_sources(project: &Project) {
-    if project.skill_sources.is_empty() {
-        return;
-    }
-    let Ok(existing) = read_skill_sources() else {
-        return;
-    };
-    for (name, source) in &project.skill_sources {
-        if !existing.contains_key(name) {
-            let _ = record_skill_source(name, &source.source, &source.id, &source.kind);
-        }
-    }
-}
-
-fn restore_skill_collections(project: &Project) {
-    if project.skill_collections.is_empty() {
-        return;
-    }
-    let Ok(existing) = read_skill_collections() else {
-        return;
-    };
-    for (name, collection) in &project.skill_collections {
-        if !existing.contains_key(name) {
-            let _ = set_skill_collection(name, collection);
-        }
-    }
-}
-
 // ── Project enrichment ───────────────────────────────────────────────────────
 //
-// Snapshots user-level registry data into the project config so it is
-// self-contained when the project is opened on another machine.  Runs on
-// every save — fields are overwritten with the current user-level state.
+// Snapshots user-level registry data into the project's state file (see
+// `STATE_FIELDS`).  Runs on every save — fields are overwritten with the
+// current user-level state.
 // Failures in individual lookups are silently skipped so that a missing
 // registry never prevents a project from being saved.
 
@@ -588,6 +539,8 @@ fn profile_providing_mcp_server<'a>(project: &'a Project, server: &str) -> Optio
 
 fn enrich_skill_sources(project: &mut Project) {
     let Ok(all_sources) = read_skill_sources() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_sources.clear();
         return;
     };
     let mut sources = BTreeMap::new();
@@ -601,6 +554,8 @@ fn enrich_skill_sources(project: &mut Project) {
 
 fn enrich_skill_collections(project: &mut Project) {
     let Ok(all_collections) = read_skill_collections() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_collections.clear();
         return;
     };
     let mut collections = BTreeMap::new();

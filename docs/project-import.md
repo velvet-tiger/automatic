@@ -44,4 +44,3 @@ Find Projects previews at most 200 unregistered configs in one scan. A folder pa
 - **Providers.** `providers` is not reviewed. Sync does not use it, nothing validates its ids, and it grants no access to the library.
 - **Contexts.** `contexts` is not reviewed, because sync does not write contexts into a project's files. Agents read them on demand through Automatic's MCP tools, so an agent in the project can read a context the config names.
 - **Inline content.** `custom_skills`, `custom_agents`, `custom_commands` and `custom_rules` carry their own content and are not listed. The repository can also commit agent files directly.
-- **Registries.** Opening an imported project, even in read-only mode, can copy committed `skill_sources` and `skill_collections` into the user's registries.
