@@ -536,6 +536,8 @@ fn profile_providing_mcp_server<'a>(project: &'a Project, server: &str) -> Optio
 
 fn enrich_skill_sources(project: &mut Project) {
     let Ok(all_sources) = read_skill_sources() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_sources.clear();
         return;
     };
     let mut sources = BTreeMap::new();
@@ -549,6 +551,8 @@ fn enrich_skill_sources(project: &mut Project) {
 
 fn enrich_skill_collections(project: &mut Project) {
     let Ok(all_collections) = read_skill_collections() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_collections.clear();
         return;
     };
     let mut collections = BTreeMap::new();

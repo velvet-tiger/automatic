@@ -5837,4 +5837,35 @@ mod teammate_skill_registry_tests {
         assert!(!config.contains("skill_sources"), "{config}");
         assert!(!config.contains("skill_collections"), "{config}");
     }
+
+    /// A repo can commit a state file. An unreadable registry must not leave
+    /// its values in what the project reports.
+    #[test]
+    fn unreadable_registries_do_not_keep_a_committed_state_files_values() {
+        let home = tempfile::tempdir().expect("home");
+        let repo = tempfile::tempdir().expect("repo");
+        let directory = repo.path().to_str().unwrap().to_string();
+
+        on_machine(home.path(), || {
+            let ident = create_project(&directory);
+            let state_path = repo.path().join(".automatic").join("project.json");
+            let mut state: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+            state["skill_sources"] = serde_json::json!({
+                SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
+            });
+            state["skill_collections"] = serde_json::json!({ SKILL: "frontend" });
+            std::fs::write(&state_path, state.to_string()).unwrap();
+            let automatic_dir = core::get_automatic_dir().expect("automatic dir");
+            std::fs::create_dir_all(&automatic_dir).unwrap();
+            for file in ["skills.json", "skill-collections.json"] {
+                std::fs::write(automatic_dir.join(file), "{ not json").unwrap();
+            }
+
+            let raw = core::read_project(&ident).expect("read");
+            let project: core::Project = serde_json::from_str(&raw).expect("parse");
+            assert!(project.skill_sources.is_empty());
+            assert!(project.skill_collections.is_empty());
+        });
+    }
 }

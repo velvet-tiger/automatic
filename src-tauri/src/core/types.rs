@@ -472,7 +472,7 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "is_false")]
     pub directory_missing: bool,
 
-    // ── Resolved metadata (project portability) ─────────────────────────────
+    // ── Resolved metadata (machine-local snapshots) ─────────────────────────
     //
     // These fields snapshot this machine's user-level registry data. They live
     // in the state file, never in the committed config, and do not travel to
