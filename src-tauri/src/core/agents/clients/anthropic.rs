@@ -276,3 +276,24 @@ impl AgentClient for AnthropicClient {
         Ok(parsed.data.into_iter().map(|m| m.id).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gateway_token_is_sent_in_its_header() {
+        let gateway = GatewayConfig {
+            account_id: "account".to_string(),
+            gateway_id: "gateway".to_string(),
+            cf_token: Some("cf-token".to_string()),
+            cf_token_stored: true,
+        };
+        let client = AnthropicClient::new("key", Some(gateway));
+        let request = client
+            .auth_headers(reqwest::Client::new().post("https://example.test"))
+            .build()
+            .expect("request");
+        assert_eq!(request.headers()["cf-aig-authorization"], "Bearer cf-token");
+    }
+}

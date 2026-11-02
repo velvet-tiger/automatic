@@ -42,6 +42,15 @@ fn needs_reinstall(installed: Option<&str>, bundled: &str) -> bool {
 /// never abort the remaining steps, so one broken migration can't take the
 /// whole app down with it.
 pub fn run_startup_housekeeping() {
+    // Older versions kept the Cloudflare AI Gateway token in settings.json.
+    match core::migrate_gateway_tokens() {
+        Ok(moved) if moved > 0 => {
+            eprintln!("[automatic] moved {} gateway token(s) to the secret store", moved)
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[automatic] gateway token migration error: {}", e),
+    }
+
     // Version-gated default-asset reinstall: force a re-seed only when
     // the installed library version is *older* than the library shipped
     // in the binary. A newer installed version (e.g. picked up by the

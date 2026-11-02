@@ -183,6 +183,8 @@ pub fn run() {
             has_api_key,
             agent_features_enabled,
             delete_api_key,
+            save_gateway_token,
+            delete_gateway_token,
             list_agents,
             list_agents_with_projects,
             detect_installed_agents,

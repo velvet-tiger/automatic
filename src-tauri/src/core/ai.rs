@@ -135,17 +135,20 @@ fn api_key_from(
 // ── Active client factory ─────────────────────────────────────────────────────
 
 /// Build the active agent client, applying any configured gateway routing.
-fn active_client(api_key: &str) -> Box<dyn AgentClientDyn> {
+fn active_client(api_key: &str) -> Result<Box<dyn AgentClientDyn>, String> {
     let agent_id = active_agent_id();
-    let gateway = load_active_gateway(&agent_id);
-    super::agents::active_client_with_key(&agent_id, api_key, gateway)
+    let gateway = load_active_gateway(&agent_id)?;
+    Ok(super::agents::active_client_with_key(&agent_id, api_key, gateway))
 }
 
-/// Read the AI Gateway config for the given agent from settings, if any.
-fn load_active_gateway(agent_id: &str) -> Option<GatewayConfig> {
+/// Read the AI Gateway config for the given agent from settings, if any, with
+/// its token ready for a request.
+fn load_active_gateway(agent_id: &str) -> Result<Option<GatewayConfig>, String> {
     super::settings::read_settings()
         .ok()
         .and_then(|s| s.agent_gateways.get(agent_id).cloned())
+        .map(|gateway| gateway.with_stored_token(agent_id))
+        .transpose()
 }
 
 // ── Public AI operations ──────────────────────────────────────────────────────
@@ -153,7 +156,7 @@ fn load_active_gateway(agent_id: &str) -> Option<GatewayConfig> {
 /// Fetch the list of available model IDs from the active provider's API.
 pub async fn list_models() -> Result<Vec<String>, String> {
     let key = resolve_api_key(None)?;
-    active_client(&key).list_models_dyn().await
+    active_client(&key)?.list_models_dyn().await
 }
 
 /// Send a list of messages to the active provider and return the assistant's
@@ -174,7 +177,7 @@ pub async fn chat(
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)
+    active_client(&key)?
         .chat_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens)
         .await
 }
@@ -196,7 +199,7 @@ pub async fn chat_structured(
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)
+    active_client(&key)?
         .chat_structured_dyn(
             &neutral,
             Some(&model_str),
@@ -279,7 +282,7 @@ async fn chat_with_tools_inner(
 ) -> Result<(String, Vec<Value>), String> {
     let work_path = validate_working_dir(&working_dir)?;
     let key = resolve_api_key(api_key.as_deref())?;
-    let client = active_client(&key);
+    let client = active_client(&key)?;
 
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());

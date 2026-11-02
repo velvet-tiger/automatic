@@ -288,3 +288,24 @@ impl AgentClient for OpenAiCompatClient {
         Ok(vec![])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gateway_token_is_sent_in_its_header() {
+        let gateway = GatewayConfig {
+            account_id: "account".to_string(),
+            gateway_id: "gateway".to_string(),
+            cf_token: Some("cf-token".to_string()),
+            cf_token_stored: true,
+        };
+        let client = OpenAiCompatClient::new("key", "https://example.test", vec![], Some(gateway));
+        let request = client
+            .auth_request(reqwest::Client::new().post("https://example.test"))
+            .build()
+            .expect("request");
+        assert_eq!(request.headers()["cf-aig-authorization"], "Bearer cf-token");
+    }
+}

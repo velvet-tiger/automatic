@@ -32,6 +32,22 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     core::delete_api_key(provider)
 }
 
+// ── Gateway tokens ───────────────────────────────────────────────────────────
+
+/// Store the Cloudflare AI Gateway token for a configured gateway.
+#[tauri::command]
+pub fn save_gateway_token(provider: &str, token: &str) -> Result<(), String> {
+    core::agents::check_credential_provider(provider)?;
+    core::save_gateway_token(provider, token)
+}
+
+/// Remove the Cloudflare AI Gateway token for this provider.
+#[tauri::command]
+pub fn delete_gateway_token(provider: &str) -> Result<(), String> {
+    core::agents::check_credential_provider(provider)?;
+    core::delete_gateway_token(provider)
+}
+
 /// Effective state of the master "Agent features" toggle. Used by the frontend
 /// to gate AI buttons / inputs purely on whether the user has agent features
 /// turned on, independent of whether an API key is currently stored.
