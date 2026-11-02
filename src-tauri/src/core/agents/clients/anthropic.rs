@@ -415,6 +415,7 @@ mod tests {
             account_id: "account".to_string(),
             gateway_id: "gateway".to_string(),
             cf_token: Some("cf-token".to_string()),
+            cf_token_stored: false,
         }
     }
 

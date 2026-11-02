@@ -28,7 +28,10 @@ interface AgentDefinition {
 interface GatewayConfig {
   account_id: string;
   gateway_id: string;
+  /** A token from an older version that has not reached the secret store. */
   cf_token?: string;
+  /** The secret store holds a token. The token itself never reaches this page. */
+  cf_token_stored?: boolean;
 }
 
 interface GatewayFormState {
@@ -208,7 +211,7 @@ export default function SettingsAgents() {
             expanded: false,
             accountId: saved.account_id,
             gatewayId: saved.gateway_id,
-            cfToken: saved.cf_token ?? "",
+            cfToken: "",
             saveStatus: "idle",
           };
         }
@@ -286,14 +289,21 @@ export default function SettingsAgents() {
       const raw = await invoke<Record<string, unknown>>("read_settings");
       const existing = (raw.agent_gateways as Record<string, GatewayConfig> | undefined) ?? {};
       const config: GatewayConfig = {
+        ...existing[provider],
         account_id: gs.accountId.trim(),
         gateway_id: gs.gatewayId.trim(),
-        ...(gs.cfToken.trim() ? { cf_token: gs.cfToken.trim() } : {}),
       };
       raw.agent_gateways = { ...existing, [provider]: config };
       await invoke("write_settings", { settings: raw });
+      // The gateway is saved from here on, even if the token then fails.
       setSavedGateways((prev) => ({ ...prev, [provider]: config }));
-      updateGatewayState(provider, { saveStatus: "saved", expanded: false });
+      const token = gs.cfToken.trim();
+      if (token) {
+        await invoke("save_gateway_token", { provider, token });
+        const { cf_token: _plaintext, ...rest } = config;
+        setSavedGateways((prev) => ({ ...prev, [provider]: { ...rest, cf_token_stored: true } }));
+      }
+      updateGatewayState(provider, { saveStatus: "saved", expanded: false, cfToken: "" });
       setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 2000);
     } catch (e) {
       console.error("Failed to save gateway config", e);
@@ -302,8 +312,26 @@ export default function SettingsAgents() {
     }
   };
 
+  const removeGatewayToken = async (provider: string) => {
+    try {
+      await invoke("delete_gateway_token", { provider });
+      setSavedGateways((prev) => {
+        const saved = prev[provider];
+        if (!saved) return prev;
+        const next = { ...saved, cf_token_stored: false };
+        delete next.cf_token;
+        return { ...prev, [provider]: next };
+      });
+    } catch (e) {
+      console.error("Failed to remove gateway token", e);
+      updateGatewayState(provider, { saveStatus: "error" });
+      setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 3000);
+    }
+  };
+
   const clearGateway = async (provider: string) => {
     try {
+      await invoke("delete_gateway_token", { provider });
       const raw = await invoke<Record<string, unknown>>("read_settings");
       const existing = { ...((raw.agent_gateways as Record<string, GatewayConfig> | undefined) ?? {}) };
       delete existing[provider];
@@ -320,6 +348,8 @@ export default function SettingsAgents() {
       }));
     } catch (e) {
       console.error("Failed to clear gateway config", e);
+      updateGatewayState(provider, { saveStatus: "error" });
+      setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 3000);
     }
   };
 
@@ -560,6 +590,7 @@ export default function SettingsAgents() {
                 {agent.supportsGateway && state.stored && !state.editing && !usesCustomGateway && (() => {
                   const gs = gatewayStates[agent.provider] ?? defaultGatewayState();
                   const saved = savedGateways[agent.provider];
+                  const tokenSaved = Boolean(saved?.cf_token_stored || saved?.cf_token);
                   return (
                     <div className="border-t border-border-strong/20">
                       <button
@@ -594,10 +625,11 @@ export default function SettingsAgents() {
                             className="w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
                           />
                           <input
-                            type="text"
+                            type="password"
+                            autoComplete="off"
                             value={gs.cfToken}
                             onChange={(e) => updateGatewayState(agent.provider, { cfToken: e.target.value })}
-                            placeholder="CF AIG Token (optional)"
+                            placeholder={tokenSaved ? "Token saved. Enter a new one to replace it" : "CF AIG Token (optional)"}
                             className="w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
                           />
                           <div className="flex items-center gap-2 pt-1">
@@ -608,6 +640,14 @@ export default function SettingsAgents() {
                             >
                               {gs.saveStatus === "saving" ? "Saving..." : "Save"}
                             </button>
+                            {tokenSaved && (
+                              <button
+                                onClick={() => removeGatewayToken(agent.provider)}
+                                className="px-3 py-1.5 text-[11px] font-medium rounded border border-border-strong/40 text-text-muted hover:text-text-base transition-colors"
+                              >
+                                Remove token
+                              </button>
+                            )}
                             {saved && (
                               <button
                                 onClick={() => clearGateway(agent.provider)}
