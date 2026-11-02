@@ -2894,9 +2894,8 @@ impl AutomaticMcpServer {
         description = "Only a path inside this folder's own project, into a context this folder can read or this server created, can be linked. Link a local folder or file into a local context. Agents \
                        read its Markdown and text files where they are; \
                        nothing is copied. Only when the user asks. The user's \
-                       settings decide which folders are allowed (by default, \
-                       only folders inside registered projects); hidden, \
-                       credential and system folders are always refused. The \
+                       settings can narrow this further; hidden, credential \
+                       and system folders are always refused. The \
                        user sees it marked as added by an agent. Returns the \
                        source id."
     )]
