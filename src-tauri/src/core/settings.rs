@@ -209,7 +209,11 @@ pub fn erase_app_data() -> Result<(), String> {
     super::install_default_instructions()?;
     super::install_default_skills()?;
     super::install_default_subagents()?;
-    super::seed_default_profile()?;
+    // The erase has already happened, so a missing profile must not report
+    // it as failed. The next launch tries again.
+    if let Err(e) = super::seed_default_profile() {
+        eprintln!("[automatic] default profile error: {}", e);
+    }
 
     Ok(())
 }

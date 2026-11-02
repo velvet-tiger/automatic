@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use super::*;
@@ -93,7 +94,15 @@ pub fn seed_default_profile() -> Result<(), String> {
         return Ok(());
     }
     create_default_profile_file()?;
-    fs::write(&marker, "").map_err(|e| format!("Could not write {}: {}", marker.display(), e))
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Could not write {}: {}", marker.display(), e)),
+    }
 }
 
 fn default_profile_marker_path() -> Result<PathBuf, String> {
@@ -104,7 +113,7 @@ fn default_profile_marker_path() -> Result<PathBuf, String> {
 /// `mcp-serve` can run startup together, and either may find a user's profile
 /// of the same name, so this must never overwrite.
 ///
-/// The bytes go to a temporary file that is then linked into place. The link
+/// The bytes go to a temporary file that then moves into place. The move
 /// fails if the target exists, and a crash cannot leave a partial profile.
 fn create_default_profile_file() -> Result<(), String> {
     let profile = ProjectProfile {
@@ -119,21 +128,18 @@ fn create_default_profile_file() -> Result<(), String> {
     fs::create_dir_all(get_profiles_dir()?)
         .map_err(|e| format!("Could not create the profiles folder: {}", e))?;
     let path = profile_path(DEFAULT_PROFILE_NAME)?;
-    let temp = get_profiles_dir()?.join(format!(
-        "{}.{}.tmp",
-        DEFAULT_PROFILE_NAME,
-        std::process::id()
-    ));
-    fs::write(&temp, pretty).map_err(|e| format!("Could not write {}: {}", temp.display(), e))?;
+    let mut temp = tempfile::NamedTempFile::new_in(get_profiles_dir()?)
+        .map_err(|e| format!("Could not create a temporary profile: {}", e))?;
+    temp.write_all(pretty.as_bytes())
+        .map_err(|e| format!("Could not write the temporary profile: {}", e))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Could not flush the temporary profile: {}", e))?;
 
-    let linked = fs::hard_link(&temp, &path);
-    // The link result decides the outcome. A leftover temporary file is
-    // harmless, because profile listing reads `.json` files only.
-    let _ = fs::remove_file(&temp);
-    match linked {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(format!("Could not create {}: {}", path.display(), e)),
+    match temp.persist_noclobber(&path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Could not create {}: {}", path.display(), e.error)),
     }
 }
 
