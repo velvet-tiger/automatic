@@ -2875,7 +2875,7 @@ pub(crate) mod propagation_tests {
         pull_config(alex_repo.path(), sam_repo.path());
         let sam = on_machine(sam_home.path(), || {
             save_shared_profile(&["react", "python"]);
-            let ident = core::import_existing_project(&sam_dir).expect("import").local_key;
+            let ident = core::import_existing_project(&sam_dir, None).expect("import").local_key;
             autosave(&ident);
             let skills = read_back(&ident).skills;
             assert!(skills.contains(&"vitest".to_string()), "Sam removed vitest: {skills:?}");
@@ -2910,7 +2910,7 @@ pub(crate) mod propagation_tests {
             r#"{"name":"demo","profiles":["shared"],"skills":["react"]}"#,
         )
         .unwrap();
-        core::import_existing_project(repo.to_str().unwrap()).expect("import").local_key
+        core::import_existing_project(repo.to_str().unwrap(), None).expect("import").local_key
     }
 
     #[test]
@@ -2958,7 +2958,7 @@ pub(crate) mod propagation_tests {
             )
             .unwrap();
 
-            let ident = core::import_existing_project(dir).expect("import").local_key;
+            let ident = core::import_existing_project(dir, None).expect("import").local_key;
 
             let project = read_back(&ident);
             assert!(project.profile_contributions.is_empty());
