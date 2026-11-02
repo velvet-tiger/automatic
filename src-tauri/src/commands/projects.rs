@@ -4132,6 +4132,67 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    /// Give `key` a record for `team`, as a save did before the upgrade.
+    fn hold_team_record(key: &str, slug: &str) {
+        let mut project = read_back(key);
+        project.contexts.push(slug.to_string());
+        project.group_context_contributions.insert("team".into(), vec![slug.to_string()]);
+        core::save_project(key, &serde_json::to_string(&project).expect("json")).expect("save");
+    }
+
+    #[test]
+    fn a_shared_id_checkout_with_a_record_keeps_its_join_and_contexts() {
+        with_temp_home(|_| {
+            core::create_local_context("provided", "").expect("context");
+            let (member, clone, _keep, _clone_keep) = shared_id_before_migration();
+            hold_team_record(&member, "provided");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert_eq!(read_back(&member).local_confirmed_groups, vec!["team"]);
+            assert_eq!(offered_contexts(&member), vec!["provided"]);
+            core::reconcile_group_contexts_for_projects(std::slice::from_ref(&member)).expect("reconcile");
+            assert_eq!(read_back(&member).contexts, vec!["provided"], "the join keeps it through a reconcile");
+
+            assert!(read_back(&clone).local_confirmed_groups.is_empty(), "no record, no join");
+            assert!(offered_contexts(&clone).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_profile_record_also_keeps_a_join() {
+        with_temp_home(|_| {
+            let (member, _clone, _keep, _clone_keep) = shared_id_before_migration();
+            let mut project = read_back(&member);
+            project.group_profile_contributions.insert("team".into(), vec!["base".into()]);
+            core::save_project(&member, &serde_json::to_string(&project).expect("json")).expect("save");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert_eq!(read_back(&member).local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn a_copied_state_file_grants_no_join() {
+        with_temp_home(|_| {
+            let (member, clone, _keep, clone_keep) = shared_id_before_migration();
+            let copied = serde_json::json!({
+                "local_key": member,
+                "group_context_contributions": {"team": ["provided"]},
+                "group_profile_contributions": {"team": ["base"]},
+            });
+            let state = clone_keep.path().join(".automatic/project.json");
+            std::fs::create_dir_all(state.parent().expect("parent")).expect("mkdir");
+            std::fs::write(&state, copied.to_string()).expect("write");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert!(read_back(&clone).local_confirmed_groups.is_empty());
+            assert!(offered_contexts(&clone).is_empty());
+        });
+    }
+
     #[test]
     fn the_migration_still_joins_a_single_checkout() {
         with_temp_home(|_| {

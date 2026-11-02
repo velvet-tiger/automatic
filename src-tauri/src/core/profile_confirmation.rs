@@ -717,9 +717,26 @@ fn checkouts_sharing_an_id() -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// The groups a checkout's own state records, read through `resolve_project`,
+/// which clears the records of a state file copied from another checkout.
+fn groups_recorded_by(ident: &str) -> Vec<String> {
+    let Some(project) = read_project(ident)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Project>(&raw).ok())
+    else {
+        return Vec::new();
+    };
+    project
+        .group_context_contributions
+        .into_keys()
+        .chain(project.group_profile_contributions.into_keys())
+        .collect()
+}
+
 /// Confirm every name attached to every registered project and record every
-/// group that lists it, once. The group is not recorded for a checkout that
-/// shares its `id` with another. Without this, projects from before confirmation
+/// group that lists it, once. A checkout that shares its `id` with another joins
+/// only the groups its own state already records: a group gave it something
+/// before, and without a record nothing tells it from a clone. Without this, projects from before confirmation
 /// existed would stop tracking their profiles. Writes only pointers, so
 /// read-only projects are covered.
 ///
@@ -736,11 +753,12 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     let shared = checkouts_sharing_an_id()?;
     for entry in scan_registry()? {
         let ident = entry.local_key().unwrap_or(&entry.name);
-        let groups: Vec<String> = if shared.iter().any(|key| key == ident) {
-            Vec::new()
-        } else {
-            groups_for_project(ident).into_iter().map(|g| g.name).collect()
-        };
+        let mut groups: Vec<String> =
+            groups_for_project(ident).into_iter().map(|g| g.name).collect();
+        if shared.iter().any(|key| key == ident) {
+            let recorded = groups_recorded_by(ident);
+            groups.retain(|group| recorded.contains(group));
+        }
         let confirmed = attached_profile_names(&entry).unwrap_or_else(|e| {
             eprintln!("Could not read the profiles of '{}': {}", entry.name, e);
             Vec::new()
