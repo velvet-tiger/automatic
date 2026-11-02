@@ -859,25 +859,29 @@ pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, Str
         return Ok(DirectoryStatus::Available);
     };
 
-    let name = read_orphan_config_name(&config_path).unwrap_or_else(|| {
+    let name = read_orphan_config_name(directory, &config_path).unwrap_or_else(|| {
         PathBuf::from(directory)
             .file_name()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string())
             .unwrap_or_default()
     });
-    let profiles = read_orphan_config_profiles(&config_path);
+    let profiles = read_orphan_config_profiles(directory, &config_path);
     Ok(DirectoryStatus::OrphanConfig { name, profiles })
 }
 
-fn read_orphan_config(config_path: &std::path::Path) -> Option<serde_json::Value> {
-    let raw = fs::read_to_string(config_path).ok()?;
+/// Read an unregistered config. The read is contained: this runs on a folder
+/// the user has only pointed at, and the config can be a committed link.
+fn read_orphan_config(directory: &str, config_path: &std::path::Path) -> Option<serde_json::Value> {
+    let raw = crate::sync::read_project_text(std::path::Path::new(directory), config_path)
+        .ok()
+        .flatten()?;
     serde_json::from_str(&raw).ok()
 }
 
 /// Profile names in an unregistered config that this machine has.
-fn read_orphan_config_profiles(config_path: &std::path::Path) -> Vec<String> {
-    let Some(names) = read_orphan_config(config_path)
+fn read_orphan_config_profiles(directory: &str, config_path: &std::path::Path) -> Vec<String> {
+    let Some(names) = read_orphan_config(directory, config_path)
         .and_then(|value| value.get("profiles").cloned())
         .and_then(|names| serde_json::from_value::<Vec<String>>(names).ok())
     else {
@@ -889,8 +893,8 @@ fn read_orphan_config_profiles(config_path: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
-    let value = read_orphan_config(config_path)?;
+fn read_orphan_config_name(directory: &str, config_path: &std::path::Path) -> Option<String> {
+    let value = read_orphan_config(directory, config_path)?;
     value
         .get("name")
         .and_then(|v| v.as_str())

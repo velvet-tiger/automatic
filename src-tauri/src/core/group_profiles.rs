@@ -25,13 +25,37 @@ use super::*;
 /// profile keeps its `profile_contributions` record, so the
 /// `reconcile_project_profiles` call that must follow removes its entries.
 /// Returns `true` when anything changed.
+///
+/// A group this checkout has not joined does nothing: `member_groups` matches
+/// by project `id`, which a repository chooses. A record of a group it never
+/// joined is dropped without releasing a name it did not confirm, so a forged
+/// record changes no committed list.
 pub fn reconcile_group_profiles(project: &mut Project, member_groups: &[ProjectGroup]) -> bool {
+    let joined: Vec<ProjectGroup> = member_groups
+        .iter()
+        .filter(|group| project.local_confirmed_groups.contains(&group.name))
+        .cloned()
+        .collect();
+    drop_unearned_group_records(project);
     reconcile_group_provided(
         &mut project.profiles,
         &mut project.group_profile_contributions,
-        member_groups,
+        &joined,
         group_profiles,
     )
+}
+
+/// Remove names from the group records that this checkout has no decision
+/// behind: the group was never joined here and the name was never confirmed.
+fn drop_unearned_group_records(project: &mut Project) {
+    let joined = &project.local_confirmed_groups;
+    let confirmed = &project.local_confirmed_profiles;
+    project.group_profile_contributions.retain(|group, names| {
+        if !joined.contains(group) {
+            names.retain(|name| confirmed.contains(name));
+        }
+        !names.is_empty()
+    });
 }
 
 fn group_profiles(group: &ProjectGroup) -> &[String] {
@@ -222,6 +246,7 @@ mod tests {
         Project {
             name: "app".to_string(),
             profiles: profiles.iter().map(|p| p.to_string()).collect(),
+            local_confirmed_groups: vec!["team".into(), "alpha".into(), "beta".into()],
             ..Default::default()
         }
     }

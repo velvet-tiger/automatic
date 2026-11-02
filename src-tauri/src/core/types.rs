@@ -461,6 +461,13 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_ignored_profiles: Vec<String>,
 
+    /// Groups this checkout joined on this machine. Group members are stored
+    /// by project `id`, which a repository chooses, so a group provides its
+    /// profiles only to a checkout listed here. Stored only in the registry
+    /// pointer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_confirmed_groups: Vec<String>,
+
     /// Computed at read-time: names in `profiles` that are not applied here,
     /// because this checkout has not confirmed them and no group provides
     /// them. Never persisted.

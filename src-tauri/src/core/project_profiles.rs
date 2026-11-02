@@ -413,14 +413,18 @@ pub fn reconcile_project_profiles(project: &mut Project) -> ProfileReconcileRepo
     let mut report = ProfileReconcileReport::default();
 
     // Defensive: a duplicated name would make a profile contribute twice.
-    let mut seen = std::collections::HashSet::new();
-    let before = project.profiles.len();
-    project.profiles.retain(|name| seen.insert(name.clone()));
-    if project.profiles.len() != before {
-        report.changed = true;
-    }
-
+    // Dropping a pending name's duplicate stays in memory: a sweep must not
+    // rewrite a committed config for a profile this checkout has not taken.
     let unconfirmed = unconfirmed_profiles(project);
+    let mut seen = std::collections::HashSet::new();
+    let mut confirmed_duplicate = false;
+    project.profiles.retain(|name| {
+        let first = seen.insert(name.clone());
+        confirmed_duplicate |= !first && !unconfirmed.contains(name);
+        first
+    });
+    report.changed |= confirmed_duplicate;
+
     let mut loaded: Vec<ProjectProfile> = Vec::new();
     for name in &project.profiles {
         match read_project_profile_parsed(name) {

@@ -8,17 +8,19 @@ use super::*;
 //
 // `profiles` arrives in a committed `.automatic.json`, so a repository can
 // name any profile in this machine's library. A name is applied only once this
-// checkout has confirmed it, or a group on this machine provides it. Until
-// then it is pending, and reconcile treats it like a missing profile: nothing
-// is added, removed or rewritten.
+// checkout has confirmed it, or a group this checkout joined provides it.
+// Until then it is pending, and reconcile treats it like a missing profile:
+// nothing is added, removed or rewritten.
 //
 // The decisions live only in the registry pointer, like `local_read_only`, so
-// no file in a repository can grant one. A group is checked in the group files
-// and not in `group_profile_contributions`, because that record is read from
-// `.automatic/project.json` and a repository can commit that file.
+// no file in a repository can grant one. Group members are stored by project
+// `id`, and a repository chooses its committed `id`, so listing a checkout is
+// not enough: it must have joined on this machine. A group record is no proof
+// either, because a repository can commit `.automatic/project.json`.
 
 const CONFIRMED_FIELD: &str = "local_confirmed_profiles";
 const IGNORED_FIELD: &str = "local_ignored_profiles";
+const GROUPS_FIELD: &str = "local_confirmed_groups";
 const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
 
 /// What this checkout has decided about the profile names it was given.
@@ -26,6 +28,7 @@ const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
 pub(crate) struct ProfileDecisions {
     confirmed: Vec<String>,
     ignored: Vec<String>,
+    groups: Vec<String>,
 }
 
 impl ProfileDecisions {
@@ -33,6 +36,7 @@ impl ProfileDecisions {
         Self {
             confirmed: pointer_names(pointer, CONFIRMED_FIELD),
             ignored: pointer_names(pointer, IGNORED_FIELD),
+            groups: pointer_names(pointer, GROUPS_FIELD),
         }
     }
 
@@ -53,16 +57,22 @@ impl ProfileDecisions {
         Self {
             confirmed: project.local_confirmed_profiles.clone(),
             ignored: project.local_ignored_profiles.clone(),
+            groups: project.local_confirmed_groups.clone(),
         }
     }
 
     pub(crate) fn apply_to(self, project: &mut Project) {
         project.local_confirmed_profiles = self.confirmed;
         project.local_ignored_profiles = self.ignored;
+        project.local_confirmed_groups = self.groups;
     }
 
     fn write_to(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
-        for (field, names) in [(CONFIRMED_FIELD, &self.confirmed), (IGNORED_FIELD, &self.ignored)] {
+        for (field, names) in [
+            (CONFIRMED_FIELD, &self.confirmed),
+            (IGNORED_FIELD, &self.ignored),
+            (GROUPS_FIELD, &self.groups),
+        ] {
             if names.is_empty() {
                 map.remove(field);
             } else {
@@ -105,15 +115,27 @@ pub(crate) fn keep_stored_profile_decisions(path: &Path, pointer: &mut serde_jso
     }
 }
 
-/// Set `project`'s decisions from the stored entry for `ident`, so stale or
-/// edited data cannot change them. An `ident` with no entry is a project being
-/// created in the app, so the user chose every name it lists.
-pub fn load_profile_decisions(ident: &str, project: &mut Project) -> Result<(), String> {
+/// Set `project`'s decisions and `local_key` from the stored entry for
+/// `ident`, so stale or edited data cannot change them. The editor's copy can
+/// lack the key, and its name may belong to another checkout.
+///
+/// With no entry, only a project being created keeps its names: the user chose
+/// them in the app.
+pub fn load_profile_decisions(
+    ident: &str,
+    project: &mut Project,
+    creating: bool,
+) -> Result<(), String> {
     match resolve_registry_entry(ident)? {
-        Some(entry) => ProfileDecisions::of_entry(&entry).apply_to(project),
+        Some(entry) => {
+            ProfileDecisions::of_entry(&entry).apply_to(project);
+            project.local_key = entry.local_key().unwrap_or_default().to_string();
+        }
         None => {
-            project.local_confirmed_profiles = project.profiles.clone();
-            project.local_ignored_profiles.clear();
+            ProfileDecisions::default().apply_to(project);
+            if creating {
+                project.local_confirmed_profiles = project.profiles.clone();
+            }
         }
     }
     Ok(())
@@ -129,22 +151,60 @@ pub(crate) fn keep_entry_profile_decisions(entry: Option<&RegistryEntry>, projec
 
 // ── Pending names ────────────────────────────────────────────────────────────
 
+/// The groups `project` has joined on this machine that still list it. Group
+/// files are read only for a checkout that joined one. The checkout is found
+/// by its `local_key`, never by its name or committed `id`.
+pub(crate) fn joined_groups(project: &Project) -> Vec<ProjectGroup> {
+    if project.local_confirmed_groups.is_empty() || project.local_key.is_empty() {
+        return Vec::new();
+    }
+    let mut groups = groups_for_project(&project.local_key);
+    groups.retain(|group| project.local_confirmed_groups.contains(&group.name));
+    groups
+}
+
+/// The library's spelling of `name`. Profiles are files, so on a
+/// case-insensitive filesystem `Base` opens `base.json`.
+fn canonical_profile_name(name: &str) -> String {
+    let Ok(names) = list_project_profiles() else {
+        return name.to_string();
+    };
+    if names.iter().any(|n| n == name) {
+        return name.to_string();
+    }
+    let folded = name.to_lowercase();
+    names
+        .into_iter()
+        .find(|n| n.to_lowercase() == folded)
+        .unwrap_or_else(|| name.to_string())
+}
+
+fn is_confirmed(confirmed: &[String], name: &str) -> bool {
+    confirmed.iter().any(|n| n == name) || confirmed.contains(&canonical_profile_name(name))
+}
+
 /// Names in `project.profiles` that this checkout has not confirmed and that
-/// no group on this machine provides. Group files are read only when a name
-/// is left to check.
+/// no group it joined provides.
 pub(crate) fn unconfirmed_profiles(project: &Project) -> Vec<String> {
     let mut names: Vec<String> = project
         .profiles
         .iter()
-        .filter(|name| !project.local_confirmed_profiles.contains(name))
+        .filter(|name| !is_confirmed(&project.local_confirmed_profiles, name))
         .cloned()
         .collect();
     if names.is_empty() {
         return names;
     }
-    let groups = groups_for_project(project_ident(project));
+    let groups = joined_groups(project);
     names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
     names
+}
+
+/// Accept `profile` on the in-memory `project`, for the reconcile of an
+/// attach. [`confirm_project_profile`] records it once the attach is saved, so
+/// a failure in between leaves the name pending.
+pub fn accept_profile(project: &mut Project, profile: &str) {
+    add_name(&mut project.local_confirmed_profiles, &canonical_profile_name(profile));
 }
 
 /// Whether `name` is listed by `project` but not applied on this checkout.
@@ -164,14 +224,17 @@ pub(crate) fn pending_profile_names(project: &Project) -> Vec<String> {
 
 // ── Decisions ────────────────────────────────────────────────────────────────
 
-fn edit_entry(
-    entry: &RegistryEntry,
+/// Edit the pointer at `path`, read afresh so a change another process made
+/// since a scan is kept.
+fn edit_pointer_file(
+    path: &Path,
+    name: &str,
     edit: impl FnOnce(&mut ProfileDecisions),
 ) -> Result<(), String> {
-    let mut value = entry
-        .contents
-        .clone()
-        .map_err(|e| format!("Invalid project registry data for '{}': {}", entry.name, e))?;
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let mut value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("Invalid project registry data for '{}': {}", name, e))?;
     let before = ProfileDecisions::of_pointer(&value);
     let mut after = before.clone();
     edit(&mut after);
@@ -180,12 +243,11 @@ fn edit_entry(
     }
     let map = value
         .as_object_mut()
-        .ok_or_else(|| format!("{} does not contain a JSON object", entry.path.display()))?;
+        .ok_or_else(|| format!("{} does not contain a JSON object", path.display()))?;
     after.write_to(map);
-    let pretty = serde_json::to_string_pretty(&value).map_err(|e| {
-        format!("Failed to serialize registry entry for '{}': {}", entry.name, e)
-    })?;
-    write_registry_file(&entry.path, &pretty)
+    let pretty = serde_json::to_string_pretty(&value)
+        .map_err(|e| format!("Failed to serialize registry entry for '{}': {}", name, e))?;
+    write_registry_file(path, &pretty)
 }
 
 /// Edit the decisions of the project with identifier `ident`. Writes only the
@@ -200,7 +262,7 @@ fn edit_decisions(
     let _writes = super::hold_library_writes();
     let entry =
         resolve_registry_entry(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))?;
-    edit_entry(&entry, edit)
+    edit_pointer_file(&entry.path, &entry.name, edit)
 }
 
 fn add_name(names: &mut Vec<String>, name: &str) {
@@ -209,11 +271,29 @@ fn add_name(names: &mut Vec<String>, name: &str) {
     }
 }
 
-/// Record that this checkout accepts `profile`. Clears any Ignore.
+fn same_profile(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+fn rename_in(names: &mut Vec<String>, old: &str, new: &str) {
+    if names.iter().any(|name| name == old) {
+        names.retain(|name| name != old);
+        add_name(names, new);
+    }
+}
+
+fn forget_profile(decisions: &mut ProfileDecisions, profile: &str) {
+    decisions.confirmed.retain(|name| !same_profile(name, profile));
+    decisions.ignored.retain(|name| !same_profile(name, profile));
+}
+
+/// Record that this checkout accepts `profile`, in the library's spelling.
+/// Clears any Ignore.
 pub fn confirm_project_profile(ident: &str, profile: &str) -> Result<(), String> {
+    let canonical = canonical_profile_name(profile);
     edit_decisions(ident, |decisions| {
-        add_name(&mut decisions.confirmed, profile);
-        decisions.ignored.retain(|name| name != profile);
+        add_name(&mut decisions.confirmed, &canonical);
+        decisions.ignored.retain(|name| !same_profile(name, profile));
     })
 }
 
@@ -226,17 +306,36 @@ pub fn ignore_project_profile(ident: &str, profile: &str) -> Result<(), String> 
     edit_decisions(ident, |decisions| add_name(&mut decisions.ignored, profile))
 }
 
-/// Drop this checkout's decisions about `profile`, after it is detached.
+/// Drop this checkout's decisions about `profile`, on its way to a detach. It
+/// goes by the case folding the library lookup uses, so no spelling survives.
 pub fn forget_project_profile(ident: &str, profile: &str) -> Result<(), String> {
-    edit_decisions(ident, |decisions| {
-        decisions.confirmed.retain(|name| name != profile);
-        decisions.ignored.retain(|name| name != profile);
+    edit_decisions(ident, |decisions| forget_profile(decisions, profile))
+}
+
+/// Record that this checkout joined `group` on this machine.
+pub(crate) fn confirm_project_group(ident: &str, group: &str) -> Result<(), String> {
+    edit_decisions(ident, |decisions| add_name(&mut decisions.groups, group))
+}
+
+/// Forget the groups `ident` has left. Runs after its reconcile, which needs
+/// the join to release what the group provided.
+pub(crate) fn forget_left_groups(ident: &str) -> Result<(), String> {
+    let Some(entry) = resolve_registry_entry(ident)? else {
+        return Ok(());
+    };
+    if ProfileDecisions::of_entry(&entry).groups.is_empty() {
+        return Ok(());
+    }
+    let key = entry.local_key().unwrap_or(ident).to_string();
+    let listing: Vec<String> = groups_for_project(&key).into_iter().map(|g| g.name).collect();
+    edit_pointer_file(&entry.path, &entry.name, |decisions| {
+        decisions.groups.retain(|group| listing.contains(group));
     })
 }
 
-/// Edit the decisions of every project. Read-only projects are included,
-/// because this writes only pointers. Returns the name and error of each
-/// entry that could not be changed.
+/// Edit the decisions of every project, one pointer at a time. Read-only
+/// projects are included, because this writes only pointers. Returns the name
+/// and error of each entry that could not be changed.
 fn edit_all_decisions(edit: impl Fn(&mut ProfileDecisions)) -> Vec<(String, String)> {
     let _writes = super::hold_library_writes();
     let entries = match scan_registry() {
@@ -247,7 +346,7 @@ fn edit_all_decisions(edit: impl Fn(&mut ProfileDecisions)) -> Vec<(String, Stri
         .iter()
         .filter(|entry| entry.contents.is_ok())
         .filter_map(|entry| {
-            edit_entry(entry, &edit)
+            edit_pointer_file(&entry.path, &entry.name, &edit)
                 .err()
                 .map(|e| (entry.name.clone(), e))
         })
@@ -257,17 +356,7 @@ fn edit_all_decisions(edit: impl Fn(&mut ProfileDecisions)) -> Vec<(String, Stri
 /// Drop every project's decisions about a deleted profile, so a later profile
 /// with the same name is not trusted.
 pub fn forget_profile_everywhere(profile: &str) -> Vec<(String, String)> {
-    edit_all_decisions(|decisions| {
-        decisions.confirmed.retain(|name| name != profile);
-        decisions.ignored.retain(|name| name != profile);
-    })
-}
-
-fn rename_in(names: &mut Vec<String>, old: &str, new: &str) {
-    if names.iter().any(|name| name == old) {
-        names.retain(|name| name != old);
-        add_name(names, new);
-    }
+    edit_all_decisions(|decisions| forget_profile(decisions, profile))
 }
 
 /// Carry every project's decisions over to a renamed profile.
@@ -276,6 +365,17 @@ pub fn rename_profile_decisions(old: &str, new: &str) -> Vec<(String, String)> {
         rename_in(&mut decisions.confirmed, old, new);
         rename_in(&mut decisions.ignored, old, new);
     })
+}
+
+/// Drop every project's join of a deleted group, so a later group with the
+/// same name is not trusted.
+pub fn forget_group_everywhere(group: &str) -> Vec<(String, String)> {
+    edit_all_decisions(|decisions| decisions.groups.retain(|name| name != group))
+}
+
+/// Carry every project's join over to a renamed group.
+pub fn rename_group_decisions(old: &str, new: &str) -> Vec<(String, String)> {
+    edit_all_decisions(|decisions| rename_in(&mut decisions.groups, old, new))
 }
 
 // ── Migration ────────────────────────────────────────────────────────────────
@@ -297,9 +397,10 @@ fn attached_profile_names(entry: &RegistryEntry) -> Result<Vec<String>, String> 
     }
 }
 
-/// Confirm every name attached to every registered project, once. Without
-/// this, projects from before confirmation existed would stop tracking their
-/// profiles. Writes only pointers, so read-only projects are covered.
+/// Confirm every name attached to every registered project and record every
+/// group that lists it, once. Without this, projects from before confirmation
+/// existed would stop tracking their profiles. Writes only pointers, so
+/// read-only projects are covered.
 ///
 /// A project whose folder cannot be read is skipped. Its names show as pending
 /// with a notice, which loses nothing.
@@ -310,12 +411,19 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     }
     let _writes = super::hold_library_writes();
     for entry in scan_registry()? {
-        let confirmed = attached_profile_names(&entry).and_then(|names| {
-            edit_entry(&entry, |decisions| {
-                for name in &names {
-                    add_name(&mut decisions.confirmed, name);
-                }
-            })
+        let ident = entry.local_key().unwrap_or(&entry.name);
+        let groups: Vec<String> = groups_for_project(ident).into_iter().map(|g| g.name).collect();
+        let confirmed = attached_profile_names(&entry).unwrap_or_else(|e| {
+            eprintln!("Could not read the profiles of '{}': {}", entry.name, e);
+            Vec::new()
+        });
+        let confirmed = edit_pointer_file(&entry.path, &entry.name, |decisions| {
+            for name in &confirmed {
+                add_name(&mut decisions.confirmed, name);
+            }
+            for group in &groups {
+                add_name(&mut decisions.groups, group);
+            }
         });
         if let Err(e) = confirmed {
             eprintln!("Could not confirm the profiles of '{}': {}", entry.name, e);
@@ -326,6 +434,16 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(format!("Could not write {}: {}", marker.display(), e)),
     }
+}
+
+/// A project's registry pointer as stored.
+#[cfg(test)]
+pub(crate) fn resolve_project_pointer_for_test(ident: &str) -> serde_json::Value {
+    resolve_registry_entry(ident)
+        .expect("resolve")
+        .expect("entry")
+        .contents
+        .expect("contents")
 }
 
 #[cfg(test)]
@@ -364,11 +482,7 @@ mod tests {
     }
 
     fn registry_json(ident: &str) -> serde_json::Value {
-        resolve_registry_entry(ident)
-            .expect("resolve")
-            .expect("entry")
-            .contents
-            .expect("contents")
+        resolve_project_pointer_for_test(ident)
     }
 
     #[test]
@@ -486,6 +600,7 @@ mod tests {
             save_group("team", &group.to_string()).expect("save group");
 
             let mut project = read(&key);
+            assert_eq!(project.local_confirmed_groups, vec!["team"]);
             assert!(project.pending_profiles.is_empty());
             assert!(reconcile_project_profiles(&mut project).changed);
             assert_eq!(project.skills, vec!["react"]);
@@ -592,6 +707,7 @@ mod tests {
                 let text = fs::read_to_string(dir.join(file)).expect("read file");
                 assert!(!text.contains("local_confirmed"), "{file}: {text}");
                 assert!(!text.contains("local_ignored"), "{file}: {text}");
+                assert!(!text.contains("local_confirmed_groups"), "{file}: {text}");
                 assert!(!text.contains("pending_profiles"), "{file}: {text}");
             }
         });
@@ -676,6 +792,116 @@ mod tests {
             .expect("pull");
             confirm_attached_profiles_once().expect("again");
             assert_eq!(read(&key).pending_profiles, vec!["later"]);
+        });
+    }
+
+    #[test]
+    fn the_migration_records_group_memberships() {
+        with_home(|home| {
+            let (_dir, key) = import_clone(home, serde_json::json!({ "name": "demo" }));
+            let id = read(&key).id;
+            // Written directly, as a group from before joins were recorded.
+            let groups = get_groups_dir().expect("dir");
+            fs::create_dir_all(&groups).expect("mkdir");
+            fs::write(
+                groups.join("team.json"),
+                serde_json::json!({ "name": "team", "projects": [id] }).to_string(),
+            )
+            .expect("write group");
+            assert!(read(&key).local_confirmed_groups.is_empty());
+
+            confirm_attached_profiles_once().expect("migrate");
+
+            assert_eq!(read(&key).local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn a_group_rename_carries_the_join_on_a_read_only_project() {
+        with_home(|home| {
+            let (_dir, key) = import_clone(home, serde_json::json!({ "name": "demo" }));
+            confirm_project_group(&key, "old").expect("join");
+            set_project_read_only(&key, true).expect("on");
+
+            assert!(rename_group_decisions("old", "new").is_empty());
+            assert_eq!(read(&key).local_confirmed_groups, vec!["new"]);
+            assert!(forget_group_everywhere("new").is_empty());
+            assert!(read(&key).local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_confirmation_uses_the_library_spelling_and_forgetting_folds_case() {
+        with_home(|home| {
+            save_profile("baseline", &["react"]);
+            let (_dir, key) = import_clone(
+                home,
+                serde_json::json!({ "name": "demo", "profiles": ["Baseline"] }),
+            );
+
+            confirm_project_profile(&key, "Baseline").expect("confirm");
+            assert_eq!(read(&key).local_confirmed_profiles, vec!["baseline"]);
+            assert!(read(&key).pending_profiles.is_empty());
+
+            forget_project_profile(&key, "BASELINE").expect("forget");
+            assert!(read(&key).local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn only_a_created_project_keeps_its_names_when_it_has_no_entry() {
+        with_home(|_| {
+            let mut project = Project {
+                profiles: vec!["baseline".into()],
+                local_confirmed_groups: vec!["team".into()],
+                ..Default::default()
+            };
+
+            load_profile_decisions("unknown", &mut project, false).expect("load");
+            assert!(project.local_confirmed_profiles.is_empty());
+            assert!(project.local_confirmed_groups.is_empty());
+
+            load_profile_decisions("unknown", &mut project, true).expect("load");
+            assert_eq!(project.local_confirmed_profiles, vec!["baseline"]);
+        });
+    }
+
+    #[test]
+    fn inspecting_a_folder_lists_the_library_profiles_it_asks_for() {
+        with_home(|home| {
+            save_profile("baseline", &["react"]);
+            let dir = home.join("stray");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::write(
+                dir.join(".automatic.json"),
+                r#"{"name":"stray","profiles":["baseline","ghost"]}"#,
+            )
+            .expect("write");
+
+            let status = inspect_project_directory(dir.to_str().unwrap()).expect("inspect");
+            let DirectoryStatus::OrphanConfig { profiles, .. } = status else {
+                panic!("expected an orphan config");
+            };
+            assert_eq!(profiles, vec!["baseline"]);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspecting_a_folder_does_not_follow_a_linked_config() {
+        with_home(|home| {
+            save_profile("baseline", &["react"]);
+            let outside = home.join("outside.json");
+            fs::write(&outside, r#"{"name":"stray","profiles":["baseline"]}"#).expect("write");
+            let dir = home.join("stray");
+            fs::create_dir_all(&dir).expect("mkdir");
+            std::os::unix::fs::symlink(&outside, dir.join(".automatic.json")).expect("link");
+
+            let status = inspect_project_directory(dir.to_str().unwrap()).expect("inspect");
+            let DirectoryStatus::OrphanConfig { profiles, .. } = status else {
+                panic!("expected an orphan config");
+            };
+            assert!(profiles.is_empty());
         });
     }
 

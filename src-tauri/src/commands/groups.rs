@@ -61,6 +61,9 @@ pub fn delete_group(name: &str) -> Result<(), String> {
             core::delete_group_reconciling_contexts(&group)?;
             drop(writes);
             reconcile_group_profiles_for_projects(&members, progress);
+            for (project, error) in core::forget_group_everywhere(&group) {
+                progress.report_failure(&project, error);
+            }
             Ok(())
         },
     )
