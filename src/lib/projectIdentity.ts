@@ -85,6 +85,7 @@ interface CheckoutDecisions {
   pending_contexts?: string[];
   contexts?: string[];
   group_context_contributions?: Record<string, string[]>;
+  local_awaiting_confirmation?: boolean;
 }
 
 /**
@@ -117,6 +118,7 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(
     pending_contexts: fresh.pending_contexts ?? [],
     contexts: mergeContexts(held.contexts ?? [], fresh.contexts ?? [], base),
     group_context_contributions: fresh.group_context_contributions ?? {},
+    local_awaiting_confirmation: fresh.local_awaiting_confirmation === true,
   };
 }
 

@@ -202,6 +202,7 @@ describe("withCheckoutDecisions", () => {
       pending_contexts: [],
       contexts: [],
       group_context_contributions: {},
+      local_awaiting_confirmation: false,
     });
   });
 

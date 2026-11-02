@@ -90,6 +90,7 @@ import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
 import { PendingProfilesNotice } from "./panels/PendingProfilesNotice";
 import { PendingContextsNotice } from "./panels/PendingContextsNotice";
+import { PendingRegistrationNotice } from "./panels/PendingRegistrationNotice";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
 import {
   ContextsPanel,
@@ -2284,6 +2285,7 @@ export function ProjectEditor({
         pending_profiles: stored.pending_profiles || [],
         local_ignored_contexts: stored.local_ignored_contexts || [],
         pending_contexts: stored.pending_contexts || [],
+        local_awaiting_confirmation: stored.local_awaiting_confirmation === true,
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
       };
@@ -2395,6 +2397,7 @@ export function ProjectEditor({
         pending_profiles: parsed.pending_profiles || [],
         local_ignored_contexts: parsed.local_ignored_contexts || [],
         pending_contexts: parsed.pending_contexts || [],
+        local_awaiting_confirmation: parsed.local_awaiting_confirmation === true,
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
       };
@@ -4478,6 +4481,16 @@ export function ProjectEditor({
             {!isCreating && !readOnly && selectedKey && (project.pending_profiles ?? []).some((name) => !(project.local_ignored_profiles ?? []).includes(name)) && (
               <div className="px-6 pt-3 flex-shrink-0">
                 <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={refreshCheckoutDecisions} />
+              </div>
+            )}
+            {!isCreating && selectedKey && project.local_awaiting_confirmation === true && (
+              <div className="px-6 pt-3 flex-shrink-0">
+                <PendingRegistrationNotice
+                  projectName={project.name}
+                  selectedKey={selectedKey}
+                  reloadProject={refreshCheckoutDecisions}
+                  onRemove={() => handleRemove(selectedKey, project.name)}
+                />
               </div>
             )}
             {!isCreating && selectedKey && (project.pending_contexts ?? []).some((slug) => !(project.local_ignored_contexts ?? []).includes(slug)) && (

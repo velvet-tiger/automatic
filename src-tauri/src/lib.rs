@@ -323,6 +323,7 @@ pub fn run() {
             detach_context,
             ignore_project_context,
             decide_project_context,
+            confirm_project_registration,
             list_context_documentation_pages,
             read_context_documentation_page,
             write_context_documentation_page,

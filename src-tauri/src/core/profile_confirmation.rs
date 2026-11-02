@@ -29,6 +29,7 @@ const DEPARTED_FIELD: &str = "local_departed_groups";
 const RELEASING_FIELD: &str = "local_releasing_profiles";
 const CONFIRMED_CONTEXTS_FIELD: &str = "local_confirmed_contexts";
 const IGNORED_CONTEXTS_FIELD: &str = "local_ignored_contexts";
+const AWAITING_FIELD: &str = "local_awaiting_confirmation";
 const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
 const CONTEXT_MIGRATION_MARKER: &str = "contexts_confirmed_migrated";
 
@@ -42,6 +43,7 @@ pub(crate) struct ProfileDecisions {
     releasing: Vec<String>,
     confirmed_contexts: Vec<String>,
     ignored_contexts: Vec<String>,
+    awaiting_confirmation: bool,
 }
 
 impl ProfileDecisions {
@@ -54,6 +56,10 @@ impl ProfileDecisions {
             releasing: pointer_names(pointer, RELEASING_FIELD),
             confirmed_contexts: pointer_names(pointer, CONFIRMED_CONTEXTS_FIELD),
             ignored_contexts: pointer_names(pointer, IGNORED_CONTEXTS_FIELD),
+            awaiting_confirmation: pointer
+                .get(AWAITING_FIELD)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     }
 
@@ -79,6 +85,7 @@ impl ProfileDecisions {
             releasing: project.local_releasing_profiles.clone(),
             confirmed_contexts: project.local_confirmed_contexts.clone(),
             ignored_contexts: project.local_ignored_contexts.clone(),
+            awaiting_confirmation: project.local_awaiting_confirmation,
         }
     }
 
@@ -90,6 +97,7 @@ impl ProfileDecisions {
         project.local_releasing_profiles = self.releasing;
         project.local_confirmed_contexts = self.confirmed_contexts;
         project.local_ignored_contexts = self.ignored_contexts;
+        project.local_awaiting_confirmation = self.awaiting_confirmation;
     }
 
     fn write_to(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
@@ -107,6 +115,11 @@ impl ProfileDecisions {
             } else {
                 map.insert(field.into(), names.clone().into());
             }
+        }
+        if self.awaiting_confirmation {
+            map.insert(AWAITING_FIELD.into(), true.into());
+        } else {
+            map.remove(AWAITING_FIELD);
         }
     }
 }
@@ -456,6 +469,12 @@ pub fn decide_project_context(ident: &str, slug: &str, confirmed: bool) -> Resul
     } else {
         forget_project_context(ident, slug)
     }
+}
+
+/// Record that the user keeps a project an agent registered. Only the app calls
+/// this: no MCP tool can, or the agent could confirm its own registration.
+pub fn confirm_project_registration(ident: &str) -> Result<(), String> {
+    edit_decisions(ident, |decisions| decisions.awaiting_confirmation = false)
 }
 
 /// Record that this checkout joined `group` on this machine.

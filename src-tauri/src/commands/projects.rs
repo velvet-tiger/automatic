@@ -4053,6 +4053,40 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
+    fn the_create_save_of_the_app_is_never_awaiting() {
+        with_temp_home(|_| {
+            let keep = tempdir().expect("dir");
+            let project = core::Project {
+                name: "fresh".into(),
+                directory: keep.path().display().to_string(),
+                local_awaiting_confirmation: true,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&project).expect("json");
+            let key = save_project("fresh", &json, Some(true)).expect("save");
+            assert!(!read_back(&key).local_awaiting_confirmation);
+        });
+    }
+
+    #[test]
+    fn keeping_a_registration_goes_through_the_command() {
+        with_temp_home(|_| {
+            let keep = tempdir().expect("dir");
+            let project = core::Project {
+                name: "agent".into(),
+                directory: keep.path().display().to_string(),
+                local_awaiting_confirmation: true,
+                ..Default::default()
+            };
+            core::save_project("agent", &serde_json::to_string(&project).expect("json")).expect("save");
+            assert!(read_back("agent").local_awaiting_confirmation);
+
+            super::super::contexts::confirm_project_registration("agent").expect("keep");
+            assert!(!read_back("agent").local_awaiting_confirmation);
+        });
+    }
+
+    #[test]
     fn a_keyless_pointer_is_confirmed_and_not_kept_for_retry() {
         with_temp_home(|_| {
             let slug = save_library_context("Private");

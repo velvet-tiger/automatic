@@ -19,7 +19,7 @@ The server knows which project you are working in. Omit the `project` argument (
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
 - **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this checkout joined. This is the authoritative source — related projects are intentionally not written into the instruction file.
 - **Other Projects** — Call `automatic_list_projects` to see this project and the projects in the groups it joined. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
-- **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
+- **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. Its agents can read nothing until the user keeps it in the Automatic app. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
 
 ## Rules
 

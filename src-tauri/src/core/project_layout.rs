@@ -85,6 +85,7 @@ const PROFILE_RECORD_FIELD: &str = "profile_contributions";
 /// a profile confirmation.
 const TRANSIENT_FIELDS: &[&str] = &[
     "directory_missing",
+    "local_awaiting_confirmation",
     "local_confirmed_contexts",
     "local_confirmed_groups",
     "local_departed_groups",

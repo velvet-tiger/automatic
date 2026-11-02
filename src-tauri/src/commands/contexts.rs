@@ -62,6 +62,14 @@ pub fn decide_project_context(project_name: &str, slug: &str, confirmed: bool) -
     core::decide_project_context(&core::canonical_project_ident(project_name)?, slug, confirmed)
 }
 
+/// Keep a project an agent registered, so its agents can read. Not reachable
+/// from MCP.
+#[tauri::command(async)]
+pub fn confirm_project_registration(project_name: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
+    core::confirm_project_registration(&core::canonical_project_ident(project_name)?)
+}
+
 /// Hide the notice for a pending context on this checkout. The slug stays in
 /// the committed config and stays pending.
 #[tauri::command(async)]

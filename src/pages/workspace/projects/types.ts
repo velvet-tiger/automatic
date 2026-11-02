@@ -134,6 +134,8 @@ export interface Project {
    * here, because this checkout has not confirmed them. Never saved.
    */
   pending_profiles?: string[];
+  /** An agent registered this project and the user has not kept it. Stored only on this machine. */
+  local_awaiting_confirmation?: boolean;
   /** Pending context slugs this checkout chose to ignore. Stored only on this machine. */
   local_ignored_contexts?: string[];
   /**

@@ -863,6 +863,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     let now = chrono::Utc::now().to_rfc3339();
     let mut project = crate::core::Project {
         name: name.to_string(),
+        local_awaiting_confirmation: true,
         description: params
             .description
             .as_deref()
@@ -921,7 +922,9 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
              automatic_sync_project to write their config files.\n",
         );
     }
-    report.push_str("Call automatic_read_project to inspect the saved configuration.");
+    report.push_str(
+        "Agents cannot read this project until the user keeps it in the Automatic app.",
+    );
 
     Ok(report)
 }
@@ -988,7 +991,9 @@ fn joined_peers(
             crate::core::read_project(&peer.ident)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<crate::core::Project>(&raw).ok())
-                .is_some_and(|p| p.local_confirmed_groups.contains(&group.name))
+                .is_some_and(|p| {
+                    p.local_confirmed_groups.contains(&group.name) && !p.local_awaiting_confirmation
+                })
         })
         .collect()
 }
@@ -1052,6 +1057,14 @@ fn peer_roots(peer: rmcp::Peer<rmcp::RoleServer>, timeout: std::time::Duration) 
             }
         })
     })
+}
+
+fn awaiting_confirmation(name: &str) -> String {
+    format!(
+        "An agent registered the project '{}', and the user has not kept it yet. Ask the user to \
+         confirm it in the Automatic app.",
+        name
+    )
 }
 
 const GROUPS_UNREADABLE: &str = "Automatic could not read its project groups, so it will not \
@@ -1135,10 +1148,15 @@ struct ReadingScope {
     peers: Vec<crate::core::ProjectSummary>,
     /// Context slugs offered to `checkout`.
     contexts: Vec<String>,
+    /// The name of a project in this folder that the user has not kept yet.
+    awaiting: Option<String>,
 }
 
 impl ReadingScope {
     fn own_checkout(&self) -> Result<&crate::core::ProjectSummary, String> {
+        if let Some(name) = &self.awaiting {
+            return Err(awaiting_confirmation(name));
+        }
         self.checkout.as_ref().ok_or_else(|| no_reading_checkout(self.folder.as_deref()))
     }
 
@@ -1238,6 +1256,9 @@ fn reading_scope_of(
         return Ok(ReadingScope { folder, ..Default::default() });
     };
     let project = load_project(&checkout)?;
+    if project.local_awaiting_confirmation {
+        return Ok(ReadingScope { folder, awaiting: Some(checkout.name), ..Default::default() });
+    }
     // First, so an unreadable group refuses before anything is shared.
     let contexts = offered_contexts(&project)?
         .into_iter()
@@ -1256,7 +1277,7 @@ fn reading_scope_of(
         }
     }
     let groups = joined.into_iter().map(|group| group.name).collect();
-    Ok(ReadingScope { folder, checkout: Some(checkout), groups, peers, contexts })
+    Ok(ReadingScope { folder, checkout: Some(checkout), groups, peers, contexts, awaiting: None })
 }
 
 // ── MCP Server Handler ──────────────────────────────────────────────────────
@@ -1587,6 +1608,9 @@ impl AutomaticMcpServer {
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
         match self.reading_scope().await {
+            Ok(ReadingScope { awaiting: Some(name), .. }) => {
+                Ok(tool_error(awaiting_confirmation(&name)))
+            }
             Ok(scope) => {
                 let readable: Vec<_> =
                     scope.checkout.iter().chain(&scope.peers).cloned().collect();
@@ -1639,7 +1663,8 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_register_project",
-        description = "Register a new project in Automatic. Requires a project name and \
+        description = "Register a new project in Automatic. Its agents can read nothing until \
+                       the user keeps it in the Automatic app. Requires a project name and \
                        an absolute path to an existing directory on disk. Optionally provide a \
                        description and a list of agent tool ids (e.g. claude, cursor, codex) — \
                        when agents are given, their configuration files are synced into the \
@@ -4287,6 +4312,7 @@ mod tests {
             groups: vec!["team".into()],
             peers: vec![summary("api", API_ID, API_KEY)],
             contexts: vec!["shared".into()],
+            awaiting: None,
         };
         assert_eq!(scope.project(None).unwrap().local_key, SITE_KEY);
         assert_eq!(scope.project(Some(API_KEY)).unwrap().local_key, API_KEY);
@@ -4559,6 +4585,7 @@ mod tests {
             project.contexts = vec!["private".into()];
             let key = project.local_key.clone();
             crate::core::save_project(&key, &serde_json::to_string(&project).unwrap()).expect("commit");
+            crate::core::confirm_project_registration(&key).expect("keep");
 
             let server = server_in(&repo, None);
             assert!(slugs_listed(&server).unwrap().is_empty());
@@ -4572,6 +4599,144 @@ mod tests {
             crate::core::confirm_project_context(&key, "private").expect("confirm");
             assert_eq!(slugs_listed(&server).unwrap(), vec!["private"]);
             assert_ne!(entry_of(&server, "private").is_error, Some(true));
+        });
+    }
+
+    /// `repo`, registered by an agent working elsewhere.
+    fn register_from(server: &AutomaticMcpServer, repo: &std::path::Path) -> String {
+        let registered = call(server.register_project(Parameters(RegisterProjectParams {
+            name: "repo".into(),
+            directory: repo.display().to_string(),
+            description: None,
+            agents: None,
+        })));
+        assert_ne!(registered.is_error, Some(true), "{}", result_text(&registered));
+        let raw = crate::core::read_project("repo").expect("read");
+        serde_json::from_str::<crate::core::Project>(&raw).expect("parse").local_key
+    }
+
+    #[test]
+    fn a_registered_project_reads_nothing_until_the_user_keeps_it() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let key = register_from(&server_in(&folders.site, None), &repo);
+            let server = server_in(&repo, None);
+            let refusal = awaiting_confirmation("repo");
+
+            assert_eq!(slugs_listed(&server).unwrap_err(), refusal);
+            assert_eq!(result_text(&read(&server, None)), refusal);
+            assert_eq!(result_text(&related(&server, None)), refusal);
+            assert_eq!(result_text(&call(server.list_projects())), refusal);
+            assert_eq!(result_text(&read_slug(&server, "private")), refusal);
+            assert_eq!(result_text(&link(&server, &repo)), refusal);
+
+            crate::core::confirm_project_registration(&key).expect("keep");
+            assert_eq!(listed_keys(&server), vec![key]);
+        });
+    }
+
+    #[test]
+    fn a_root_naming_an_unconfirmed_project_reads_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            register_from(&server_in(&folders.site, None), &repo);
+            let elsewhere = tempfile::tempdir().expect("tempdir");
+            let cwd = std::fs::canonicalize(elsewhere.path()).expect("canonical");
+
+            let server = server_in(&cwd, None);
+            let uri = file_uri(&repo);
+            let source: RootsSource = std::sync::Arc::new(move || {
+                let uri = uri.clone();
+                Box::pin(async move { Ok(vec![uri]) })
+            });
+            *server.client_roots.lock().unwrap() = Some(source);
+            assert_eq!(result_text(&read(&server, None)), awaiting_confirmation("repo"));
+        });
+    }
+
+    #[test]
+    fn an_unconfirmed_project_is_nobodys_peer() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let key = register_from(&server_in(&folders.site, None), &repo);
+            let group = serde_json::json!({"name": "team", "projects": [SITE_ID, key.clone()]});
+            crate::core::save_group("team", &group.to_string()).expect("group");
+            crate::core::confirm_project_group(SITE_KEY, "team").expect("join");
+            crate::core::confirm_project_group(&key, "team").expect("join");
+
+            let member = server_in(&folders.site, None);
+            assert_eq!(listed_keys(&member), vec![SITE_KEY]);
+
+            crate::core::confirm_project_registration(&key).expect("keep");
+            assert_eq!(listed_keys(&member), vec![SITE_KEY, key.as_str()]);
+        });
+    }
+
+    /// Later saves go through tools an agent can call. None may clear it.
+    #[test]
+    fn no_save_or_committed_file_clears_the_flag() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let key = register_from(&server_in(&folders.site, None), &repo);
+            let awaiting = || {
+                let raw = crate::core::read_project(&key).expect("read");
+                serde_json::from_str::<crate::core::Project>(&raw).unwrap().local_awaiting_confirmation
+            };
+            assert!(awaiting());
+
+            let mut stale: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project(&key).unwrap()).unwrap();
+            stale.local_awaiting_confirmation = false;
+            crate::core::save_project(&key, &serde_json::to_string(&stale).unwrap()).expect("save");
+            assert!(awaiting(), "a save keeps it");
+
+            let config = repo.join(".automatic.json");
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&config).expect("read")).expect("parse");
+            assert!(value.get("local_awaiting_confirmation").is_none(), "pointer only");
+            value["local_awaiting_confirmation"] = serde_json::json!(false);
+            std::fs::write(&config, value.to_string()).expect("write");
+            assert!(awaiting(), "a committed value is ignored");
+
+            let server = server_in(&repo, None);
+            call(server.sync_project(Parameters(SyncProjectParams { name: Some(key.clone()) })));
+            assert!(awaiting(), "a sync keeps it");
+
+            let tools: Vec<String> = serde_json::from_str::<serde_json::Value>(
+                include_str!("mcp_tools.golden.json"),
+            )
+            .expect("golden")
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+            assert!(!tools.iter().any(|name| name.contains("confirm")), "{tools:?}");
+        });
+    }
+
+    #[test]
+    fn a_project_saved_directly_is_confirmed() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let raw = crate::core::read_project(SITE_KEY).expect("read");
+            let project: crate::core::Project = serde_json::from_str(&raw).expect("parse");
+            assert!(!project.local_awaiting_confirmation);
+            assert_eq!(listed_keys(&server_in(&folders.site, None)), vec![SITE_KEY]);
         });
     }
 
@@ -5549,6 +5714,7 @@ mod tests {
             crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
             register_project_impl(&params("pending", ws.to_str().unwrap(), None))
                 .expect("register");
+            crate::core::confirm_project_registration("pending").expect("keep");
             let mut project: crate::core::Project =
                 serde_json::from_str(&crate::core::read_project("pending").expect("read"))
                     .expect("parse");
@@ -5589,6 +5755,7 @@ mod tests {
             let profile = serde_json::json!({"name": "base", "skills": ["react"]});
             crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
             register_project_impl(&params("site", ws.to_str().unwrap(), None)).expect("register");
+            crate::core::confirm_project_registration("site").expect("keep");
             let read = || -> crate::core::Project {
                 serde_json::from_str(&crate::core::read_project("site").expect("read"))
                     .expect("parse")
