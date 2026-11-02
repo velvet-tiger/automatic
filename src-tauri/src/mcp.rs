@@ -3540,6 +3540,8 @@ mod tests {
             crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
             let group = serde_json::json!({"name": "team", "projects": ["site"]});
             crate::core::save_group("team", &group.to_string()).expect("save group");
+            crate::core::record_group_joins("team", &group.to_string(), &["site".to_string()])
+                .expect("join");
 
             let server = AutomaticMcpServer::new();
             let attach = |project: Option<&str>, group: Option<&str>| {

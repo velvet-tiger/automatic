@@ -1832,12 +1832,10 @@ pub(crate) fn reconcile_group_profiles_for_projects(
         |_, project| sync_configured_project(project),
     );
     // After the reconcile, which needs a join to release what the group
-    // provided. A read-only project reconciles when the mode is turned off.
+    // provided.
     for ident in unique {
-        if !core::is_project_read_only(&ident).unwrap_or(true) {
-            if let Err(e) = core::forget_left_groups(&ident) {
-                progress.report_failure(&ident, e);
-            }
+        if let Err(e) = core::settle_group_joins(&ident) {
+            progress.report_failure(&ident, e);
         }
     }
 }
@@ -2936,7 +2934,8 @@ fn detach_profile_from_projects_removes_provided_entries() {
             ..Default::default()
         };
         let data = serde_json::to_string(&group).expect("group json");
-        super::super::groups::save_group(name, &data).expect("save group");
+        let joining = projects.iter().map(|p| p.to_string()).collect();
+        super::super::groups::save_group(name, &data, Some(joining)).expect("save group");
     }
 
     fn read_group_back(name: &str) -> core::ProjectGroup {
@@ -3065,8 +3064,14 @@ fn detach_profile_from_projects_removes_provided_entries() {
             // The editor sends back every checkout `read_group` shows.
             let shown = core::group_member_idents("team");
             assert!(shown.contains(&key));
-            let refs: Vec<&str> = shown.iter().map(String::as_str).collect();
-            save_group_command("team", &refs, &["baseline"]);
+            let group = core::ProjectGroup {
+                name: "team".to_string(),
+                projects: shown,
+                profiles: vec!["baseline".to_string()],
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&group).expect("group json");
+            super::super::groups::save_group("team", &data, None).expect("save group");
 
             let clone = read_back(&key);
             assert!(clone.local_confirmed_groups.is_empty());
@@ -3133,6 +3138,136 @@ fn detach_profile_from_projects_removes_provided_entries() {
             core::set_project_read_only("b", true).expect("on");
             super::super::groups::delete_group("team").expect("delete");
             assert!(read_back("b").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_of_a_deleted_group_releases_its_names_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            assert_eq!(read_back("member").file_rules["_project"], vec!["profile-rule"]);
+
+            core::set_project_read_only("member", true).expect("on");
+            super::super::groups::delete_group("team").expect("delete");
+            let waiting = read_back("member");
+            assert!(waiting.local_confirmed_groups.is_empty(), "the name is not trusted");
+            assert_eq!(waiting.local_departed_groups, vec!["team"]);
+
+            set_project_read_only("member", false).expect("off");
+
+            let released = read_back("member");
+            assert!(released.profiles.is_empty());
+            assert!(released.file_rules.is_empty());
+            assert!(released.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_group_recreated_under_a_deleted_name_is_not_trusted() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+            super::super::groups::delete_group("team").expect("delete");
+
+            let key = read_back("member").local_key;
+            let group = core::ProjectGroup {
+                name: "team".to_string(),
+                projects: vec![key],
+                profiles: vec!["baseline".to_string()],
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&group).expect("json");
+            super::super::groups::save_group("team", &data, None).expect("save");
+            assert!(read_back("member").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_reconcile_keeps_a_group_releasable() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, dir) = make_project("a", |_| {});
+            let (_keep_b, _) = make_project("b", |_| {});
+            save_group_command("team", &["a", "b"], &["baseline"]);
+
+            // A folder that refuses the write fails the sweep's save.
+            let config = std::fs::read(dir.join(".automatic.json")).expect("config");
+            let mut perms = std::fs::metadata(&dir).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o555);
+            let state = dir.join(".automatic/project.json");
+            let mut locked = std::fs::metadata(&state).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut locked, 0o444);
+            std::fs::set_permissions(&state, locked.clone()).expect("lock");
+            std::fs::set_permissions(dir.join(".automatic.json"), locked).expect("lock");
+            std::fs::set_permissions(&dir, perms).expect("lock dir");
+            save_group_command("team", &["b"], &["baseline"]);
+            let waiting = read_back("a");
+            assert_eq!(waiting.local_departed_groups, vec!["team"]);
+            assert_eq!(waiting.profiles, vec!["baseline"]);
+
+            let mut open = std::fs::metadata(&dir).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut open, 0o755);
+            std::fs::set_permissions(&dir, open.clone()).expect("unlock dir");
+            std::fs::set_permissions(dir.join(".automatic.json"), open.clone()).expect("unlock");
+            std::fs::set_permissions(&state, open).expect("unlock");
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).unwrap(), config);
+
+            let key = read_back("a").local_key;
+            reconcile_group_profiles_for_projects(&[key], &SweepProgress::silent());
+
+            let released = read_back("a");
+            assert!(released.profiles.is_empty());
+            assert!(released.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_listed_clone_joins_explicitly() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_group_command("team", &[&member], &["baseline"]);
+            let (_clone, _dir2, key) = import_id_clone("member", &["baseline"], None);
+
+            super::super::groups::join_group("team", &key).expect("join");
+
+            let clone = read_back(&key);
+            assert_eq!(clone.local_confirmed_groups, vec!["team"]);
+            assert!(clone.pending_profiles.is_empty());
+            assert_eq!(clone.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(read_back("member").file_rules["_project"], vec!["profile-rule"]);
+        });
+    }
+
+    #[test]
+    fn join_is_refused_for_a_group_that_does_not_list_the_checkout() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("outsider", |_| {});
+            save_group_command("team", &[], &[]);
+            assert!(super::super::groups::join_group("team", "outsider").is_err());
+            assert!(read_back("outsider").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn an_unreadable_group_file_makes_nothing_join() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let dir = core::get_groups_dir().expect("dir");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(dir.join("team.json"), "<<<<<<< conflict").expect("write");
+            let group = core::ProjectGroup { name: "team".to_string(), ..Default::default() };
+            let data = serde_json::to_string(&group).expect("json");
+
+            let joining = Some(vec!["member".to_string()]);
+            assert!(super::super::groups::save_group("team", &data, joining).is_err());
+            assert!(read_back("member").local_confirmed_groups.is_empty());
         });
     }
 

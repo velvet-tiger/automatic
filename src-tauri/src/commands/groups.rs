@@ -25,7 +25,8 @@ pub fn read_group(name: &str) -> Result<String, String> {
 /// Save a group and bring the contexts and profiles of its old and new
 /// members in step. Members whose profiles changed are re-synced.
 /// `projects` holds `local_key`s (ids are accepted too); they are stored as
-/// project ids. Any other value is stored unchanged.
+/// project ids. Any other value is stored unchanged. `joining` names the
+/// checkouts being added, the only ones that join.
 /// Queue a reconcile of `members`. It has no merge key: each save names its
 /// own old and new members, and merging two would drop one set.
 fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
@@ -35,11 +36,12 @@ fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
 }
 
 #[tauri::command(async)]
-pub fn save_group(name: &str, data: &str) -> Result<(), String> {
+pub fn save_group(name: &str, data: &str, joining: Option<Vec<String>>) -> Result<(), String> {
     ensure_not_being_deleted(&format!("group:{name}"), name)?;
     let mut affected = core::group_member_idents(name);
     // Saving a group writes its contexts into the member projects.
     let writes = hold_library_writes();
+    core::record_group_joins(name, data, joining.as_deref().unwrap_or_default())?;
     core::save_group_reconciling_contexts(name, data)?;
     drop(writes);
     affected.extend(core::group_member_idents(name));
@@ -61,12 +63,24 @@ pub fn delete_group(name: &str) -> Result<(), String> {
             core::delete_group_reconciling_contexts(&group)?;
             drop(writes);
             reconcile_group_profiles_for_projects(&members, progress);
-            for (project, error) in core::forget_group_everywhere(&group) {
+            for (project, error) in core::settle_all_group_joins() {
                 progress.report_failure(&project, error);
             }
             Ok(())
         },
     )
+}
+
+/// Join a group that already lists this checkout through a shared `id`, so
+/// its profiles apply here.
+#[tauri::command(async)]
+pub fn join_group(group_name: &str, project_name: &str) -> Result<(), String> {
+    let writes = hold_library_writes();
+    let ident = core::canonical_project_ident(project_name)?;
+    core::join_listed_group(&ident, group_name)?;
+    drop(writes);
+    queue_group_reconcile(group_name, vec![ident]);
+    Ok(())
 }
 
 // ── Group profiles ───────────────────────────────────────────────────────────
@@ -86,6 +100,7 @@ pub(crate) fn attach_group_profile(group_name: &str, profile_name: &str) -> Resu
 /// the group does not exist. Returns `false` when the group did not list the
 /// profile; members are brought in step either way.
 pub(crate) fn detach_group_profile(group_name: &str, profile_name: &str) -> Result<bool, String> {
+    core::mark_group_profile_releasing(group_name, profile_name)?;
     let changed = core::remove_profile_from_group(group_name, profile_name)?;
     queue_group_reconcile(group_name, core::group_member_idents(group_name));
     Ok(changed)

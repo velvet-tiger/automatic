@@ -101,46 +101,37 @@ pub fn save_group(name: &str, data: &str) -> Result<(), String> {
 
     let mut group: ProjectGroup =
         serde_json::from_str(data).map_err(|e| format!("Invalid group data: {}", e))?;
-    let index = ProjectKeyIndex::load()?;
-    let groups_dir = get_groups_dir()?;
-    let joining = checkouts_joining(&index, &group_path(&groups_dir, name), name, &group.projects);
     // Members arrive as `local_key`s (or ids); store them by project id.
-    group.projects = group_members_for_storage(&index, &group.projects);
+    group.projects = group_members_for_storage(&ProjectKeyIndex::load()?, &group.projects);
     let pretty = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
 
+    let groups_dir = get_groups_dir()?;
     if !groups_dir.exists() {
         fs::create_dir_all(&groups_dir).map_err(|e| e.to_string())?;
     }
 
-    fs::write(group_path(&groups_dir, name), &pretty).map_err(|e| e.to_string())?;
-    for ident in joining {
-        confirm_project_group(&ident, name)?;
-    }
-    Ok(())
+    fs::write(group_path(&groups_dir, name), &pretty).map_err(|e| e.to_string())
 }
 
-/// The checkouts `members` adds to the group stored at `path`. A checkout that
-/// shares an `id` with a member is already shown as listed, so the editor
-/// sends it back on every save. Only one the group did not list joins, which
-/// keeps a clone with a copied `id` out. An `id` names no one checkout, so it
-/// joins none.
-fn checkouts_joining(
-    index: &ProjectKeyIndex,
-    path: &std::path::Path,
-    name: &str,
-    members: &[String],
-) -> Vec<String> {
-    let stored = if path.exists() {
-        read_stored_group(path, name).map(|g| g.projects).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    members
-        .iter()
-        .filter_map(|member| index.resolve(member))
-        .filter(|checkout| !stored.iter().any(|m| index.member_is(m, checkout)))
-        .map(|checkout| checkout_ident(checkout).to_string())
-        .collect()
+/// Record that the checkouts in `joining` are joining group `name`, ahead of
+/// the save of `data` that lists them. An extra join is harmless until the
+/// group lists the checkout. An explicit list is the only source of joins: a
+/// checkout that shares an `id` with a member shows as listed, and the editor
+/// sends it back on every save.
+pub fn record_group_joins(name: &str, data: &str, joining: &[String]) -> Result<(), String> {
+    if joining.is_empty() {
+        return Ok(());
+    }
+    serde_json::from_str::<ProjectGroup>(data).map_err(|e| format!("Invalid group data: {}", e))?;
+    let groups_dir = get_groups_dir()?;
+    if group_path(&groups_dir, name).exists() {
+        read_group_from_dir(&groups_dir, name)
+            .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
+    }
+    for ident in joining {
+        confirm_project_group(ident, name)?;
+    }
+    Ok(())
 }
 
 pub fn delete_group(name: &str) -> Result<(), String> {

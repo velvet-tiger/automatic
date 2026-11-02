@@ -300,6 +300,7 @@ pub fn run() {
             list_groups,
             read_group,
             save_group,
+            join_group,
             delete_group,
             groups_for_project,
             attach_profile_to_group,

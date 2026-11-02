@@ -468,6 +468,17 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_confirmed_groups: Vec<String>,
 
+    /// Groups this checkout left whose records it still holds, because the
+    /// reconcile that releases them failed or was skipped. Stored only in the
+    /// registry pointer. They provide nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_departed_groups: Vec<String>,
+
+    /// Profile names a joined group stopped listing, kept until the reconcile
+    /// releases them. Stored only in the registry pointer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_releasing_profiles: Vec<String>,
+
     /// Computed at read-time: names in `profiles` that are not applied here,
     /// because this checkout has not confirmed them and no group provides
     /// them. Never persisted.

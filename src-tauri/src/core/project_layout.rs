@@ -68,6 +68,8 @@ const STATE_FIELDS: &[&str] = &[
 const TRANSIENT_FIELDS: &[&str] = &[
     "directory_missing",
     "local_confirmed_groups",
+    "local_departed_groups",
+    "local_releasing_profiles",
     "local_confirmed_profiles",
     "local_ignored_profiles",
     "local_read_only",
