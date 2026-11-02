@@ -4,7 +4,7 @@ pub mod credential;
 pub mod message;
 
 pub use client::{AgentClient, AgentClientDyn, AgentTurnResponse};
-pub use credential::{AgentCredential, GatewayConfig};
+pub use credential::{AgentCredential, CustomGatewayRoute, GatewayConfig, GatewayCredentialKind};
 pub use message::{ContentBlock, NeutralMessage, ToolDef};
 
 use clients::anthropic::AnthropicClient;
@@ -228,6 +228,11 @@ pub fn active_client_with_key(
         }
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
     }
+}
+
+/// Construct the Anthropic client that sends requests to a custom gateway.
+pub fn custom_gateway_client(route: CustomGatewayRoute) -> Box<dyn AgentClientDyn> {
+    Box::new(AnthropicClient::through_custom_gateway(route))
 }
 
 /// Return the curated static model list for any agent without constructing a

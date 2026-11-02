@@ -32,6 +32,31 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     core::delete_api_key(provider)
 }
 
+// ── Custom gateway ───────────────────────────────────────────────────────────
+//
+// No command returns the gateway token.
+
+/// Save the custom gateway for Automatic and Claude Code. A blank `token`
+/// keeps the current one.
+#[tauri::command]
+pub fn save_custom_gateway(
+    base_url: &str,
+    credential_kind: core::agents::GatewayCredentialKind,
+    token: Option<&str>,
+) -> Result<(), String> {
+    core::save_custom_gateway(base_url, credential_kind, token)
+}
+
+#[tauri::command]
+pub fn clear_custom_gateway() -> Result<core::ClearedCustomGateway, String> {
+    core::clear_custom_gateway()
+}
+
+#[tauri::command]
+pub fn get_custom_gateway_status() -> Result<core::CustomGatewayStatus, String> {
+    core::custom_gateway_status()
+}
+
 /// Effective state of the master "Agent features" toggle. Used by the frontend
 /// to gate AI buttons / inputs purely on whether the user has agent features
 /// turned on, independent of whether an API key is currently stored.
