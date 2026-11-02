@@ -292,6 +292,54 @@ fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
     recorded.is_some() && recorded == std::fs::canonicalize(dir.join(".git")).ok()
 }
 
+/// The checkout a tool may read for, given the client's `roots`. The working
+/// directory always wins. Only when it resolves to nothing do the roots count,
+/// each by the same rule. A root that resolves nowhere is ignored. Roots that
+/// resolve to more than one checkout give none: nothing here can pick.
+pub fn choose_reading_checkout<F>(
+    folder: Option<&Path>,
+    roots: &[PathBuf],
+    summaries: &[ProjectSummary],
+    canonical: F,
+) -> Option<ProjectSummary>
+where
+    F: Fn(&str) -> PathBuf,
+{
+    if let Some(found) = resolve_reading_checkout(folder, summaries, &canonical) {
+        return Some(found);
+    }
+    let mut chosen: Option<ProjectSummary> = None;
+    for root in roots {
+        let Some(found) = resolve_reading_checkout(Some(root), summaries, &canonical) else {
+            continue;
+        };
+        match &chosen {
+            Some(existing) if !same_checkout(existing, &found) => return None,
+            _ => chosen = Some(found),
+        }
+    }
+    chosen
+}
+
+/// [`choose_reading_checkout`] against registered directories on disk.
+pub fn reading_checkout_with_roots(
+    folder: Option<&Path>,
+    roots: &[PathBuf],
+    summaries: &[ProjectSummary],
+) -> Option<ProjectSummary> {
+    choose_reading_checkout(folder, roots, summaries, canonical_or_raw)
+}
+
+/// The canonical folder a `file:` root names. Any other URI, a malformed one,
+/// or a path that does not exist gives `None`. `Url` percent-decodes the path.
+pub fn file_root_path(uri: &str) -> Option<PathBuf> {
+    let url = url::Url::parse(uri).ok()?;
+    if url.scheme() != "file" {
+        return None;
+    }
+    std::fs::canonicalize(url.to_file_path().ok()?).ok()
+}
+
 /// [`resolve_reading_checkout`] against registered directories on disk.
 pub fn reading_checkout_of(
     folder: Option<&Path>,
@@ -575,6 +623,62 @@ mod tests {
     fn reading(cwd: Option<&str>) -> Option<String> {
         resolve_reading_checkout(cwd.map(Path::new), &registry(), identity)
             .map(|summary| summary.local_key)
+    }
+
+    fn chosen(cwd: Option<&str>, roots: &[&str]) -> Option<String> {
+        let roots: Vec<PathBuf> = roots.iter().map(PathBuf::from).collect();
+        choose_reading_checkout(cwd.map(Path::new), &roots, &registry(), identity)
+            .map(|summary| summary.local_key)
+    }
+
+    #[test]
+    fn the_working_directory_wins_over_a_root() {
+        assert_eq!(chosen(Some("/work/api"), &["/work/site"]).as_deref(), Some(KEY_B));
+    }
+
+    #[test]
+    fn a_root_inside_a_checkout_chooses_it() {
+        assert_eq!(chosen(Some("/elsewhere"), &["/work/site/src"]).as_deref(), Some(KEY_A1));
+        assert_eq!(chosen(None, &["/work/api"]).as_deref(), Some(KEY_B));
+    }
+
+    #[test]
+    fn roots_in_two_checkouts_choose_neither() {
+        assert_eq!(chosen(Some("/elsewhere"), &["/work/site", "/work/api"]), None);
+        assert_eq!(chosen(Some("/elsewhere"), &["/work/site", "/work/trees/site-wt"]), None);
+    }
+
+    #[test]
+    fn a_root_that_resolves_nowhere_is_ignored() {
+        assert_eq!(chosen(Some("/elsewhere"), &["/nowhere", "/work/api"]).as_deref(), Some(KEY_B));
+        assert_eq!(chosen(Some("/elsewhere"), &["/work/api", "/work/api/src"]).as_deref(), Some(KEY_B));
+        assert_eq!(chosen(Some("/elsewhere"), &[]), None);
+    }
+
+    #[test]
+    fn a_root_in_a_nested_repository_chooses_nothing() {
+        let (_tmp, root, _worktree) = repository_with_worktree();
+        let cloned = root.join("vendor/clone");
+        std::fs::create_dir_all(cloned.join(".git")).expect("mkdir");
+        let registered = [summary("app", ID_A, KEY_A1, root.to_str().unwrap())];
+        let elsewhere = Path::new("/elsewhere");
+        let chosen = choose_reading_checkout(Some(elsewhere), &[cloned], &registered, identity);
+        assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn only_a_well_formed_file_uri_names_a_root() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = std::fs::canonicalize(tmp.path()).expect("canonical").join("with space");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let uri = url::Url::from_directory_path(&dir).expect("uri").to_string();
+        assert!(uri.contains("%20"), "{uri}");
+        assert_eq!(file_root_path(&uri), Some(dir.clone()));
+
+        assert_eq!(file_root_path("https://example.com/repo"), None);
+        assert_eq!(file_root_path("not a uri"), None);
+        assert_eq!(file_root_path("file://remote.example/repo"), None);
+        assert_eq!(file_root_path(&format!("file://{}/gone", dir.display())), None);
     }
 
     #[test]

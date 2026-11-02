@@ -2,7 +2,7 @@
 
 This project is managed by Automatic, a desktop hub that provides skills, rules, hooks, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
 
-The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`. Contexts and project details can be read only for the registered project containing the folder the server runs in, and for the projects in the groups it joined.
+The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`. Contexts and project details can be read only for the registered project containing the folder the server runs in, or else the single registered project your client's roots name, and for the projects in the groups it joined.
 
 ## Session Start
 

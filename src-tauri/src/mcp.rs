@@ -995,16 +995,45 @@ fn joined_peers(
 
 // ── Reading scope ────────────────────────────────────────────────────────────
 
-/// The refusal for a folder with no reading checkout. It names the folder, and
-/// does not ask for it to be added, because it may be registered already: a
-/// client can start the server elsewhere, or a repository can sit between.
+/// The refusal when no reading checkout is found. It names the folder, and does
+/// not ask for it to be added, because it may be registered already: a client
+/// can start the server elsewhere, or a repository can sit between.
 fn no_reading_checkout(folder: Option<&std::path::Path>) -> String {
     let seen = folder.map_or_else(|| "an unknown folder".to_string(), |f| format!("'{}'", f.display()));
     format!(
         "This Automatic server runs in {}, which is not inside a registered project with no \
-         other repository in between, so it will not share contexts or project details here.",
+         other repository in between, and the client's roots name no single such project. It \
+         will not share contexts or project details here.",
         seen
     )
+}
+
+/// How long a client gets to answer `roots/list`. A tool call must not hang on
+/// a client that never does.
+const ROOTS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+type RootsFuture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, String>> + Send>>;
+
+/// Asks the connected client for its root URIs. An empty list means it declared
+/// no `roots` capability.
+type RootsSource = std::sync::Arc<dyn Fn() -> RootsFuture + Send + Sync>;
+
+/// [`RootsSource`] over a connected client. `list_roots` is deprecated by
+/// SEP-2577 and errors on protocol 2026-07-28 or later, which then reads as no
+/// reading checkout.
+#[allow(deprecated)]
+fn peer_roots(peer: rmcp::Peer<rmcp::RoleServer>) -> RootsSource {
+    std::sync::Arc::new(move || {
+        let peer = peer.clone();
+        Box::pin(async move {
+            if !peer.peer_info().is_some_and(|info| info.capabilities.roots.is_some()) {
+                return Ok(Vec::new());
+            }
+            let listed = peer.list_roots().await.map_err(|e| e.to_string())?;
+            Ok(listed.roots.into_iter().map(|root| root.uri).collect())
+        })
+    })
 }
 
 const GROUPS_UNREADABLE: &str = "Automatic could not read its project groups, so it will not \
@@ -1048,20 +1077,24 @@ fn without_checkout_decisions(content: &str) -> Result<String, String> {
 
 const GROUP_REFUSED: &str = "A group can only be changed from a project that joined it.";
 
-/// Refuse to register a folder holding the server's working directory, so that
-/// an agent cannot make its own folder a reading checkout. A server that does
-/// not know its folder cannot tell, so it refuses too.
-fn check_registrable(reading_folder: Option<&std::path::Path>, directory: &str) -> Result<(), String> {
+/// Refuse to register a folder holding the server's working directory or a
+/// client root, so that an agent cannot make its own folder a reading checkout.
+/// A server that does not know its folder cannot tell, so it refuses too.
+fn check_registrable(
+    reading_folder: Option<&std::path::Path>,
+    roots: &[std::path::PathBuf],
+    directory: &str,
+) -> Result<(), String> {
     let refused = || {
         format!(
-            "'{}' holds the folder this server runs in. The user adds it in the Automatic app.",
+            "'{}' holds the folder this server reads from. The user adds it in the Automatic app.",
             directory.trim()
         )
     };
     let folder = reading_folder.ok_or_else(refused)?;
     let requested = std::path::PathBuf::from(directory.trim());
     let requested = std::fs::canonicalize(&requested).unwrap_or(requested);
-    if folder.starts_with(&requested) {
+    if folder.starts_with(&requested) || roots.iter().any(|root| root.starts_with(&requested)) {
         return Err(refused());
     }
     Ok(())
@@ -1217,6 +1250,10 @@ pub struct AutomaticMcpServer {
     /// The folder this server runs in, which decides what it may read. See
     /// [`ReadingScope`].
     reading_folder: Option<std::path::PathBuf>,
+    /// The connected client's roots, set once it has initialised. Shared across
+    /// clones of this handler.
+    client_roots: std::sync::Arc<std::sync::Mutex<Option<RootsSource>>>,
+    roots_timeout: std::time::Duration,
     /// The slug and `created_at` of each context this server created, which
     /// it may attach. `created_at` tells it from a later context on that slug.
     created_contexts: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
@@ -1226,28 +1263,71 @@ pub struct AutomaticMcpServer {
 /// registry is read on every call, so a project registered, renamed or
 /// removed since startup is seen.
 impl AutomaticMcpServer {
-    /// What this server's folder may read. The registry is read on every
-    /// call, like [`Self::project_target`].
-    fn reading_scope(&self) -> Result<ReadingScope, String> {
+    /// What this server may read. The registry and the client's roots are read
+    /// on every call, so nothing goes stale and `list_changed` needs no handling.
+    async fn reading_scope(&self) -> Result<ReadingScope, String> {
         let index = crate::core::ProjectKeyIndex::load()
             .map_err(|e| format!("Failed to read the project registry: {}", e))?;
-        let checkout =
-            crate::core::reading_checkout_of(self.reading_folder.as_deref(), index.summaries());
+        let checkout = self.reading_checkout(index.summaries()).await;
         reading_scope_of(checkout, self.reading_folder.clone(), &index)
+    }
+
+    /// The working directory's checkout, or else the one the client's roots
+    /// name. A failed or late `roots/list` means there is none. Other tools'
+    /// `current_project` does not come through here.
+    async fn reading_checkout(
+        &self,
+        summaries: &[crate::core::ProjectSummary],
+    ) -> Option<crate::core::ProjectSummary> {
+        let folder = self.reading_folder.as_deref();
+        if let Some(found) = crate::core::reading_checkout_of(folder, summaries) {
+            return Some(found);
+        }
+        match self.client_root_paths().await {
+            Ok(roots) => crate::core::reading_checkout_with_roots(folder, &roots, summaries),
+            Err(e) => {
+                eprintln!("[automatic] mcp-serve: could not read the client's roots: {}", e);
+                None
+            }
+        }
+    }
+
+    /// The client's roots as canonical folders. Empty when no client is
+    /// connected or it declared no `roots` capability.
+    async fn client_root_paths(&self) -> Result<Vec<std::path::PathBuf>, String> {
+        let source = self.client_roots.lock().ok().and_then(|held| held.clone());
+        let Some(source) = source else {
+            return Ok(Vec::new());
+        };
+        let uris = tokio::time::timeout(self.roots_timeout, source())
+            .await
+            .map_err(|_| "the client did not answer roots/list".to_string())??;
+        Ok(uris.iter().filter_map(|uri| crate::core::file_root_path(uri)).collect())
+    }
+
+    /// The roots a registration must not take. While the working directory
+    /// resolves, cwd wins and no root can become a reading checkout.
+    async fn roots_to_protect(&self) -> Result<Vec<std::path::PathBuf>, String> {
+        let summaries = crate::core::get_project_summaries()
+            .map_err(|e| format!("Failed to read the project registry: {}", e))?;
+        if crate::core::reading_checkout_of(self.reading_folder.as_deref(), &summaries).is_some() {
+            return Ok(Vec::new());
+        }
+        self.client_root_paths().await
     }
 
     /// Refuse a group target this folder has not joined, before anything
     /// reveals whether the group exists.
-    fn check_group_target(&self, project: &Option<String>, group: &Option<String>) -> Result<(), String> {
+    async fn check_group_target(&self, project: &Option<String>, group: &Option<String>) -> Result<(), String> {
         match (project, group) {
-            (None, Some(group)) => self.reading_scope()?.check_group(group),
+            (None, Some(group)) => self.reading_scope().await?.check_group(group),
             _ => Ok(()),
         }
     }
 
     /// The context `slug`, when this server's folder may read it.
-    fn readable_context(&self, slug: &str) -> Result<crate::core::Context, String> {
-        self.reading_scope()?.check_context(slug)?;
+    async fn readable_context(&self, slug: &str) -> Result<crate::core::Context, String> {
+        self.reading_scope().await?.check_context(slug)?;
         crate::core::read_context(slug)
     }
 
@@ -1301,11 +1381,11 @@ impl AutomaticMcpServer {
     /// Resolve the `project` / `group` pair of a context attach or detach
     /// call, with a label for the result message. Neither given means the
     /// current project.
-    fn context_target(
+    async fn context_target(
         &self,
         params: &AttachContextParams,
     ) -> Result<(crate::core::ContextTarget, String), String> {
-        let scope = self.reading_scope()?;
+        let scope = self.reading_scope().await?;
         match (&params.project, &params.group) {
             (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
             (None, Some(group)) => {
@@ -1342,6 +1422,8 @@ impl AutomaticMcpServer {
             tool_router: Self::tool_router(),
             current_project,
             reading_folder: None,
+            client_roots: Default::default(),
+            roots_timeout: ROOTS_TIMEOUT,
             created_contexts: Default::default(),
         }
     }
@@ -1478,7 +1560,7 @@ impl AutomaticMcpServer {
                        as `project`."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
-        match self.reading_scope() {
+        match self.reading_scope().await {
             Ok(scope) => {
                 let readable: Vec<_> =
                     scope.checkout.iter().chain(&scope.peers).cloned().collect();
@@ -1510,7 +1592,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadProjectParams>,
     ) -> Result<CallToolResult, McpError> {
-        let scope = match self.reading_scope() {
+        let scope = match self.reading_scope().await {
             Ok(scope) => scope,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -1543,7 +1625,10 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<RegisterProjectParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = check_registrable(self.reading_folder.as_deref(), &params.0.directory) {
+        let protected = self.roots_to_protect().await.and_then(|roots| {
+            check_registrable(self.reading_folder.as_deref(), &roots, &params.0.directory)
+        });
+        if let Err(e) = protected {
             return Ok(tool_error(e));
         }
         match register_project_impl(&params.0) {
@@ -1565,7 +1650,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetRelatedProjectsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let scope = match self.reading_scope() {
+        let scope = match self.reading_scope().await {
             Ok(scope) => scope,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2404,7 +2489,7 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
 
-        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group) {
+        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group).await {
             return Ok(tool_error(e));
         }
         match profile_group_target(&params.0.project, &params.0.group) {
@@ -2415,6 +2500,7 @@ impl AutomaticMcpServer {
 
         let checkout = match self
             .reading_scope()
+            .await
             .and_then(|scope| scope.own_project(params.0.project.as_deref()).cloned())
         {
             Ok(checkout) => checkout,
@@ -2490,7 +2576,7 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
 
-        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group) {
+        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group).await {
             return Ok(tool_error(e));
         }
         match profile_group_target(&params.0.project, &params.0.group) {
@@ -2501,6 +2587,7 @@ impl AutomaticMcpServer {
 
         let checkout = match self
             .reading_scope()
+            .await
             .and_then(|scope| scope.own_project(params.0.project.as_deref()).cloned())
         {
             Ok(checkout) => checkout,
@@ -2578,7 +2665,7 @@ impl AutomaticMcpServer {
                     .to_string(),
             ));
         }
-        let scope = match self.reading_scope() {
+        let scope = match self.reading_scope().await {
             Ok(scope) => scope,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2627,7 +2714,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let context = match self.readable_context(&params.0.context) {
+        let context = match self.readable_context(&params.0.context).await {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2661,7 +2748,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListContextEntriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let context = match self.readable_context(&params.0.context) {
+        let context = match self.readable_context(&params.0.context).await {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2688,7 +2775,7 @@ impl AutomaticMcpServer {
         params: Parameters<ReadContextEntryParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
-        let context = match self.readable_context(&p.context) {
+        let context = match self.readable_context(&p.context).await {
             Ok(c) => c,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2716,7 +2803,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (target, label) = match self.context_target(&params.0) {
+        let (target, label) = match self.context_target(&params.0).await {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2724,6 +2811,7 @@ impl AutomaticMcpServer {
         let created = self.live_created_contexts();
         if let Err(e) = self
             .reading_scope()
+            .await
             .and_then(|scope| scope.check_attach(slug, &created))
         {
             return Ok(tool_error(e));
@@ -2764,7 +2852,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (target, label) = match self.context_target(&params.0) {
+        let (target, label) = match self.context_target(&params.0).await {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2907,6 +2995,7 @@ impl AutomaticMcpServer {
         let created = self.live_created_contexts();
         let canonical = match self
             .reading_scope()
+            .await
             .and_then(|scope| scope.check_linkable(&p.context, &p.path, &created))
         {
             Ok(canonical) => canonical,
@@ -3578,6 +3667,12 @@ impl AutomaticMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AutomaticMcpServer {
+    async fn on_initialized(&self, context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
+        if let Ok(mut held) = self.client_roots.lock() {
+            *held = Some(peer_roots(context.peer));
+        }
+    }
+
     fn get_info(&self) -> ServerConfig {
         let server_info = Implementation::new("automatic", env!("CARGO_PKG_VERSION"))
             .with_title("Automatic")
@@ -3597,7 +3692,8 @@ impl ServerHandler for AutomaticMcpServer {
                  on that project. Pass it only to act on a different project; it accepts a \
                  local_key, an id or a name from automatic_list_projects. Contexts and project \
                  details are readable only for the registered project containing the folder \
-                 this server runs in, and the groups that project joined.",
+                 this server runs in, or else the single project the client's roots name, \
+                 and the groups that project joined.",
             )
             .with_server_info(server_info)
     }
@@ -4469,7 +4565,7 @@ mod tests {
             }
 
             let created = server.live_created_contexts();
-            let scope = server.reading_scope().unwrap();
+            let scope = tauri::async_runtime::block_on(server.reading_scope()).unwrap();
             let padded = format!("  {}  ", folders.site.display());
             assert_eq!(
                 scope.check_linkable("notes", &padded, &created).as_deref(),
@@ -4526,6 +4622,239 @@ mod tests {
         });
     }
 
+    fn file_uri(folder: &std::path::Path) -> String {
+        url::Url::from_directory_path(folder).expect("uri").to_string()
+    }
+
+    /// A server in a folder no project owns, whose client answers with `answer`.
+    fn server_with_roots(
+        folders: &Folders,
+        answer: Result<Vec<String>, String>,
+    ) -> AutomaticMcpServer {
+        let server = server_in(&folders.outside, None);
+        let source: RootsSource = std::sync::Arc::new(move || {
+            let answer = answer.clone();
+            Box::pin(async move { answer })
+        });
+        *server.client_roots.lock().unwrap() = Some(source);
+        server
+    }
+
+    #[test]
+    fn a_root_grants_reads_for_its_checkout() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let server = server_with_roots(&folders, Ok(vec![file_uri(&folders.site)]));
+            assert_eq!(slugs_listed(&server).unwrap(), vec!["private"]);
+            assert_ne!(entry_of(&server, "private").is_error, Some(true));
+            assert_eq!(listed_keys(&server), vec![SITE_KEY, API_KEY]);
+        });
+    }
+
+    #[test]
+    fn the_working_directory_wins_and_never_asks_for_roots() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let server = server_in(&folders.api, None);
+            let source: RootsSource = std::sync::Arc::new(|| panic!("roots must not be read"));
+            *server.client_roots.lock().unwrap() = Some(source);
+            assert_eq!(listed_keys(&server), vec![API_KEY]);
+        });
+    }
+
+    #[test]
+    fn roots_that_fail_or_name_two_checkouts_grant_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let answers = [
+                Err("roots failed".to_string()),
+                Ok(Vec::new()),
+                Ok(vec![file_uri(&folders.site), file_uri(&folders.api)]),
+                Ok(vec!["::not a uri::".to_string(), "https://example.com/".to_string()]),
+            ];
+            for answer in answers {
+                let server = server_with_roots(&folders, answer);
+                assert_eq!(
+                    slugs_listed(&server).unwrap_err(),
+                    no_reading_checkout(Some(&folders.outside))
+                );
+                assert!(listed_keys(&server).is_empty());
+            }
+
+            // A malformed entry does not spoil a good one.
+            let mixed = vec!["::not a uri::".to_string(), file_uri(&folders.site)];
+            let server = server_with_roots(&folders, Ok(mixed));
+            assert_eq!(listed_keys(&server), vec![SITE_KEY, API_KEY]);
+        });
+    }
+
+    #[test]
+    fn a_client_that_never_answers_grants_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let mut server = server_in(&folders.outside, None);
+            server.roots_timeout = std::time::Duration::from_millis(20);
+            let source: RootsSource = std::sync::Arc::new(|| Box::pin(std::future::pending()));
+            *server.client_roots.lock().unwrap() = Some(source);
+            assert!(listed_keys(&server).is_empty());
+        });
+    }
+
+    #[test]
+    fn the_roots_fallback_leaves_the_current_project_alone() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let server = server_with_roots(&folders, Ok(vec![file_uri(&folders.site)]));
+            assert_eq!(server.current_project, crate::core::CurrentProject::None);
+            assert!(server.project_target(None).is_err());
+            assert_eq!(listed_keys(&server), vec![SITE_KEY]);
+        });
+    }
+
+    #[test]
+    fn a_root_folder_cannot_be_registered_to_make_it_readable() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let register = |server: &AutomaticMcpServer, directory: &std::path::Path| {
+                call(server.register_project(Parameters(RegisterProjectParams {
+                    name: "new".into(),
+                    directory: directory.display().to_string(),
+                    description: None,
+                    agents: None,
+                })))
+            };
+
+            let server = server_with_roots(&folders, Ok(vec![file_uri(&repo)]));
+            let refused = register(&server, &repo);
+            assert_eq!(refused.is_error, Some(true), "{}", result_text(&refused));
+
+            let failing = server_with_roots(&folders, Err("roots failed".to_string()));
+            let other = folders.outside.join("other");
+            std::fs::create_dir_all(&other).expect("mkdir");
+            assert_eq!(register(&failing, &other).is_error, Some(true), "fails closed");
+            assert!(crate::core::read_project("new").is_err());
+        });
+    }
+
+    /// One tool call through rmcp itself, against a hand-written client. Only
+    /// this shows the handler can reach the peer while a call is in flight.
+    /// Returns the call's text and whether the client was asked for roots.
+    fn call_over_transport(
+        server: AutomaticMcpServer,
+        capabilities: serde_json::Value,
+        roots_reply: Option<serde_json::Value>,
+    ) -> (String, bool) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        // One thread: the test home does not cross threads.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async move {
+            let (client, transport) = tokio::io::duplex(64 * 1024);
+            let running = tokio::spawn(async move {
+                let service = server.serve(transport).await.expect("serve");
+                let _ = service.waiting().await;
+            });
+            let (reader, mut writer) = tokio::io::split(client);
+            let mut lines = tokio::io::BufReader::new(reader).lines();
+            let init = serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": capabilities,
+                    "clientInfo": {"name": "test", "version": "1"},
+                },
+            });
+            writer.write_all(format!("{init}\n").as_bytes()).await.unwrap();
+            lines.next_line().await.unwrap().expect("initialize reply");
+            let ready = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            let tool = serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "automatic_list_projects", "arguments": {}},
+            });
+            writer.write_all(format!("{ready}\n{tool}\n").as_bytes()).await.unwrap();
+
+            let mut asked = false;
+            let text = loop {
+                let line = tokio::time::timeout(std::time::Duration::from_secs(10), lines.next_line())
+                    .await
+                    .expect("a reply in time")
+                    .unwrap()
+                    .expect("a line");
+                let message: serde_json::Value = serde_json::from_str(&line).expect("json");
+                if message["method"] == "roots/list" {
+                    asked = true;
+                    let mut reply = roots_reply.clone().expect("roots were not expected");
+                    reply["id"] = message["id"].clone();
+                    writer.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    continue;
+                }
+                if message["id"] == 2 {
+                    break message["result"].to_string();
+                }
+            };
+            running.abort();
+            (text, asked)
+        })
+    }
+
+    #[test]
+    fn a_client_with_roots_is_asked_through_the_transport() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let reply = serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {"roots": [{"uri": file_uri(&folders.site)}]},
+            });
+            let server = server_in(&folders.outside, None);
+            let (text, asked) =
+                call_over_transport(server, serde_json::json!({"roots": {}}), Some(reply));
+            assert!(asked);
+            assert!(text.contains(SITE_KEY), "{text}");
+        });
+    }
+
+    #[test]
+    fn a_client_without_the_capability_is_not_asked() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let server = server_in(&folders.outside, None);
+            let (text, asked) = call_over_transport(server, serde_json::json!({}), None);
+            assert!(!asked);
+            assert!(!text.contains(SITE_KEY), "{text}");
+        });
+    }
+
+    #[test]
+    fn a_roots_error_from_the_client_grants_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let reply = serde_json::json!({
+                "jsonrpc": "2.0",
+                "error": {"code": -32603, "message": "no roots"},
+            });
+            let server = server_in(&folders.outside, None);
+            let (text, asked) =
+                call_over_transport(server, serde_json::json!({"roots": {}}), Some(reply));
+            assert!(asked);
+            assert!(!text.contains(SITE_KEY), "{text}");
+        });
+    }
+
     #[test]
     fn a_server_cannot_register_the_folder_it_runs_in() {
         let folder = tempfile::tempdir().expect("tempdir");
@@ -4536,12 +4865,12 @@ mod tests {
         std::fs::create_dir_all(&elsewhere).expect("mkdir");
         let cwd = Some(inner.as_path());
 
-        assert!(check_registrable(cwd, inner.to_str().unwrap()).is_err());
-        assert!(check_registrable(cwd, root.to_str().unwrap()).is_err(), "a parent holds it too");
-        assert!(check_registrable(cwd, &format!("  {}/ ", inner.display())).is_err());
-        assert!(check_registrable(cwd, elsewhere.to_str().unwrap()).is_ok());
-        assert!(check_registrable(cwd, inner.join("src").to_str().unwrap()).is_ok());
-        assert!(check_registrable(None, elsewhere.to_str().unwrap()).is_err());
+        assert!(check_registrable(cwd, &[], inner.to_str().unwrap()).is_err());
+        assert!(check_registrable(cwd, &[], root.to_str().unwrap()).is_err(), "a parent holds it too");
+        assert!(check_registrable(cwd, &[], &format!("  {}/ ", inner.display())).is_err());
+        assert!(check_registrable(cwd, &[], elsewhere.to_str().unwrap()).is_ok());
+        assert!(check_registrable(cwd, &[], inner.join("src").to_str().unwrap()).is_ok());
+        assert!(check_registrable(None, &[], elsewhere.to_str().unwrap()).is_err());
 
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
