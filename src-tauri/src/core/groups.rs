@@ -269,7 +269,8 @@ fn scan_group_names(groups_dir: &PathBuf) -> Result<(Vec<String>, Vec<String>), 
 /// Put back what `stored` records as group-provided, for a save that cannot
 /// reconcile because group membership is unknown. The reconcile is what stops
 /// a stale editor copy dropping a group's entries, so without it the stored
-/// records decide. Entries the copy added are left alone.
+/// records decide. Entries the copy added are left alone. This only keeps
+/// what `stored` already holds: it confirms nothing.
 pub(crate) fn keep_group_provided_entries(incoming: &mut Project, stored: &Project) {
     incoming.group_profile_contributions = stored.group_profile_contributions.clone();
     incoming.group_context_contributions = stored.group_context_contributions.clone();
@@ -277,6 +278,7 @@ pub(crate) fn keep_group_provided_entries(incoming: &mut Project, stored: &Proje
         if !incoming.profiles.contains(profile) {
             incoming.profiles.push(profile.clone());
         }
+        restore_profile_items(incoming, stored, profile);
     }
     for context in stored.group_context_contributions.values().flatten() {
         if !incoming.contexts.contains(context) {

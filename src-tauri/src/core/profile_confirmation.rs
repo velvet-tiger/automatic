@@ -213,20 +213,11 @@ pub(crate) fn unconfirmed_profiles(project: &Project) -> Vec<String> {
     if names.is_empty() {
         return names;
     }
-    match joined_groups(project) {
-        Ok(groups) => {
-            names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
-        }
-        // A damaged group file must not turn the profiles a joined group
-        // provides into pending ones, so the stored record stands in for it.
-        Err(_) => names.retain(|name| {
-            !project.local_confirmed_groups.iter().any(|group| {
-                project
-                    .group_profile_contributions
-                    .get(group)
-                    .is_some_and(|recorded| recorded.contains(name))
-            })
-        }),
+    // With a group file unreadable, every name stays pending. The stored group
+    // records cannot vouch for one: a repository can forge them, and pending
+    // only holds a name back, it releases nothing.
+    if let Ok(groups) = joined_groups(project) {
+        names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
     }
     names
 }
@@ -679,6 +670,32 @@ mod tests {
                 profiles: vec!["baseline".into()],
                 group_profile_contributions: BTreeMap::from([(
                     "forged".to_string(),
+                    vec!["baseline".to_string()],
+                )]),
+                ..Default::default()
+            };
+
+            let report = reconcile_project_profiles(&mut project);
+
+            assert_eq!(report.pending_profiles, vec!["baseline"]);
+            assert!(project.skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_forged_record_under_a_joined_group_stays_pending_while_a_group_is_unreadable() {
+        with_home(|_| {
+            save_profile("baseline", &["react"]);
+            let groups_dir = get_groups_dir().expect("groups dir");
+            fs::create_dir_all(&groups_dir).expect("groups dir");
+            fs::write(groups_dir.join("team.json"), "{ not json").expect("damage group");
+            let mut project = Project {
+                name: "demo".into(),
+                local_key: "11111111-1111-4111-8111-111111111111".into(),
+                profiles: vec!["baseline".into()],
+                local_confirmed_groups: vec!["team".into()],
+                group_profile_contributions: BTreeMap::from([(
+                    "team".to_string(),
                     vec!["baseline".to_string()],
                 )]),
                 ..Default::default()
