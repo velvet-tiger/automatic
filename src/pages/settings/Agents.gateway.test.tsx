@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { invokeMock, mockInvoke, resetInvokeMock, type InvokeArgs } from "../../test/tauriMock";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SettingsAgents from "./Agents";
+import { leftInPlaceNotice } from "./CustomGatewaySection";
 
 const OFF = { configured: false, base_url: null, credential_kind: null };
 const ON = { configured: true, base_url: "https://gateway.example.com", credential_kind: "bearer" };
@@ -35,6 +36,8 @@ describe("Agents settings custom gateway", () => {
     expect(screen.getByText(/instead of your claude\.ai login/)).toBeInTheDocument();
     expect(screen.getByText(/Remote Control and voice dictation/)).toBeInTheDocument();
     expect(screen.getByText(/Claude desktop app has its own gateway settings/)).toBeInTheDocument();
+    expect(screen.getByText(/asks you once to approve the key/)).toBeInTheDocument();
+    expect(screen.getByText(/VS Code extension's login check/)).toBeInTheDocument();
   });
 
   it("saves through its own command and reloads the status", async () => {
@@ -129,7 +132,35 @@ describe("Agents settings custom gateway", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Clear" }));
 
-    expect(await screen.findByText(/ANTHROPIC_AUTH_TOKEN changed outside Automatic/)).toBeInTheDocument();
+    expect(await screen.findByText(/ANTHROPIC_AUTH_TOKEN is still set/)).toBeInTheDocument();
+  });
+
+  it("uses a grammatical notice for two values", () => {
+    expect(leftInPlaceNotice(["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"])).toMatch(
+      /^ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN are still set/,
+    );
+  });
+
+  it("needs a new token when the address changes", async () => {
+    mockInvoke({
+      has_api_key: false,
+      read_settings: {},
+      get_custom_gateway_status: ON,
+      list_agent_models: [],
+    });
+    render(<SettingsAgents />);
+    await openForm();
+    const url = await screen.findByLabelText("Gateway URL");
+    await waitFor(() => expect(url).toHaveValue("https://gateway.example.com"));
+
+    fireEvent.change(url, { target: { value: "https://other.example.com" } });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByPlaceholderText("Enter the token for this address")).toBeInTheDocument();
+
+    fireEvent.change(url, { target: { value: "https://gateway.example.com/team" } });
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
   it("offers Claude as the active agent with no Anthropic key", async () => {

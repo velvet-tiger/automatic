@@ -567,15 +567,17 @@ fn save_project_with(
 /// Background helper: run AI recommendations for a project, respecting the
 /// once-per-day throttle unless `force` is true (used for new projects).
 async fn run_ai_recommendations_bg(project: &str, force: bool) -> Result<(), String> {
-    // Verify a key exists before attempting the (potentially slow) AI call.
-    crate::core::ai::ensure_agent_credential()?;
-
     // Honour the throttle for existing projects; always run for new ones.
     // The throttle timestamp is stored under the checkout's `local_key`.
+    // This comes first because a project save reaches here every time, and a
+    // throttled save must not touch the credential check.
     let store_key = crate::core::project_store_local_key(project)?;
     if !force && crate::recommendations::ai_recommendations_throttled(&store_key)? {
         return Ok(());
     }
+
+    // Verify a credential exists before attempting the (potentially slow) AI call.
+    crate::core::ai::ensure_agent_credential(crate::core::store_reads::StoreRead::Background)?;
 
     // Delegate to the full command implementation (re-uses all the same logic).
     super::recommendations::ai_generate_project_recommendations(project, Some(force)).await?;

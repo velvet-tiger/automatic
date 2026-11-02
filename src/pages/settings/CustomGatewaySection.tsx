@@ -23,6 +23,25 @@ interface CustomGatewaySectionProps {
   onChanged: () => Promise<void> | void;
 }
 
+/**
+ * Whether two URLs share a scheme, host and port. The backend only keeps a
+ * saved token for the same address, and it makes the final decision.
+ */
+function sameAddress(first: string, second: string): boolean {
+  try {
+    return new URL(first.trim()).origin === new URL(second.trim()).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** A sentence naming the gateway variables that stayed in Claude Code's file. */
+export function leftInPlaceNotice(names: string[]): string {
+  const list = names.join(", ");
+  const subject = names.length === 1 ? `${list} is` : `${list} are`;
+  return `${subject} still set in ~/.claude/settings.json. Automatic left it in place. Remove it from that file if you no longer want it.`;
+}
+
 const inputClass =
   "w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors";
 
@@ -45,7 +64,13 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
     setKind(status.credential_kind ?? "bearer");
   }, [status.base_url, status.credential_kind]);
 
-  const canSave = !busy && baseUrl.trim() !== "" && (status.configured || token.trim() !== "");
+  const tokenKept = status.base_url !== null && sameAddress(baseUrl, status.base_url);
+  const canSave = !busy && baseUrl.trim() !== "" && (tokenKept || token.trim() !== "");
+  const tokenPlaceholder = tokenKept
+    ? "Leave blank to keep the current token"
+    : status.configured
+      ? "Enter the token for this address"
+      : "Token";
 
   const closeForm = () => {
     setExpanded(false);
@@ -88,9 +113,7 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
       setExpanded(false);
       const leftInPlace = cleared?.left_in_claude_code ?? [];
       if (leftInPlace.length > 0) {
-        setNotice(
-          `Gateway cleared. ${leftInPlace.join(" and ")} changed outside Automatic, so it was left in ~/.claude/settings.json.`,
-        );
+        setNotice(`Gateway cleared. ${leftInPlaceNotice(leftInPlace)}`);
       }
       await onChanged();
     } catch (e) {
@@ -156,7 +179,7 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
               aria-label="Gateway token"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder={status.configured ? "Leave blank to keep the current token" : "Token"}
+              placeholder={tokenPlaceholder}
               className={`${inputClass} font-mono pr-9`}
             />
             <button
@@ -177,6 +200,11 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
             <li>Claude Code will use this gateway instead of your claude.ai login.</li>
             <li>Remote Control and voice dictation stop working until you clear the gateway.</li>
             <li>The Claude desktop app has its own gateway settings and does not use this one.</li>
+            <li>
+              With the API key type, interactive Claude Code asks you once to approve the key. If
+              you decline, it ignores the key from then on.
+            </li>
+            <li>The VS Code extension's login check does not read ~/.claude/settings.json.</li>
             {overridesCloudflare && (
               <li>While this gateway is on, Automatic does not use your Cloudflare AI Gateway.</li>
             )}

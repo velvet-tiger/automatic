@@ -560,7 +560,7 @@ pub async fn ai_generate_project_recommendations(
     }
 
     // Verify an AI key is available before doing any work.
-    crate::core::ai::ensure_agent_credential()?;
+    crate::core::ai::ensure_agent_credential(crate::core::store_reads::StoreRead::Now)?;
 
     // ── Build project state snapshot ─────────────────────────────────────────
 
@@ -1058,7 +1058,7 @@ pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, Str
     // Recommendations are stored under the checkout's `local_key`; the
     // project must exist, as before.
     let project = &crate::core::project_store_local_key(&crate::core::canonical_project_ident(project)?)?;
-    crate::core::ai::ensure_agent_credential()?;
+    crate::core::ai::ensure_agent_credential(crate::core::store_reads::StoreRead::Now)?;
 
     let raw = crate::core::read_project(project)?;
     let proj: crate::core::Project =
@@ -1179,7 +1179,7 @@ pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>
     // Recommendations are stored under the checkout's `local_key`; the
     // project must exist, as before.
     let project = &crate::core::project_store_local_key(&crate::core::canonical_project_ident(project)?)?;
-    crate::core::ai::ensure_agent_credential()?;
+    crate::core::ai::ensure_agent_credential(crate::core::store_reads::StoreRead::Now)?;
 
     let raw = crate::core::read_project(project)?;
     let proj: crate::core::Project =

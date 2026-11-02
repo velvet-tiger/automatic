@@ -47,10 +47,14 @@ pub struct ClaudeCodeRecord {
     credential_kind: GatewayCredentialKind,
     token_salt: String,
     token_fingerprint: String,
+    /// Variables that already held the wanted value before Automatic wrote.
+    /// The user set those, so a clear leaves them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    adopted: Vec<String>,
 }
 
 impl ClaudeCodeRecord {
-    fn for_env(env: &GatewayEnv) -> Self {
+    fn for_env(env: &GatewayEnv, adopted: Vec<String>) -> Self {
         let token_salt = hex::encode(rand::random::<[u8; 16]>());
         let token_fingerprint = fingerprint(&token_salt, env.token);
         Self {
@@ -58,18 +62,24 @@ impl ClaudeCodeRecord {
             credential_kind: env.kind,
             token_salt,
             token_fingerprint,
+            adopted,
         }
     }
 
-    fn wrote_base_url(&self, value: &Value) -> bool {
-        value.as_str() == Some(self.base_url.as_str())
+    /// Whether `value` in `variable` is the one this record describes.
+    fn matches(&self, variable: &str, value: &Value) -> bool {
+        let Some(value) = value.as_str() else {
+            return false;
+        };
+        if variable == BASE_URL_VAR {
+            return value == self.base_url;
+        }
+        variable == token_var(self.credential_kind)
+            && fingerprint(&self.token_salt, value) == self.token_fingerprint
     }
 
-    fn wrote_token(&self, variable: &str, value: &Value) -> bool {
-        variable == token_var(self.credential_kind)
-            && value
-                .as_str()
-                .is_some_and(|v| fingerprint(&self.token_salt, v) == self.token_fingerprint)
+    fn adopted(&self, variable: &str) -> bool {
+        self.adopted.iter().any(|name| name == variable)
     }
 }
 
@@ -137,13 +147,7 @@ fn check_conflicts(
             None
         };
         let same_as_wanted = wanted.is_some() && value.as_str() == wanted;
-        let automatic_wrote = record.is_some_and(|record| {
-            if variable == BASE_URL_VAR {
-                record.wrote_base_url(value)
-            } else {
-                record.wrote_token(variable, value)
-            }
-        });
+        let automatic_wrote = record.is_some_and(|record| record.matches(variable, value));
         if !same_as_wanted && !automatic_wrote {
             // The value is left out on purpose. It may be a token, and a URL
             // can hold a password.
@@ -177,32 +181,60 @@ fn merged(mut root: Map<String, Value>, desired: &GatewayEnv) -> Map<String, Val
     root
 }
 
-/// `root` without the values `record` says Automatic wrote, and the names of
-/// the variables left in place because they now hold something else.
+/// The variables that already hold what is wanted, and that Automatic did not
+/// put there.
+fn adopted_variables(
+    env: Option<&Map<String, Value>>,
+    desired: &GatewayEnv,
+    record: Option<&ClaudeCodeRecord>,
+) -> Vec<String> {
+    let Some(env) = env else {
+        return Vec::new();
+    };
+    [
+        (BASE_URL_VAR, desired.base_url),
+        (token_var(desired.kind), desired.token),
+    ]
+    .into_iter()
+    .filter(|(variable, wanted)| {
+        let Some(value) = env.get(*variable).filter(|v| v.as_str() == Some(*wanted)) else {
+            return false;
+        };
+        let automatic_wrote = record
+            .is_some_and(|r| r.matches(variable, value) && !r.adopted(variable));
+        !automatic_wrote
+    })
+    .map(|(variable, _)| variable.to_string())
+    .collect()
+}
+
+/// `root` without the values Automatic wrote, and the names of the gateway
+/// variables that remain. An `env` this empties is removed too.
 fn cleared(
     mut root: Map<String, Value>,
     record: &ClaudeCodeRecord,
 ) -> (Map<String, Value>, Vec<String>) {
-    let mut left_alone = Vec::new();
+    let mut remaining = Vec::new();
+    let mut emptied = false;
     if let Some(Value::Object(env)) = root.get_mut("env") {
-        let token_variable = token_var(record.credential_kind);
-        for variable in [BASE_URL_VAR, token_variable] {
+        let mut removed = false;
+        for variable in [BASE_URL_VAR, AUTH_TOKEN_VAR, API_KEY_VAR] {
             let Some(value) = env.get(variable) else {
                 continue;
             };
-            let automatic_wrote = if variable == BASE_URL_VAR {
-                record.wrote_base_url(value)
-            } else {
-                record.wrote_token(variable, value)
-            };
-            if automatic_wrote {
+            if record.matches(variable, value) && !record.adopted(variable) {
                 env.remove(variable);
+                removed = true;
             } else {
-                left_alone.push(variable.to_string());
+                remaining.push(variable.to_string());
             }
         }
+        emptied = removed && env.is_empty();
     }
-    (root, left_alone)
+    if emptied {
+        root.remove("env");
+    }
+    (root, remaining)
 }
 
 // ── File access ───────────────────────────────────────────────────────────────
@@ -212,9 +244,10 @@ pub(super) fn settings_path() -> Result<PathBuf, String> {
     Ok(super::paths::home_dir()?.join(".claude").join("settings.json"))
 }
 
-/// The file to read and replace. A symlink resolves to its target, so that a
-/// settings file kept in a dotfiles repository stays linked.
-fn resolved(path: &Path) -> Result<PathBuf, String> {
+/// The file a path really is. A symlink resolves to its target, so that a
+/// link stays a link when the file is replaced. A link that leads nowhere is
+/// refused.
+fn followed(path: &Path) -> Result<PathBuf, String> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => path.canonicalize().map_err(|e| {
             format!(
@@ -227,11 +260,56 @@ fn resolved(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// The root object of the file, or `None` when there is no file yet.
-fn read_root(target: &Path) -> Result<Option<Map<String, Value>>, String> {
+/// The file to write a token to. It must really be inside the settings folder.
+/// A link out of it usually points into a dotfiles repository, where the token
+/// could be committed.
+fn token_target(path: &Path) -> Result<PathBuf, String> {
+    let target = followed(path)?;
+    let folder = path.parent().ok_or("The settings path has no parent folder")?;
+    let Some(home) = folder.parent().and_then(|home| home.canonicalize().ok()) else {
+        return Ok(target);
+    };
+    let allowed = match folder.file_name() {
+        Some(name) => home.join(name),
+        None => return Ok(target),
+    };
+    let real_folder = match target.parent().map(Path::canonicalize) {
+        Some(Ok(real_folder)) => real_folder,
+        // The folder does not exist yet, so it cannot be a link.
+        _ => return Ok(target),
+    };
+    if !real_folder.starts_with(&allowed) {
+        return Err(format!(
+            "{} leads to {}, which is outside {}. Automatic will not write a token there, \
+             because it could end up in a tracked dotfiles repository. Nothing was changed.",
+            path.display(),
+            target.display(),
+            allowed.display()
+        ));
+    }
+    Ok(target)
+}
+
+/// The file as it was read.
+struct LoadedFile {
+    /// The text, or `None` when there is no file yet.
+    text: Option<String>,
+    root: Map<String, Value>,
+}
+
+fn load(target: &Path) -> Result<LoadedFile, String> {
     match fs::read_to_string(target) {
-        Ok(raw) => parse_root(&raw, target).map(Some),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Ok(text) => {
+            let root = parse_root(&text, target)?;
+            Ok(LoadedFile {
+                text: Some(text),
+                root,
+            })
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LoadedFile {
+            text: None,
+            root: Map::new(),
+        }),
         Err(e) => Err(format!(
             "Could not read {}: {}. Nothing was changed.",
             target.display(),
@@ -240,12 +318,74 @@ fn read_root(target: &Path) -> Result<Option<Map<String, Value>>, String> {
     }
 }
 
+/// Whether the file's permissions change along with its content.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Permissions {
+    /// A token stays in the file, so group and other access is removed.
+    OwnerOnly,
+    /// Values were only removed, so the user's choice stands.
+    Keep,
+}
+
+/// The mode for a file that holds a token.
+#[cfg(unix)]
+fn owner_only(mode: u32) -> u32 {
+    mode & !0o077
+}
+
+/// Give the temporary file the permissions the target should end up with.
+fn copy_permissions(
+    temp: &Path,
+    existing: fs::Permissions,
+    permissions: Permissions,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if permissions == Permissions::OwnerOnly {
+        use std::os::unix::fs::PermissionsExt;
+        return fs::set_permissions(
+            temp,
+            fs::Permissions::from_mode(owner_only(existing.mode())),
+        );
+    }
+    #[cfg(not(unix))]
+    let _ = permissions;
+    fs::set_permissions(temp, existing)
+}
+
+/// Rename the finished temporary file over the target, unless the target has
+/// changed since it was read. Claude Code edits this file too, and this
+/// narrows the window in which its edit could be lost.
+fn replace_unless_changed(
+    temp: tempfile::NamedTempFile,
+    target: &Path,
+    seen: Option<&str>,
+) -> Result<(), String> {
+    let current = match fs::read_to_string(target) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("Could not read {}: {}", target.display(), e)),
+    };
+    if current.as_deref() != seen {
+        return Err(format!(
+            "{} changed while Automatic was writing it. Nothing was changed. Try again.",
+            target.display()
+        ));
+    }
+    temp.persist(target)
+        .map(|_| ())
+        .map_err(|e| format!("Could not write {}: {}", target.display(), e.error))
+}
+
 /// Replace `target` in one step, so that Claude Code never reads half a file.
 ///
 /// The temporary file sits next to the target, because a rename only works
-/// within one filesystem. It starts with mode 0600. An existing target's
-/// permissions are copied onto it, and a new file keeps 0600.
-fn write_root(target: &Path, root: &Map<String, Value>) -> Result<(), String> {
+/// within one filesystem. It starts with mode 0600, which a new file keeps.
+fn write_root(
+    target: &Path,
+    root: &Map<String, Value>,
+    seen: Option<&str>,
+    permissions: Permissions,
+) -> Result<(), String> {
     let failed = |e: &dyn std::fmt::Display| format!("Could not write {}: {}", target.display(), e);
 
     let parent = target
@@ -261,13 +401,27 @@ fn write_root(target: &Path, root: &Map<String, Value>) -> Result<(), String> {
     temp.as_file().sync_all().map_err(|e| failed(&e))?;
     match fs::metadata(target) {
         Ok(existing) => {
-            fs::set_permissions(temp.path(), existing.permissions()).map_err(|e| failed(&e))?;
+            copy_permissions(temp.path(), existing.permissions(), permissions)
+                .map_err(|e| failed(&e))?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(failed(&e)),
     }
-    temp.persist(target).map_err(|e| failed(&e.error))?;
-    Ok(())
+    replace_unless_changed(temp, target, seen)
+}
+
+/// Load the file and refuse everything a save must not touch.
+fn load_for_save(
+    path: &Path,
+    desired: &GatewayEnv,
+    record: Option<&ClaudeCodeRecord>,
+) -> Result<(PathBuf, LoadedFile), String> {
+    let target = token_target(path)?;
+    let loaded = load(&target)?;
+    if let Some(env) = env_of(&loaded.root, &target)? {
+        check_conflicts(env, desired, record, &target)?;
+    }
+    Ok((target, loaded))
 }
 
 /// Check that a write would be accepted, without changing anything.
@@ -276,12 +430,7 @@ pub(super) fn check_file(
     desired: &GatewayEnv,
     record: Option<&ClaudeCodeRecord>,
 ) -> Result<(), String> {
-    let target = resolved(path)?;
-    let root = read_root(&target)?.unwrap_or_default();
-    match env_of(&root, &target)? {
-        Some(env) => check_conflicts(env, desired, record, &target),
-        None => Ok(()),
-    }
+    load_for_save(path, desired, record).map(|_| ())
 }
 
 /// Merge the gateway into the file and return the record of what was written.
@@ -293,27 +442,35 @@ pub(super) fn write_file(
     desired: &GatewayEnv,
     record: Option<&ClaudeCodeRecord>,
 ) -> Result<ClaudeCodeRecord, String> {
-    check_file(path, desired, record)?;
-    let target = resolved(path)?;
-    let root = read_root(&target)?.unwrap_or_default();
-    write_root(&target, &merged(root, desired))?;
-    Ok(ClaudeCodeRecord::for_env(desired))
+    let (target, loaded) = load_for_save(path, desired, record)?;
+    let adopted = adopted_variables(env_of(&loaded.root, &target)?, desired, record);
+    write_root(
+        &target,
+        &merged(loaded.root, desired),
+        loaded.text.as_deref(),
+        Permissions::OwnerOnly,
+    )?;
+    Ok(ClaudeCodeRecord::for_env(desired, adopted))
 }
 
-/// Remove what Automatic wrote from the file. Returns the names of the
-/// variables left in place because the user changed them.
+/// Remove what Automatic wrote from the file. Returns the names of the gateway
+/// variables that remain there.
+///
+/// A link out of the folder is followed here. Taking a token out of a file is
+/// always safe, and it may have been linked after the save.
 pub(super) fn clear_file(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
-    let target = resolved(path)?;
-    let Some(root) = read_root(&target)? else {
+    let target = followed(path)?;
+    let loaded = load(&target)?;
+    let Some(text) = loaded.text else {
         return Ok(Vec::new());
     };
-    env_of(&root, &target)?;
-    let original = root.clone();
-    let (root, left_alone) = cleared(root, record);
+    env_of(&loaded.root, &target)?;
+    let original = loaded.root.clone();
+    let (root, remaining) = cleared(loaded.root, record);
     if root != original {
-        write_root(&target, &root)?;
+        write_root(&target, &root, Some(&text), Permissions::Keep)?;
     }
-    Ok(left_alone)
+    Ok(remaining)
 }
 
 #[cfg(test)]
@@ -373,13 +530,28 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn an_existing_file_keeps_its_permissions() {
+    fn an_existing_file_loses_group_and_other_access_when_it_gets_a_token() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, "{}");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).expect("chmod");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
 
         write_file(&path, &desired(BEARER, "token"), None).expect("write");
+
+        let mode = fs::metadata(&path).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clear_leaves_the_mode_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).expect("chmod");
+
+        clear_file(&path, &record).expect("clear");
 
         let mode = fs::metadata(&path).expect("metadata").permissions().mode();
         assert_eq!(mode & 0o777, 0o640);
@@ -402,19 +574,71 @@ mod tests {
         assert_eq!(written["apple"], true);
     }
 
+    /// A home with a `.claude` folder, and the settings path inside it.
+    fn claude_folder(dir: &tempfile::TempDir) -> PathBuf {
+        let folder = dir.path().join(".claude");
+        fs::create_dir_all(&folder).expect("mkdir");
+        folder.join("settings.json")
+    }
+
     #[cfg(unix)]
     #[test]
-    fn a_symlinked_file_stays_a_link_and_the_target_changes() {
+    fn a_link_inside_the_folder_stays_a_link_and_the_target_changes() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let target = dir.path().join("dotfiles-settings.json");
+        let link = claude_folder(&dir);
+        let target = dir.path().join(".claude").join("real-settings.json");
         fs::write(&target, "{}").expect("write target");
-        let link = dir.path().join("settings.json");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
         write_file(&link, &desired(BEARER, "token"), None).expect("write");
 
         assert!(fs::symlink_metadata(&link).expect("meta").file_type().is_symlink());
         assert_eq!(json_in(&target)["env"]["ANTHROPIC_AUTH_TOKEN"], "token");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_out_of_the_folder_is_refused_by_the_check() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link = claude_folder(&dir);
+        let target = dir.path().join("dotfiles-settings.json");
+        fs::write(&target, "{}").expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let err = check_file(&link, &desired(BEARER, "token"), None).expect_err("refused");
+
+        assert!(err.contains("dotfiles"), "{err}");
+        assert!(write_file(&link, &desired(BEARER, "token"), None).is_err());
+        assert_eq!(fs::read_to_string(&target).expect("read"), "{}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_folder_outside_the_home_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let elsewhere = dir.path().join("dotfiles");
+        fs::create_dir_all(&elsewhere).expect("mkdir");
+        let home = dir.path().join("home");
+        fs::create_dir_all(&home).expect("mkdir");
+        std::os::unix::fs::symlink(&elsewhere, home.join(".claude")).expect("symlink");
+        let path = home.join(".claude").join("settings.json");
+
+        assert!(check_file(&path, &desired(BEARER, "token"), None).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clear_follows_a_link_out_of_the_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link = claude_folder(&dir);
+        let record = write_file(&link, &desired(BEARER, "token"), None).expect("write");
+        let target = dir.path().join("dotfiles-settings.json");
+        fs::rename(&link, &target).expect("move");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        clear_file(&link, &record).expect("clear");
+
+        assert_eq!(json_in(&target), json!({}));
     }
 
     #[cfg(unix)]
@@ -554,6 +778,102 @@ mod tests {
     }
 
     #[test]
+    fn clearing_removes_an_env_it_emptied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, r#"{"model":"opus"}"#);
+        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+
+        clear_file(&path, &record).expect("clear");
+
+        assert_eq!(json_in(&path), json!({ "model": "opus" }));
+    }
+
+    #[test]
+    fn clearing_keeps_an_env_that_was_already_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, r#"{"env":{}}"#);
+        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "token"), Vec::new());
+
+        clear_file(&path, &record).expect("clear");
+
+        assert_eq!(json_in(&path), json!({ "env": {} }));
+    }
+
+    #[test]
+    fn values_the_user_already_set_are_left_by_a_clear_and_reported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(
+            &dir,
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.com","ANTHROPIC_AUTH_TOKEN":"token"}}"#,
+        );
+        let first = write_file(&path, &desired(BEARER, "token"), None).expect("adopt");
+        // A second save with the same values must not lose the adoption.
+        let record = write_file(&path, &desired(BEARER, "token"), Some(&first)).expect("again");
+
+        let remaining = clear_file(&path, &record).expect("clear");
+
+        assert_eq!(remaining, [BASE_URL_VAR, AUTH_TOKEN_VAR]);
+        assert_eq!(json_in(&path)["env"][AUTH_TOKEN_VAR], "token");
+    }
+
+    #[test]
+    fn a_value_automatic_replaced_is_no_longer_adopted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"token"}}"#);
+        let first = write_file(&path, &desired(BEARER, "token"), None).expect("adopt");
+        let second = write_file(&path, &desired(BEARER, "rotated"), Some(&first)).expect("rotate");
+
+        let remaining = clear_file(&path, &second).expect("clear");
+
+        assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn a_save_of_automatics_own_values_adopts_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        let first = write_file(&path, &desired(BEARER, "token"), None).expect("first");
+        let second = write_file(&path, &desired(BEARER, "token"), Some(&first)).expect("second");
+
+        assert!(clear_file(&path, &second).expect("clear").is_empty());
+    }
+
+    #[test]
+    fn clearing_reports_the_other_token_variable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let text = fs::read_to_string(&path)
+            .expect("read")
+            .replace(AUTH_TOKEN_VAR, API_KEY_VAR);
+        fs::write(&path, text).expect("edit");
+
+        assert_eq!(clear_file(&path, &record).expect("clear"), [API_KEY_VAR]);
+    }
+
+    #[test]
+    fn a_file_changed_after_it_was_read_is_not_overwritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, "{}");
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).expect("temp");
+        fs::write(&path, r#"{"theirs":true}"#).expect("concurrent edit");
+
+        let err = replace_unless_changed(temp, &path, Some("{}")).expect_err("changed");
+
+        assert!(err.contains("changed while"), "{err}");
+        assert_eq!(fs::read_to_string(&path).expect("read"), r#"{"theirs":true}"#);
+    }
+
+    #[test]
+    fn a_file_created_after_the_read_is_not_overwritten() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, "{}");
+        let temp = tempfile::NamedTempFile::new_in(dir.path()).expect("temp");
+
+        assert!(replace_unless_changed(temp, &path, None).is_err());
+    }
+
+    #[test]
     fn clearing_leaves_a_changed_value_and_says_so() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
@@ -585,7 +905,7 @@ mod tests {
     fn clearing_with_no_file_does_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "token"));
+        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "token"), Vec::new());
 
         assert_eq!(clear_file(&path, &record), Ok(Vec::new()));
         assert!(!path.exists());
@@ -595,7 +915,7 @@ mod tests {
     fn clearing_a_malformed_file_is_refused() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, "{not json");
-        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "token"));
+        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "token"), Vec::new());
 
         assert!(clear_file(&path, &record).is_err());
         assert_eq!(fs::read_to_string(&path).expect("read"), "{not json");
@@ -603,7 +923,7 @@ mod tests {
 
     #[test]
     fn the_record_does_not_hold_the_token() {
-        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "plain-token"));
+        let record = ClaudeCodeRecord::for_env(&desired(BEARER, "plain-token"), Vec::new());
 
         let shown = serde_json::to_string(&record).expect("serialise");
 

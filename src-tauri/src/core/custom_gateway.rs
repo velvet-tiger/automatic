@@ -14,10 +14,10 @@ use super::agents::{CustomGatewayRoute, GatewayCredentialKind};
 use super::claude_code_env::{self, ClaudeCodeRecord, GatewayEnv};
 use super::credentials::{any_known_api_key_stored, set_agent_features_enabled};
 use super::secret_store;
-use super::settings::{read_settings, write_settings};
+use super::settings::{read_settings_strict, write_settings_with_gateway};
 use super::store_reads::StoreRead;
 
-/// The secret store account that holds the gateway token.
+/// The secret store account that holds the gateway token, bound to its URL.
 pub(crate) const TOKEN_ACCOUNT: &str = "anthropic-custom-gateway";
 
 /// The saved gateway. Holds no secret.
@@ -41,9 +41,27 @@ pub struct CustomGatewayStatus {
 /// The outcome of a clear.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ClearedCustomGateway {
-    /// Claude Code variables left in place because they were changed outside
-    /// Automatic.
+    /// Gateway variables still set in Claude Code's file after the clear.
     pub left_in_claude_code: Vec<String>,
+}
+
+/// How the gateway step of an erase went.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum GatewayErase {
+    Cleared(ClearedCustomGateway),
+    /// Claude Code's file may still hold the token, so nothing may be erased.
+    FileNotCleared(String),
+    /// Claude Code's file is done. The keychain kept the token.
+    TokenNotDeleted(String),
+}
+
+/// The token as it sits in the secret store. The URL travels with the token,
+/// so a save that stops half way cannot pair one gateway's token with another
+/// gateway's URL.
+#[derive(Serialize, Deserialize)]
+struct BoundToken {
+    base_url: String,
+    token: String,
 }
 
 /// Save and clear each touch three stores, so they run one at a time.
@@ -91,7 +109,23 @@ pub(crate) fn parse_gateway_url(input: &str) -> Result<String, String> {
     if url.query().is_some() || url.fragment().is_some() {
         return Err("The gateway URL cannot contain a query or fragment.".to_string());
     }
-    Ok(url.as_str().trim_end_matches('/').to_string())
+    let base_url = url.as_str().trim_end_matches('/');
+    if base_url.to_ascii_lowercase().ends_with("/v1") {
+        return Err(
+            "Leave /v1 off the gateway URL. Automatic and Claude Code add it themselves."
+                .to_string(),
+        );
+    }
+    Ok(base_url.to_string())
+}
+
+/// Whether two validated URLs share a scheme, host and port. A token is only
+/// kept for the same address. A new address might be run by someone else.
+fn same_address(first: &str, second: &str) -> bool {
+    match (url::Url::parse(first), url::Url::parse(second)) {
+        (Ok(first), Ok(second)) => first.origin() == second.origin(),
+        _ => false,
+    }
 }
 
 /// Parse a token into the value sent in a request header.
@@ -113,7 +147,7 @@ fn parse_token(input: &str) -> Result<String, String> {
 
 /// The gateway's public details. Reads no secret.
 pub fn custom_gateway_status() -> Result<CustomGatewayStatus, String> {
-    let gateway = read_settings()?.custom_gateway;
+    let gateway = read_settings_strict()?.custom_gateway;
     Ok(CustomGatewayStatus {
         configured: gateway.is_some(),
         base_url: gateway.as_ref().map(|g| g.base_url.clone()),
@@ -121,34 +155,76 @@ pub fn custom_gateway_status() -> Result<CustomGatewayStatus, String> {
     })
 }
 
-/// The stored token, with a message the user can act on when it is missing.
-fn stored_token() -> Result<String, String> {
-    secret_store::load_secret_if_present(TOKEN_ACCOUNT)
+fn store_bound_token(base_url: &str, token: &str) -> Result<(), String> {
+    let bound = BoundToken {
+        base_url: base_url.to_string(),
+        token: token.to_string(),
+    };
+    let value = serde_json::to_string(&bound)
+        .map_err(|e| format!("Could not prepare the gateway token: {}", e))?;
+    secret_store::store_secret(TOKEN_ACCOUNT, &value)
+        .map_err(|e| format!("Could not store the gateway token: {}", e))
+}
+
+/// The token saved for `base_url`, with a message the user can act on when
+/// there is none. A token saved for another URL is never returned.
+fn stored_token(base_url: &str) -> Result<String, String> {
+    let enter_again = |problem: &str| format!("{} Enter it again in Settings > Agents.", problem);
+    let value = secret_store::load_secret_if_present(TOKEN_ACCOUNT)
         .map_err(|e| format!("Could not read the gateway token: {}", e))?
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| {
-            "The custom gateway token is missing. Enter it again in Settings > Agents.".to_string()
-        })
+        .ok_or_else(|| enter_again("The custom gateway token is missing."))?;
+    // The parse error is dropped because serde can quote what it read.
+    let bound: BoundToken = serde_json::from_str(&value)
+        .map_err(|_| enter_again("The custom gateway token could not be read."))?;
+    if bound.base_url != base_url {
+        return Err(enter_again(
+            "The custom gateway token was saved for a different URL.",
+        ));
+    }
+    Ok(bound.token)
 }
 
 /// The route for a saved gateway. Settings can be edited by hand, so the URL
 /// is checked again here before a token is sent to it.
 pub(crate) fn gateway_route(gateway: &CustomGateway) -> Result<CustomGatewayRoute, String> {
+    let base_url = parse_gateway_url(&gateway.base_url)?;
+    let token = stored_token(&base_url)?;
     Ok(CustomGatewayRoute {
-        base_url: parse_gateway_url(&gateway.base_url)?,
+        base_url,
         kind: gateway.credential_kind,
-        token: stored_token()?,
+        token,
     })
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 
+/// The token for a save. A blank one keeps the stored token, but only for the
+/// same address.
+fn token_for_save(
+    typed: Option<&str>,
+    base_url: &str,
+    previous: Option<&CustomGateway>,
+) -> Result<String, String> {
+    if let Some(token) = typed.map(str::trim).filter(|t| !t.is_empty()) {
+        return parse_token(token);
+    }
+    let Some(previous) = previous else {
+        return Err("Enter the gateway token.".to_string());
+    };
+    if !same_address(&previous.base_url, base_url) {
+        return Err(
+            "Enter the token again. A saved token is only reused for the same address.".to_string(),
+        );
+    }
+    stored_token(&previous.base_url)
+}
+
 /// Save the gateway for Automatic and Claude Code. A blank `token` keeps the
-/// one already stored.
+/// one already stored, as long as the address stays the same.
 ///
 /// The steps run in an order that keeps a failure safe to retry: validate,
 /// check Claude Code's file for conflicts, store the token, write that file,
-/// then write Automatic's settings.
+/// then write Automatic's settings. A failed first save takes its changes back.
 pub fn save_custom_gateway(
     base_url: &str,
     credential_kind: GatewayCredentialKind,
@@ -157,16 +233,8 @@ pub fn save_custom_gateway(
     let _changing = change_lock();
 
     let base_url = parse_gateway_url(base_url)?;
-    let previous = read_settings()?.custom_gateway;
-    let new_token = match token.map(str::trim).filter(|t| !t.is_empty()) {
-        Some(token) => Some(parse_token(token)?),
-        None if previous.is_none() => return Err("Enter the gateway token.".to_string()),
-        None => None,
-    };
-    let token = match &new_token {
-        Some(token) => token.clone(),
-        None => stored_token()?,
-    };
+    let previous = read_settings_strict()?.custom_gateway;
+    let token = token_for_save(token, &base_url, previous.as_ref())?;
 
     let path = claude_code_env::settings_path()?;
     let desired = GatewayEnv {
@@ -180,43 +248,73 @@ pub fn save_custom_gateway(
     let first_credential =
         previous.is_none() && any_known_api_key_stored(StoreRead::Now) == Ok(false);
 
-    if new_token.is_some() {
-        secret_store::store_secret(TOKEN_ACCOUNT, &token)
-            .map_err(|e| format!("Could not store the gateway token: {}", e))?;
-    }
+    store_bound_token(&base_url, &token)?;
 
     let written = claude_code_env::write_file(&path, &desired, record).map_err(|e| {
-        if previous.is_none() {
-            // The form still shows no gateway, so nothing could clear this.
-            let _ = secret_store::delete_secret(TOKEN_ACCOUNT);
-            return e;
-        }
-        if new_token.is_some() {
-            return format!(
-                "The new token is stored and Automatic now uses it, but Claude Code was not \
-                 updated. Save again to finish. {}",
+        match &previous {
+            None => {
+                // The form still shows no gateway, so nothing could clear this.
+                let _ = secret_store::delete_secret(TOKEN_ACCOUNT);
                 e
-            );
+            }
+            Some(previous) if previous.base_url == base_url => format!(
+                "Automatic has the new token, but Claude Code still has the old one. \
+                 Save again to finish. {}",
+                e
+            ),
+            Some(_) => format!(
+                "Claude Code was not updated, and Automatic cannot use the gateway until \
+                 this save finishes. Save again with the same token. {}",
+                e
+            ),
         }
-        e
     })?;
 
-    let mut settings = read_settings()?;
-    settings.custom_gateway = Some(CustomGateway {
+    let gateway = CustomGateway {
         base_url,
         credential_kind,
         claude_code: Some(written),
-    });
-    if first_credential {
-        settings.agent_features_enabled = Some(true);
-    }
-    write_settings(&settings).map_err(|e| {
-        format!(
+    };
+    record_gateway(&gateway, first_credential).map_err(|e| match &previous {
+        None => undo_first_save(&path, &gateway, &e),
+        Some(_) => format!(
             "Claude Code now uses this gateway, but Automatic could not record it. \
              Save again with the same token to finish. {}",
             e
-        )
+        ),
     })
+}
+
+fn record_gateway(gateway: &CustomGateway, first_credential: bool) -> Result<(), String> {
+    let mut settings = read_settings_strict()?;
+    settings.custom_gateway = Some(gateway.clone());
+    if first_credential {
+        settings.agent_features_enabled = Some(true);
+    }
+    write_settings_with_gateway(&settings)
+}
+
+/// Take back a first save that Automatic could not record. Without a settings
+/// entry the user would have no way to clear what is in Claude Code's file.
+fn undo_first_save(path: &std::path::Path, gateway: &CustomGateway, error: &str) -> String {
+    let file_undone = match &gateway.claude_code {
+        Some(record) => claude_code_env::clear_file(path, record).map(|_| ()),
+        None => Ok(()),
+    };
+    let token_undone = delete_stored_token();
+    match file_undone.and(token_undone) {
+        Ok(()) => format!(
+            "Automatic could not record the gateway, so the change was taken back. {}",
+            error
+        ),
+        Err(undo_error) => format!(
+            "Automatic could not record the gateway, and could not take the change back. \
+             Check {} for the gateway values. {} {}",
+            path.display(),
+            error,
+            undo_error
+        ),
+    }
 }
 
 // ── Clear ─────────────────────────────────────────────────────────────────────
@@ -227,16 +325,13 @@ pub fn save_custom_gateway(
 pub fn clear_custom_gateway() -> Result<ClearedCustomGateway, String> {
     let _changing = change_lock();
 
-    let Some(gateway) = read_settings()?.custom_gateway else {
+    let Some(gateway) = read_settings_strict()?.custom_gateway else {
         return Ok(ClearedCustomGateway {
             left_in_claude_code: Vec::new(),
         });
     };
 
-    let left_in_claude_code = match &gateway.claude_code {
-        Some(record) => claude_code_env::clear_file(&claude_code_env::settings_path()?, record)?,
-        None => Vec::new(),
-    };
+    let left_in_claude_code = clear_claude_code(&gateway)?;
 
     delete_stored_token().map_err(|e| {
         format!(
@@ -246,9 +341,9 @@ pub fn clear_custom_gateway() -> Result<ClearedCustomGateway, String> {
         )
     })?;
 
-    let mut settings = read_settings()?;
+    let mut settings = read_settings_strict()?;
     settings.custom_gateway = None;
-    write_settings(&settings).map_err(|e| {
+    write_settings_with_gateway(&settings).map_err(|e| {
         format!(
             "The gateway was removed from Claude Code and the keychain, but Automatic could \
              not update its settings. Clear again to finish. {}",
@@ -261,6 +356,37 @@ pub fn clear_custom_gateway() -> Result<ClearedCustomGateway, String> {
         set_agent_features_enabled(false);
     }
     Ok(ClearedCustomGateway { left_in_claude_code })
+}
+
+fn clear_claude_code(gateway: &CustomGateway) -> Result<Vec<String>, String> {
+    match &gateway.claude_code {
+        Some(record) => claude_code_env::clear_file(&claude_code_env::settings_path()?, record),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Clear the gateway before an erase. The token is always deleted, whatever
+/// happens to Claude Code's file, and whether or not settings can be read.
+pub(crate) fn clear_gateway_for_erase() -> GatewayErase {
+    let _changing = change_lock();
+
+    let file = read_settings_strict().and_then(|settings| match settings.custom_gateway {
+        Some(gateway) => clear_claude_code(&gateway),
+        None => Ok(Vec::new()),
+    });
+    let token = delete_stored_token();
+
+    match (file, token) {
+        (Err(e), _) => GatewayErase::FileNotCleared(format!(
+            "App data was not erased, because the custom gateway could not be cleared from \
+             Claude Code's settings. Fix this and try again. {}",
+            e
+        )),
+        (Ok(_), Err(e)) => GatewayErase::TokenNotDeleted(e),
+        (Ok(left_in_claude_code), Ok(())) => {
+            GatewayErase::Cleared(ClearedCustomGateway { left_in_claude_code })
+        }
+    }
 }
 
 /// Delete the token. The store reports a missing secret as an error, and a
@@ -294,11 +420,21 @@ pub(crate) mod test_support {
         )
         .expect("save gateway");
     }
+
+    /// Change the saved URL as a hand edit would, without touching the token.
+    pub(crate) fn set_saved_gateway_url(url: &str) {
+        let mut settings = read_settings_strict().expect("read");
+        if let Some(gateway) = &mut settings.custom_gateway {
+            gateway.base_url = url.to_string();
+        }
+        write_settings_with_gateway(&settings).expect("write");
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{gateway_store_lock, save_test_gateway};
+    use super::test_support::{gateway_store_lock, save_test_gateway, set_saved_gateway_url};
+    use crate::core::settings::{read_settings, write_settings, Settings};
     use super::*;
     use crate::core::secret_store::{set_test_fault, TestFault};
     use crate::core::temp_test_home;
@@ -378,6 +514,19 @@ mod tests {
     // ── Token validation ─────────────────────────────────────────────────────
 
     #[test]
+    fn a_url_ending_in_v1_is_refused_because_v1_gets_added() {
+        for url in [
+            "https://gateway.example.com/v1",
+            "https://gateway.example.com/v1/",
+            "https://gateway.example.com/llm/V1",
+        ] {
+            let err = parse_gateway_url(url).expect_err(url);
+            assert!(err.contains("/v1"), "{err}");
+        }
+        assert!(parse_gateway_url("https://gateway.example.com/v1beta").is_ok());
+    }
+
+    #[test]
     fn tokens_are_trimmed_and_must_fit_in_a_header() {
         assert_eq!(parse_token("  token-1\n").as_deref(), Ok("token-1"));
         for token in ["", "   ", "two\nlines", "two\r\nlines", "with space", "tökén"] {
@@ -394,7 +543,7 @@ mod tests {
 
         save_custom_gateway(URL, BEARER, Some("plain-token")).expect("save");
 
-        assert_eq!(secret_store::load_secret(TOKEN_ACCOUNT).as_deref(), Ok("plain-token"));
+        assert_eq!(stored_token(URL).as_deref(), Ok("plain-token"));
         assert!(claude_settings_text().contains("plain-token"));
         let settings_file = crate::core::get_automatic_dir().expect("dir").join("settings.json");
         let saved = fs::read_to_string(settings_file).expect("read settings");
@@ -435,12 +584,12 @@ mod tests {
         assert!(save_custom_gateway(URL, BEARER, None).is_err());
 
         save_test_gateway("plain-token");
-        save_custom_gateway("https://other.example.com", API_KEY, Some(""))
-            .expect("keep the token");
+        let moved = "https://gateway.example.com/team";
+        save_custom_gateway(moved, API_KEY, Some("")).expect("keep the token");
 
-        assert_eq!(secret_store::load_secret(TOKEN_ACCOUNT).as_deref(), Ok("plain-token"));
+        assert_eq!(stored_token(moved).as_deref(), Ok("plain-token"));
         let text = claude_settings_text();
-        assert!(text.contains("https://other.example.com"), "{text}");
+        assert!(text.contains(moved), "{text}");
         assert!(text.contains(r#""ANTHROPIC_API_KEY": "plain-token""#), "{text}");
         assert!(!text.contains("ANTHROPIC_AUTH_TOKEN"), "{text}");
         remove_token();
@@ -459,6 +608,147 @@ mod tests {
         assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
         assert_eq!(claude_settings_text(), theirs);
         assert!(!custom_gateway_status().expect("status").configured);
+    }
+
+    #[cfg(unix)]
+    fn read_only(folder: &std::path::Path, read_only: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if read_only { 0o555 } else { 0o755 };
+        fs::set_permissions(folder, fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_first_save_that_cannot_write_claude_code_stores_no_token() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        let folder = claude_code_env::settings_path().expect("path");
+        let folder = folder.parent().expect("parent");
+        fs::create_dir_all(folder).expect("mkdir");
+        read_only(folder, true);
+
+        let result = save_custom_gateway(URL, BEARER, Some("plain-token"));
+
+        read_only(folder, false);
+        assert!(result.is_err());
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+        assert!(!custom_gateway_status().expect("status").configured);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rotation_that_cannot_write_claude_code_says_what_happened() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("first-token");
+        let path = claude_code_env::settings_path().expect("path");
+        let folder = path.parent().expect("parent");
+        read_only(folder, true);
+
+        let err = save_custom_gateway(URL, BEARER, Some("second-token")).expect_err("no write");
+
+        read_only(folder, false);
+        assert!(err.contains("still has the old one"), "{err}");
+        assert!(!err.contains("second-token"), "{err}");
+        assert!(claude_settings_text().contains("first-token"));
+
+        // Retrying finishes the job.
+        save_custom_gateway(URL, BEARER, Some("second-token")).expect("retry");
+        assert!(claude_settings_text().contains("second-token"));
+        remove_token();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_move_to_a_new_url_never_pairs_the_new_token_with_the_old_url() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("token-for-a");
+        let path = claude_code_env::settings_path().expect("path");
+        let folder = path.parent().expect("parent");
+        read_only(folder, true);
+
+        let err = save_custom_gateway("https://b.example.com", BEARER, Some("token-for-b"))
+            .expect_err("no write");
+
+        read_only(folder, false);
+        assert!(err.contains("cannot use the gateway"), "{err}");
+        let saved = read_settings().expect("read").custom_gateway.expect("gateway");
+        assert_eq!(saved.base_url, URL);
+        let refused = gateway_route(&saved).expect_err("no route");
+        assert!(refused.contains("different URL"), "{refused}");
+        remove_token();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_first_save_automatic_cannot_record_is_taken_back() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        let theirs = r#"{"model":"opus"}"#;
+        write_claude_settings(theirs);
+        let settings_dir = crate::core::get_automatic_dir().expect("dir");
+        fs::create_dir_all(&settings_dir).expect("mkdir");
+        read_only(&settings_dir, true);
+
+        let err = save_custom_gateway(URL, BEARER, Some("plain-token")).expect_err("no record");
+
+        read_only(&settings_dir, false);
+        assert!(err.contains("taken back"), "{err}");
+        let text = claude_settings_text();
+        assert!(!text.contains("ANTHROPIC"), "{text}");
+        assert!(text.contains("opus"), "{text}");
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_later_save_automatic_cannot_record_keeps_claude_code_and_says_so() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("first-token");
+        let settings_dir = crate::core::get_automatic_dir().expect("dir");
+        read_only(&settings_dir, true);
+
+        let err = save_custom_gateway(URL, BEARER, Some("second-token")).expect_err("no record");
+
+        read_only(&settings_dir, false);
+        assert!(err.contains("could not record"), "{err}");
+        assert!(claude_settings_text().contains("second-token"));
+        save_custom_gateway(URL, BEARER, Some("second-token")).expect("retry");
+        remove_token();
+    }
+
+    #[test]
+    fn a_hand_edited_url_is_checked_before_the_token_is_used() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+
+        for url in ["http://gateway.example.com", "https://evil.example.com"] {
+            set_saved_gateway_url(url);
+            let saved = read_settings().expect("read").custom_gateway.expect("gateway");
+            assert!(gateway_route(&saved).is_err(), "{url}");
+        }
+        remove_token();
+    }
+
+    #[test]
+    fn a_new_address_needs_a_token_and_a_new_path_does_not() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+
+        for url in [
+            "https://other.example.com",
+            "https://gateway.example.com:8443",
+            "http://localhost:4000",
+        ] {
+            let err = save_custom_gateway(url, BEARER, Some("")).expect_err(url);
+            assert!(err.contains("Enter the token again"), "{err}");
+        }
+        assert!(save_custom_gateway("https://gateway.example.com/team", BEARER, None).is_ok());
+        remove_token();
     }
 
     #[test]
@@ -484,7 +774,7 @@ mod tests {
         // Claude Code holds the values, and Automatic lost its record of them.
         let mut settings = read_settings().expect("read");
         settings.custom_gateway = None;
-        write_settings(&settings).expect("write");
+        write_settings_with_gateway(&settings).expect("write");
 
         save_test_gateway("plain-token");
 
@@ -556,6 +846,59 @@ mod tests {
         assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
     }
 
+    // ── Erase ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn an_erase_stops_when_claude_code_cannot_be_cleared_but_deletes_the_token() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        let good = claude_settings_text();
+        write_claude_settings("{not json");
+
+        let err = crate::core::erase_app_data().expect_err("stopped");
+
+        assert!(err.contains("settings.json"), "{err}");
+        assert!(err.contains("not erased"), "{err}");
+        assert!(custom_gateway_status().expect("status").configured, "app data was kept");
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+
+        // The token is already gone, and the retry must not mind.
+        write_claude_settings(&good);
+        assert!(clear_custom_gateway().is_ok());
+        assert!(!claude_settings_text().contains("ANTHROPIC"));
+    }
+
+    #[test]
+    fn an_erase_reports_what_stayed_in_claude_code() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        write_claude_settings(&claude_settings_text().replace("plain-token", "theirs"));
+
+        let cleared = crate::core::erase_app_data().expect("erase");
+
+        assert_eq!(cleared.left_in_claude_code, ["ANTHROPIC_AUTH_TOKEN"]);
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+        assert!(!custom_gateway_status().expect("status").configured);
+    }
+
+    #[test]
+    fn an_erase_with_a_keychain_that_refuses_says_so_after_erasing() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+
+        set_test_fault(TOKEN_ACCOUNT, Some(TestFault::DeleteRefused));
+        let erased = crate::core::erase_app_data();
+        set_test_fault(TOKEN_ACCOUNT, None);
+
+        let err = erased.expect_err("the token stayed");
+        assert!(err.contains("was erased"), "{err}");
+        assert!(!custom_gateway_status().expect("status").configured);
+        remove_token();
+    }
+
     #[test]
     fn a_clear_with_nothing_saved_does_nothing() {
         let _store = gateway_store_lock();
@@ -583,7 +926,7 @@ mod tests {
     // ── Who can change or read it ────────────────────────────────────────────
 
     #[test]
-    fn the_frontend_settings_write_cannot_change_the_gateway() {
+    fn a_general_settings_write_cannot_change_the_gateway() {
         let _store = gateway_store_lock();
         let _home = temp_test_home();
         save_test_gateway("plain-token");
@@ -591,9 +934,32 @@ mod tests {
 
         let mut stale = read_settings().expect("read");
         stale.custom_gateway = None;
-        crate::core::write_settings_from_frontend(stale).expect("write");
-
+        write_settings(&stale).expect("drop it");
         assert_eq!(read_settings().expect("read").custom_gateway, saved);
+
+        clear_custom_gateway().expect("clear");
+        stale.custom_gateway = saved;
+        write_settings(&stale).expect("bring it back");
+        assert_eq!(read_settings().expect("read").custom_gateway, None);
+    }
+
+    #[test]
+    fn a_damaged_settings_file_stops_every_gateway_change() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        let file = crate::core::get_automatic_dir().expect("dir").join("settings.json");
+        fs::write(&file, "{not json").expect("damage the file");
+        let claude_code = claude_settings_text();
+
+        assert!(clear_custom_gateway().is_err());
+        assert!(save_custom_gateway(URL, BEARER, Some("other")).is_err());
+        assert!(write_settings(&Settings::default()).is_err());
+        assert!(crate::core::reset_settings().is_err());
+
+        assert_eq!(fs::read_to_string(&file).expect("read"), "{not json");
+        assert_eq!(claude_settings_text(), claude_code);
+        assert_eq!(stored_token(URL).as_deref(), Ok("plain-token"));
         remove_token();
     }
 

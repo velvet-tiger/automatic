@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 use crate::core::agents::client::{AgentClient, AgentTurnResponse};
 use crate::core::agents::credential::{CustomGatewayRoute, GatewayConfig, GatewayCredentialKind};
@@ -53,13 +54,41 @@ struct ModelsResponse {
 /// Where requests go, with the credential that belongs to that destination.
 ///
 /// The Anthropic key lives only in `Direct`, so `Custom` has no way to send it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Route {
     Direct {
         api_key: String,
         gateway: Option<GatewayConfig>,
     },
     Custom(CustomGatewayRoute),
+}
+
+impl std::fmt::Debug for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Route::Direct { gateway, .. } => f
+                .debug_struct("Direct")
+                .field("api_key", &"[redacted]")
+                .field("cloudflare_gateway", &gateway.is_some())
+                .finish(),
+            Route::Custom(route) => f.debug_tuple("Custom").field(route).finish(),
+        }
+    }
+}
+
+/// The longest wait for a gateway. A non-streaming reply can take minutes, but
+/// a gateway that stops answering must not hang the feature for ever.
+const CUSTOM_GATEWAY_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// How much of a gateway's error body is shown. A gateway is not Anthropic, so
+/// its body can be anything, such as a whole HTML page.
+const MAX_GATEWAY_ERROR_CHARS: usize = 500;
+
+/// Whether a gateway URL names this machine.
+fn is_loopback(base_url: &str) -> bool {
+    url::Url::parse(base_url).is_ok_and(|url| {
+        matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    })
 }
 
 /// Anthropic Messages API client.
@@ -100,11 +129,21 @@ impl AnthropicClient {
 
     fn client(&self) -> Result<reqwest::Client, String> {
         let builder = reqwest::Client::builder();
-        // reqwest keeps `x-api-key` on a redirect to another host, so a gateway
-        // could otherwise pass the token to any host it names.
-        let builder = match self.route {
-            Route::Custom(_) => builder.redirect(reqwest::redirect::Policy::none()),
+        let builder = match &self.route {
             Route::Direct { .. } => builder,
+            Route::Custom(route) => {
+                // reqwest keeps `x-api-key` on a redirect to another host, so
+                // a gateway could otherwise pass the token to any host it names.
+                let builder = builder
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(CUSTOM_GATEWAY_TIMEOUT);
+                // A system proxy must not see a token meant for this machine.
+                if is_loopback(&route.base_url) {
+                    builder.no_proxy()
+                } else {
+                    builder
+                }
+            }
         };
         builder
             .build()
@@ -152,6 +191,26 @@ impl AnthropicClient {
         Ok((status, text))
     }
 
+    /// The error for a response outside the 2xx range.
+    fn response_error(&self, body: &str, status: u16) -> String {
+        if !matches!(self.route, Route::Custom(_)) {
+            return Self::parse_error(body, status);
+        }
+        if (300..400).contains(&status) {
+            return format!(
+                "The custom gateway answered with a redirect (status {}), which Automatic does \
+                 not follow. Set the gateway's final URL in Settings > Agents.",
+                status
+            );
+        }
+        let detail = serde_json::from_str::<AnthropicError>(body)
+            .map(|e| e.error.message)
+            .unwrap_or_else(|_| body.to_string());
+        let shown: String = detail.chars().take(MAX_GATEWAY_ERROR_CHARS).collect();
+        let cut = if shown.len() < detail.len() { "..." } else { "" };
+        format!("Custom gateway error {}: {}{}", status, shown, cut)
+    }
+
     fn parse_error(body: &str, status: u16) -> String {
         serde_json::from_str::<AnthropicError>(body)
             .map(|e| e.error.message)
@@ -190,7 +249,7 @@ impl AgentClient for AnthropicClient {
 
         let (status, body_text) = self.send_messages_request(&body).await?;
         if !(200..300).contains(&status) {
-            return Err(Self::parse_error(&body_text, status));
+            return Err(self.response_error(&body_text, status));
         }
 
         let parsed: AnthropicSimpleResponse = serde_json::from_str(&body_text)
@@ -234,7 +293,7 @@ impl AgentClient for AnthropicClient {
 
         let (status, body_text) = self.send_messages_request(&body).await?;
         if !(200..300).contains(&status) {
-            return Err(Self::parse_error(&body_text, status));
+            return Err(self.response_error(&body_text, status));
         }
 
         let parsed: AnthropicSimpleResponse = serde_json::from_str(&body_text)
@@ -274,7 +333,7 @@ impl AgentClient for AnthropicClient {
 
         let (status, body_text) = self.send_messages_request(&body).await?;
         if !(200..300).contains(&status) {
-            return Err(Self::parse_error(&body_text, status));
+            return Err(self.response_error(&body_text, status));
         }
 
         let parsed: AnthropicTurnResponse = serde_json::from_str(&body_text)
@@ -308,7 +367,7 @@ impl AgentClient for AnthropicClient {
             .map_err(|e| format!("Failed to read response body: {}", e))?;
 
         if !(200..300).contains(&status) {
-            return Err(Self::parse_error(&body_text, status));
+            return Err(self.response_error(&body_text, status));
         }
 
         let parsed: ModelsResponse = serde_json::from_str(&body_text)
@@ -412,9 +471,74 @@ mod tests {
     }
 
     #[test]
-    fn the_debug_form_does_not_show_the_gateway_token() {
-        let shown = format!("{:?}", custom(GatewayCredentialKind::Bearer));
+    fn the_debug_form_shows_no_credential() {
+        let gateway = format!("{:?}", custom(GatewayCredentialKind::Bearer));
+        assert!(!gateway.contains(TOKEN), "{gateway}");
 
-        assert!(!shown.contains(TOKEN), "{shown}");
+        let direct = format!("{:?}", AnthropicClient::new(STORED_KEY, Some(cloudflare())));
+        assert!(!direct.contains(STORED_KEY), "{direct}");
+        assert!(!direct.contains("cf-token"), "{direct}");
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_loopback() {
+        for url in ["http://localhost:4000", "http://127.0.0.1:4000", "http://[::1]:4000"] {
+            assert!(is_loopback(url), "{url}");
+        }
+        assert!(!is_loopback("https://gateway.example.com"));
+    }
+
+    #[test]
+    fn a_long_gateway_error_body_is_cut() {
+        let client = custom(GatewayCredentialKind::Bearer);
+        let body = "x".repeat(MAX_GATEWAY_ERROR_CHARS * 2);
+
+        let error = client.response_error(&body, 500);
+
+        assert!(error.starts_with("Custom gateway error 500"), "{error}");
+        assert!(error.len() < MAX_GATEWAY_ERROR_CHARS + 100, "{error}");
+        assert!(error.ends_with("..."), "{error}");
+    }
+
+    /// Serve one canned response on a local port. Returns the address and the
+    /// channel that receives the request text.
+    fn one_shot_server(response: String) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = format!("http://{}", listener.local_addr().expect("address"));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buffer = [0u8; 4096];
+            let read = stream.read(&mut buffer).expect("read");
+            let _ = sender.send(String::from_utf8_lossy(&buffer[..read]).to_string());
+            stream.write_all(response.as_bytes()).expect("write");
+        });
+        (address, receiver)
+    }
+
+    #[test]
+    fn a_redirect_is_reported_and_the_token_does_not_follow_it() {
+        let (second, second_requests) = one_shot_server(String::new());
+        let (first, first_requests) = one_shot_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: {second}/v1/models\r\nContent-Length: 0\r\n\r\n"
+        ));
+        let client = AnthropicClient::through_custom_gateway(CustomGatewayRoute {
+            base_url: first,
+            kind: GatewayCredentialKind::ApiKey,
+            token: TOKEN.to_string(),
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let error = runtime.block_on(client.list_models()).expect_err("a redirect");
+
+        assert!(error.contains("redirect"), "{error}");
+        assert!(error.contains("302"), "{error}");
+        let seen = first_requests.recv().expect("the gateway got the request");
+        assert!(seen.to_lowercase().contains("x-api-key: gateway-token"), "{seen}");
+        assert!(second_requests.try_recv().is_err(), "the redirect was followed");
     }
 }

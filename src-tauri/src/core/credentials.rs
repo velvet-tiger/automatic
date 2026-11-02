@@ -125,7 +125,7 @@ pub fn has_api_key(provider: &str) -> Result<bool, String> {
 /// [`has_api_key`] for a caller that says who is asking. A background check
 /// reports a recent failed read again without asking the store, as
 /// [`StoreRead`] explains.
-fn api_key_presence(provider: &str, read: StoreRead) -> Result<bool, String> {
+pub(super) fn api_key_presence(provider: &str, read: StoreRead) -> Result<bool, String> {
     if let Ok(cache) = presence_cache().lock() {
         if let Some(present) = cache.get(provider) {
             return Ok(*present);
@@ -163,6 +163,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::custom_gateway::test_support::{gateway_store_lock, save_test_gateway};
     use crate::core::secret_store::{set_test_fault, TestFault};
 
     // Not one of `known_agents()`, so saving it never changes the
@@ -182,6 +183,51 @@ mod tests {
         assert_eq!(has_api_key(PROVIDER), Ok(false));
         assert!(get_api_key(PROVIDER).is_err());
         assert_eq!(get_api_key_if_present(PROVIDER), Ok(None));
+    }
+
+    fn set_features(value: Option<bool>) {
+        let mut settings = read_settings().expect("read settings");
+        settings.agent_features_enabled = value;
+        write_settings(&settings).expect("write settings");
+    }
+
+    #[test]
+    fn a_first_key_leaves_the_toggle_alone_when_a_gateway_is_saved() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_features(Some(false));
+
+        save_api_key("anthropic", "key").expect("save");
+        let enabled = read_settings().expect("read").agent_features_enabled;
+        delete_api_key("anthropic").expect("clean up");
+
+        assert_eq!(enabled, Some(false));
+    }
+
+    #[test]
+    fn removing_the_last_key_keeps_features_on_while_a_gateway_is_saved() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        save_api_key("anthropic", "key").expect("save");
+        set_features(Some(true));
+
+        delete_api_key("anthropic").expect("delete");
+
+        assert_eq!(read_settings().expect("read").agent_features_enabled, Some(true));
+    }
+
+    #[test]
+    fn removing_the_last_key_turns_features_off_with_no_gateway() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_api_key("anthropic", "key").expect("save");
+        set_features(Some(true));
+
+        delete_api_key("anthropic").expect("delete");
+
+        assert_eq!(read_settings().expect("read").agent_features_enabled, Some(false));
     }
 
     // The store and the presence cache are shared by the whole test process,

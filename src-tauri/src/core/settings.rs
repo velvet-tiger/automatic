@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
+use std::sync::{Mutex, MutexGuard};
 
 use super::agents::GatewayConfig;
-use super::custom_gateway::CustomGateway;
+use super::custom_gateway::{ClearedCustomGateway, CustomGateway, GatewayErase};
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
 
@@ -170,34 +172,79 @@ pub fn read_settings() -> Result<Settings, String> {
     Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
-pub fn write_settings(settings: &Settings) -> Result<(), String> {
+/// Read settings, and fail when the file cannot be parsed.
+///
+/// [`read_settings`] turns a damaged file into defaults. That would make a
+/// saved gateway disappear, so requests would go straight to Anthropic and a
+/// clear would leave the token behind. Anything that depends on the gateway
+/// reads through here.
+pub fn read_settings_strict() -> Result<Settings, String> {
     let path = get_automatic_dir()?.join("settings.json");
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-    }
-    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| e.to_string())
-}
-
-/// Write settings that came from the frontend. The custom gateway is left as
-/// it is on disk, because the frontend writes the whole `Settings` back and
-/// the gateway must only change together with the file it controls.
-pub fn write_settings_from_frontend(mut settings: Settings) -> Result<(), String> {
-    settings.custom_gateway = read_settings()?.custom_gateway;
-    write_settings(&settings)
-}
-
-/// Return settings to their defaults. The custom gateway stays: dropping it
-/// would lose the record of what Automatic wrote to Claude Code, and the user
-/// could no longer clear those values here.
-pub fn reset_settings() -> Result<(), String> {
-    let custom_gateway = read_settings()?.custom_gateway;
-    write_settings(&Settings {
-        custom_gateway,
-        ..Settings::default()
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
+        Err(e) => return Err(format!("Could not read {}: {}", path.display(), e)),
+    };
+    serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "{} could not be parsed (line {}). Fix or remove the file, then try again.",
+            path.display(),
+            e.line()
+        )
     })
+}
+
+/// Settings writes run one at a time, so that a write cannot bring back a
+/// gateway another thread has just changed.
+fn write_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Write settings, keeping the custom gateway that is on disk.
+///
+/// Callers read, change and write the whole `Settings`, the frontend included.
+/// A stale copy must not drop or restore the gateway, which has to change
+/// together with Claude Code's file and the secret store. Only
+/// [`write_settings_with_gateway`] changes it. A file that cannot be parsed
+/// stops the write, because the gateway record in it would be lost.
+pub fn write_settings(settings: &Settings) -> Result<(), String> {
+    let _writing = write_lock();
+    let custom_gateway = read_settings_strict()?.custom_gateway;
+    replace_settings_file(&Settings {
+        custom_gateway,
+        ..settings.clone()
+    })
+}
+
+/// Write settings including their `custom_gateway`. For the gateway module.
+pub(super) fn write_settings_with_gateway(settings: &Settings) -> Result<(), String> {
+    let _writing = write_lock();
+    replace_settings_file(settings)
+}
+
+/// Replace the settings file in one step, so a crash cannot leave half a file.
+fn replace_settings_file(settings: &Settings) -> Result<(), String> {
+    let path = get_automatic_dir()?.join("settings.json");
+    let parent = path.parent().ok_or("The settings path has no parent folder")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temp.write_all(raw.as_bytes()).map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    if let Ok(existing) = fs::metadata(&path) {
+        fs::set_permissions(temp.path(), existing.permissions()).map_err(|e| e.to_string())?;
+    }
+    temp.persist(&path).map_err(|e| e.error.to_string())?;
+    Ok(())
+}
+
+/// Return settings to their defaults. [`write_settings`] keeps the custom
+/// gateway: dropping it would lose the record of what Automatic wrote to
+/// Claude Code, and the user could no longer clear those values here.
+pub fn reset_settings() -> Result<(), String> {
+    write_settings(&Settings::default())
 }
 
 /// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
@@ -217,9 +264,16 @@ pub fn reinstall_defaults() -> Result<(), String> {
     Ok(())
 }
 
-pub fn erase_app_data() -> Result<(), String> {
-    // The erase goes ahead if this fails, so the user is told what is left.
-    let gateway_cleared = super::custom_gateway::clear_custom_gateway();
+/// Erase Automatic's data. Returns what stayed in Claude Code's settings.
+///
+/// The gateway comes first, because its record is part of what gets erased.
+/// When Claude Code's file cannot be cleared the erase stops, or the token
+/// would stay in that file with nothing left that knows about it.
+pub fn erase_app_data() -> Result<ClearedCustomGateway, String> {
+    let gateway = super::custom_gateway::clear_gateway_for_erase();
+    if let GatewayErase::FileNotCleared(error) = gateway {
+        return Err(error);
+    }
 
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {
@@ -236,12 +290,15 @@ pub fn erase_app_data() -> Result<(), String> {
     super::install_default_skills()?;
     super::install_default_subagents()?;
 
-    gateway_cleared.map(|_| ()).map_err(|e| {
-        format!(
-            "App data was erased, but the custom gateway could not be cleared: {}",
-            e
-        )
-    })
+    match gateway {
+        GatewayErase::Cleared(cleared) => Ok(cleared),
+        GatewayErase::TokenNotDeleted(error) => Err(format!(
+            "App data was erased, but the custom gateway token could not be removed from the \
+             keychain: {}",
+            error
+        )),
+        GatewayErase::FileNotCleared(error) => Err(error),
+    }
 }
 
 pub fn dismiss_welcome() -> Result<(), String> {
