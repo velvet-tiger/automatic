@@ -82,7 +82,9 @@ impl OpenAiCompatClient {
             req = req.header(name, value);
         }
 
-        if let Some(gw) = &self.gateway {
+        // Without a provider segment the request goes to the provider itself,
+        // which must never see the Cloudflare token.
+        if let (Some(gw), Some(_)) = (&self.gateway, &self.gateway_provider_segment) {
             if let Some(cf_token) = &gw.cf_token {
                 req = req.header("cf-aig-authorization", format!("Bearer {}", cf_token));
             }
@@ -301,8 +303,18 @@ mod tests {
             cf_token: Some("cf-token".to_string()),
             cf_token_stored: true,
         };
-        let client = OpenAiCompatClient::new("key", "https://example.test", vec![], Some(gateway));
-        let request = client
+        let direct = OpenAiCompatClient::new("key", "https://example.test", vec![], Some(gateway));
+        let request = direct
+            .auth_request(reqwest::Client::new().post("https://example.test"))
+            .build()
+            .expect("request");
+        assert!(
+            !request.headers().contains_key("cf-aig-authorization"),
+            "a request to the provider itself must not carry the token"
+        );
+
+        let routed = direct.with_gateway_provider("openai");
+        let request = routed
             .auth_request(reqwest::Client::new().post("https://example.test"))
             .build()
             .expect("request");

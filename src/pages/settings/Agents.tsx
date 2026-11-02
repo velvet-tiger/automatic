@@ -270,13 +270,14 @@ export default function SettingsAgents() {
       };
       raw.agent_gateways = { ...existing, [provider]: config };
       await invoke("write_settings", { settings: raw });
+      // The gateway is saved from here on, even if the token then fails.
+      setSavedGateways((prev) => ({ ...prev, [provider]: config }));
       const token = gs.cfToken.trim();
       if (token) {
         await invoke("save_gateway_token", { provider, token });
-        delete config.cf_token;
-        config.cf_token_stored = true;
+        const { cf_token: _plaintext, ...rest } = config;
+        setSavedGateways((prev) => ({ ...prev, [provider]: { ...rest, cf_token_stored: true } }));
       }
-      setSavedGateways((prev) => ({ ...prev, [provider]: config }));
       updateGatewayState(provider, { saveStatus: "saved", expanded: false, cfToken: "" });
       setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 2000);
     } catch (e) {
@@ -322,6 +323,8 @@ export default function SettingsAgents() {
       }));
     } catch (e) {
       console.error("Failed to clear gateway config", e);
+      updateGatewayState(provider, { saveStatus: "error" });
+      setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 3000);
     }
   };
 

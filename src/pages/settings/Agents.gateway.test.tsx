@@ -65,6 +65,44 @@ describe("Agents gateway token", () => {
     expect(invoked("save_gateway_token")).toHaveLength(0);
   });
 
+  it("shows the gateway as saved when its token could not be stored", async () => {
+    const user = userEvent.setup();
+    mockInvoke({
+      has_api_key: true,
+      read_settings: {},
+      list_agent_models: [],
+      save_gateway_token: () => Promise.reject("the keychain is locked"),
+    });
+    render(<SettingsAgents />);
+    await openGateway(user);
+
+    await user.type(screen.getAllByPlaceholderText("Account ID")[0], "account");
+    await user.type(screen.getByPlaceholderText("Gateway ID"), "gateway");
+    await user.type(screen.getByPlaceholderText("CF AIG Token (optional)"), "cf-token");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Failed to save")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
+  });
+
+  it("removes the token and reports a failure when clearing a gateway", async () => {
+    const user = userEvent.setup();
+    mockInvoke({
+      has_api_key: true,
+      read_settings: settings(true),
+      list_agent_models: [],
+      delete_gateway_token: () => Promise.reject("the keychain is locked"),
+    });
+    render(<SettingsAgents />);
+    await openGateway(user);
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(await screen.findByText("Failed to save")).toBeInTheDocument();
+    expect(invoked("delete_gateway_token")[0][1]).toEqual({ provider: "anthropic" });
+    expect(invoked("write_settings")).toHaveLength(0);
+  });
+
   it("shows that a token is saved and can remove it", async () => {
     const user = userEvent.setup();
     mockInvoke({

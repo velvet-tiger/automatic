@@ -37,14 +37,14 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
 /// Store the Cloudflare AI Gateway token for a configured gateway.
 #[tauri::command]
 pub fn save_gateway_token(provider: &str, token: &str) -> Result<(), String> {
-    core::agents::check_credential_provider(provider)?;
+    core::agents::check_gateway_provider(provider)?;
     core::save_gateway_token(provider, token)
 }
 
 /// Remove the Cloudflare AI Gateway token for this provider.
 #[tauri::command]
 pub fn delete_gateway_token(provider: &str) -> Result<(), String> {
-    core::agents::check_credential_provider(provider)?;
+    core::agents::check_gateway_provider(provider)?;
     core::delete_gateway_token(provider)
 }
 

@@ -6,7 +6,7 @@ use super::agents::credential::{
 };
 use super::agents::known_agents;
 use super::secret_store;
-use super::settings::{read_settings, write_settings, Settings};
+use super::settings::{read_settings, read_settings_to_update, write_settings, Settings};
 use super::store_reads::{FailedReads, StoreRead};
 
 // ── Gateway tokens ───────────────────────────────────────────────────────────
@@ -17,30 +17,42 @@ pub fn save_gateway_token(agent_id: &str, token: &str) -> Result<(), String> {
     if token.is_empty() {
         return Err("The gateway token must not be empty.".to_string());
     }
-    if !read_settings()?.agent_gateways.contains_key(agent_id) {
+    if !read_settings_to_update()?.agent_gateways.contains_key(agent_id) {
         return Err(format!("No gateway is configured for '{}'.", agent_id));
     }
     store_gateway_token(agent_id, token)?;
 
     // Read again: a keychain prompt can hold the store call for a while.
-    let mut settings = read_settings()?;
-    if let Some(gateway) = settings.agent_gateways.get_mut(agent_id) {
-        gateway.cf_token = None;
-        gateway.cf_token_stored = true;
-    }
+    let mut settings = read_settings_to_update()?;
+    let Some(gateway) = settings.agent_gateways.get_mut(agent_id) else {
+        remove_stored_gateway_token(agent_id)?;
+        return Err(format!("The gateway for '{}' was removed.", agent_id));
+    };
+    gateway.cf_token = None;
+    gateway.cf_token_stored = true;
     write_settings(&settings)
 }
 
 /// Remove the Cloudflare AI Gateway token for `agent_id`, from the secret
 /// store and from `settings.json`.
 pub fn delete_gateway_token(agent_id: &str) -> Result<(), String> {
-    let mut settings = read_settings()?;
-    let Some(gateway) = settings.agent_gateways.get_mut(agent_id) else {
+    let mut settings = read_settings_to_update()?;
+    let gateway = settings.agent_gateways.get_mut(agent_id);
+
+    // A failed move or save can leave a token the flag does not record, so
+    // the store is always tried. Only a recorded token makes a failure stop
+    // this: a locked keychain must not keep a user from clearing a gateway
+    // that has no token.
+    let recorded = gateway.as_ref().is_some_and(|g| g.cf_token_stored);
+    match remove_stored_gateway_token(agent_id) {
+        Err(e) if recorded => return Err(e),
+        Err(e) => eprintln!("[automatic] could not check for a gateway token: {}", e),
+        Ok(()) => {}
+    }
+
+    let Some(gateway) = gateway else {
         return Ok(());
     };
-    if gateway.cf_token_stored {
-        remove_stored_gateway_token(agent_id)?;
-    }
     gateway.cf_token = None;
     gateway.cf_token_stored = false;
     write_settings(&settings)
@@ -52,10 +64,10 @@ pub fn delete_gateway_token(agent_id: &str) -> Result<(), String> {
 /// A token leaves the file only after the store has given it back, so a store
 /// that fails loses nothing and the next start tries again. A plaintext token
 /// replaces a stored one: it exists only where no move has finished, or where
-/// an older build wrote it, so it is the newer value. Safe to run in several
-/// processes at once, because each writes the same value.
+/// an older build wrote it, so it is the newer value. An unparsable settings
+/// file is an error, and nothing is written.
 pub fn migrate_gateway_tokens() -> Result<usize, String> {
-    let settings = read_settings()?;
+    let settings = read_settings_to_update()?;
     let mut moved = Vec::new();
     let mut failures = Vec::new();
     for (agent_id, gateway) in &settings.agent_gateways {
@@ -71,7 +83,7 @@ pub fn migrate_gateway_tokens() -> Result<usize, String> {
     if !moved.is_empty() {
         // Read again: a keychain prompt can hold the moves for a while, and
         // settings saved in that time must survive.
-        let mut settings = read_settings()?;
+        let mut settings = read_settings_to_update()?;
         mark_gateway_tokens_moved(&mut settings, &moved);
         write_settings(&settings)?;
     }
@@ -108,7 +120,7 @@ fn mark_gateway_tokens_moved(settings: &mut Settings, moved: &[(String, String)]
         if let Some(gateway) = settings.agent_gateways.get_mut(agent_id) {
             if gateway.cf_token.as_ref() == Some(token) {
                 gateway.cf_token = None;
-                gateway.cf_token_stored = !token.is_empty();
+                gateway.cf_token_stored |= !token.is_empty();
             }
         }
     }
@@ -390,6 +402,107 @@ mod tests {
             assert!(save_gateway_token(agent, "").is_err());
             assert_eq!(load_gateway_token("gateway-save-unknown"), Ok(None));
             assert_eq!(delete_gateway_token("gateway-save-unknown"), Ok(()));
+        });
+    }
+
+    #[test]
+    fn one_token_that_cannot_move_does_not_hold_back_the_others() {
+        let moved = "gateway-migrate-partial-moved";
+        let stuck = "gateway-migrate-partial-stuck";
+        with_gateway(moved, Some("cf-moved-token"), |path| {
+            let mut settings = read_settings().unwrap();
+            let mut other = settings.agent_gateways[moved].clone();
+            other.cf_token = Some("cf-stuck-token".to_string());
+            settings.agent_gateways.insert(stuck.to_string(), other);
+            write_settings(&settings).unwrap();
+
+            set_test_fault(&fault_on(stuck), Some(TestFault::Unreadable));
+            let failed = migrate_gateway_tokens();
+            set_test_fault(&fault_on(stuck), None);
+
+            assert!(failed.expect_err("one failed").contains(stuck));
+            let raw = std::fs::read_to_string(path).expect("read file");
+            assert!(!raw.contains("cf-moved-token"), "{raw}");
+            assert!(raw.contains("cf-stuck-token"), "{raw}");
+        });
+    }
+
+    #[test]
+    fn an_unparsable_settings_file_is_left_alone() {
+        let agent = "gateway-torn-read";
+        with_gateway(agent, Some("cf-token"), |path| {
+            let settings_json = std::fs::read_to_string(path).unwrap();
+            // What a read sees while another process rewrites the file.
+            std::fs::write(path, "").unwrap();
+
+            assert!(migrate_gateway_tokens().is_err());
+            assert!(save_gateway_token(agent, "token").is_err());
+            assert!(delete_gateway_token(agent).is_err());
+            assert_eq!(std::fs::read_to_string(path).unwrap(), "");
+
+            std::fs::write(path, settings_json).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_token_the_flag_does_not_record_is_still_deleted() {
+        let agent = "gateway-delete-unrecorded";
+        with_gateway(agent, None, |_| {
+            store_gateway_token(agent, "cf-orphan").expect("store");
+
+            delete_gateway_token(agent).expect("delete");
+
+            assert_eq!(load_gateway_token(agent), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_locked_store_does_not_stop_clearing_a_gateway_with_no_token() {
+        let agent = "gateway-delete-locked";
+        with_gateway(agent, None, |_| {
+            set_test_fault(&fault_on(agent), Some(TestFault::Unreadable));
+            let deleted = delete_gateway_token(agent);
+            set_test_fault(&fault_on(agent), None);
+            assert_eq!(deleted, Ok(()));
+        });
+    }
+
+    #[test]
+    fn reset_removes_the_stored_token() {
+        let agent = "gateway-reset-removes";
+        with_gateway(agent, None, |_| {
+            save_gateway_token(agent, "cf-token").expect("save");
+
+            crate::core::settings::reset_settings().expect("reset");
+
+            assert_eq!(load_gateway_token(agent), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_token_that_cannot_be_removed_stops_the_reset() {
+        let agent = "gateway-reset-refused";
+        with_gateway(agent, None, |_| {
+            save_gateway_token(agent, "cf-token").expect("save");
+
+            set_test_fault(&fault_on(agent), Some(TestFault::DeleteRefused));
+            let reset = crate::core::settings::reset_settings();
+            set_test_fault(&fault_on(agent), None);
+
+            assert!(reset.is_err());
+            assert!(read_settings().unwrap().agent_gateways.contains_key(agent));
+            delete_gateway_token(agent).expect("clean up");
+        });
+    }
+
+    #[test]
+    fn an_empty_plaintext_token_keeps_the_record_of_a_stored_one() {
+        let agent = "gateway-migrate-empty-stored";
+        with_gateway(agent, Some(""), |_| {
+            let mut settings = read_settings().unwrap();
+            settings.agent_gateways.get_mut(agent).unwrap().cf_token_stored = true;
+            mark_gateway_tokens_moved(&mut settings, &[(agent.to_string(), String::new())]);
+            assert!(settings.agent_gateways[agent].cf_token_stored);
         });
     }
 

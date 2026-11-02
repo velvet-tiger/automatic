@@ -66,6 +66,16 @@ pub fn credential_providers() -> Vec<AgentId> {
     ]
 }
 
+/// Refuse a `provider` whose requests cannot go through a Cloudflare AI
+/// Gateway. Its client talks to the provider directly, so a gateway token
+/// has no use there.
+pub fn check_gateway_provider(provider: &str) -> Result<(), String> {
+    match provider {
+        "anthropic" | "openai" | "workers-ai" => Ok(()),
+        other => Err(format!("'{}' does not support a Cloudflare AI Gateway.", other)),
+    }
+}
+
 /// Refuse a `provider` that is not one of [`credential_providers`].
 ///
 /// Every path that turns a caller-supplied name into a secret store read or

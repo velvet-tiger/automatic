@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 
+use super::agents::credential::delete_gateway_token;
 use super::agents::GatewayConfig;
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
@@ -162,6 +163,28 @@ pub fn read_settings() -> Result<Settings, String> {
     Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
+/// [`read_settings`] for a caller that writes the result back.
+///
+/// An unparsable file is an error here, not defaults. The file is replaced by
+/// truncating it, so another process's save can look empty for a moment, and
+/// writing defaults back would lose every setting. The error gives the
+/// position only: the parser's own message can quote a value from the file.
+pub fn read_settings_to_update() -> Result<Settings, String> {
+    let path = get_automatic_dir()?.join("settings.json");
+    if !path.exists() {
+        return Ok(Settings::default());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| {
+        format!(
+            "{} could not be parsed (line {}, column {})",
+            path.display(),
+            e.line(),
+            e.column()
+        )
+    })
+}
+
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
     let path = get_automatic_dir()?.join("settings.json");
     if let Some(parent) = path.parent() {
@@ -174,7 +197,19 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
 }
 
 pub fn reset_settings() -> Result<(), String> {
+    delete_all_gateway_tokens()?;
     write_settings(&Settings::default())
+}
+
+/// Remove the secret store token of every configured gateway. Runs before a
+/// reset or an erase removes the record of them, so a failure stops the wipe
+/// and the user can try again.
+fn delete_all_gateway_tokens() -> Result<(), String> {
+    for agent_id in read_settings()?.agent_gateways.keys() {
+        delete_gateway_token(agent_id)
+            .map_err(|e| format!("could not remove the gateway token for '{}': {}", agent_id, e))?;
+    }
+    Ok(())
 }
 
 /// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
@@ -195,6 +230,7 @@ pub fn reinstall_defaults() -> Result<(), String> {
 }
 
 pub fn erase_app_data() -> Result<(), String> {
+    delete_all_gateway_tokens()?;
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {
         fs::remove_dir_all(&automatic_dir).map_err(|e| e.to_string())?;

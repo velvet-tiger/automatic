@@ -88,6 +88,7 @@ pub fn run() {
             // it has no GUI event loop to block and needs the repair done
             // before it starts serving.
             std::thread::spawn(|| {
+                bootstrap::move_gateway_tokens();
                 bootstrap::run_startup_housekeeping();
                 commands::project_sweeps::queue_owed_repair();
             });
