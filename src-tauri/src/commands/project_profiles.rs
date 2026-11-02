@@ -6,7 +6,7 @@ use super::project_sweeps::{
 };
 use super::projects::{
     detach_profile_from_projects, reconcile_projects_referencing_profile,
-    rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
+    ensure_writable, rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
 };
 
 // ── Project Profiles ─────────────────────────────────────────────────────────
@@ -91,6 +91,8 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
     let _writes = hold_library_writes();
     let project_name = &crate::core::canonical_project_ident(project_name)?;
     core::read_project_profile_parsed(profile_name)?;
+    ensure_writable(project_name)?;
+    core::confirm_project_profile(project_name, profile_name)?;
 
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
@@ -141,6 +143,16 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
     let json = serde_json::to_string_pretty(&project)
         .map_err(|e| format!("Failed to serialise project: {}", e))?;
     core::save_project(project_name, &json)?;
+    core::forget_project_profile(project_name, profile_name)?;
     sync_project_if_configured(project_name, &mut project);
     Ok(())
+}
+
+/// Hide the notice for a pending profile on this checkout. The name stays in
+/// the committed config and stays pending.
+#[tauri::command(async)]
+pub fn ignore_project_profile(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
+    let project_name = &crate::core::canonical_project_ident(project_name)?;
+    core::ignore_project_profile(project_name, profile_name)
 }

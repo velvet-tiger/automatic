@@ -450,6 +450,23 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "is_false")]
     pub local_read_only: bool,
 
+    /// Names in `profiles` this checkout has accepted. Stored only in this
+    /// machine's registry pointer, like `local_read_only`, so a repository
+    /// can never grant one. See `core::profile_confirmation`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_confirmed_profiles: Vec<String>,
+
+    /// Pending names whose notice this checkout has hidden. Stored only in
+    /// the registry pointer. The names stay pending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_ignored_profiles: Vec<String>,
+
+    /// Computed at read-time: names in `profiles` that are not applied here,
+    /// because this checkout has not confirmed them and no group provides
+    /// them. Never persisted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_profiles: Vec<String>,
+
     /// Computed at read-time: the name of the read-only project whose folder
     /// holds this project's folder, when this project is not read-only
     /// itself. Such a project is read-only too, because its files belong to

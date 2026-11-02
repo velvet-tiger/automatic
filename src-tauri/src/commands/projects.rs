@@ -318,6 +318,7 @@ fn save_project_with(
         core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string())
     };
     let name = &ident;
+    core::load_profile_decisions(name, &mut incoming)?;
 
     // Profiles: bring the project's lists in step with its attached profiles
     // before anything is persisted or synced. This one hook covers the
@@ -601,8 +602,9 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 /// folder's files are refreshed (keys and enrichment), and group profiles
 /// and plugin-owned resources are reconciled. Renames and removals of
 /// library items made in the meantime are not replayed; the project keeps
-/// the names its committed config uses. Agent files are not synced here, so
-/// any drift shows and the user syncs when ready.
+/// the names its committed config uses. A project the reconcile changes is
+/// synced. Any other project is not, so its drift shows and the user syncs
+/// when ready.
 #[tauri::command(async)]
 pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> {
     // A sweep holds this while it works on a project, so the toggle lands
@@ -1834,14 +1836,21 @@ pub(crate) fn reconcile_group_profiles_for_projects(
 /// Detach `profile_name` from every group and every project, dropping every
 /// item the profile provides, then re-sync. Used before a profile is deleted.
 /// Groups are cleared too, or a group would put the missing profile back.
+///
+/// A project where the name is pending is left alone: this checkout never
+/// took the profile, so its committed config must not change. Groups are
+/// cleared after the sweep, because a group-provided name counts as confirmed
+/// only while a group lists it.
 pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepProgress) {
-    core::prune_profile_from_groups(profile_name);
     sweep_project_changes(
         all_project_idents(progress),
         progress,
         Unreadable::Report,
         "profile detach",
         |_, project| {
+            if core::profile_is_unconfirmed(project, profile_name) {
+                return false;
+            }
             let before = project.profiles.len();
             project.profiles.retain(|p| p != profile_name);
             let recorded = project.profile_contributions.contains_key(profile_name);
@@ -1854,11 +1863,18 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepP
         },
         |_, project| sync_configured_project(project),
     );
+    core::prune_profile_from_groups(profile_name);
+    for (project, error) in core::forget_profile_everywhere(profile_name) {
+        progress.report_failure(&project, error);
+    }
 }
 
 /// Rewrite `profiles` entries and contribution keys from `old_name` to
 /// `new_name` in every group and every project. Content is unchanged, so no
 /// sync is needed.
+///
+/// A project where the old name is pending keeps it in its committed config.
+/// Groups and decisions follow the sweep, because the check reads both.
 pub(crate) fn rename_profile_in_projects(
     old_name: &str,
     new_name: &str,
@@ -1867,15 +1883,21 @@ pub(crate) fn rename_profile_in_projects(
     if old_name == new_name {
         return;
     }
-    core::rename_profile_in_groups(old_name, new_name);
     sweep_project_changes(
         all_project_idents(progress),
         progress,
         Unreadable::Report,
         "profile rename",
-        |_, project| core::rename_profile_in_project(project, old_name, new_name),
+        |_, project| {
+            !core::profile_is_unconfirmed(project, old_name)
+                && core::rename_profile_in_project(project, old_name, new_name)
+        },
         |_, _| Ok(()),
     );
+    core::rename_profile_in_groups(old_name, new_name);
+    for (project, error) in core::rename_profile_decisions(old_name, new_name) {
+        progress.report_failure(&project, error);
+    }
 }
 
 pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgress) {
@@ -2704,6 +2726,9 @@ pub(crate) mod propagation_tests {
             ..Default::default()
         };
         mutate(&mut project);
+        // Every fixture stands for profiles the user chose. Tests of a pending
+        // name forget the confirmation afterwards.
+        project.local_confirmed_profiles = project.profiles.clone();
         let json = serde_json::to_string_pretty(&project).expect("project json");
         core::save_project(name, &json).expect("save project");
         let dir = project_dir.path().to_path_buf();
@@ -2946,6 +2971,161 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(b.profiles.is_empty());
             assert!(b.group_profile_contributions.is_empty());
             assert!(b.file_rules.is_empty());
+        });
+    }
+
+    /// `make_project` confirms what it attaches. These tests need the name
+    /// pending, as it is on a checkout that received it through a commit.
+    fn make_pending_project(name: &str, profile: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let made = make_project(name, |p| p.profiles = vec![profile.to_string()]);
+        core::forget_project_profile(name, profile).expect("forget");
+        made
+    }
+
+    fn committed_config(dir: &std::path::Path) -> Vec<u8> {
+        std::fs::read(dir.join(".automatic.json")).expect("read config")
+    }
+
+    #[test]
+    fn saving_a_profile_does_not_touch_a_checkout_where_it_is_pending() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            let before = committed_config(&dir);
+
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&dir), before);
+            assert!(!dir.join(".claude").exists(), "nothing was synced");
+        });
+    }
+
+    #[test]
+    fn a_stale_editor_copy_cannot_confirm_a_profile() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            let mut stale = read_back("pending");
+            stale.local_confirmed_profiles = vec!["baseline".to_string()];
+
+            save_project("pending", &serde_json::to_string(&stale).unwrap(), None)
+                .expect("save");
+
+            let saved = read_back("pending");
+            assert_eq!(saved.pending_profiles, vec!["baseline"]);
+            assert!(saved.file_rules.is_empty());
+        });
+    }
+
+    #[test]
+    fn turning_read_only_off_does_not_apply_a_pending_profile() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            set_project_read_only("pending", true).expect("on");
+
+            set_project_read_only("pending", false).expect("off");
+
+            assert!(read_back("pending").file_rules.is_empty());
+            assert!(!dir.join(".claude").exists(), "nothing was synced");
+        });
+    }
+
+    #[test]
+    fn attach_applies_a_pending_profile_and_detach_forgets_it() {
+        use super::super::project_profiles::{
+            attach_profile_to_project, detach_profile_from_project,
+        };
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            core::ignore_project_profile("pending", "baseline").expect("ignore");
+
+            attach_profile_to_project("pending", "baseline").expect("attach");
+            let attached = read_back("pending");
+            assert_eq!(attached.local_confirmed_profiles, vec!["baseline"]);
+            assert!(attached.local_ignored_profiles.is_empty());
+            assert!(attached.pending_profiles.is_empty());
+            assert_eq!(attached.file_rules["_project"], vec!["profile-rule"]);
+
+            detach_profile_from_project("pending", "baseline").expect("detach");
+            assert!(read_back("pending").local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn attach_to_a_read_only_project_records_no_confirmation() {
+        use super::super::project_profiles::attach_profile_to_project;
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            core::set_project_read_only("pending", true).expect("on");
+
+            assert!(attach_profile_to_project("pending", "baseline").is_err());
+            assert!(read_back("pending").local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_a_profile_leaves_a_pending_checkout_and_forgets_confirmations() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, pending) = make_pending_project("pending", "baseline");
+            let (_keep_b, _) = make_project("attached", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let before = committed_config(&pending);
+
+            detach_profile_from_projects("baseline", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&pending), before);
+            let attached = read_back("attached");
+            assert!(attached.profiles.is_empty());
+            assert!(attached.local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn renaming_a_profile_leaves_a_pending_checkout_and_keeps_attached_ones_working() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, pending) = make_pending_project("pending", "baseline");
+            let (_keep_b, _) = make_project("attached", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let before = committed_config(&pending);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&pending), before);
+            let attached = read_back("attached");
+            assert_eq!(attached.profiles, vec!["renamed"]);
+            assert_eq!(attached.local_confirmed_profiles, vec!["renamed"]);
+            assert!(attached.pending_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_and_renaming_still_reach_group_provided_profiles() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            assert_eq!(read_back("member").profiles, vec!["baseline"]);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+            let renamed = read_back("member");
+            assert_eq!(renamed.profiles, vec!["renamed"]);
+            assert!(renamed.pending_profiles.is_empty());
+            assert_eq!(read_group_back("team").profiles, vec!["renamed"]);
+
+            detach_profile_from_projects("renamed", &SweepProgress::silent());
+            assert!(read_back("member").profiles.is_empty());
+            assert!(read_group_back("team").profiles.is_empty());
         });
     }
 

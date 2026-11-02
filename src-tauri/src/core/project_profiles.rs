@@ -392,6 +392,9 @@ pub struct ProfileReconcileReport {
     /// Names in `project.profiles` whose file could not be read. Their
     /// recorded contributions are left untouched.
     pub missing_profiles: Vec<String>,
+    /// Names in `project.profiles` this checkout has not confirmed. They are
+    /// treated like missing profiles. See `core::profile_confirmation`.
+    pub pending_profiles: Vec<String>,
 }
 
 /// Bring a project's lists in step with its attached profiles.
@@ -417,9 +420,11 @@ pub fn reconcile_project_profiles(project: &mut Project) -> ProfileReconcileRepo
         report.changed = true;
     }
 
+    let unconfirmed = unconfirmed_profiles(project);
     let mut loaded: Vec<ProjectProfile> = Vec::new();
     for name in &project.profiles {
         match read_project_profile_parsed(name) {
+            Ok(_) if unconfirmed.contains(name) => report.pending_profiles.push(name.clone()),
             Ok(profile) => loaded.push(profile),
             Err(_) => report.missing_profiles.push(name.clone()),
         }
@@ -896,6 +901,7 @@ mod tests {
 
             let mut project = empty_project();
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             let report = reconcile_project_profiles(&mut project);
 
             assert!(report.changed);
@@ -928,6 +934,7 @@ mod tests {
             let mut project = empty_project();
             project.skills = vec!["own-skill".into(), "react".into()];
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             let report = reconcile_project_profiles(&mut project);
 
             assert!(report.changed);
@@ -954,6 +961,7 @@ mod tests {
 
             let mut project = empty_project();
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.skills, vec!["react", "vitest"]);
 
@@ -984,6 +992,7 @@ mod tests {
             let mut project = empty_project();
             project.skills = vec!["react".into(), "own-skill".into()];
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.skills, vec!["react", "own-skill", "vitest"]);
             assert_eq!(rules(&project), vec!["automatic-process"]);
@@ -1013,12 +1022,14 @@ mod tests {
             // `first` is attached earlier, so it owns the record.
             let mut project = empty_project();
             project.profiles = vec!["first".into(), "second".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.profile_contributions["first"].skills, vec!["react"]);
             assert!(!project.profile_contributions.contains_key("second"));
 
             // Detach `first`: the skill stays and `second` takes the record.
             project.profiles = vec!["second".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.skills, vec!["react"]);
             assert_eq!(project.profile_contributions["second"].skills, vec!["react"]);
@@ -1027,6 +1038,7 @@ mod tests {
             // Same when the owner is attached later and drops the item.
             let mut project = empty_project();
             project.profiles = vec!["second".into(), "first".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.profile_contributions["second"].skills, vec!["react"]);
             second.skills.clear();
@@ -1052,12 +1064,14 @@ mod tests {
             let mut project = empty_project();
             project.skills = vec!["react".into()];
             project.profiles = vec!["first".into(), "second".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.profile_contributions["first"].skills, vec!["react"]);
             assert!(!project.profile_contributions.contains_key("second"));
 
             // Detach the owner: the skill stays and `second` takes the record.
             project.profiles = vec!["second".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
             assert_eq!(project.skills, vec!["react"]);
             assert_eq!(
@@ -1084,6 +1098,7 @@ mod tests {
 
             let mut project = empty_project();
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
 
             delete_project_profile("baseline").expect("delete");
@@ -1107,6 +1122,7 @@ mod tests {
             let mut project = empty_project();
             project.mcp_servers = vec!["sentry".into()];
             project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             reconcile_project_profiles(&mut project);
 
             // The project's spelling is kept in both the list and the record.
@@ -1129,6 +1145,7 @@ mod tests {
 
             let mut project = empty_project();
             project.profiles = vec!["baseline".into(), "baseline".into()];
+            project.local_confirmed_profiles = project.profiles.clone();
             let first = reconcile_project_profiles(&mut project);
             assert!(first.changed);
             assert_eq!(project.profiles, vec!["baseline"]);
@@ -1179,6 +1196,7 @@ mod tests {
     fn contribution_helpers_strip_rename_and_move_records() {
         let mut project = empty_project();
         project.profiles = vec!["baseline".into()];
+        project.local_confirmed_profiles = project.profiles.clone();
         project.profile_contributions.insert(
             "baseline".into(),
             ProfileContribution {

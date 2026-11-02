@@ -307,6 +307,7 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     let registry_keys = ProjectKeys::of(&registry_project);
     // Per-machine state that only the pointer stores (see `read_only.rs`).
     let local_read_only = registry_project.local_read_only;
+    let profile_decisions = ProfileDecisions::of_project(&registry_project);
 
     // If directory is set, read the full project from the project directory.
     // A malformed file there is an error rather than a fallback to registry
@@ -325,6 +326,8 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     project.id = resolved.id;
     project.local_key = resolved.local_key;
     project.local_read_only = local_read_only;
+    profile_decisions.apply_to(&mut project);
+    project.pending_profiles = pending_profile_names(&project);
     // A folder inside a read-only project is read-only too. A failed check
     // is logged and left to the writers, which re-check strictly.
     project.read_only_owner = if local_read_only {
@@ -828,7 +831,13 @@ pub enum DirectoryStatus {
     /// references this directory. `name` is a best-effort read from the
     /// on-disk config's `name` field (falls back to the directory basename
     /// when the field is missing or the JSON is malformed).
-    OrphanConfig { name: String },
+    OrphanConfig {
+        name: String,
+        /// Profiles the config names that this machine has, which the user
+        /// is asked about after importing it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        profiles: Vec<String>,
+    },
 }
 
 /// Classify a candidate directory for the Add Project wizard. Distinguishes
@@ -857,12 +866,31 @@ pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, Str
             .map(|s| s.to_string())
             .unwrap_or_default()
     });
-    Ok(DirectoryStatus::OrphanConfig { name })
+    let profiles = read_orphan_config_profiles(&config_path);
+    Ok(DirectoryStatus::OrphanConfig { name, profiles })
+}
+
+fn read_orphan_config(config_path: &std::path::Path) -> Option<serde_json::Value> {
+    let raw = fs::read_to_string(config_path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Profile names in an unregistered config that this machine has.
+fn read_orphan_config_profiles(config_path: &std::path::Path) -> Vec<String> {
+    let Some(names) = read_orphan_config(config_path)
+        .and_then(|value| value.get("profiles").cloned())
+        .and_then(|names| serde_json::from_value::<Vec<String>>(names).ok())
+    else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .filter(|name| read_project_profile_parsed(name).is_ok())
+        .collect()
 }
 
 fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
-    let raw = fs::read_to_string(config_path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let value = read_orphan_config(config_path)?;
     value
         .get("name")
         .and_then(|v| v.as_str())
@@ -977,10 +1005,11 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     validate_custom_asset_names(&project)?;
-    // directory_missing and read_only_owner are computed at read time —
-    // never persist them.
+    // directory_missing, read_only_owner and pending_profiles are computed at
+    // read time — never persist them.
     project.directory_missing = false;
     project.read_only_owner = None;
+    project.pending_profiles.clear();
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
@@ -1008,6 +1037,8 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     // the stored value, so stale or edited data cannot turn it off, and a
     // read-only project with a folder is never saved.
     project.local_read_only = existing.as_ref().is_some_and(|e| e.local_read_only());
+    // Profile decisions work the same way: see `core::profile_confirmation`.
+    keep_entry_profile_decisions(existing.as_ref(), &mut project);
     if !project.directory.is_empty() {
         if project.local_read_only {
             let shown = existing.as_ref().map_or(name, |e| e.name.as_str());
@@ -2179,7 +2210,7 @@ mod tests {
 
             let status = inspect_project_directory(&dir).expect("inspect");
             match status {
-                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "legacy-name"),
+                DirectoryStatus::OrphanConfig { name, .. } => assert_eq!(name, "legacy-name"),
                 other => panic!("unexpected status: {:?}", other),
             }
         });
@@ -2199,7 +2230,7 @@ mod tests {
 
             let status = inspect_project_directory(&dir).expect("inspect");
             match status {
-                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "orphan-broken"),
+                DirectoryStatus::OrphanConfig { name, .. } => assert_eq!(name, "orphan-broken"),
                 other => panic!("unexpected status: {:?}", other),
             }
         });

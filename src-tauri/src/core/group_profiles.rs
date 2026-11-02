@@ -327,6 +327,7 @@ mod tests {
             .expect("save profile");
 
             let mut p = project(&[]);
+            p.local_confirmed_profiles = vec!["base".into()];
             reconcile_group_profiles(&mut p, &[group("team", &["base"])]);
             reconcile_project_profiles(&mut p);
             assert_eq!(p.skills, vec!["react"]);

@@ -61,10 +61,18 @@ const STATE_FIELDS: &[&str] = &[
 ];
 
 /// Fields that neither file stores: runtime flags (including the computed
-/// `read_only_owner`), and `local_read_only`,
-/// which lives only in the registry pointer so that turning it on writes
-/// nothing into the folder.
-const TRANSIENT_FIELDS: &[&str] = &["directory_missing", "local_read_only", "read_only_owner"];
+/// `read_only_owner` and `pending_profiles`), and `local_read_only` and the
+/// profile decisions, which live only in the registry pointer. Turning
+/// read-only on writes nothing into the folder, and a repository cannot grant
+/// a profile confirmation.
+const TRANSIENT_FIELDS: &[&str] = &[
+    "directory_missing",
+    "local_confirmed_profiles",
+    "local_ignored_profiles",
+    "local_read_only",
+    "pending_profiles",
+    "read_only_owner",
+];
 
 fn is_state_field(key: &str) -> bool {
     STATE_FIELDS.contains(&key)
@@ -191,6 +199,7 @@ pub fn read_project_files(
     }
 
     let mut fields = merge_project_fields(config, state);
+    fields.retain(|key, _| !TRANSIENT_FIELDS.contains(&key.as_str()));
     fields.insert("directory".into(), Value::String(directory.to_string()));
     if !fields.contains_key("name") {
         fields.insert("name".into(), Value::String(fallback_name.to_string()));

@@ -245,6 +245,7 @@ pub fn run() {
             rename_project_profile,
             get_projects_referencing_profile,
             attach_profile_to_project,
+            ignore_project_profile,
             detach_profile_from_project,
             get_project_file_info,
             read_project_file,

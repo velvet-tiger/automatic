@@ -847,7 +847,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
                 existing
             ));
         }
-        crate::core::DirectoryStatus::OrphanConfig { name: orphan } => {
+        crate::core::DirectoryStatus::OrphanConfig { name: orphan, .. } => {
             return Err(format!(
                 "Directory '{}' contains an Automatic config (.automatic.json) that is \
                  not registered (project name '{}'). Ask the user to import it from the \
@@ -2120,17 +2120,30 @@ impl AutomaticMcpServer {
             )));
         }
 
-        let mut project = match load_project(&checkout) {
+        let project = match load_project(&checkout) {
             Ok(p) => p,
             Err(e) => return Ok(tool_error(e)),
         };
 
-        if project.profiles.iter().any(|p| p == profile_name) {
+        let pending = project.pending_profiles.iter().any(|p| p == profile_name);
+        if project.profiles.iter().any(|p| p == profile_name) && !pending {
             return Ok(tool_success(format!(
                 "Profile '{}' is already attached to project '{}'.",
                 profile_name, project_name
             )));
         }
+        if let Err(e) = crate::core::ensure_project_writable(&project) {
+            return Ok(tool_error(e));
+        }
+        let ident = crate::core::checkout_ident(&checkout);
+        if let Err(e) = crate::core::confirm_project_profile(ident, profile_name) {
+            return Ok(tool_error(e));
+        }
+        // Read again so the reconcile sees the confirmation.
+        let mut project = match load_project(&checkout) {
+            Ok(p) => p,
+            Err(e) => return Ok(tool_error(e)),
+        };
         // Group profiles first: they decide which profiles are attached.
         crate::core::reconcile_group_profiles(
             &mut project,
@@ -2214,7 +2227,12 @@ impl AutomaticMcpServer {
         }
         crate::core::reconcile_project_profiles(&mut project);
 
-        match persist_project(&checkout, &project) {
+        match persist_project(&checkout, &project).and_then(|()| {
+            crate::core::forget_project_profile(
+                crate::core::checkout_ident(&checkout),
+                profile_name,
+            )
+        }) {
             Ok(()) => Ok(tool_success(format!(
                 "Detached profile '{}' from project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -4098,6 +4116,46 @@ mod tests {
         crate::sync::check_project_drift(&project)
             .expect("drift check")
             .drifted
+    }
+
+    #[test]
+    fn attach_profile_tool_applies_a_pending_profile() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let profile = serde_json::json!({"name": "base", "skills": ["react"]});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
+            register_project_impl(&params("pending", ws.to_str().unwrap(), None))
+                .expect("register");
+            let mut project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("pending").expect("read"))
+                    .expect("parse");
+            project.profiles.push("base".to_string());
+            crate::core::save_project("pending", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            let read = || -> crate::core::Project {
+                serde_json::from_str(&crate::core::read_project("pending").expect("read"))
+                    .expect("parse")
+            };
+            assert_eq!(read().pending_profiles, vec!["base"]);
+
+            let server = AutomaticMcpServer::new();
+            let result = tauri::async_runtime::block_on(server.attach_profile(Parameters(
+                AttachProfileParams {
+                    project: Some("pending".into()),
+                    group: None,
+                    profile: "base".into(),
+                },
+            )))
+            .expect("tool call");
+
+            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            let attached = read();
+            assert!(attached.pending_profiles.is_empty());
+            assert_eq!(attached.skills, vec!["react"]);
+        });
     }
 
     #[test]
