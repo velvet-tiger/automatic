@@ -4086,6 +4086,81 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    /// A member and a clone with its `id`, in a group listing that `id`, before
+    /// either migration ran. Returns the keys of the member and the clone, and
+    /// a guard for the clone's folder.
+    fn shared_id_before_migration() -> (String, String, tempfile::TempDir, tempfile::TempDir) {
+        let keep = tempdir().expect("member");
+        let mut project = core::Project {
+            name: "member".to_string(),
+            directory: keep.path().display().to_string(),
+            ..Default::default()
+        };
+        core::prepare_new_project_keys(&mut project).expect("keys");
+        let member = project.local_key.clone();
+        core::save_project(&member, &serde_json::to_string(&project).expect("json")).expect("save");
+        let group = serde_json::json!({
+            "name": "team",
+            "projects": [member],
+            "contexts": ["provided"],
+            "profiles": [],
+        });
+        core::save_group("team", &group.to_string()).expect("group");
+        let (clone_keep, clone_dir, clone) = import_id_clone(&member, &[], None);
+        let path = clone_dir.join(".automatic.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("parse");
+        config["contexts"] = serde_json::json!(["provided"]);
+        std::fs::write(&path, config.to_string()).expect("write");
+        (member, clone, keep, clone_keep)
+    }
+
+    #[test]
+    fn the_migration_does_not_join_checkouts_that_share_an_id() {
+        with_temp_home(|_| {
+            let (member, clone, _keep, _clone_keep) = shared_id_before_migration();
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert!(read_back(&member).local_confirmed_groups.is_empty());
+            assert!(read_back(&clone).local_confirmed_groups.is_empty());
+            let listed = super::super::groups::groups_for_project(&clone).expect("groups");
+            assert_eq!(listed, vec!["team"], "the Join action still has a group to offer");
+
+            super::super::groups::join_group("team", &clone).expect("join");
+            assert_eq!(read_back(&clone).local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn the_migration_still_joins_a_single_checkout() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            let group = serde_json::json!({"name": "team", "projects": [member]});
+            core::save_group("team", &group.to_string()).expect("group");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert_eq!(read_back(&member).local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn the_context_migration_confirms_no_group_slug_on_a_shared_id() {
+        with_temp_home(|_| {
+            core::create_local_context("provided", "").expect("context");
+            let (member, clone, _keep, _clone_keep) = shared_id_before_migration();
+
+            core::confirm_attached_profiles_once().expect("migrate");
+            core::confirm_attached_contexts_once().expect("migrate");
+
+            assert!(read_back(&clone).local_confirmed_contexts.is_empty());
+            assert!(read_back(&member).local_confirmed_contexts.is_empty());
+            assert!(offered_contexts(&clone).is_empty());
+        });
+    }
+
     #[test]
     fn a_keyless_pointer_is_confirmed_and_not_kept_for_retry() {
         with_temp_home(|_| {

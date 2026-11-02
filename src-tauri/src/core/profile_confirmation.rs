@@ -705,8 +705,21 @@ fn attached_profile_names(entry: &RegistryEntry) -> Result<Vec<String>, String> 
     }
 }
 
+/// Identifiers of the checkouts whose committed `id` another registered checkout
+/// also has. A repository chooses its `id`, so nothing tells which of them the
+/// group meant: each joins with the Join group action.
+fn checkouts_sharing_an_id() -> Result<Vec<String>, String> {
+    let summaries = get_project_summaries()?;
+    Ok(summaries
+        .iter()
+        .filter(|s| !s.id.is_empty() && summaries.iter().filter(|o| o.id == s.id).count() > 1)
+        .map(|s| checkout_ident(s).to_string())
+        .collect())
+}
+
 /// Confirm every name attached to every registered project and record every
-/// group that lists it, once. Without this, projects from before confirmation
+/// group that lists it, once. The group is not recorded for a checkout that
+/// shares its `id` with another. Without this, projects from before confirmation
 /// existed would stop tracking their profiles. Writes only pointers, so
 /// read-only projects are covered.
 ///
@@ -720,9 +733,14 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     }
     let _writes = super::hold_library_writes();
     let mut failed = Vec::new();
+    let shared = checkouts_sharing_an_id()?;
     for entry in scan_registry()? {
         let ident = entry.local_key().unwrap_or(&entry.name);
-        let groups: Vec<String> = groups_for_project(ident).into_iter().map(|g| g.name).collect();
+        let groups: Vec<String> = if shared.iter().any(|key| key == ident) {
+            Vec::new()
+        } else {
+            groups_for_project(ident).into_iter().map(|g| g.name).collect()
+        };
         let confirmed = attached_profile_names(&entry).unwrap_or_else(|e| {
             eprintln!("Could not read the profiles of '{}': {}", entry.name, e);
             Vec::new()
