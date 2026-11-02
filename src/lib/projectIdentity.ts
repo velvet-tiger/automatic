@@ -81,6 +81,8 @@ interface CheckoutDecisions {
   local_confirmed_groups?: string[];
   local_ignored_profiles?: string[];
   pending_profiles?: string[];
+  local_ignored_contexts?: string[];
+  pending_contexts?: string[];
 }
 
 /**
@@ -93,6 +95,8 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(held: T, fres
     local_confirmed_groups: fresh.local_confirmed_groups ?? [],
     local_ignored_profiles: fresh.local_ignored_profiles ?? [],
     pending_profiles: fresh.pending_profiles ?? [],
+    local_ignored_contexts: fresh.local_ignored_contexts ?? [],
+    pending_contexts: fresh.pending_contexts ?? [],
   };
 }
 

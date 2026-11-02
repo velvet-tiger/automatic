@@ -89,6 +89,7 @@ import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
 import { PendingProfilesNotice } from "./panels/PendingProfilesNotice";
+import { PendingContextsNotice } from "./panels/PendingContextsNotice";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
 import { ContextsPanel } from "./panels/ContextsPanel";
 import { ActivityPanel } from "./panels/ActivityPanel";
@@ -2225,6 +2226,8 @@ export function ProjectEditor({
         local_ignored_profiles: stored.local_ignored_profiles || [],
         local_confirmed_groups: stored.local_confirmed_groups || [],
         pending_profiles: stored.pending_profiles || [],
+        local_ignored_contexts: stored.local_ignored_contexts || [],
+        pending_contexts: stored.pending_contexts || [],
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
       };
@@ -2333,6 +2336,8 @@ export function ProjectEditor({
         local_ignored_profiles: parsed.local_ignored_profiles || [],
         local_confirmed_groups: parsed.local_confirmed_groups || [],
         pending_profiles: parsed.pending_profiles || [],
+        local_ignored_contexts: parsed.local_ignored_contexts || [],
+        pending_contexts: parsed.pending_contexts || [],
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
       };
@@ -4414,6 +4419,11 @@ export function ProjectEditor({
             {!isCreating && !readOnly && selectedKey && (project.pending_profiles ?? []).some((name) => !(project.local_ignored_profiles ?? []).includes(name)) && (
               <div className="px-6 pt-3 flex-shrink-0">
                 <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
+              </div>
+            )}
+            {!isCreating && !readOnly && selectedKey && (project.pending_contexts ?? []).some((slug) => !(project.local_ignored_contexts ?? []).includes(slug)) && (
+              <div className="px-6 pt-3 flex-shrink-0">
+                <PendingContextsNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
               </div>
             )}
             {projectTab === "project_file" && project && (

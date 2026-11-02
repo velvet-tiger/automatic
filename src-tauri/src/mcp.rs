@@ -1476,7 +1476,8 @@ impl AutomaticMcpServer {
                        those entries are owned by the profile and are re-attached on the \
                        next save if removed directly. `contexts` lists attached context \
                        slugs and `group_context_contributions` records which of them each \
-                       project group provides. `group_profile_contributions` records which \
+                       project group provides. `pending_contexts` lists the slugs agents \
+                       cannot read until the user attaches them in the app. `group_profile_contributions` records which \
                        entries in `profiles` each project group provides; those can only be \
                        detached from the group."
     )]
@@ -2693,13 +2694,22 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         let slug = &params.0.context;
+        let created = self.live_created_contexts();
         if let Err(e) = self
             .reading_scope()
-            .and_then(|scope| scope.check_attach(slug, &self.live_created_contexts()))
+            .and_then(|scope| scope.check_attach(slug, &created))
         {
             return Ok(tool_error(e));
         }
-        match crate::core::attach_context(&target, slug) {
+        let attached = crate::core::attach_context(&target, slug).and_then(|changed| {
+            // Only a context this server created: anything else this folder
+            // can see is confirmed or provided by a group already.
+            if let (crate::core::ContextTarget::Project(ident), true) = (&target, created.contains(slug)) {
+                crate::core::confirm_project_context(ident, slug)?;
+            }
+            Ok(changed)
+        });
+        match attached {
             Ok(true) => Ok(tool_success(format!(
                 "Attached context '{}' to {}.",
                 slug, label
@@ -3578,6 +3588,9 @@ fn serving_server() -> AutomaticMcpServer {
     if let Err(e) = crate::core::confirm_attached_profiles_once() {
         eprintln!("[automatic] profile confirmation error: {}", e);
     }
+    if let Err(e) = crate::core::confirm_attached_contexts_once() {
+        eprintln!("[automatic] context confirmation error: {}", e);
+    }
     // Resolved once. Agents start one `mcp-serve` per session, and the
     // working directory and `AUTOMATIC_PROJECT` do not change during it.
     AutomaticMcpServer::with_current_project(crate::core::detect_current_project())
@@ -4352,6 +4365,49 @@ mod tests {
             name: "Notes".into(),
             description: String::new(),
         })))
+    }
+
+    /// The H1 probe: a repository with its own `id` names a private slug, and
+    /// the folder is in the registry, here because an agent registered it from
+    /// elsewhere. The name alone must open nothing.
+    #[test]
+    fn a_registered_repository_naming_a_slug_reads_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            crate::core::create_local_context("private", "").expect("context");
+            crate::core::write_documentation_page("private", "pages", "index.md", "Secret notes")
+                .expect("page");
+
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let elsewhere = server_in(&folders.site, None);
+            let registered = call(elsewhere.register_project(Parameters(RegisterProjectParams {
+                name: "repo".into(),
+                directory: repo.display().to_string(),
+                description: None,
+                agents: None,
+            })));
+            assert_ne!(registered.is_error, Some(true), "{}", result_text(&registered));
+            let mut project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("repo").unwrap()).unwrap();
+            project.contexts = vec!["private".into()];
+            let key = project.local_key.clone();
+            crate::core::save_project(&key, &serde_json::to_string(&project).unwrap()).expect("commit");
+
+            let server = server_in(&repo, None);
+            assert!(slugs_listed(&server).unwrap().is_empty());
+            assert_refused(&read_slug(&server, "private"));
+            assert_refused(&entry_of(&server, "private"));
+            assert_refused(&attach(&server, "private", None));
+            let pending: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project(&key).unwrap()).unwrap();
+            assert_eq!(pending.pending_contexts, vec!["private"]);
+
+            crate::core::confirm_project_context(&key, "private").expect("confirm");
+            assert_eq!(slugs_listed(&server).unwrap(), vec!["private"]);
+            assert_ne!(entry_of(&server, "private").is_error, Some(true));
+        });
     }
 
     #[test]

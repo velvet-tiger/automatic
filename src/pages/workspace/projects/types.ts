@@ -134,6 +134,13 @@ export interface Project {
    * here, because this checkout has not confirmed them. Never saved.
    */
   pending_profiles?: string[];
+  /** Pending context slugs this checkout chose to ignore. Stored only on this machine. */
+  local_ignored_contexts?: string[];
+  /**
+   * Computed by backend at read-time: slugs in `contexts` agents are not
+   * offered here, because this checkout has not confirmed them. Never saved.
+   */
+  pending_contexts?: string[];
   /**
    * Computed by backend at read-time: the read-only project whose folder
    * holds this one's. Such a project is read-only too. Never saved.

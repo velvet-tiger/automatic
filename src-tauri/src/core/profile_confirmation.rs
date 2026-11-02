@@ -24,7 +24,10 @@ const IGNORED_FIELD: &str = "local_ignored_profiles";
 const GROUPS_FIELD: &str = "local_confirmed_groups";
 const DEPARTED_FIELD: &str = "local_departed_groups";
 const RELEASING_FIELD: &str = "local_releasing_profiles";
+const CONFIRMED_CONTEXTS_FIELD: &str = "local_confirmed_contexts";
+const IGNORED_CONTEXTS_FIELD: &str = "local_ignored_contexts";
 const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
+const CONTEXT_MIGRATION_MARKER: &str = "contexts_confirmed_migrated";
 
 /// What this checkout has decided about the profile names it was given.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub(crate) struct ProfileDecisions {
     groups: Vec<String>,
     departed: Vec<String>,
     releasing: Vec<String>,
+    confirmed_contexts: Vec<String>,
+    ignored_contexts: Vec<String>,
 }
 
 impl ProfileDecisions {
@@ -44,6 +49,8 @@ impl ProfileDecisions {
             groups: pointer_names(pointer, GROUPS_FIELD),
             departed: pointer_names(pointer, DEPARTED_FIELD),
             releasing: pointer_names(pointer, RELEASING_FIELD),
+            confirmed_contexts: pointer_names(pointer, CONFIRMED_CONTEXTS_FIELD),
+            ignored_contexts: pointer_names(pointer, IGNORED_CONTEXTS_FIELD),
         }
     }
 
@@ -67,6 +74,8 @@ impl ProfileDecisions {
             groups: project.local_confirmed_groups.clone(),
             departed: project.local_departed_groups.clone(),
             releasing: project.local_releasing_profiles.clone(),
+            confirmed_contexts: project.local_confirmed_contexts.clone(),
+            ignored_contexts: project.local_ignored_contexts.clone(),
         }
     }
 
@@ -76,6 +85,8 @@ impl ProfileDecisions {
         project.local_confirmed_groups = self.groups;
         project.local_departed_groups = self.departed;
         project.local_releasing_profiles = self.releasing;
+        project.local_confirmed_contexts = self.confirmed_contexts;
+        project.local_ignored_contexts = self.ignored_contexts;
     }
 
     fn write_to(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
@@ -85,6 +96,8 @@ impl ProfileDecisions {
             (GROUPS_FIELD, &self.groups),
             (DEPARTED_FIELD, &self.departed),
             (RELEASING_FIELD, &self.releasing),
+            (CONFIRMED_CONTEXTS_FIELD, &self.confirmed_contexts),
+            (IGNORED_CONTEXTS_FIELD, &self.ignored_contexts),
         ] {
             if names.is_empty() {
                 map.remove(field);
@@ -149,6 +162,7 @@ pub fn load_profile_decisions(
             if creating {
                 project.local_confirmed_profiles =
                     project.profiles.iter().map(|name| canonical_profile_name(name)).collect();
+                project.local_confirmed_contexts = project.contexts.clone();
             }
         }
     }
@@ -239,6 +253,34 @@ pub(crate) fn pending_profile_names(project: &Project) -> Vec<String> {
         .collect()
 }
 
+/// Slugs in `project.contexts` that this checkout has not confirmed and that
+/// no group it joined lists or records. Like [`unconfirmed_profiles`], this
+/// reads the groups leniently, for a notice. What agents are offered comes
+/// from `project_context_entries`, which fails closed.
+pub(crate) fn pending_context_slugs(project: &Project) -> Vec<String> {
+    let mut slugs: Vec<String> = project
+        .contexts
+        .iter()
+        .filter(|slug| !project.local_confirmed_contexts.contains(slug))
+        .cloned()
+        .collect();
+    if slugs.is_empty() {
+        return slugs;
+    }
+    let groups = joined_groups(project);
+    slugs.retain(|slug| {
+        !groups.iter().any(|group| {
+            group.contexts.contains(slug)
+                || project
+                    .group_context_contributions
+                    .get(&group.name)
+                    .is_some_and(|recorded| recorded.contains(slug))
+        })
+    });
+    slugs.retain(|slug| read_context(slug).is_ok());
+    slugs
+}
+
 // ── Decisions ────────────────────────────────────────────────────────────────
 
 /// Edit the pointer at `path`, read afresh so a change another process made
@@ -323,6 +365,77 @@ pub fn ignore_project_profile(ident: &str, profile: &str) -> Result<(), String> 
 /// goes by the case folding the library lookup uses, so no spelling survives.
 pub fn forget_project_profile(ident: &str, profile: &str) -> Result<(), String> {
     edit_decisions(ident, |decisions| forget_profile(decisions, profile))
+}
+
+/// Record that this checkout accepts the context `slug`. Clears any Ignore.
+pub fn confirm_project_context(ident: &str, slug: &str) -> Result<(), String> {
+    edit_decisions(ident, |decisions| {
+        add_name(&mut decisions.confirmed_contexts, slug);
+        decisions.ignored_contexts.retain(|name| name != slug);
+    })
+}
+
+/// Hide the notice for the pending context `slug` on this checkout. It stays
+/// pending, so the committed config is left as it is.
+pub fn ignore_project_context(ident: &str, slug: &str) -> Result<(), String> {
+    if !is_valid_context_slug(slug) {
+        return Err(format!("Invalid context slug '{}'", slug));
+    }
+    edit_decisions(ident, |decisions| add_name(&mut decisions.ignored_contexts, slug))
+}
+
+/// Drop this checkout's decisions about the context `slug`.
+pub fn forget_project_context(ident: &str, slug: &str) -> Result<(), String> {
+    edit_decisions(ident, |decisions| forget_context(decisions, slug))
+}
+
+fn forget_context(decisions: &mut ProfileDecisions, slug: &str) {
+    decisions.confirmed_contexts.retain(|name| name != slug);
+    decisions.ignored_contexts.retain(|name| name != slug);
+}
+
+/// What an editor save changed in `contexts`, against the stored list. Only a
+/// difference counts: a save carries the whole list, so a slug the committed
+/// config already holds is not confirmed by being sent back.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ContextEdits {
+    added: Vec<String>,
+    removed: Vec<String>,
+}
+
+/// Compare `requested` with the list stored for `ident`. A project with nothing
+/// stored has no edits: the create path confirms what its creator chose.
+pub fn context_edits(ident: &str, requested: &[String]) -> ContextEdits {
+    let Some(stored) = read_project(ident)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Project>(&raw).ok())
+    else {
+        return ContextEdits::default();
+    };
+    ContextEdits {
+        added: requested.iter().filter(|s| !stored.contexts.contains(s)).cloned().collect(),
+        removed: stored.contexts.iter().filter(|s| !requested.contains(s)).cloned().collect(),
+    }
+}
+
+/// Record `edits` once the save is done, so a failed save decides nothing. A
+/// slug a group provides is left out: leaving the group must remove it.
+pub fn record_context_edits(ident: &str, edits: &ContextEdits) -> Result<(), String> {
+    if edits == &ContextEdits::default() {
+        return Ok(());
+    }
+    let raw = read_project(ident)?;
+    let project: Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project '{}': {}", ident, e))?;
+    edit_decisions(ident, |decisions| {
+        for slug in edits.added.iter().filter(|s| group_providing(&project, s).is_none()) {
+            add_name(&mut decisions.confirmed_contexts, slug);
+            decisions.ignored_contexts.retain(|name| name != slug);
+        }
+        for slug in &edits.removed {
+            forget_context(decisions, slug);
+        }
+    })
 }
 
 /// Record that this checkout joined `group` on this machine.
@@ -460,6 +573,26 @@ pub fn forget_profile_everywhere(profile: &str) -> Vec<(String, String)> {
     edit_all_decisions(|decisions| forget_profile(decisions, profile))
 }
 
+/// Drop every project's decisions about a deleted context, so a later context
+/// with the same slug is not trusted.
+pub fn forget_context_everywhere(slug: &str) -> Vec<(String, String)> {
+    edit_all_decisions(|decisions| forget_context(decisions, slug))
+}
+
+/// Carry every project's decisions over to a renamed context.
+pub fn rename_context_decisions(old: &str, new: &str) -> Vec<(String, String)> {
+    let rename = |names: &mut Vec<String>| {
+        if names.iter().any(|name| name == old) {
+            names.retain(|name| name != old);
+            add_name(names, new);
+        }
+    };
+    edit_all_decisions(|decisions| {
+        rename(&mut decisions.confirmed_contexts);
+        rename(&mut decisions.ignored_contexts);
+    })
+}
+
 /// Carry every project's decisions over to a renamed profile.
 pub fn rename_profile_decisions(old: &str, new: &str) -> Vec<(String, String)> {
     edit_all_decisions(|decisions| {
@@ -528,6 +661,61 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     }
     if !failed.is_empty() {
         return Err(format!("Could not confirm the profiles of {}", failed.join("; ")));
+    }
+    match fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Could not write {}: {}", marker.display(), e)),
+    }
+}
+
+/// The slugs `entry` attached itself. A slug a group recorded is left out: a
+/// joined group already provides it, and confirming it would outlive the join.
+fn attached_context_slugs(entry: &RegistryEntry) -> Result<Vec<String>, String> {
+    let Some(directory) = entry.directory()? else {
+        return Ok(entry
+            .contents
+            .as_ref()
+            .map(|value| pointer_names(value, "contexts"))
+            .unwrap_or_default());
+    };
+    let Some(project) = read_project_files(&directory, &entry.name)? else {
+        return Ok(Vec::new());
+    };
+    let provided = |slug: &String| {
+        project.group_context_contributions.values().any(|slugs| slugs.contains(slug))
+    };
+    Ok(project.contexts.iter().filter(|slug| !provided(slug)).cloned().collect())
+}
+
+/// Confirm every slug attached to every registered checkout, once. Without
+/// this, projects from before confirmation existed would lose their contexts.
+/// Writes only pointers, so read-only projects are covered. A project whose
+/// folder cannot be read is skipped, and its slugs show as pending. A pointer
+/// that cannot be written is an error and leaves the marker unset.
+pub fn confirm_attached_contexts_once() -> Result<(), String> {
+    let marker = get_automatic_dir()?.join(CONTEXT_MIGRATION_MARKER);
+    if marker.exists() {
+        return Ok(());
+    }
+    let _writes = super::hold_library_writes();
+    let mut failed = Vec::new();
+    for entry in scan_registry()? {
+        let slugs = attached_context_slugs(&entry).unwrap_or_else(|e| {
+            eprintln!("Could not read the contexts of '{}': {}", entry.name, e);
+            Vec::new()
+        });
+        let confirmed = edit_pointer_file(&entry.path, &entry.name, |decisions| {
+            for slug in &slugs {
+                add_name(&mut decisions.confirmed_contexts, slug);
+            }
+        });
+        if let Err(e) = confirmed {
+            failed.push(format!("'{}': {}", entry.name, e));
+        }
+    }
+    if !failed.is_empty() {
+        return Err(format!("Could not confirm the contexts of {}", failed.join("; ")));
     }
     match fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
         Ok(_) => Ok(()),

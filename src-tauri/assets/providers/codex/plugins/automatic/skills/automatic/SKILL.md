@@ -38,7 +38,7 @@ Use Automatic when you need to:
 
 ### Contexts
 
-- `automatic_list_contexts` (this folder's project only)
+- `automatic_list_contexts` (this folder's project only; committed slugs stay pending until the user attaches them)
 - `automatic_read_context`
 - `automatic_list_context_entries`
 - `automatic_read_context_entry`

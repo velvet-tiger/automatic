@@ -171,6 +171,8 @@ describe("withCheckoutDecisions", () => {
       local_confirmed_groups: ["team"],
       local_ignored_profiles: [],
       pending_profiles: [],
+      local_ignored_contexts: [],
+      pending_contexts: [],
     });
   });
 });

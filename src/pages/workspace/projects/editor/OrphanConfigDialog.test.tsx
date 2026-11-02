@@ -103,6 +103,28 @@ describe("OrphanConfigDialog", () => {
     expect(screen.getByRole("button", { name: /Remove and start fresh/ })).toBeEnabled();
   });
 
+  it("says contexts wait for an attach when the config names any", () => {
+    render(
+      <OrphanConfigDialog
+        directory="/repo"
+        existingName="cloned"
+        libraryUse={{
+          kind: "Readable",
+          read_only_hint: false,
+          has_unreadable_profile: false,
+          groups: [{ kind: "context", total: 1, flagged_total: 0, names: [{ name: "private", flagged: false }], not_checked: 0 }],
+        }}
+        busy={false}
+        error={null}
+        onImport={vi.fn()}
+        onStartFresh={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("private")).toBeInTheDocument();
+    expect(screen.getByText("Agents cannot read these contexts until you attach them in the project.")).toBeInTheDocument();
+  });
+
   it("says profiles wait for an attach only when the config names one", () => {
     const note = "Profiles do not apply until you attach them in the project.";
     const { unmount } = render(

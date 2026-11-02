@@ -8,7 +8,8 @@ export type LibraryItemKind =
   | "sub_agent"
   | "command"
   | "rule"
-  | "profile";
+  | "profile"
+  | "context";
 
 /** Mirrors `core::LibraryUseGroup`. */
 export interface LibraryUseGroup {
@@ -50,6 +51,7 @@ const KIND_LABELS: Record<LibraryItemKind, string> = {
   command: "Commands",
   rule: "Rules",
   profile: "Profiles",
+  context: "Contexts",
 };
 
 export function libraryKindLabel(kind: LibraryItemKind): string {

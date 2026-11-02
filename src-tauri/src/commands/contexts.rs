@@ -50,7 +50,15 @@ pub fn get_context_references(slug: &str) -> Result<core::ContextReferences, Str
 #[tauri::command(async)]
 pub fn attach_context(target: core::ContextTarget, slug: &str) -> Result<bool, String> {
     let _writes = super::project_sweeps::hold_library_writes();
-    core::attach_context(&target, slug)
+    core::attach_context_for_user(&target, slug)
+}
+
+/// Hide the notice for a pending context on this checkout. The slug stays in
+/// the committed config and stays pending.
+#[tauri::command(async)]
+pub fn ignore_project_context(project_name: &str, slug: &str) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
+    core::ignore_project_context(&core::canonical_project_ident(project_name)?, slug)
 }
 
 #[tauri::command(async)]

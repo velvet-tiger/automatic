@@ -36,6 +36,7 @@ pub enum LibraryItemKind {
     Command,
     Rule,
     Profile,
+    Context,
 }
 
 /// One name from the config that this machine's library would satisfy.
@@ -169,6 +170,9 @@ fn library_use_groups(
         }),
         checked_group(LibraryItemKind::Profile, project.profiles.iter(), |name| {
             profile_flags.get(&profiles.get(name)?.file).copied()
+        }),
+        checked_group(LibraryItemKind::Context, project.contexts.iter(), |slug| {
+            super::read_context(slug).ok().map(|_| false)
         }),
     ];
     Ok(groups

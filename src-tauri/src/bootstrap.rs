@@ -219,6 +219,9 @@ pub fn run_startup_housekeeping() {
     if let Err(e) = core::confirm_attached_profiles_once() {
         eprintln!("[automatic] profile confirmation error: {}", e);
     }
+    if let Err(e) = core::confirm_attached_contexts_once() {
+        eprintln!("[automatic] context confirmation error: {}", e);
+    }
 
     // Carry what a read resolves into each project folder: keys cached in
     // the registry, current enrichment and the legacy `project.json` split.

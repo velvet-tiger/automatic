@@ -334,6 +334,7 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     project.local_read_only = local_read_only;
     profile_decisions.apply_to(&mut project);
     project.pending_profiles = pending_profile_names(&project);
+    project.pending_contexts = pending_context_slugs(&project);
     // A folder inside a read-only project is read-only too. A failed check
     // is logged and left to the writers, which re-check strictly.
     project.read_only_owner = if local_read_only {
@@ -960,6 +961,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     project.directory_missing = false;
     project.read_only_owner = None;
     project.pending_profiles.clear();
+    project.pending_contexts.clear();
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {

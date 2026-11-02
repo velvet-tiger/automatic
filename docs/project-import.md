@@ -42,6 +42,6 @@ Find Projects previews at most 200 unregistered configs in one scan. A folder pa
 
 - **Later changes.** The review runs at import only. A `git pull` that adds a name is not reviewed, and neither sync nor drift detection asks.
 - **Providers.** `providers` is not reviewed. Sync does not use it, nothing validates its ids, and it grants no access to the library.
-- **Contexts.** `contexts` is not reviewed, because sync does not write contexts into a project's files. Agents read them on demand through Automatic's MCP tools, so an agent in the project can read a context the config names, unless a group that lists this checkout provides it and the checkout has not joined.
+- **Contexts.** The dialog lists the slugs in `contexts`, but `git pull` is not reviewed. A slug the config names is pending on each checkout. Agents cannot read it until the user attaches it in the project, or a group the checkout joined provides it.
 - **Client working directory.** MCP context and project reads go by the folder the server runs in. The client must start `mcp-serve` inside the project folder, and no other repository may sit between that folder and the registered one. A client that starts it elsewhere, such as the home folder, reads nothing, even in a registered project. A linked worktree of the project reads as the project.
 - **Inline content.** `custom_skills`, `custom_agents`, `custom_commands` and `custom_rules` carry their own content and are not listed. The repository can also commit agent files directly.

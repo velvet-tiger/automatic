@@ -1163,6 +1163,17 @@ pub enum ContextTarget {
     Group(String),
 }
 
+/// [`attach_context`] for a choice the user made: a project target also
+/// confirms the slug on that checkout. Confirmed last, so a failure leaves it
+/// pending. An agent's attach does not come through here.
+pub fn attach_context_for_user(target: &ContextTarget, slug: &str) -> Result<bool, String> {
+    let changed = attach_context(target, slug)?;
+    if let ContextTarget::Project(ident) = target {
+        confirm_project_context(ident, slug)?;
+    }
+    Ok(changed)
+}
+
 /// Attach an existing context to a project or group and persist the change.
 /// Attaching to a group also brings every member project in step. Returns
 /// `false` when the context was already attached.
@@ -1194,6 +1205,11 @@ pub fn detach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
             let ident = &canonical_project_ident(ident)?;
             let mut project = read_project_parsed(ident)?;
             reconcile_group_contexts(&mut project, &groups_for_project(ident));
+            if group_providing(&project, slug).is_none() {
+                // First, so a failure after this leaves the slug not trusted.
+                ensure_project_writable(&project)?;
+                forget_project_context(ident, slug)?;
+            }
             let changed = detach_context_from_project(&mut project, slug)?;
             if changed {
                 write_project(ident, &project)?;
@@ -1352,6 +1368,14 @@ fn rewrite_context_references(
 ) -> Result<ContextReferences, String> {
     let mut changes = ContextReferences::default();
 
+    let failures = match new_slug {
+        Some(new_slug) => rename_context_decisions(old_slug, new_slug),
+        None => forget_context_everywhere(old_slug),
+    };
+    for (project, error) in failures {
+        eprintln!("contexts: failed to update decisions of '{}': {}", project, error);
+    }
+
     for name in list_groups()? {
         let mut group = match read_group(&name)
             .and_then(|raw| serde_json::from_str::<ProjectGroup>(&raw).map_err(|e| e.to_string()))
@@ -1475,51 +1499,34 @@ pub struct ProjectContextEntry {
     pub group: Option<String>,
 }
 
+/// The contexts offered to this checkout's agents. `contexts` is committed, so
+/// holding a slug grants nothing. A slug is offered only if a group this
+/// checkout joined lists or records it, or this checkout confirmed it. Anything
+/// else is pending, and the committed list is left as it is.
+///
+/// An unreadable group is an error, because it might decide what is offered.
 pub fn project_context_entries(project: &Project) -> Result<Vec<ProjectContextEntry>, String> {
-    let withheld = withheld_group_contexts(project)?;
+    let joined: Vec<ProjectGroup> = groups_listing_strict(project_ident(project))?
+        .into_iter()
+        .filter(|group| project.local_confirmed_groups.contains(&group.name))
+        .collect();
+    let group_grants = |slug: &String| {
+        joined.iter().any(|group| {
+            group.contexts.contains(slug)
+                || project
+                    .group_context_contributions
+                    .get(&group.name)
+                    .is_some_and(|recorded| recorded.contains(slug))
+        })
+    };
     Ok(project
         .contexts
         .iter()
-        .filter(|slug| !withheld.contains(*slug))
+        .filter(|slug| project.local_confirmed_contexts.contains(slug) || group_grants(slug))
         .map(|slug| ProjectContextEntry {
             slug: slug.clone(),
             group: group_providing(project, slug),
         })
-        .collect())
-}
-
-/// Slugs not to offer this checkout, unless a joined group provides them too:
-/// - Those of a group that lists it but that it has not joined. A clone of a
-///   member carries them in its committed `contexts`, with no group record, so
-///   the reconcile cannot remove them.
-/// - Those recorded only under a group it is no longer joined to. A checkout
-///   that cannot be written keeps the record after it leaves.
-///
-/// An unreadable group is an error, because it might list this checkout.
-fn withheld_group_contexts(project: &Project) -> Result<Vec<String>, String> {
-    let listing = groups_listing_strict(project_ident(project))?;
-    let (joined, unjoined): (Vec<_>, Vec<_>) = listing
-        .iter()
-        .partition(|group| project.local_confirmed_groups.contains(&group.name));
-    let is_joined = |name: &str| joined.iter().any(|group| group.name == name);
-    let recorded_as_joined = |slug: &String| {
-        project
-            .group_context_contributions
-            .iter()
-            .any(|(group, slugs)| is_joined(group) && slugs.contains(slug))
-    };
-    let unearned_records = project
-        .group_context_contributions
-        .iter()
-        .filter(|(group, _)| !is_joined(group))
-        .flat_map(|(_, slugs)| slugs);
-    Ok(unjoined
-        .iter()
-        .flat_map(|group| group.contexts.iter())
-        .chain(unearned_records)
-        .filter(|slug| !joined.iter().any(|group| group.contexts.contains(*slug)))
-        .filter(|slug| !recorded_as_joined(slug))
-        .cloned()
         .collect())
 }
 

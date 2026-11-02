@@ -481,6 +481,23 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_releasing_profiles: Vec<String>,
 
+    /// Slugs in `contexts` this checkout has accepted. `contexts` is committed,
+    /// so a repository can name any context in the library. Stored only in the
+    /// registry pointer, so a repository can never grant one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_confirmed_contexts: Vec<String>,
+
+    /// Pending slugs whose notice this checkout has hidden. Stored only in the
+    /// registry pointer. They stay pending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_ignored_contexts: Vec<String>,
+
+    /// Computed at read-time: slugs in `contexts` that agents are not offered
+    /// here, because this checkout has not confirmed them and no group it
+    /// joined provides them. Never persisted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_contexts: Vec<String>,
+
     /// Computed at read-time: names in `profiles` that are not applied here,
     /// because this checkout has not confirmed them and no group provides
     /// them. Never persisted.

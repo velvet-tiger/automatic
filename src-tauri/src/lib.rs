@@ -321,6 +321,7 @@ pub fn run() {
             get_context_references,
             attach_context,
             detach_context,
+            ignore_project_context,
             list_context_documentation_pages,
             read_context_documentation_page,
             write_context_documentation_page,

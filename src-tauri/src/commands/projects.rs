@@ -307,8 +307,8 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
     )
 }
 
-/// Body of [`save_project`]. `recommendations` decides whether a new
-/// project gets the forced first AI recommendations call.
+/// [`save_reconciled_project`], then record what the save changed in
+/// `contexts`, compared with the list stored before it.
 fn save_project_with(
     name: &str,
     data: &str,
@@ -316,6 +316,27 @@ fn save_project_with(
     recommendations: NewProjectRecommendations,
 ) -> Result<String, String> {
     let _writes = hold_library_writes();
+    let requested = serde_json::from_str::<core::Project>(data)
+        .map_err(|e| format!("Invalid project data: {}", e))?
+        .contexts;
+    let edits = if creating {
+        core::ContextEdits::default()
+    } else {
+        core::context_edits(name, &requested)
+    };
+    let saved = save_reconciled_project(name, data, creating, recommendations)?;
+    core::record_context_edits(&saved, &edits)?;
+    Ok(saved)
+}
+
+/// Body of [`save_project`]. `recommendations` decides whether a new
+/// project gets the forced first AI recommendations call.
+fn save_reconciled_project(
+    name: &str,
+    data: &str,
+    creating: bool,
+    recommendations: NewProjectRecommendations,
+) -> Result<String, String> {
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     // Add Project wizard: refuse a directory another project owns, then give
@@ -3614,6 +3635,206 @@ fn detach_profile_from_projects_removes_provided_entries() {
             super::super::groups::delete_group("kept").expect("delete");
             assert_eq!(read_back(&member).contexts, vec!["private", "open"], "not writable");
             assert_eq!(offered_contexts(&member), Vec::<String>::new());
+        });
+    }
+
+    fn save_library_context(name: &str) -> String {
+        core::create_local_context(name, "").expect("context").slug
+    }
+
+    /// A registered repository with its own `id`, naming a library slug.
+    fn repo_naming(slug: &str) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let keep = tempdir().expect("repo");
+        let dir = keep.path().to_path_buf();
+        let config = serde_json::json!({"name": "repo", "id": uuid::Uuid::new_v4().to_string(), "contexts": [slug]});
+        std::fs::write(dir.join(".automatic.json"), config.to_string()).expect("config");
+        let key = core::import_existing_project(dir.to_str().expect("utf-8"), None)
+            .expect("import")
+            .local_key;
+        (keep, dir, key)
+    }
+
+    #[test]
+    fn a_committed_slug_is_pending_until_the_user_attaches_it() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, key) = repo_naming(&slug);
+            let config = std::fs::read(dir.join(".automatic.json")).expect("read");
+
+            assert_eq!(read_back(&key).pending_contexts, vec![slug.clone()]);
+            assert!(offered_contexts(&key).is_empty());
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config, "not rewritten");
+
+            let target = core::ContextTarget::Project(key.clone());
+            super::super::contexts::attach_context(target.clone(), &slug).expect("attach");
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec![slug.clone()]);
+            assert!(read_back(&key).pending_contexts.is_empty());
+            assert_eq!(offered_contexts(&key), vec![slug.clone()]);
+
+            super::super::contexts::detach_context(target, &slug).expect("detach");
+            let detached = read_back(&key);
+            assert!(detached.contexts.is_empty());
+            assert!(detached.local_confirmed_contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_pull_that_adds_a_slug_leaves_it_pending() {
+        with_temp_home(|_| {
+            let first = save_library_context("First");
+            let second = save_library_context("Second");
+            let (_keep, dir, key) = repo_naming(&first);
+            core::confirm_project_context(&key, &first).expect("confirm");
+
+            let path = dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("parse");
+            config["contexts"] = serde_json::json!([first, second]);
+            std::fs::write(&path, config.to_string()).expect("write");
+
+            assert_eq!(read_back(&key).pending_contexts, vec![second]);
+            assert_eq!(offered_contexts(&key), vec![first]);
+        });
+    }
+
+    #[test]
+    fn a_committed_confirmation_grants_nothing() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, key) = repo_naming(&slug);
+            let path = dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("parse");
+            config["local_confirmed_contexts"] = serde_json::json!([slug]);
+            std::fs::write(&path, config.to_string()).expect("write");
+            std::fs::create_dir_all(dir.join(".automatic")).expect("mkdir");
+            let state = serde_json::json!({"local_confirmed_contexts": [slug]});
+            std::fs::write(dir.join(".automatic/project.json"), state.to_string()).expect("write");
+
+            let project = read_back(&key);
+            assert!(project.local_confirmed_contexts.is_empty());
+            assert_eq!(project.pending_contexts, vec![slug]);
+            assert!(offered_contexts(&key).is_empty());
+        });
+    }
+
+    #[test]
+    fn an_editor_save_confirms_only_what_it_added() {
+        with_temp_home(|_| {
+            let committed = save_library_context("Committed");
+            let chosen = save_library_context("Chosen");
+            let (_keep, _dir, key) = repo_naming(&committed);
+
+            // A stale copy sends the committed slug back, claiming a decision.
+            let mut stale = read_back(&key);
+            stale.local_confirmed_contexts = vec![committed.clone()];
+            let json = serde_json::to_string(&stale).expect("json");
+            save_project(&key, &json, None).expect("save");
+            let saved = read_back(&key);
+            assert!(saved.local_confirmed_contexts.is_empty());
+            assert_eq!(saved.pending_contexts, vec![committed.clone()]);
+
+            // The panel adds a slug while the editor holds unsaved edits.
+            let mut edited = read_back(&key);
+            edited.contexts.push(chosen.clone());
+            save_project(&key, &serde_json::to_string(&edited).expect("json"), None).expect("save");
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec![chosen.clone()]);
+            assert_eq!(offered_contexts(&key), vec![chosen.clone()]);
+
+            let mut removed = read_back(&key);
+            removed.contexts.retain(|slug| slug != &chosen);
+            save_project(&key, &serde_json::to_string(&removed).expect("json"), None).expect("save");
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_joined_group_needs_no_confirmation() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", std::slice::from_ref(&member), &["private"], std::slice::from_ref(&member));
+            let project = read_back(&member);
+            assert!(project.local_confirmed_contexts.is_empty());
+            assert!(project.pending_contexts.is_empty());
+            assert_eq!(offered_contexts(&member), vec!["private"]);
+        });
+    }
+
+    #[test]
+    fn deleting_or_renaming_a_context_carries_the_decision() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            core::confirm_project_context(&key, &slug).expect("confirm");
+            core::rename_context(&slug, "renamed").expect("rename");
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec!["renamed"]);
+
+            core::delete_context("renamed").expect("delete");
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn ignore_hides_the_notice_and_the_slug_stays_pending() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            super::super::contexts::ignore_project_context(&key, &slug).expect("ignore");
+            let project = read_back(&key);
+            assert_eq!(project.local_ignored_contexts, vec![slug.clone()]);
+            assert_eq!(project.pending_contexts, vec![slug.clone()]);
+            assert!(offered_contexts(&key).is_empty());
+        });
+    }
+
+    #[test]
+    fn the_context_migration_keeps_existing_projects_and_runs_once() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let other = save_library_context("Later");
+            let (_keep, dir, key) = repo_naming(&slug);
+            let (_member_keep, _member_dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", std::slice::from_ref(&member), &["provided"], std::slice::from_ref(&member));
+            let config = std::fs::read(dir.join(".automatic.json")).expect("read");
+
+            core::confirm_attached_contexts_once().expect("migrate");
+
+            assert_eq!(offered_contexts(&key), vec![slug.clone()]);
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config);
+            assert!(read_back(&member).local_confirmed_contexts.is_empty(), "the group provides it");
+
+            let path = dir.join(".automatic.json");
+            let mut value: serde_json::Value = serde_json::from_slice(&config).expect("parse");
+            value["contexts"] = serde_json::json!([slug, other]);
+            std::fs::write(&path, value.to_string()).expect("write");
+            core::confirm_attached_contexts_once().expect("again");
+            assert_eq!(read_back(&key).pending_contexts, vec![other]);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_pointer_edit_leaves_the_context_migration_to_run_again() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            let pointers = core::get_projects_dir().expect("dir");
+            let chmod = |mode| {
+                for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
+                    std::fs::set_permissions(entry.path(), std::fs::Permissions::from_mode(mode)).expect("chmod");
+                }
+                std::fs::set_permissions(&pointers, std::fs::Permissions::from_mode(mode | 0o111)).expect("chmod");
+            };
+            chmod(0o444);
+            let failed = core::confirm_attached_contexts_once();
+            chmod(0o644);
+
+            assert!(failed.is_err());
+            core::confirm_attached_contexts_once().expect("retry");
+            assert_eq!(offered_contexts(&key), vec![slug]);
         });
     }
 
