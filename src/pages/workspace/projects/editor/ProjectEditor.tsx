@@ -19,6 +19,7 @@ import {
   membersWithoutProject,
   projectsNamed,
   sharedNameNote,
+  withCheckoutDecisions,
 } from "../../../../lib/projectIdentity";
 import type { ProjectSummary } from "../types";
 import { SELECTED_PROJECT_STORAGE_KEY } from "../../../../lib/projectStorageMigration";
@@ -1602,12 +1603,23 @@ export function ProjectEditor({
     };
   }, [projectGroupMemberships, project?.local_confirmed_groups]);
 
+  /** Show a group change on the project without discarding unsaved edits. */
+  const refreshCheckoutDecisions = async (projectKey: string) => {
+    if (!dirty && !projectFileDirty) {
+      await reloadProject(projectKey);
+      return;
+    }
+    const raw: string = await invoke("read_project", { name: projectKey });
+    const fresh = JSON.parse(raw) as Partial<Project>;
+    setProject((held) => (held ? withCheckoutDecisions(held, fresh) : held));
+  };
+
   const handleAddToGroup = async (groupName: string, projectKey: string) => {
     try {
       if (await addProjectToGroup(groupName, projectKey)) {
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
         // The join is on the project, and the Groups tab reads it from there.
-        await reloadProject(projectKey);
+        await refreshCheckoutDecisions(projectKey);
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
@@ -1618,7 +1630,7 @@ export function ProjectEditor({
   const handleJoinGroup = async (groupName: string, projectKey: string) => {
     try {
       await invoke("join_group", { groupName, projectName: projectKey });
-      await reloadProject(projectKey);
+      await refreshCheckoutDecisions(projectKey);
     } catch (err: any) {
       setError(`Failed to join group: ${err}`);
     }

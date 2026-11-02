@@ -76,6 +76,26 @@ export function membersWithoutProject(
   return members.filter((member) => !sameProject.has(member));
 }
 
+/** Per-checkout fields that change when a project joins a group. */
+interface CheckoutDecisions {
+  local_confirmed_groups?: string[];
+  local_ignored_profiles?: string[];
+  pending_profiles?: string[];
+}
+
+/**
+ * `held` with the per-checkout decisions of `fresh`. For an editor holding
+ * unsaved edits, which a full reload would discard.
+ */
+export function withCheckoutDecisions<T extends CheckoutDecisions>(held: T, fresh: CheckoutDecisions): T {
+  return {
+    ...held,
+    local_confirmed_groups: fresh.local_confirmed_groups ?? [],
+    local_ignored_profiles: fresh.local_ignored_profiles ?? [],
+    pending_profiles: fresh.pending_profiles ?? [],
+  };
+}
+
 /**
  * How to show one project: its name, plus a folder hint when another
  * project has the same name. `hint` is null when the name is unique.

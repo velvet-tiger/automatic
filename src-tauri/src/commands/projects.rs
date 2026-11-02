@@ -3409,8 +3409,53 @@ fn detach_profile_from_projects_removes_provided_entries() {
             super::super::groups::delete_group("other").expect("delete");
 
             let member = read_back("member");
-            assert_eq!(member.local_confirmed_groups, vec!["team", "other"]);
+            assert_eq!(member.local_confirmed_groups, vec!["team"]);
             assert!(member.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_rename_leaves_no_mark_on_a_writable_member() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            let moved = read_back("member");
+            assert_eq!(moved.profiles, vec!["renamed"]);
+            assert!(moved.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_mark_leaves_the_group_listing_the_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            let pointers = core::get_projects_dir().expect("dir");
+            let lock = |mode| {
+                for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    std::fs::set_permissions(entry.path(), perms).expect("chmod");
+                }
+                let perms = std::fs::Permissions::from_mode(mode | 0o111);
+                std::fs::set_permissions(&pointers, perms).expect("chmod");
+            };
+
+            lock(0o444);
+            let marked = core::mark_group_profile_releasing("team", "baseline");
+            let changed = core::prune_profile_from_groups("baseline");
+            lock(0o644);
+
+            assert!(marked.is_err());
+            assert!(changed.is_empty());
+            assert_eq!(read_group_back("team").profiles, vec!["baseline"]);
         });
     }
 

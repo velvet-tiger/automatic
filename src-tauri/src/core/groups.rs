@@ -189,20 +189,26 @@ pub fn groups_for_project(ident: &str) -> Vec<ProjectGroup> {
 }
 
 /// Names of the groups that list the project with `local_key`, like
-/// [`groups_for_project`], but a group file, the group list or the registry
-/// that cannot be read is an error and not a group that does not list it.
+/// [`groups_for_project`]. A group file that cannot be read counts as listing
+/// it. A group list or registry that cannot be read is an error, not an empty
+/// result.
 pub(crate) fn group_names_listing(local_key: &str) -> Result<Vec<String>, String> {
     let groups_dir = get_groups_dir()?;
     let index = ProjectKeyIndex::load()?;
     let project = index.resolve_for_group(local_key).cloned();
     let mut listing = Vec::new();
     for name in list_groups()? {
-        let group = read_group_from_dir(&groups_dir, &name)
-            .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
-        let listed = group.projects.iter().any(|member| match &project {
-            Some(summary) => index.member_is(member, summary),
-            None => member == local_key,
-        });
+        // A group that cannot be read might list the project, so it counts.
+        let listed = match read_group_from_dir(&groups_dir, &name) {
+            Ok(group) => group.projects.iter().any(|member| match &project {
+                Some(summary) => index.member_is(member, summary),
+                None => member == local_key,
+            }),
+            Err(e) => {
+                eprintln!("Group '{}' could not be read: {}", name, e);
+                true
+            }
+        };
         if listed {
             listing.push(name);
         }

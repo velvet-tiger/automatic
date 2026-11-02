@@ -376,7 +376,6 @@ pub(crate) fn settle_group_joins(ident: &str) -> Result<(), String> {
         return Ok(());
     }
     let key = entry.local_key().unwrap_or(ident).to_string();
-    // A group that cannot be read might list this checkout. Leave its joins.
     let listing = match group_names_listing(&key) {
         Ok(listing) => listing,
         Err(e) => {
@@ -393,9 +392,12 @@ pub(crate) fn settle_group_joins(ident: &str) -> Result<(), String> {
             .as_ref()
             .is_none_or(|p| p.group_profile_contributions.contains_key(group))
     };
+    // A mark waits for the record of a group that stopped listing the name.
     let held = |name: &str| {
         project.as_ref().is_none_or(|p| {
-            p.group_profile_contributions.values().any(|names| names.iter().any(|n| n == name))
+            p.group_profile_contributions.iter().any(|(group, names)| {
+                names.iter().any(|n| n == name) && !group_lists_profile(group, name)
+            })
         })
     };
     edit_pointer_file(&entry.path, &entry.name, |decisions| {

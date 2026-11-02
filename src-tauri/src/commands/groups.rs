@@ -100,8 +100,11 @@ pub(crate) fn attach_group_profile(group_name: &str, profile_name: &str) -> Resu
 /// the group does not exist. Returns `false` when the group did not list the
 /// profile; members are brought in step either way.
 pub(crate) fn detach_group_profile(group_name: &str, profile_name: &str) -> Result<bool, String> {
+    // Held across both steps: a settle between them would clear the mark.
+    let writes = hold_library_writes();
     core::mark_group_profile_releasing(group_name, profile_name)?;
     let changed = core::remove_profile_from_group(group_name, profile_name)?;
+    drop(writes);
     queue_group_reconcile(group_name, core::group_member_idents(group_name));
     Ok(changed)
 }

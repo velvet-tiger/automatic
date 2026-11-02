@@ -129,6 +129,12 @@ fn edit_group_profiles(
     Ok(true)
 }
 
+/// Whether `group` lists `profile_name`. `false` for a group that cannot be
+/// read.
+pub(crate) fn group_lists_profile(group: &str, profile_name: &str) -> bool {
+    read_group_parsed(group).is_ok_and(|g| g.profiles.iter().any(|p| p == profile_name))
+}
+
 /// Names of the groups that list `profile_name`, sorted. Unreadable group
 /// files are skipped.
 pub fn groups_referencing_profile(profile_name: &str) -> Result<Vec<String>, String> {
@@ -180,6 +186,7 @@ fn rewrite_groups_listing_profile(
         // the name, so the mark is what lets its next reconcile release it.
         if let Err(e) = mark_group_profile_releasing(&name, profile_name) {
             eprintln!("group profiles: could not mark group '{}': {}", name, e);
+            continue;
         }
         let saved = read_group_parsed(&name).and_then(|mut group| {
             edit(&mut group.profiles);
