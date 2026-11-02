@@ -127,6 +127,8 @@ export interface Project {
   local_read_only?: boolean;
   /** Pending profile names this checkout chose to ignore. Stored only on this machine. */
   local_ignored_profiles?: string[];
+  /** Groups this checkout joined. Stored only on this machine. */
+  local_confirmed_groups?: string[];
   /**
    * Computed by backend at read-time: names in `profiles` that do not apply
    * here, because this checkout has not confirmed them. Never saved.

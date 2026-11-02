@@ -775,6 +775,8 @@ export function ProjectEditor({
   // Groups state — names of all groups this project belongs to, and the full
   // list of all available groups (for the "add to group" picker).
   const [projectGroupMemberships, setProjectGroupMemberships] = useState<string[]>([]);
+  /** Profile name to the listing group, for groups this checkout has not joined. */
+  const [unjoinedGroupProfiles, setUnjoinedGroupProfiles] = useState<Record<string, string>>({});
   const [allGroups, setAllGroups] = useState<string[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
 
@@ -1559,7 +1561,7 @@ export function ProjectEditor({
     if (g.projects.includes(projectKey)) return false;
     g.projects.push(projectKey);
     g.updated_at = new Date().toISOString();
-    await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+    await invoke("save_group", { name: groupName, data: JSON.stringify(g), joining: [projectKey] });
     // Sync ALL projects in the group - each one's peer list changes.
     for (const name of g.projects) {
       invoke("sync_project", { name }).catch((e: unknown) => {
@@ -1570,6 +1572,30 @@ export function ProjectEditor({
     return true;
   };
 
+  useEffect(() => {
+    const joined = project?.local_confirmed_groups ?? [];
+    const unjoined = projectGroupMemberships.filter((name) => !joined.includes(name));
+    if (unjoined.length === 0) {
+      setUnjoinedGroupProfiles({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      unjoined.map(async (name) => {
+        const raw: string = await invoke("read_group", { name });
+        const group = JSON.parse(raw) as { profiles?: string[] };
+        return (group.profiles ?? []).map((profile) => [profile, name] as const);
+      }),
+    )
+      .then((pairs) => {
+        if (!cancelled) setUnjoinedGroupProfiles(Object.fromEntries(pairs.flat()));
+      })
+      .catch((err: unknown) => console.warn("Could not read a group's profiles:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectGroupMemberships, project?.local_confirmed_groups]);
+
   const handleAddToGroup = async (groupName: string, projectKey: string) => {
     try {
       if (await addProjectToGroup(groupName, projectKey)) {
@@ -1577,6 +1603,16 @@ export function ProjectEditor({
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
+    }
+  };
+
+  /** Join a group that already lists this checkout through a shared project id. */
+  const handleJoinGroup = async (groupName: string, projectKey: string) => {
+    try {
+      await invoke("join_group", { groupName, projectName: projectKey });
+      await reloadProject(projectKey);
+    } catch (err: any) {
+      setError(`Failed to join group: ${err}`);
     }
   };
 
@@ -2167,6 +2203,7 @@ export function ProjectEditor({
         id: stored.id,
         local_key: stored.local_key,
         local_ignored_profiles: stored.local_ignored_profiles || [],
+        local_confirmed_groups: stored.local_confirmed_groups || [],
         pending_profiles: stored.pending_profiles || [],
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
@@ -2274,6 +2311,7 @@ export function ProjectEditor({
         id: parsed.id,
         local_key: parsed.local_key,
         local_ignored_profiles: parsed.local_ignored_profiles || [],
+        local_confirmed_groups: parsed.local_confirmed_groups || [],
         pending_profiles: parsed.pending_profiles || [],
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
@@ -4735,10 +4773,12 @@ export function ProjectEditor({
                   <GroupsPanel
                     projectKey={selectedKey}
                     projectGroupMemberships={projectGroupMemberships}
+                    joinedGroups={project?.local_confirmed_groups ?? []}
                     allGroups={allGroups}
                     loadingGroups={loadingGroups}
                     reloadGroups={loadGroups}
                     onAddToGroup={handleAddToGroup}
+                    onJoinGroup={handleJoinGroup}
                     onRemoveFromGroup={handleRemoveFromGroup}
                     onRemoveFromAllGroups={handleRemoveFromAllGroups}
                     onNavigateToGroup={onNavigateToGroup}
@@ -4755,6 +4795,7 @@ export function ProjectEditor({
                     selectedKey={selectedKey}
                     availableProfiles={availableProfiles}
                     readOnly={readOnly}
+                    unjoinedGroupProfiles={unjoinedGroupProfiles}
                     reloadProject={reloadProject}
                     onNavigateToGroup={onNavigateToGroup}
                   />

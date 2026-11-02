@@ -17,6 +17,8 @@ interface ProfilesPanelProps {
   availableProfiles: string[];
   /** The project is read only here: Attach would be refused, Ignore writes nothing into it. */
   readOnly?: boolean;
+  /** Profile name to a group that lists it and that this checkout has not joined. */
+  unjoinedGroupProfiles?: Record<string, string>;
   reloadProject: (projectKey: string) => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
 }
@@ -51,7 +53,7 @@ function summariseContribution(contribution: ProfileContribution | undefined): s
  * show which group, and are detached at the group, not here.
  */
 export function ProfilesPanel({
-  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, readOnly = false, reloadProject, onNavigateToGroup,
+  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, readOnly = false, unjoinedGroupProfiles = {}, reloadProject, onNavigateToGroup,
 }: ProfilesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -215,11 +217,14 @@ export function ProfilesPanel({
               const group = providingGroup(groupContributions, name);
               const isPending = pending.includes(name);
               const isIgnored = ignored.includes(name);
+              const unjoinedGroup = unjoinedGroupProfiles[name];
               const summary = !isPending
                 ? summariseContribution(contributions[name])
                 : isIgnored
                   ? "Ignored on this computer. Nothing from it applies here."
-                  : "The repository asks for this profile. Nothing from it applies here yet.";
+                  : unjoinedGroup
+                    ? `From the group "${unjoinedGroup}", which this checkout has not joined. Nothing from it applies here yet.`
+                    : "The repository asks for this profile. Nothing from it applies here yet.";
               return (
                 <div
                   key={name}

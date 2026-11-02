@@ -85,6 +85,16 @@ describe("ProfilesPanel", () => {
     expect(screen.getByText("Attach")).toBeInTheDocument();
   });
 
+  it("names a group this checkout has not joined", () => {
+    renderPanel({
+      project: { ...project(), pending_profiles: ["shared"] },
+      unjoinedGroupProfiles: { shared: "team" },
+    });
+    expect(
+      screen.getByText('From the group "team", which this checkout has not joined. Nothing from it applies here yet.'),
+    ).toBeInTheDocument();
+  });
+
   it("opens the group from the badge", () => {
     const onNavigateToGroup = vi.fn();
     renderPanel({ onNavigateToGroup });
