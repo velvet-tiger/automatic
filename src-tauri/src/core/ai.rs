@@ -139,6 +139,9 @@ fn resolve_route(explicit_key: Option<&str>) -> Result<AgentRoute, String> {
     if let Some(gateway) = gateway {
         return super::custom_gateway::gateway_route(&gateway).map(AgentRoute::CustomGateway);
     }
+    if agent_id == "anthropic" {
+        super::custom_gateway::refuse_if_token_is_orphaned()?;
+    }
 
     let key = api_key_from(
         super::credentials::get_api_key_if_present(&agent_id),
@@ -1228,6 +1231,57 @@ mod tests {
         crate::core::secret_store::delete_secret("anthropic").expect("clean up");
         assert!(route.expect_err("no fallback").contains("custom-gateway.json"));
         assert!(ensure_agent_credential(StoreRead::Now).is_err());
+    }
+
+    #[test]
+    fn a_lost_gateway_record_refuses_requests_with_no_direct_fallback() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
+        crate::core::custom_gateway::test_support::lose_gateway_record();
+
+        let route = resolve_route(Some("explicit"));
+
+        crate::core::secret_store::delete_secret("anthropic").expect("clean up");
+        assert!(route.expect_err("no fallback").contains("clear it"));
+    }
+
+    #[test]
+    fn a_lost_gateway_record_does_not_stop_another_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+        crate::core::custom_gateway::test_support::lose_gateway_record();
+
+        let route = resolve_route(None);
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        assert!(matches!(route, Ok(AgentRoute::Provider { .. })));
+    }
+
+    #[test]
+    fn the_credential_check_does_not_read_the_token_with_a_lost_record() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        set_active_agent(None);
+        crate::core::save_api_key("anthropic", "stored-key").expect("save");
+        let account = crate::core::custom_gateway::TOKEN_ACCOUNT;
+
+        crate::core::secret_store::set_test_fault(
+            account,
+            Some(crate::core::secret_store::TestFault::Unreadable),
+        );
+        let checked = ensure_agent_credential(StoreRead::Now);
+        let requested = resolve_route(None);
+        crate::core::secret_store::set_test_fault(account, None);
+        crate::core::delete_api_key("anthropic").expect("clean up");
+
+        assert_eq!(checked, Ok(()));
+        assert!(requested.is_err(), "the request itself fails closed");
     }
 
     #[test]

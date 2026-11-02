@@ -42,6 +42,10 @@ pub struct CustomGatewayStatus {
     pub configured: bool,
     pub base_url: Option<String>,
     pub credential_kind: Option<GatewayCredentialKind>,
+    /// The record is gone but the keychain still holds a token, so Claude Code
+    /// may still use the gateway. Claude requests are refused until this is
+    /// cleared or saved again.
+    pub orphaned_token: bool,
 }
 
 /// The outcome of a clear.
@@ -201,7 +205,38 @@ pub fn custom_gateway_status() -> Result<CustomGatewayStatus, String> {
         configured: gateway.is_some(),
         base_url: gateway.as_ref().map(|g| g.base_url.clone()),
         credential_kind: gateway.as_ref().map(|g| g.credential_kind),
+        orphaned_token: gateway.is_none() && token_entry_present()?,
     })
+}
+
+/// Whether the keychain holds anything under the gateway account. This is a
+/// keychain read, so it is for real requests and user-opened pages only, never
+/// a background or polling path.
+fn token_entry_present() -> Result<bool, String> {
+    secret_store::load_secret_if_present(TOKEN_ACCOUNT)
+        .map(|value| value.is_some())
+        .map_err(|e| format!("Could not read the gateway token: {}", e))
+}
+
+/// Refuse a request when the gateway record is gone but its token is not.
+/// Without the record the request would go straight to Anthropic while Claude
+/// Code keeps using the gateway, so the user would not know which one is in use.
+pub(crate) fn refuse_if_token_is_orphaned() -> Result<(), String> {
+    let present = token_entry_present().map_err(|e| {
+        format!(
+            "Automatic could not check for a custom gateway, so this request was not sent. {}",
+            e
+        )
+    })?;
+    if present {
+        return Err(
+            "Automatic has lost its custom gateway record, but the gateway token is still \
+             stored, so this request was not sent. Save the gateway again or clear it in \
+             Settings > Agents."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn store_bound_token(base_url: &str, token: &str) -> Result<(), String> {
@@ -324,7 +359,11 @@ pub fn save_custom_gateway(
     // Read before the store below, so this says what an earlier save left.
     let held = stored_binding().ok().flatten();
     let known = KnownValues {
-        base_url: held.as_ref().is_some_and(|bound| bound.base_url == base_url),
+        // A save can write the file and then fail to rebind a kept token, so
+        // the same token also vouches for the URL it was being saved with.
+        base_url: held
+            .as_ref()
+            .is_some_and(|bound| bound.base_url == base_url || bound.token == token),
         token: held.as_ref().is_some_and(|bound| bound.token == token),
     };
 
@@ -362,7 +401,7 @@ pub fn save_custom_gateway(
         }
     })?;
 
-    if !typed_token && !known.base_url {
+    if !typed_token && held.as_ref().is_none_or(|bound| bound.base_url != base_url) {
         store_bound_token(&base_url, &token).map_err(|e| {
             format!(
                 "Claude Code now uses this gateway, but Automatic could not update its own \
@@ -426,13 +465,15 @@ fn undo_first_save(path: &Path, gateway: &CustomGateway, error: &str) -> String 
 pub fn clear_custom_gateway() -> Result<ClearedCustomGateway, String> {
     let _changing = change_lock();
 
-    let Some(gateway) = read_gateway()? else {
-        return Ok(ClearedCustomGateway {
-            left_in_claude_code: Vec::new(),
-        });
+    let left_in_claude_code = match read_gateway()? {
+        Some(gateway) => clear_claude_code(&gateway)?,
+        None if token_entry_present()? => clear_orphaned_values()?,
+        None => {
+            return Ok(ClearedCustomGateway {
+                left_in_claude_code: Vec::new(),
+            })
+        }
     };
-
-    let left_in_claude_code = clear_claude_code(&gateway)?;
 
     delete_stored_token().map_err(|e| {
         format!(
@@ -458,10 +499,24 @@ pub fn clear_custom_gateway() -> Result<ClearedCustomGateway, String> {
 }
 
 fn clear_claude_code(gateway: &CustomGateway) -> Result<Vec<String>, String> {
+    let path = claude_code_env::settings_path()?;
     match &gateway.claude_code {
-        Some(record) => claude_code_env::clear_file(&claude_code_env::settings_path()?, record),
-        None => Ok(Vec::new()),
+        Some(record) => claude_code_env::clear_file(&path, record),
+        // With no record nothing can be called Automatic's, so this only reports.
+        None => claude_code_env::clear_matching(&path, None, None),
     }
+}
+
+/// Clear Claude Code's file when the record is gone. The keychain still says
+/// what was saved, so exact matches are removed and anything else is reported.
+/// A keychain value that cannot be parsed matches nothing.
+fn clear_orphaned_values() -> Result<Vec<String>, String> {
+    let bound = stored_binding().ok().flatten();
+    claude_code_env::clear_matching(
+        &claude_code_env::settings_path()?,
+        bound.as_ref().map(|b| b.base_url.as_str()),
+        bound.as_ref().map(|b| b.token.as_str()),
+    )
 }
 
 /// Clear the gateway before an erase. The token is always deleted, whatever
@@ -472,6 +527,8 @@ pub(crate) fn clear_gateway_for_erase() -> GatewayErase {
     let gateway = read_gateway();
     let file = match &gateway {
         Ok(Some(gateway)) => clear_claude_code(gateway),
+        // A keychain that cannot be read is reported by the delete below.
+        Ok(None) if token_entry_present().unwrap_or(false) => clear_orphaned_values(),
         _ => Ok(Vec::new()),
     };
     let token = delete_stored_token();
@@ -480,21 +537,20 @@ pub(crate) fn clear_gateway_for_erase() -> GatewayErase {
         Err(e) => format!("The gateway token could not be deleted from the keychain: {}", e),
     };
 
+    let claude_settings = claude_code_env::settings_path()
+        .map_or_else(|_| "Claude Code's settings".to_string(), |p| p.display().to_string());
     if let Err(e) = gateway {
         return GatewayErase::FileNotCleared(format!(
             "App data was not erased, because Automatic could not read its record of what it \
-             wrote to Claude Code. Fix or remove that file and try again. {} {}",
-            e, token_note
+             wrote to Claude Code. The gateway token may remain in plain text in {}. {} {}",
+            claude_settings, e, token_note
         ));
     }
     match (file, token) {
         (Err(e), _) => GatewayErase::FileNotCleared(format!(
             "App data was not erased, because the custom gateway could not be cleared from \
              {}. Fix that file and try again. {} {}",
-            claude_code_env::settings_path()
-                .map_or_else(|_| "Claude Code's settings".to_string(), |p| p.display().to_string()),
-            e,
-            token_note
+            claude_settings, e, token_note
         )),
         (Ok(_), Err(e)) => GatewayErase::TokenNotDeleted(e),
         (Ok(left_in_claude_code), Ok(())) => {
@@ -520,9 +576,18 @@ pub(crate) mod test_support {
 
     /// The test secret store is shared by the whole process and the token
     /// account is fixed, so tests that use it run one at a time.
+    ///
+    /// Each test starts with the account empty, whatever the last one left.
     pub(crate) fn gateway_store_lock() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        delete_stored_token().expect("empty the token account");
+        guard
+    }
+
+    /// Lose the record as a deleted file would, leaving the keychain as it is.
+    pub(crate) fn lose_gateway_record() {
+        remove_gateway_file().expect("remove the record");
     }
 
     /// Save a gateway in the calling test's home.
@@ -545,7 +610,9 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{gateway_store_lock, save_test_gateway, set_saved_gateway_url};
+    use super::test_support::{
+        gateway_store_lock, lose_gateway_record, save_test_gateway, set_saved_gateway_url,
+    };
     use crate::core::settings::{read_settings, write_settings};
     use super::*;
     use crate::core::secret_store::{set_test_fault, TestFault};
@@ -674,7 +741,8 @@ mod tests {
             Ok(CustomGatewayStatus {
                 configured: false,
                 base_url: None,
-                credential_kind: None
+                credential_kind: None,
+                orphaned_token: false,
             })
         );
 
@@ -1072,6 +1140,9 @@ mod tests {
         assert!(err.contains("custom-gateway.json"), "{err}");
         assert!(err.contains("not erased"), "{err}");
         assert!(err.contains("token was deleted"), "{err}");
+        assert!(err.contains("may remain"), "{err}");
+        assert!(err.contains(".claude/settings.json"), "{err}");
+        assert!(!err.contains("remove that file"), "{err}");
         assert!(file.exists());
     }
 
@@ -1117,6 +1188,155 @@ mod tests {
         assert!(err.contains("was erased"), "{err}");
         assert!(!custom_gateway_status().expect("status").configured);
         remove_token();
+    }
+
+    // ── A lost record ────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_lost_record_with_a_stored_token_shows_in_the_status() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        lose_gateway_record();
+
+        let status = custom_gateway_status().expect("status");
+
+        assert!(!status.configured);
+        assert!(status.orphaned_token);
+        assert!(refuse_if_token_is_orphaned().is_err());
+        remove_token();
+    }
+
+    #[test]
+    fn a_keychain_that_cannot_be_read_fails_the_orphan_check_closed() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+
+        set_test_fault(TOKEN_ACCOUNT, Some(TestFault::Unreadable));
+        let checked = refuse_if_token_is_orphaned();
+        set_test_fault(TOKEN_ACCOUNT, None);
+
+        assert!(checked.expect_err("closed").contains("was not sent"));
+    }
+
+    #[test]
+    fn a_clear_after_a_lost_record_removes_exact_matches_and_the_token() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        lose_gateway_record();
+
+        let cleared = clear_custom_gateway().expect("clear");
+
+        assert!(cleared.left_in_claude_code.is_empty(), "{cleared:?}");
+        assert!(!claude_settings_text().contains("ANTHROPIC"));
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+        assert!(!custom_gateway_status().expect("status").orphaned_token);
+    }
+
+    #[test]
+    fn a_clear_after_a_lost_record_leaves_and_reports_a_value_that_differs() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        lose_gateway_record();
+        write_claude_settings(&claude_settings_text().replace("plain-token", "theirs"));
+
+        let cleared = clear_custom_gateway().expect("clear");
+
+        assert_eq!(cleared.left_in_claude_code, ["ANTHROPIC_AUTH_TOKEN"]);
+        assert!(claude_settings_text().contains("theirs"));
+        assert!(!claude_settings_text().contains("ANTHROPIC_BASE_URL"));
+    }
+
+    #[test]
+    fn a_clear_that_cannot_read_the_keychain_is_an_error() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+
+        set_test_fault(TOKEN_ACCOUNT, Some(TestFault::Unreadable));
+        let cleared = clear_custom_gateway();
+        set_test_fault(TOKEN_ACCOUNT, None);
+
+        assert!(cleared.is_err());
+    }
+
+    #[test]
+    fn a_stored_value_that_cannot_be_parsed_can_still_be_cleared() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        secret_store::store_secret(TOKEN_ACCOUNT, "not a binding").expect("store");
+        write_claude_settings(r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"theirs"}}"#);
+
+        let cleared = clear_custom_gateway().expect("clear");
+
+        assert_eq!(cleared.left_in_claude_code, ["ANTHROPIC_AUTH_TOKEN"]);
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+    }
+
+    #[test]
+    fn an_erase_after_a_lost_record_cleans_up_too() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        lose_gateway_record();
+
+        crate::core::erase_app_data().expect("erase");
+
+        assert!(!claude_settings_text().contains("plain-token"));
+        assert_eq!(secret_store::load_secret_if_present(TOKEN_ACCOUNT), Ok(None));
+    }
+
+    #[test]
+    fn a_clear_of_a_record_with_no_write_history_reports_what_is_set() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        let mut gateway = read_gateway().expect("read").expect("gateway");
+        gateway.claude_code = None;
+        write_gateway(&gateway).expect("write");
+
+        let cleared = clear_custom_gateway().expect("clear");
+
+        assert_eq!(
+            cleared.left_in_claude_code,
+            ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"]
+        );
+    }
+
+    #[test]
+    fn a_failed_rebind_retry_does_not_adopt_automatics_url() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        save_test_gateway("plain-token");
+        let moved = "https://gateway.example.com/team";
+
+        set_test_fault(TOKEN_ACCOUNT, Some(TestFault::StoreRefused));
+        let first = save_custom_gateway(moved, BEARER, None);
+        set_test_fault(TOKEN_ACCOUNT, None);
+        assert!(first.is_err());
+        assert!(claude_settings_text().contains(moved));
+
+        save_custom_gateway(moved, BEARER, None).expect("retry");
+
+        let cleared = clear_custom_gateway().expect("clear");
+        assert!(cleared.left_in_claude_code.is_empty(), "{cleared:?}");
+    }
+
+    #[test]
+    fn an_erase_with_a_damaged_settings_file_and_no_gateway_works() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        let dir = crate::core::get_automatic_dir().expect("dir");
+        fs::create_dir_all(&dir).expect("mkdir");
+        fs::write(dir.join("settings.json"), "{not json").expect("damage the file");
+
+        crate::core::erase_app_data().expect("erase");
+
+        assert!(serde_json::from_str::<serde_json::Value>(
+            &fs::read_to_string(dir.join("settings.json")).expect("read")
+        )
+        .is_ok());
     }
 
     #[test]

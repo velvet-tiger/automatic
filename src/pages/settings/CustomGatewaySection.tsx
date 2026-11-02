@@ -9,6 +9,8 @@ export interface CustomGatewayStatus {
   configured: boolean;
   base_url: string | null;
   credential_kind: GatewayCredentialKind | null;
+  /** The record is gone but a token is stored. Claude requests are refused. */
+  orphaned_token: boolean;
 }
 
 interface ClearedCustomGateway {
@@ -136,13 +138,22 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
           : <ChevronRight size={11} className="text-text-muted flex-shrink-0" />
         }
         <span className="text-[11px] text-text-muted flex-1">Custom gateway</span>
-        {status.configured ? (
+        {status.orphaned_token ? (
+          <span className="text-[11px] text-danger font-medium">Needs attention</span>
+        ) : status.configured ? (
           <span className="text-[11px] text-success font-medium">Active</span>
         ) : (
           <span className="text-[11px] text-text-muted">Off</span>
         )}
       </button>
 
+      {status.orphaned_token && (
+        <p className="px-3 pb-3 text-[11px] text-danger leading-relaxed">
+          Automatic has lost its gateway record, but the token is still stored. Claude requests
+          from Automatic are blocked, and Claude Code may still use the gateway. Open this section
+          to save the gateway again or clear it.
+        </p>
+      )}
       {notice && !expanded && (
         <p className="px-3 pb-3 text-[11px] text-text-muted leading-relaxed">{notice}</p>
       )}
@@ -224,7 +235,7 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
             >
               {busy ? "Saving..." : "Save"}
             </button>
-            {status.configured && (
+            {(status.configured || status.orphaned_token) && (
               <button
                 onClick={clear}
                 disabled={busy}

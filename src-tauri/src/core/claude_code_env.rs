@@ -218,11 +218,11 @@ fn adopted_variables(
     .collect()
 }
 
-/// `root` without the values Automatic wrote, and the names of the gateway
-/// variables that remain. An `env` this empties is removed too.
+/// `root` without the gateway values `owned` accepts, and the names of the
+/// gateway variables that remain. An `env` this empties is removed too.
 fn cleared(
     mut root: Map<String, Value>,
-    record: &ClaudeCodeRecord,
+    owned: impl Fn(&str, &Value) -> bool,
 ) -> (Map<String, Value>, Vec<String>) {
     let mut remaining = Vec::new();
     let mut emptied = false;
@@ -232,7 +232,7 @@ fn cleared(
             let Some(value) = env.get(variable) else {
                 continue;
             };
-            if record.matches(variable, value) && !record.adopted(variable) {
+            if owned(variable, value) {
                 env.remove(variable);
                 removed = true;
             } else {
@@ -488,6 +488,28 @@ pub(super) fn write_file(
 /// A link out of the folder is followed here. Taking a token out of a file is
 /// always safe, and it may have been linked after the save.
 pub(super) fn clear_file(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
+    clear_where(path, |variable, value| {
+        record.matches(variable, value) && !record.adopted(variable)
+    })
+}
+
+/// Remove values that equal the ones given, for when the record is gone.
+/// Passing `None` for both changes nothing and reports what is set.
+pub(super) fn clear_matching(
+    path: &Path,
+    base_url: Option<&str>,
+    token: Option<&str>,
+) -> Result<Vec<String>, String> {
+    clear_where(path, |variable, value| {
+        let wanted = if variable == BASE_URL_VAR { base_url } else { token };
+        wanted.is_some() && value.as_str() == wanted
+    })
+}
+
+fn clear_where(
+    path: &Path,
+    owned: impl Fn(&str, &Value) -> bool,
+) -> Result<Vec<String>, String> {
     let target = followed(path)?;
     let loaded = load(&target)?;
     let Some(text) = loaded.text else {
@@ -495,7 +517,7 @@ pub(super) fn clear_file(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<S
     };
     env_of(&loaded.root, &target)?;
     let original = loaded.root.clone();
-    let (root, remaining) = cleared(loaded.root, record);
+    let (root, remaining) = cleared(loaded.root, owned);
     if root != original {
         write_root(&target, &root, Some(&text), Permissions::Keep)?;
     }
@@ -931,6 +953,31 @@ mod tests {
         fs::write(&path, text).expect("edit");
 
         assert_eq!(clear_file(&path, &record).expect("clear"), [API_KEY_VAR]);
+    }
+
+    #[test]
+    fn clearing_by_value_removes_exact_matches_and_reports_the_rest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(
+            &dir,
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://theirs.example.com","ANTHROPIC_API_KEY":"token"}}"#,
+        );
+
+        let remaining =
+            clear_matching(&path, Some("https://gateway.example.com"), Some("token")).expect("clear");
+
+        assert_eq!(remaining, [BASE_URL_VAR]);
+        assert!(json_in(&path)["env"].get(API_KEY_VAR).is_none());
+    }
+
+    #[test]
+    fn clearing_with_no_values_only_reports() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let text = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"token"}}"#;
+        let path = file_in(&dir, text);
+
+        assert_eq!(clear_matching(&path, None, None).expect("report"), [AUTH_TOKEN_VAR]);
+        assert_eq!(fs::read_to_string(&path).expect("read"), text);
     }
 
     #[test]

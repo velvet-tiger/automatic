@@ -97,7 +97,12 @@ const AGENTS: AgentDefinition[] = [
 /** The custom gateway only applies to the Anthropic provider. */
 const CUSTOM_GATEWAY_PROVIDER = "anthropic";
 
-const NO_CUSTOM_GATEWAY: CustomGatewayStatus = { configured: false, base_url: null, credential_kind: null };
+const NO_CUSTOM_GATEWAY: CustomGatewayStatus = {
+  configured: false,
+  base_url: null,
+  credential_kind: null,
+  orphaned_token: false,
+};
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 

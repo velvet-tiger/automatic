@@ -176,6 +176,10 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
 }
 
 /// Copy a settings file that cannot be parsed, replacing any earlier copy.
+///
+/// The copy can hold anything the file held, so it is owner-only. It goes
+/// through a temporary file, because a rename replaces a link at the copy's
+/// path instead of writing through it.
 fn keep_damaged_copy(path: &Path) -> Result<(), String> {
     let Ok(raw) = fs::read(path) else {
         return Ok(());
@@ -183,10 +187,17 @@ fn keep_damaged_copy(path: &Path) -> Result<(), String> {
     if serde_json::from_slice::<Settings>(&raw).is_ok() {
         return Ok(());
     }
+    let failed = |e: &dyn std::fmt::Display| {
+        format!("Could not keep a copy of the damaged settings file: {}", e)
+    };
     let mut copy = path.as_os_str().to_owned();
     copy.push(".damaged");
-    fs::write(&copy, raw)
-        .map_err(|e| format!("Could not keep a copy of the damaged settings file: {}", e))
+    let parent = path.parent().ok_or_else(|| failed(&"it has no parent folder"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| failed(&e))?;
+    temp.write_all(&raw).map_err(|e| failed(&e))?;
+    temp.as_file().sync_all().map_err(|e| failed(&e))?;
+    temp.persist(&copy).map_err(|e| failed(&e.error))?;
+    Ok(())
 }
 
 /// The file a write really changes. A symlink resolves to its target, so that
@@ -334,6 +345,25 @@ mod tests {
         write_settings(&Settings::default()).expect("heal");
 
         assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "second damage");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_damaged_copy_is_owner_only_and_does_not_follow_a_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = crate::core::temp_test_home();
+        damage_settings("private damage");
+        let elsewhere = tmp();
+        let outside = elsewhere.path().join("outside.txt");
+        fs::write(&outside, "untouched").expect("outside");
+        std::os::unix::fs::symlink(&outside, damaged_copy_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("heal");
+
+        assert_eq!(fs::read_to_string(&outside).expect("read"), "untouched");
+        let copy = fs::symlink_metadata(damaged_copy_path()).expect("meta");
+        assert!(copy.file_type().is_file());
+        assert_eq!(copy.permissions().mode() & 0o777, 0o600);
     }
 
     #[test]

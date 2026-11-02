@@ -8,8 +8,14 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import SettingsAgents from "./Agents";
 import { leftInPlaceNotice } from "./CustomGatewaySection";
 
-const OFF = { configured: false, base_url: null, credential_kind: null };
-const ON = { configured: true, base_url: "https://gateway.example.com", credential_kind: "bearer" };
+const OFF = { configured: false, base_url: null, credential_kind: null, orphaned_token: false };
+const ON = {
+  configured: true,
+  base_url: "https://gateway.example.com",
+  credential_kind: "bearer",
+  orphaned_token: false,
+};
+const LOST = { ...OFF, orphaned_token: true };
 
 function commandCalls(command: string) {
   return invokeMock.mock.calls.filter(([cmd]) => cmd === command);
@@ -167,6 +173,29 @@ describe("Agents settings custom gateway", () => {
     fireEvent.change(url, { target: { value: "https://gateway.example.com/team" } });
 
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("shows a lost record and offers Clear", async () => {
+    let status = LOST;
+    mockInvoke({
+      has_api_key: false,
+      read_settings: {},
+      get_custom_gateway_status: () => status,
+      clear_custom_gateway: () => {
+        status = OFF;
+        return { left_in_claude_code: [] };
+      },
+    });
+    render(<SettingsAgents />);
+
+    expect(await screen.findByText("Needs attention")).toBeInTheDocument();
+    expect(screen.getByText(/has lost its gateway record/)).toBeInTheDocument();
+
+    await openForm();
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => expect(commandCalls("clear_custom_gateway")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText("Needs attention")).not.toBeInTheDocument());
   });
 
   it("offers Claude as the active agent with no Anthropic key", async () => {
