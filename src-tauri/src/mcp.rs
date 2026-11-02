@@ -1001,9 +1001,10 @@ fn joined_peers(
 fn no_reading_checkout(folder: Option<&std::path::Path>) -> String {
     let seen = folder.map_or_else(|| "an unknown folder".to_string(), |f| format!("'{}'", f.display()));
     format!(
-        "This Automatic server runs in {}, which is not inside a registered project with no \
-         other repository in between, and the client's roots name no single such project. It \
-         will not share contexts or project details here.",
+        "This Automatic server runs in {}. It will not share contexts or project details \
+         here: that folder must be inside a registered project with no other repository in \
+         between, or, if it is inside no registered project, every root the client lists must \
+         resolve to one project.",
         seen
     )
 }
@@ -1012,6 +1013,9 @@ fn no_reading_checkout(folder: Option<&std::path::Path>) -> String {
 /// a client that never does.
 const ROOTS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The most roots a list may hold. Each one is canonicalised on every tool call.
+const MAX_ROOTS: usize = 64;
+
 type RootsFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>, String>> + Send>>;
 
@@ -1019,19 +1023,33 @@ type RootsFuture =
 /// no `roots` capability.
 type RootsSource = std::sync::Arc<dyn Fn() -> RootsFuture + Send + Sync>;
 
-/// [`RootsSource`] over a connected client. `list_roots` is deprecated by
-/// SEP-2577 and errors on protocol 2026-07-28 or later, which then reads as no
-/// reading checkout.
+/// [`RootsSource`] over a connected client. rmcp's request timeout also sends
+/// the client a cancel. `roots/list` is deprecated by SEP-2577 and errors on
+/// protocol 2026-07-28 or later, which then reads as no reading checkout.
 #[allow(deprecated)]
-fn peer_roots(peer: rmcp::Peer<rmcp::RoleServer>) -> RootsSource {
+fn peer_roots(peer: rmcp::Peer<rmcp::RoleServer>, timeout: std::time::Duration) -> RootsSource {
+    use rmcp::model::{ClientResult, ListRootsRequest, ServerRequest};
     std::sync::Arc::new(move || {
         let peer = peer.clone();
         Box::pin(async move {
             if !peer.peer_info().is_some_and(|info| info.capabilities.roots.is_some()) {
                 return Ok(Vec::new());
             }
-            let listed = peer.list_roots().await.map_err(|e| e.to_string())?;
-            Ok(listed.roots.into_iter().map(|root| root.uri).collect())
+            let request = ServerRequest::ListRootsRequest(ListRootsRequest {
+                method: Default::default(),
+                extensions: Default::default(),
+            });
+            let options = rmcp::service::PeerRequestOptions::with_timeout(timeout);
+            let handle = peer
+                .send_request_with_option(request, options)
+                .await
+                .map_err(|e| e.to_string())?;
+            match handle.await_response().await.map_err(|e| e.to_string())? {
+                ClientResult::ListRootsResult(listed) => {
+                    Ok(listed.roots.into_iter().map(|root| root.uri).collect())
+                }
+                _ => Err("the client answered roots/list with something else".to_string()),
+            }
         })
     })
 }
@@ -1100,14 +1118,16 @@ fn check_registrable(
     Ok(())
 }
 
-/// What the folder this server runs in may read. A repository can commit any
+/// What this server may read. It comes from the checkout containing the folder
+/// the server runs in, or, when that folder is inside no registered project,
+/// the one checkout every client root resolves to. A repository can commit any
 /// `id` or `AUTOMATIC_PROJECT`, and an agent can pass any `project`, so neither
 /// decides this.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ReadingScope {
     /// The folder the server runs in, for refusals.
     folder: Option<std::path::PathBuf>,
-    /// The registered checkout containing the server's working directory.
+    /// The checkout reads are for. See [`ReadingScope`].
     checkout: Option<crate::core::ProjectSummary>,
     /// The groups `checkout` joined.
     groups: Vec<String>,
@@ -1250,8 +1270,8 @@ pub struct AutomaticMcpServer {
     /// The folder this server runs in, which decides what it may read. See
     /// [`ReadingScope`].
     reading_folder: Option<std::path::PathBuf>,
-    /// The connected client's roots, set once it has initialised. Shared across
-    /// clones of this handler.
+    /// The connected client's roots, set at `initialize`. Shared across clones
+    /// of this handler.
     client_roots: std::sync::Arc<std::sync::Mutex<Option<RootsSource>>>,
     roots_timeout: std::time::Duration,
     /// The slug and `created_at` of each context this server created, which
@@ -1272,45 +1292,52 @@ impl AutomaticMcpServer {
         reading_scope_of(checkout, self.reading_folder.clone(), &index)
     }
 
-    /// The working directory's checkout, or else the one the client's roots
-    /// name. A failed or late `roots/list` means there is none. Other tools'
+    /// The reading checkout. Roots are asked for only when they could decide
+    /// it. A failed or refused `roots/list` means there is none. Other tools'
     /// `current_project` does not come through here.
     async fn reading_checkout(
         &self,
         summaries: &[crate::core::ProjectSummary],
     ) -> Option<crate::core::ProjectSummary> {
         let folder = self.reading_folder.as_deref();
-        if let Some(found) = crate::core::reading_checkout_of(folder, summaries) {
-            return Some(found);
+        if !crate::core::reading_needs_roots(folder, summaries) {
+            return crate::core::reading_checkout_of(folder, summaries);
         }
         match self.client_root_paths().await {
             Ok(roots) => crate::core::reading_checkout_with_roots(folder, &roots, summaries),
             Err(e) => {
-                eprintln!("[automatic] mcp-serve: could not read the client's roots: {}", e);
+                eprintln!("[automatic] mcp-serve: could not use the client's roots: {}", e);
                 None
             }
         }
     }
 
     /// The client's roots as canonical folders. Empty when no client is
-    /// connected or it declared no `roots` capability.
+    /// connected or it declared no `roots` capability. A list that is too long,
+    /// or holds a root that names no local folder, is an error: it can grant
+    /// nothing.
     async fn client_root_paths(&self) -> Result<Vec<std::path::PathBuf>, String> {
         let source = self.client_roots.lock().ok().and_then(|held| held.clone());
         let Some(source) = source else {
             return Ok(Vec::new());
         };
-        let uris = tokio::time::timeout(self.roots_timeout, source())
-            .await
-            .map_err(|_| "the client did not answer roots/list".to_string())??;
-        Ok(uris.iter().filter_map(|uri| crate::core::file_root_path(uri)).collect())
+        let uris = source().await?;
+        if uris.len() > MAX_ROOTS {
+            return Err(format!("the client listed {} roots", uris.len()));
+        }
+        uris.iter()
+            .map(|uri| {
+                crate::core::file_root_path(uri).ok_or_else(|| format!("unusable root '{}'", uri))
+            })
+            .collect()
     }
 
-    /// The roots a registration must not take. While the working directory
-    /// resolves, cwd wins and no root can become a reading checkout.
+    /// The roots a registration must not take. When roots cannot decide the
+    /// reading checkout, none needs protecting.
     async fn roots_to_protect(&self) -> Result<Vec<std::path::PathBuf>, String> {
         let summaries = crate::core::get_project_summaries()
             .map_err(|e| format!("Failed to read the project registry: {}", e))?;
-        if crate::core::reading_checkout_of(self.reading_folder.as_deref(), &summaries).is_some() {
+        if !crate::core::reading_needs_roots(self.reading_folder.as_deref(), &summaries) {
             return Ok(Vec::new());
         }
         self.client_root_paths().await
@@ -1380,12 +1407,11 @@ impl AutomaticMcpServer {
 
     /// Resolve the `project` / `group` pair of a context attach or detach
     /// call, with a label for the result message. Neither given means the
-    /// current project.
-    async fn context_target(
-        &self,
+    /// reading checkout.
+    fn context_target(
+        scope: &ReadingScope,
         params: &AttachContextParams,
     ) -> Result<(crate::core::ContextTarget, String), String> {
-        let scope = self.reading_scope().await?;
         match (&params.project, &params.group) {
             (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
             (None, Some(group)) => {
@@ -2803,17 +2829,17 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (target, label) = match self.context_target(&params.0).await {
+        let scope = match self.reading_scope().await {
+            Ok(scope) => scope,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let (target, label) = match Self::context_target(&scope, &params.0) {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
         let slug = &params.0.context;
         let created = self.live_created_contexts();
-        if let Err(e) = self
-            .reading_scope()
-            .await
-            .and_then(|scope| scope.check_attach(slug, &created))
-        {
+        if let Err(e) = scope.check_attach(slug, &created) {
             return Ok(tool_error(e));
         }
         let attached = crate::core::attach_context(&target, slug).and_then(|changed| {
@@ -2852,7 +2878,11 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (target, label) = match self.context_target(&params.0).await {
+        let scope = match self.reading_scope().await {
+            Ok(scope) => scope,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let (target, label) = match Self::context_target(&scope, &params.0) {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -3667,10 +3697,18 @@ impl AutomaticMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AutomaticMcpServer {
-    async fn on_initialized(&self, context: rmcp::service::NotificationContext<rmcp::RoleServer>) {
+    /// Keeps the client at `initialize`, not `initialized`: a tool call that
+    /// arrives before the notification must still be asked about roots.
+    async fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::InitializeResult, McpError> {
+        context.peer.set_peer_info(request.clone());
         if let Ok(mut held) = self.client_roots.lock() {
-            *held = Some(peer_roots(context.peer));
+            *held = Some(peer_roots(context.peer.clone(), self.roots_timeout));
         }
+        self.negotiate_initialize(&request)
     }
 
     fn get_info(&self) -> ServerConfig {
@@ -4676,6 +4714,10 @@ mod tests {
                 Ok(Vec::new()),
                 Ok(vec![file_uri(&folders.site), file_uri(&folders.api)]),
                 Ok(vec!["::not a uri::".to_string(), "https://example.com/".to_string()]),
+                Ok(vec!["::not a uri::".to_string(), file_uri(&folders.site)]),
+                Ok(vec![file_uri(&folders.site), "https://example.com/".to_string()]),
+                Ok(vec![file_uri(&folders.site), file_uri(&folders.outside)]),
+                Ok(vec![file_uri(&folders.site); MAX_ROOTS + 1]),
             ];
             for answer in answers {
                 let server = server_with_roots(&folders, answer);
@@ -4686,23 +4728,39 @@ mod tests {
                 assert!(listed_keys(&server).is_empty());
             }
 
-            // A malformed entry does not spoil a good one.
-            let mixed = vec!["::not a uri::".to_string(), file_uri(&folders.site)];
-            let server = server_with_roots(&folders, Ok(mixed));
+            // The cap is on the list, and repeats of one checkout agree.
+            let server = server_with_roots(&folders, Ok(vec![file_uri(&folders.site); MAX_ROOTS]));
             assert_eq!(listed_keys(&server), vec![SITE_KEY, API_KEY]);
         });
     }
 
     #[test]
-    fn a_client_that_never_answers_grants_nothing() {
+    fn a_folder_inside_a_project_never_asks_for_roots() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let folders = save_registry_in_folders();
-            let mut server = server_in(&folders.outside, None);
-            server.roots_timeout = std::time::Duration::from_millis(20);
-            let source: RootsSource = std::sync::Arc::new(|| Box::pin(std::future::pending()));
+            let nested = folders.site.join("vendor/clone");
+            std::fs::create_dir_all(nested.join(".git")).expect("mkdir");
+            let server = server_in(&nested, None);
+            let source: RootsSource = std::sync::Arc::new(|| panic!("roots must not be read"));
+            *server.client_roots.lock().unwrap() = Some(source);
+
+            assert!(listed_keys(&server).is_empty(), "stopped by the boundary");
+            let protected = tauri::async_runtime::block_on(server.roots_to_protect());
+            assert_eq!(protected, Ok(Vec::new()));
+        });
+    }
+
+    #[test]
+    fn an_unknown_folder_refuses_and_never_asks_for_roots() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let _folders = save_registry_in_folders();
+            let server = AutomaticMcpServer::new();
+            let source: RootsSource = std::sync::Arc::new(|| panic!("roots must not be read"));
             *server.client_roots.lock().unwrap() = Some(source);
             assert!(listed_keys(&server).is_empty());
+            assert_eq!(result_text(&read(&server, None)), no_reading_checkout(None));
         });
     }
 
@@ -4746,14 +4804,23 @@ mod tests {
         });
     }
 
+    /// What a hand-written client saw during one tool call.
+    struct ClientRun {
+        text: String,
+        asked: bool,
+        cancelled: bool,
+    }
+
     /// One tool call through rmcp itself, against a hand-written client. Only
     /// this shows the handler can reach the peer while a call is in flight.
-    /// Returns the call's text and whether the client was asked for roots.
+    /// `roots_reply` of `None` leaves `roots/list` unanswered. The tool call goes
+    /// out before `initialized` when `early` is set.
     fn call_over_transport(
         server: AutomaticMcpServer,
         capabilities: serde_json::Value,
         roots_reply: Option<serde_json::Value>,
-    ) -> (String, bool) {
+        early: bool,
+    ) -> ClientRun {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         // One thread: the test home does not cross threads.
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -4783,9 +4850,10 @@ mod tests {
                 "jsonrpc": "2.0", "id": 2, "method": "tools/call",
                 "params": {"name": "automatic_list_projects", "arguments": {}},
             });
-            writer.write_all(format!("{ready}\n{tool}\n").as_bytes()).await.unwrap();
+            let opening = if early { format!("{tool}\n{ready}\n") } else { format!("{ready}\n{tool}\n") };
+            writer.write_all(opening.as_bytes()).await.unwrap();
 
-            let mut asked = false;
+            let (mut asked, mut cancelled) = (false, false);
             let text = loop {
                 let line = tokio::time::timeout(std::time::Duration::from_secs(10), lines.next_line())
                     .await
@@ -4795,18 +4863,28 @@ mod tests {
                 let message: serde_json::Value = serde_json::from_str(&line).expect("json");
                 if message["method"] == "roots/list" {
                     asked = true;
-                    let mut reply = roots_reply.clone().expect("roots were not expected");
-                    reply["id"] = message["id"].clone();
-                    writer.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    if let Some(reply) = &roots_reply {
+                        let mut reply = reply.clone();
+                        reply["id"] = message["id"].clone();
+                        writer.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    }
+                    continue;
+                }
+                if message["method"] == "notifications/cancelled" {
+                    cancelled = true;
                     continue;
                 }
                 if message["id"] == 2 {
-                    break message["result"].to_string();
+                    break message.to_string();
                 }
             };
             running.abort();
-            (text, asked)
+            ClientRun { text, asked, cancelled }
         })
+    }
+
+    fn roots_answer(folder: &std::path::Path) -> serde_json::Value {
+        serde_json::json!({"jsonrpc": "2.0", "result": {"roots": [{"uri": file_uri(folder)}]}})
     }
 
     #[test]
@@ -4814,15 +4892,26 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let folders = save_registry_in_folders();
-            let reply = serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {"roots": [{"uri": file_uri(&folders.site)}]},
-            });
             let server = server_in(&folders.outside, None);
-            let (text, asked) =
-                call_over_transport(server, serde_json::json!({"roots": {}}), Some(reply));
-            assert!(asked);
-            assert!(text.contains(SITE_KEY), "{text}");
+            let reply = Some(roots_answer(&folders.site));
+            let run = call_over_transport(server, serde_json::json!({"roots": {}}), reply, false);
+            assert!(run.asked);
+            assert!(run.text.contains(SITE_KEY), "{}", run.text);
+        });
+    }
+
+    /// The bypass this closes: no roots source yet would read as a client with
+    /// no roots, and registration would pass.
+    #[test]
+    fn a_tool_call_before_initialized_is_still_asked_about_roots() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let server = server_in(&folders.outside, None);
+            let reply = Some(roots_answer(&folders.site));
+            let run = call_over_transport(server, serde_json::json!({"roots": {}}), reply, true);
+            assert!(run.asked, "{}", run.text);
+            assert!(run.text.contains(SITE_KEY), "{}", run.text);
         });
     }
 
@@ -4832,9 +4921,9 @@ mod tests {
         with_test_home(home.path().to_path_buf(), || {
             let folders = save_registry_in_folders();
             let server = server_in(&folders.outside, None);
-            let (text, asked) = call_over_transport(server, serde_json::json!({}), None);
-            assert!(!asked);
-            assert!(!text.contains(SITE_KEY), "{text}");
+            let run = call_over_transport(server, serde_json::json!({}), None, false);
+            assert!(!run.asked);
+            assert!(!run.text.contains(SITE_KEY), "{}", run.text);
         });
     }
 
@@ -4848,10 +4937,23 @@ mod tests {
                 "error": {"code": -32603, "message": "no roots"},
             });
             let server = server_in(&folders.outside, None);
-            let (text, asked) =
-                call_over_transport(server, serde_json::json!({"roots": {}}), Some(reply));
-            assert!(asked);
-            assert!(!text.contains(SITE_KEY), "{text}");
+            let run = call_over_transport(server, serde_json::json!({"roots": {}}), Some(reply), false);
+            assert!(run.asked);
+            assert!(!run.text.contains(SITE_KEY), "{}", run.text);
+        });
+    }
+
+    #[test]
+    fn a_client_that_never_answers_grants_nothing_and_is_cancelled() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let mut server = server_in(&folders.outside, None);
+            server.roots_timeout = std::time::Duration::from_millis(50);
+            let run = call_over_transport(server, serde_json::json!({"roots": {}}), None, false);
+            assert!(run.asked);
+            assert!(run.cancelled, "rmcp's timeout tells the client");
+            assert!(!run.text.contains(SITE_KEY), "{}", run.text);
         });
     }
 

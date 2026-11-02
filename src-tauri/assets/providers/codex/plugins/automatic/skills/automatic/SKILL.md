@@ -38,7 +38,7 @@ Use Automatic when you need to:
 
 ### Contexts
 
-- `automatic_list_contexts` (the project the server runs in, or else the one project the client's roots name; committed slugs stay pending until the user attaches them)
+- `automatic_list_contexts` (the project the server runs in, or, if it is inside none, the one project every client root resolves to; committed slugs stay pending until the user attaches them)
 - `automatic_read_context`
 - `automatic_list_context_entries`
 - `automatic_read_context_entry`
@@ -73,6 +73,7 @@ Use Automatic when you need to:
 - `automatic_get_credential`
 - `automatic_list_mcp_servers`
 - `automatic_get_related_projects`
+- `automatic_register_project` refuses a folder that holds the one the server runs in, or a client root
 - `automatic_read_claude_memory`
 
 ## MCP configuration

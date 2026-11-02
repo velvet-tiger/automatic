@@ -292,12 +292,12 @@ fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
     recorded.is_some() && recorded == std::fs::canonicalize(dir.join(".git")).ok()
 }
 
-/// The checkout a tool may read for, given the client's `roots`. The working
-/// directory always wins. Only when it is inside no registered folder do the
-/// roots count, each by the same rule. A cwd stopped by a repository boundary
-/// is refused, so a root cannot lift a nested repository into its parent. A
-/// root that resolves nowhere is ignored. Roots that
-/// resolve to more than one checkout give none: nothing here can pick.
+/// The checkout a tool may read for, given the client's `roots`. A working
+/// directory inside a registered folder decides alone, and one stopped by a
+/// repository boundary is refused. An unknown working directory is refused.
+/// Roots count only for a directory inside no registered folder, and then
+/// every root must resolve to the same checkout: one that does not refuses the
+/// whole list, because nothing here can tell which root is the real one.
 pub fn choose_reading_checkout<F>(
     folder: Option<&Path>,
     roots: &[PathBuf],
@@ -307,20 +307,31 @@ pub fn choose_reading_checkout<F>(
 where
     F: Fn(&str) -> PathBuf,
 {
-    if folder.is_some_and(|cwd| deepest_containing(cwd, summaries.iter(), &canonical).is_some()) {
+    if !roots_can_decide(folder, summaries, &canonical) {
         return resolve_reading_checkout(folder, summaries, &canonical);
     }
     let mut chosen: Option<ProjectSummary> = None;
     for root in roots {
-        let Some(found) = resolve_reading_checkout(Some(root), summaries, &canonical) else {
-            continue;
-        };
+        let found = resolve_reading_checkout(Some(root), summaries, &canonical)?;
         match &chosen {
             Some(existing) if !same_checkout(existing, &found) => return None,
             _ => chosen = Some(found),
         }
     }
     chosen
+}
+
+fn roots_can_decide<F>(folder: Option<&Path>, summaries: &[ProjectSummary], canonical: &F) -> bool
+where
+    F: Fn(&str) -> PathBuf,
+{
+    folder.is_some_and(|cwd| deepest_containing(cwd, summaries.iter(), canonical).is_none())
+}
+
+/// Whether the client's roots could decide the reading checkout. When they
+/// cannot, there is no reason to ask for them.
+pub fn reading_needs_roots(folder: Option<&Path>, summaries: &[ProjectSummary]) -> bool {
+    roots_can_decide(folder, summaries, &canonical_or_raw)
 }
 
 /// [`choose_reading_checkout`] against registered directories on disk.
@@ -333,10 +344,10 @@ pub fn reading_checkout_with_roots(
 }
 
 /// The canonical folder a `file:` root names. Any other URI, a malformed one,
-/// or a path that does not exist gives `None`. `Url` percent-decodes the path.
+/// a remote host, or a path that does not exist gives `None`. `Url` percent-decodes the path.
 pub fn file_root_path(uri: &str) -> Option<PathBuf> {
     let url = url::Url::parse(uri).ok()?;
-    if url.scheme() != "file" {
+    if url.scheme() != "file" || !matches!(url.host_str(), None | Some("" | "localhost")) {
         return None;
     }
     std::fs::canonicalize(url.to_file_path().ok()?).ok()
@@ -641,7 +652,7 @@ mod tests {
     #[test]
     fn a_root_inside_a_checkout_chooses_it() {
         assert_eq!(chosen(Some("/elsewhere"), &["/work/site/src"]).as_deref(), Some(KEY_A1));
-        assert_eq!(chosen(None, &["/work/api"]).as_deref(), Some(KEY_B));
+        assert_eq!(chosen(None, &["/work/api"]), None, "an unknown cwd refuses");
     }
 
     #[test]
@@ -651,8 +662,9 @@ mod tests {
     }
 
     #[test]
-    fn a_root_that_resolves_nowhere_is_ignored() {
-        assert_eq!(chosen(Some("/elsewhere"), &["/nowhere", "/work/api"]).as_deref(), Some(KEY_B));
+    fn a_root_that_resolves_nowhere_refuses_the_list() {
+        assert_eq!(chosen(Some("/elsewhere"), &["/nowhere", "/work/api"]), None);
+        assert_eq!(chosen(Some("/elsewhere"), &["/work/api", "/nowhere"]), None);
         assert_eq!(chosen(Some("/elsewhere"), &["/work/api", "/work/api/src"]).as_deref(), Some(KEY_B));
         assert_eq!(chosen(Some("/elsewhere"), &[]), None);
     }
@@ -694,6 +706,9 @@ mod tests {
         assert_eq!(file_root_path("https://example.com/repo"), None);
         assert_eq!(file_root_path("not a uri"), None);
         assert_eq!(file_root_path("file://remote.example/repo"), None);
+        assert_eq!(file_root_path(&format!("file://127.0.0.1{}", dir.display()).replace(' ', "%20")), None);
+        let local = format!("file://localhost{}", dir.display()).replace(' ', "%20");
+        assert_eq!(file_root_path(&local), Some(dir.clone()));
         assert_eq!(file_root_path(&format!("file://{}/gone", dir.display())), None);
     }
 
