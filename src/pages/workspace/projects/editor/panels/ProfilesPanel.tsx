@@ -15,6 +15,8 @@ interface ProfilesPanelProps {
   /** local_key of the open project; null while creating. */
   selectedKey: string | null;
   availableProfiles: string[];
+  /** The project is read only here: Attach would be refused, Ignore writes nothing into it. */
+  readOnly?: boolean;
   reloadProject: (projectKey: string) => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
 }
@@ -49,7 +51,7 @@ function summariseContribution(contribution: ProfileContribution | undefined): s
  * show which group, and are detached at the group, not here.
  */
 export function ProfilesPanel({
-  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, reloadProject, onNavigateToGroup,
+  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, readOnly = false, reloadProject, onNavigateToGroup,
 }: ProfilesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -237,23 +239,17 @@ export function ProfilesPanel({
                       {persisted ? summary : "Applied when the project is saved"}
                     </div>
                   </div>
-                  {group ? (
-                    <button
-                      onClick={() => onNavigateToGroup?.(group)}
-                      className="flex items-center gap-1 text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded px-1.5 py-0.5 hover:text-brand transition-colors flex-shrink-0"
-                      title="This group provides it. Detach it from the group to take it off this project."
-                    >
-                      <Layers size={10} /> From group: {group}
-                    </button>
-                  ) : isPending ? (
+                  {isPending ? (
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => attach(name)}
-                        disabled={busy !== null}
-                        className="text-[12px] font-medium text-brand hover:text-brand-hover transition-colors disabled:opacity-50"
-                      >
-                        Attach
-                      </button>
+                      {!readOnly && (
+                        <button
+                          onClick={() => attach(name)}
+                          disabled={busy !== null}
+                          className="text-[12px] font-medium text-brand hover:text-brand-hover transition-colors disabled:opacity-50"
+                        >
+                          Attach
+                        </button>
+                      )}
                       {!isIgnored && (
                         <button
                           onClick={() => ignore(name)}
@@ -264,6 +260,14 @@ export function ProfilesPanel({
                         </button>
                       )}
                     </div>
+                  ) : group ? (
+                    <button
+                      onClick={() => onNavigateToGroup?.(group)}
+                      className="flex items-center gap-1 text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded px-1.5 py-0.5 hover:text-brand transition-colors flex-shrink-0"
+                      title="This group provides it. Detach it from the group to take it off this project."
+                    >
+                      <Layers size={10} /> From group: {group}
+                    </button>
                   ) : (
                     <button
                       onClick={() => detach(name)}

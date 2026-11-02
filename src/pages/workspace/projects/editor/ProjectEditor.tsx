@@ -2164,6 +2164,8 @@ export function ProjectEditor({
         manage_gitignore: stored.manage_gitignore === true,
         read_only: stored.read_only === true,
         local_read_only: stored.local_read_only === true,
+        id: stored.id,
+        local_key: stored.local_key,
         local_ignored_profiles: stored.local_ignored_profiles || [],
         pending_profiles: stored.pending_profiles || [],
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
@@ -2269,6 +2271,8 @@ export function ProjectEditor({
         manage_gitignore: parsed.manage_gitignore === true,
         read_only: parsed.read_only === true,
         local_read_only: parsed.local_read_only === true,
+        id: parsed.id,
+        local_key: parsed.local_key,
         local_ignored_profiles: parsed.local_ignored_profiles || [],
         pending_profiles: parsed.pending_profiles || [],
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
@@ -4345,7 +4349,7 @@ export function ProjectEditor({
             {/* Tab content */}
 
             {/* ── Project File tab (full-bleed layout) ──────────── */}
-            {!isCreating && !readOnly && selectedKey && (project.pending_profiles?.length ?? 0) > 0 && (
+            {!isCreating && !readOnly && selectedKey && (project.pending_profiles ?? []).some((name) => !(project.local_ignored_profiles ?? []).includes(name)) && (
               <div className="px-6 pt-3 flex-shrink-0">
                 <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
               </div>
@@ -4750,6 +4754,7 @@ export function ProjectEditor({
                     isCreating={isCreating}
                     selectedKey={selectedKey}
                     availableProfiles={availableProfiles}
+                    readOnly={readOnly}
                     reloadProject={reloadProject}
                     onNavigateToGroup={onNavigateToGroup}
                   />

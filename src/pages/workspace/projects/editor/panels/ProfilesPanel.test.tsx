@@ -73,6 +73,18 @@ describe("ProfilesPanel", () => {
     expect(screen.queryByText("Ignore")).not.toBeInTheDocument();
   });
 
+  it("hides Attach on a read-only project and keeps Ignore", () => {
+    renderPanel({ project: { ...project(), pending_profiles: ["own"] }, readOnly: true });
+    expect(screen.queryByText("Attach")).not.toBeInTheDocument();
+    expect(screen.getByText("Ignore")).toBeInTheDocument();
+  });
+
+  it("asks about a pending profile a group lists instead of showing the group", () => {
+    renderPanel({ project: { ...project(), pending_profiles: ["shared"] } });
+    expect(screen.queryByText("From group: team")).not.toBeInTheDocument();
+    expect(screen.getByText("Attach")).toBeInTheDocument();
+  });
+
   it("opens the group from the badge", () => {
     const onNavigateToGroup = vi.fn();
     renderPanel({ onNavigateToGroup });
