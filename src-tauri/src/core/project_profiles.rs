@@ -722,6 +722,8 @@ mod tests {
 
     #[test]
     fn erasing_app_data_restores_the_default_profile() {
+        // Erasing clears the gateway token, an account gateway tests fault.
+        let _store = crate::core::custom_gateway::test_support::gateway_store_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             seed_default_profile().expect("seed");
