@@ -36,6 +36,15 @@ pub(super) struct GatewayEnv<'a> {
     pub token: &'a str,
 }
 
+/// Whether this save's values are already Automatic's, because the secret
+/// store held them before the save began. A failed save leaves them in Claude
+/// Code's file with no record, and they must not look like the user's.
+#[derive(Clone, Copy, Default)]
+pub(super) struct KnownValues {
+    pub base_url: bool,
+    pub token: bool,
+}
+
 /// What Automatic last wrote to Claude Code.
 ///
 /// It holds a salted hash of the token, not the token. That is enough to tell
@@ -181,30 +190,31 @@ fn merged(mut root: Map<String, Value>, desired: &GatewayEnv) -> Map<String, Val
     root
 }
 
-/// The variables that already hold what is wanted, and that Automatic did not
-/// put there.
+/// The variables that already hold what is wanted, and that the user set.
 fn adopted_variables(
     env: Option<&Map<String, Value>>,
     desired: &GatewayEnv,
     record: Option<&ClaudeCodeRecord>,
+    known: KnownValues,
 ) -> Vec<String> {
     let Some(env) = env else {
         return Vec::new();
     };
     [
-        (BASE_URL_VAR, desired.base_url),
-        (token_var(desired.kind), desired.token),
+        (BASE_URL_VAR, desired.base_url, known.base_url),
+        (token_var(desired.kind), desired.token, known.token),
     ]
     .into_iter()
-    .filter(|(variable, wanted)| {
+    .filter(|(variable, wanted, known)| {
         let Some(value) = env.get(*variable).filter(|v| v.as_str() == Some(*wanted)) else {
             return false;
         };
-        let automatic_wrote = record
-            .is_some_and(|r| r.matches(variable, value) && !r.adopted(variable));
-        !automatic_wrote
+        match record.filter(|r| r.matches(variable, value)) {
+            Some(record) => record.adopted(variable),
+            None => !known,
+        }
     })
-    .map(|(variable, _)| variable.to_string())
+    .map(|(variable, _, _)| variable.to_string())
     .collect()
 }
 
@@ -266,17 +276,22 @@ fn followed(path: &Path) -> Result<PathBuf, String> {
 fn token_target(path: &Path) -> Result<PathBuf, String> {
     let target = followed(path)?;
     let folder = path.parent().ok_or("The settings path has no parent folder")?;
-    let Some(home) = folder.parent().and_then(|home| home.canonicalize().ok()) else {
+    let (Some(home), Some(name), Some(target_folder)) =
+        (folder.parent(), folder.file_name(), target.parent())
+    else {
+        return Err(format!(
+            "{} is not a usable settings path. Nothing was changed.",
+            path.display()
+        ));
+    };
+    // A folder that does not exist yet cannot be a link. Any other failure
+    // means the check cannot be made, so the write does not go ahead.
+    let Some(home) = real_folder_if_present(home, path)? else {
         return Ok(target);
     };
-    let allowed = match folder.file_name() {
-        Some(name) => home.join(name),
-        None => return Ok(target),
-    };
-    let real_folder = match target.parent().map(Path::canonicalize) {
-        Some(Ok(real_folder)) => real_folder,
-        // The folder does not exist yet, so it cannot be a link.
-        _ => return Ok(target),
+    let allowed = home.join(name);
+    let Some(real_folder) = real_folder_if_present(target_folder, path)? else {
+        return Ok(target);
     };
     if !real_folder.starts_with(&allowed) {
         return Err(format!(
@@ -288,6 +303,19 @@ fn token_target(path: &Path) -> Result<PathBuf, String> {
         ));
     }
     Ok(target)
+}
+
+/// The real path of a folder, or `None` when it does not exist.
+fn real_folder_if_present(folder: &Path, path: &Path) -> Result<Option<PathBuf>, String> {
+    match folder.canonicalize() {
+        Ok(real) => Ok(Some(real)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!(
+            "Could not check where {} leads: {}. Nothing was changed.",
+            path.display(),
+            e
+        )),
+    }
 }
 
 /// The file as it was read.
@@ -441,9 +469,10 @@ pub(super) fn write_file(
     path: &Path,
     desired: &GatewayEnv,
     record: Option<&ClaudeCodeRecord>,
+    known: KnownValues,
 ) -> Result<ClaudeCodeRecord, String> {
     let (target, loaded) = load_for_save(path, desired, record)?;
-    let adopted = adopted_variables(env_of(&loaded.root, &target)?, desired, record);
+    let adopted = adopted_variables(env_of(&loaded.root, &target)?, desired, record, known);
     write_root(
         &target,
         &merged(loaded.root, desired),
@@ -486,6 +515,10 @@ mod tests {
         }
     }
 
+    const NONE: KnownValues = KnownValues {
+        base_url: false,
+        token: false,
+    };
     const BEARER: GatewayCredentialKind = GatewayCredentialKind::Bearer;
     const API_KEY: GatewayCredentialKind = GatewayCredentialKind::ApiKey;
 
@@ -504,7 +537,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("nested").join("settings.json");
 
-        write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         assert_eq!(
             json_in(&path),
@@ -522,7 +555,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
 
-        write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         let mode = fs::metadata(&path).expect("metadata").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -536,7 +569,7 @@ mod tests {
         let path = file_in(&dir, "{}");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
 
-        write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         let mode = fs::metadata(&path).expect("metadata").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -548,7 +581,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).expect("chmod");
 
         clear_file(&path, &record).expect("clear");
@@ -565,7 +598,7 @@ mod tests {
             r#"{"zebra":1,"permissions":{"allow":["Bash"]},"env":{"KEEP":"me"},"apple":true}"#,
         );
 
-        write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         let written = json_in(&path);
         assert_eq!(written["env"]["KEEP"], "me");
@@ -590,7 +623,7 @@ mod tests {
         fs::write(&target, "{}").expect("write target");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        write_file(&link, &desired(BEARER, "token"), None).expect("write");
+        write_file(&link, &desired(BEARER, "token"), None, NONE).expect("write");
 
         assert!(fs::symlink_metadata(&link).expect("meta").file_type().is_symlink());
         assert_eq!(json_in(&target)["env"]["ANTHROPIC_AUTH_TOKEN"], "token");
@@ -608,7 +641,7 @@ mod tests {
         let err = check_file(&link, &desired(BEARER, "token"), None).expect_err("refused");
 
         assert!(err.contains("dotfiles"), "{err}");
-        assert!(write_file(&link, &desired(BEARER, "token"), None).is_err());
+        assert!(write_file(&link, &desired(BEARER, "token"), None, NONE).is_err());
         assert_eq!(fs::read_to_string(&target).expect("read"), "{}");
     }
 
@@ -628,10 +661,26 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_folder_that_cannot_be_checked_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let locked = dir.path().join("locked");
+        fs::create_dir_all(locked.join(".claude")).expect("mkdir");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+        let path = locked.join(".claude").join("settings.json");
+
+        let checked = check_file(&path, &desired(BEARER, "token"), None);
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+        assert!(checked.expect_err("refused").contains("Could not check"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_clear_follows_a_link_out_of_the_folder() {
         let dir = tempfile::tempdir().expect("tempdir");
         let link = claude_folder(&dir);
-        let record = write_file(&link, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&link, &desired(BEARER, "token"), None, NONE).expect("write");
         let target = dir.path().join("dotfiles-settings.json");
         fs::rename(&link, &target).expect("move");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
@@ -648,7 +697,7 @@ mod tests {
         let link = dir.path().join("settings.json");
         std::os::unix::fs::symlink(dir.path().join("gone.json"), &link).expect("symlink");
 
-        let err = write_file(&link, &desired(BEARER, "token"), None).expect_err("refused");
+        let err = write_file(&link, &desired(BEARER, "token"), None, NONE).expect_err("refused");
 
         assert!(err.contains("link"), "{err}");
         assert!(fs::symlink_metadata(&link).expect("meta").file_type().is_symlink());
@@ -660,7 +709,7 @@ mod tests {
         for text in ["{not json", "", "[1, 2]", r#"{"env":"text"}"#, r#"{"env":null}"#] {
             let path = file_in(&dir, text);
 
-            let saved = write_file(&path, &desired(BEARER, "token"), None);
+            let saved = write_file(&path, &desired(BEARER, "token"), None, NONE);
             let checked = check_file(&path, &desired(BEARER, "token"), None);
 
             assert!(saved.is_err(), "write of {text:?} was accepted");
@@ -676,7 +725,7 @@ mod tests {
             let text = json!({ "env": { variable: "theirs-secret" } }).to_string();
             let path = file_in(&dir, &text);
 
-            let err = write_file(&path, &desired(BEARER, "token"), None).expect_err("refused");
+            let err = write_file(&path, &desired(BEARER, "token"), None, NONE).expect_err("refused");
 
             assert!(err.contains(variable), "{err}");
             assert!(err.contains("settings.json"), "{err}");
@@ -690,7 +739,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, r#"{"env":{"ANTHROPIC_AUTH_TOKEN":123}}"#);
 
-        assert!(write_file(&path, &desired(BEARER, "token"), None).is_err());
+        assert!(write_file(&path, &desired(BEARER, "token"), None, NONE).is_err());
     }
 
     #[test]
@@ -702,21 +751,21 @@ mod tests {
         );
 
         // This is the retry after the Automatic settings write failed.
-        assert!(write_file(&path, &desired(BEARER, "token"), None).is_ok());
+        assert!(write_file(&path, &desired(BEARER, "token"), None, NONE).is_ok());
     }
 
     #[test]
     fn a_token_rotation_replaces_automatics_own_value() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let first = write_file(&path, &desired(BEARER, "first"), None).expect("first");
+        let first = write_file(&path, &desired(BEARER, "first"), None, NONE).expect("first");
 
-        let second = write_file(&path, &desired(BEARER, "second"), Some(&first)).expect("second");
+        let second = write_file(&path, &desired(BEARER, "second"), Some(&first), NONE).expect("second");
         assert_eq!(json_in(&path)["env"]["ANTHROPIC_AUTH_TOKEN"], "second");
 
         // The record follows the rotation, so the old token is no longer ours.
-        assert!(write_file(&path, &desired(BEARER, "third"), Some(&second)).is_ok());
-        let err = write_file(&path, &desired(BEARER, "fourth"), Some(&second)).expect_err("stale");
+        assert!(write_file(&path, &desired(BEARER, "third"), Some(&second), NONE).is_ok());
+        let err = write_file(&path, &desired(BEARER, "fourth"), Some(&second), NONE).expect_err("stale");
         assert!(err.contains(AUTH_TOKEN_VAR), "{err}");
     }
 
@@ -724,14 +773,14 @@ mod tests {
     fn a_new_base_url_replaces_automatics_own_value() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("first");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("first");
         let moved = GatewayEnv {
             base_url: "https://other.example.com",
             kind: BEARER,
             token: "token",
         };
 
-        write_file(&path, &moved, Some(&record)).expect("second");
+        write_file(&path, &moved, Some(&record), NONE).expect("second");
 
         assert_eq!(json_in(&path)["env"][BASE_URL_VAR], "https://other.example.com");
     }
@@ -740,9 +789,9 @@ mod tests {
     fn switching_credential_kind_removes_the_other_variable() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("first");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("first");
 
-        write_file(&path, &desired(API_KEY, "token"), Some(&record)).expect("second");
+        write_file(&path, &desired(API_KEY, "token"), Some(&record), NONE).expect("second");
 
         let env = json_in(&path)["env"].clone();
         assert_eq!(env[API_KEY_VAR], "token");
@@ -753,13 +802,13 @@ mod tests {
     fn switching_kind_will_not_remove_a_value_the_user_changed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("first");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("first");
         let text = fs::read_to_string(&path)
             .expect("read")
             .replace("\"token\"", "\"theirs\"");
         fs::write(&path, &text).expect("edit");
 
-        let err = write_file(&path, &desired(API_KEY, "token"), Some(&record)).expect_err("refused");
+        let err = write_file(&path, &desired(API_KEY, "token"), Some(&record), NONE).expect_err("refused");
 
         assert!(err.contains(AUTH_TOKEN_VAR), "{err}");
         assert_eq!(fs::read_to_string(&path).expect("read"), text);
@@ -769,7 +818,7 @@ mod tests {
     fn clearing_removes_only_what_automatic_wrote() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, r#"{"model":"opus","env":{"KEEP":"me"}}"#);
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         let left_alone = clear_file(&path, &record).expect("clear");
 
@@ -781,7 +830,7 @@ mod tests {
     fn clearing_removes_an_env_it_emptied() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, r#"{"model":"opus"}"#);
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         clear_file(&path, &record).expect("clear");
 
@@ -806,9 +855,9 @@ mod tests {
             &dir,
             r#"{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.com","ANTHROPIC_AUTH_TOKEN":"token"}}"#,
         );
-        let first = write_file(&path, &desired(BEARER, "token"), None).expect("adopt");
+        let first = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("adopt");
         // A second save with the same values must not lose the adoption.
-        let record = write_file(&path, &desired(BEARER, "token"), Some(&first)).expect("again");
+        let record = write_file(&path, &desired(BEARER, "token"), Some(&first), NONE).expect("again");
 
         let remaining = clear_file(&path, &record).expect("clear");
 
@@ -817,11 +866,44 @@ mod tests {
     }
 
     #[test]
+    fn values_the_secret_store_already_held_are_not_adopted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(
+            &dir,
+            r#"{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.com","ANTHROPIC_AUTH_TOKEN":"token"}}"#,
+        );
+        let known = KnownValues {
+            base_url: true,
+            token: true,
+        };
+
+        let record = write_file(&path, &desired(BEARER, "token"), None, known).expect("retry");
+
+        assert!(clear_file(&path, &record).expect("clear").is_empty());
+        assert!(json_in(&path).get("env").is_none());
+    }
+
+    #[test]
+    fn an_adopted_value_stays_adopted_when_the_store_holds_it_too() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = file_in(&dir, r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"token"}}"#);
+        let known = KnownValues {
+            base_url: true,
+            token: true,
+        };
+        let first = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("adopt");
+
+        let second = write_file(&path, &desired(BEARER, "token"), Some(&first), known).expect("again");
+
+        assert_eq!(clear_file(&path, &second).expect("clear"), [AUTH_TOKEN_VAR]);
+    }
+
+    #[test]
     fn a_value_automatic_replaced_is_no_longer_adopted() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = file_in(&dir, r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"token"}}"#);
-        let first = write_file(&path, &desired(BEARER, "token"), None).expect("adopt");
-        let second = write_file(&path, &desired(BEARER, "rotated"), Some(&first)).expect("rotate");
+        let first = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("adopt");
+        let second = write_file(&path, &desired(BEARER, "rotated"), Some(&first), NONE).expect("rotate");
 
         let remaining = clear_file(&path, &second).expect("clear");
 
@@ -832,8 +914,8 @@ mod tests {
     fn a_save_of_automatics_own_values_adopts_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let first = write_file(&path, &desired(BEARER, "token"), None).expect("first");
-        let second = write_file(&path, &desired(BEARER, "token"), Some(&first)).expect("second");
+        let first = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("first");
+        let second = write_file(&path, &desired(BEARER, "token"), Some(&first), NONE).expect("second");
 
         assert!(clear_file(&path, &second).expect("clear").is_empty());
     }
@@ -842,7 +924,7 @@ mod tests {
     fn clearing_reports_the_other_token_variable() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
         let text = fs::read_to_string(&path)
             .expect("read")
             .replace(AUTH_TOKEN_VAR, API_KEY_VAR);
@@ -877,7 +959,7 @@ mod tests {
     fn clearing_leaves_a_changed_value_and_says_so() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
         let edited = fs::read_to_string(&path)
             .expect("read")
             .replace("\"token\"", "\"theirs\"");
@@ -895,7 +977,7 @@ mod tests {
     fn clearing_twice_is_safe() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("settings.json");
-        let record = write_file(&path, &desired(BEARER, "token"), None).expect("write");
+        let record = write_file(&path, &desired(BEARER, "token"), None, NONE).expect("write");
 
         clear_file(&path, &record).expect("first");
         assert_eq!(clear_file(&path, &record), Ok(Vec::new()));

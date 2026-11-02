@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::sync::{Mutex, MutexGuard};
+use std::path::{Path, PathBuf};
 
 use super::agents::GatewayConfig;
-use super::custom_gateway::{ClearedCustomGateway, CustomGateway, GatewayErase};
+use super::custom_gateway::{ClearedCustomGateway, GatewayErase};
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
 
@@ -98,12 +98,6 @@ pub struct Settings {
     /// (e.g. `"anthropic"`). Agents absent from this map have no gateway.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_gateways: HashMap<String, GatewayConfig>,
-    /// The user's custom LLM gateway for Claude. It drives Automatic's Anthropic
-    /// client and Claude Code. The token is only in the secret store. Written
-    /// by `save_custom_gateway` and `clear_custom_gateway`, never by the
-    /// `write_settings` command.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_gateway: Option<CustomGateway>,
     /// User-selected model for each agent, keyed by agent ID. When absent for
     /// an agent, the hardcoded default from `agents::default_model` is used.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -155,7 +149,6 @@ impl Default for Settings {
             agent_features_enabled: None,
             active_agent: None,
             agent_gateways: HashMap::new(),
-            custom_gateway: None,
             agent_models: HashMap::new(),
             nvm_enabled: false,
             agent_folder_links: AgentFolderLinks::default(),
@@ -172,77 +165,62 @@ pub fn read_settings() -> Result<Settings, String> {
     Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
-/// Read settings, and fail when the file cannot be parsed.
-///
-/// [`read_settings`] turns a damaged file into defaults. That would make a
-/// saved gateway disappear, so requests would go straight to Anthropic and a
-/// clear would leave the token behind. Anything that depends on the gateway
-/// reads through here.
-pub fn read_settings_strict() -> Result<Settings, String> {
-    let path = get_automatic_dir()?.join("settings.json");
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
-        Err(e) => return Err(format!("Could not read {}: {}", path.display(), e)),
-    };
-    serde_json::from_str(&raw).map_err(|e| {
-        format!(
-            "{} could not be parsed (line {}). Fix or remove the file, then try again.",
-            path.display(),
-            e.line()
-        )
-    })
-}
-
-/// Settings writes run one at a time, so that a write cannot bring back a
-/// gateway another thread has just changed.
-fn write_lock() -> MutexGuard<'static, ()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Write settings, keeping the custom gateway that is on disk.
-///
-/// Callers read, change and write the whole `Settings`, the frontend included.
-/// A stale copy must not drop or restore the gateway, which has to change
-/// together with Claude Code's file and the secret store. Only
-/// [`write_settings_with_gateway`] changes it. A file that cannot be parsed
-/// stops the write, because the gateway record in it would be lost.
+/// Write settings. A file that cannot be parsed is replaced, so it heals, and a
+/// copy stays beside it as `settings.json.damaged` for anyone who wants what
+/// was in it.
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
-    let _writing = write_lock();
-    let custom_gateway = read_settings_strict()?.custom_gateway;
-    replace_settings_file(&Settings {
-        custom_gateway,
-        ..settings.clone()
-    })
-}
-
-/// Write settings including their `custom_gateway`. For the gateway module.
-pub(super) fn write_settings_with_gateway(settings: &Settings) -> Result<(), String> {
-    let _writing = write_lock();
-    replace_settings_file(settings)
-}
-
-/// Replace the settings file in one step, so a crash cannot leave half a file.
-fn replace_settings_file(settings: &Settings) -> Result<(), String> {
     let path = get_automatic_dir()?.join("settings.json");
-    let parent = path.parent().ok_or("The settings path has no parent folder")?;
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    keep_damaged_copy(&path)?;
     let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    write_atomically(&path, &raw)
+}
+
+/// Copy a settings file that cannot be parsed, replacing any earlier copy.
+fn keep_damaged_copy(path: &Path) -> Result<(), String> {
+    let Ok(raw) = fs::read(path) else {
+        return Ok(());
+    };
+    if serde_json::from_slice::<Settings>(&raw).is_ok() {
+        return Ok(());
+    }
+    let mut copy = path.as_os_str().to_owned();
+    copy.push(".damaged");
+    fs::write(&copy, raw)
+        .map_err(|e| format!("Could not keep a copy of the damaged settings file: {}", e))
+}
+
+/// The file a write really changes. A symlink resolves to its target, so that
+/// the link survives the rename, and a link to a file not yet created still
+/// creates it, as a plain write would.
+fn followed_link(path: &Path) -> Result<PathBuf, String> {
+    let is_link = fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    if let Ok(target) = path.canonicalize() {
+        return Ok(target);
+    }
+    let link = fs::read_link(path).map_err(|e| e.to_string())?;
+    Ok(path.parent().map_or(link.clone(), |parent| parent.join(&link)))
+}
+
+/// Replace a file in one step, so a crash cannot leave half of it. An existing
+/// file keeps its permissions. A new file is readable only by its owner.
+pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
+    let target = followed_link(path)?;
+    let parent = target.parent().ok_or("The file has no parent folder")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
 
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    temp.write_all(raw.as_bytes()).map_err(|e| e.to_string())?;
+    temp.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
     temp.as_file().sync_all().map_err(|e| e.to_string())?;
-    if let Ok(existing) = fs::metadata(&path) {
+    if let Ok(existing) = fs::metadata(&target) {
         fs::set_permissions(temp.path(), existing.permissions()).map_err(|e| e.to_string())?;
     }
-    temp.persist(&path).map_err(|e| e.error.to_string())?;
+    temp.persist(&target).map_err(|e| e.error.to_string())?;
     Ok(())
 }
 
-/// Return settings to their defaults. [`write_settings`] keeps the custom
-/// gateway: dropping it would lose the record of what Automatic wrote to
-/// Claude Code, and the user could no longer clear those values here.
 pub fn reset_settings() -> Result<(), String> {
     write_settings(&Settings::default())
 }
@@ -266,7 +244,7 @@ pub fn reinstall_defaults() -> Result<(), String> {
 
 /// Erase Automatic's data. Returns what stayed in Claude Code's settings.
 ///
-/// The gateway comes first, because its record is part of what gets erased.
+/// The gateway comes first, because its record is in the folder being erased.
 /// When Claude Code's file cannot be cleared the erase stops, or the token
 /// would stay in that file with nothing left that knows about it.
 pub fn erase_app_data() -> Result<ClearedCustomGateway, String> {
@@ -316,6 +294,101 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
+
+    // ── Healing and atomic writes ─────────────────────────────────────────────
+
+    fn real_settings_path() -> std::path::PathBuf {
+        get_automatic_dir().expect("dir").join("settings.json")
+    }
+
+    fn damaged_copy_path() -> std::path::PathBuf {
+        get_automatic_dir().expect("dir").join("settings.json.damaged")
+    }
+
+    fn damage_settings(text: &str) {
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        fs::write(real_settings_path(), text).expect("damage");
+    }
+
+    #[test]
+    fn a_write_heals_a_damaged_file_and_keeps_a_copy() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("{\"sync_mode\": \"co");
+
+        let settings = Settings {
+            wizard_completed: true,
+            ..Settings::default()
+        };
+        write_settings(&settings).expect("heal");
+
+        assert!(read_settings().expect("read").wizard_completed);
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "{\"sync_mode\": \"co");
+    }
+
+    #[test]
+    fn a_later_damage_replaces_the_earlier_copy() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("first damage");
+        write_settings(&Settings::default()).expect("heal");
+        damage_settings("second damage");
+        write_settings(&Settings::default()).expect("heal");
+
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "second damage");
+    }
+
+    #[test]
+    fn a_healthy_write_leaves_no_copy() {
+        let _home = crate::core::temp_test_home();
+        write_settings(&Settings::default()).expect("write");
+        write_settings(&Settings::default()).expect("write");
+
+        assert!(!damaged_copy_path().exists());
+    }
+
+    #[test]
+    fn reset_works_on_a_damaged_file() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("{not json");
+
+        reset_settings().expect("reset");
+
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "{not json");
+        assert!(serde_json::from_str::<Settings>(
+            &fs::read_to_string(real_settings_path()).expect("read")
+        )
+        .is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_follows_a_symlinked_file() {
+        let _home = crate::core::temp_test_home();
+        let elsewhere = tmp();
+        let target = elsewhere.path().join("settings.json");
+        fs::write(&target, "{\"sync_mode\":\"copy\"}").expect("target");
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        std::os::unix::fs::symlink(&target, real_settings_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("write");
+
+        let link = fs::symlink_metadata(real_settings_path()).expect("meta");
+        assert!(link.file_type().is_symlink());
+        assert!(fs::read_to_string(&target).expect("read").contains("\"symlink\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_through_a_dangling_link_creates_the_target() {
+        let _home = crate::core::temp_test_home();
+        let elsewhere = tmp();
+        let target = elsewhere.path().join("settings.json");
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        std::os::unix::fs::symlink(&target, real_settings_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("write");
+
+        assert!(target.exists());
+    }
 
     // ── Path-injectable helpers ───────────────────────────────────────────────
 

@@ -84,6 +84,29 @@ const CUSTOM_GATEWAY_TIMEOUT: Duration = Duration::from_secs(600);
 /// its body can be anything, such as a whole HTML page.
 const MAX_GATEWAY_ERROR_CHARS: usize = 500;
 
+/// The largest reply read from a gateway. Anthropic is trusted not to send
+/// gigabytes. A gateway is whatever the user pointed at.
+const MAX_GATEWAY_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+/// Read a response body, stopping at `limit` bytes.
+async fn read_capped(mut response: reqwest::Response, limit: usize) -> Result<String, String> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?
+    {
+        if body.len() + chunk.len() > limit {
+            return Err(format!(
+                "The custom gateway's reply is larger than the {} byte limit.",
+                limit
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
 /// Whether a gateway URL names this machine.
 fn is_loopback(base_url: &str) -> bool {
     url::Url::parse(base_url).is_ok_and(|url| {
@@ -184,11 +207,17 @@ impl AnthropicClient {
             .map_err(|e| format!("Network error: {}", e))?;
 
         let status = response.status().as_u16();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
-        Ok((status, text))
+        Ok((status, self.read_body(response).await?))
+    }
+
+    async fn read_body(&self, response: reqwest::Response) -> Result<String, String> {
+        match self.route {
+            Route::Custom(_) => read_capped(response, MAX_GATEWAY_BODY_BYTES).await,
+            Route::Direct { .. } => response
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response body: {}", e)),
+        }
     }
 
     /// The error for a response outside the 2xx range.
@@ -361,10 +390,7 @@ impl AgentClient for AnthropicClient {
             .map_err(|e| format!("Network error: {}", e))?;
 
         let status = response.status().as_u16();
-        let body_text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        let body_text = self.read_body(response).await?;
 
         if !(200..300).contains(&status) {
             return Err(self.response_error(&body_text, status));
@@ -515,6 +541,30 @@ mod tests {
             stream.write_all(response.as_bytes()).expect("write");
         });
         (address, receiver)
+    }
+
+    #[test]
+    fn a_reply_over_the_limit_is_refused() {
+        let body = "x".repeat(100);
+        let (address, _requests) = one_shot_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{body}"
+        ));
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let (over, reply) = runtime.block_on(async {
+            let response = reqwest::get(&address).await.expect("response");
+            let (again, _requests) = one_shot_server(format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{body}"
+            ));
+            let fits = reqwest::get(&again).await.expect("response");
+            (read_capped(response, 99).await, read_capped(fits, 100).await)
+        });
+
+        assert!(over.expect_err("too big").contains("limit"));
+        assert_eq!(reply.expect("fits").len(), 100);
     }
 
     #[test]

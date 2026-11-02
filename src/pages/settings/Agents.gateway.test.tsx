@@ -38,6 +38,7 @@ describe("Agents settings custom gateway", () => {
     expect(screen.getByText(/Claude desktop app has its own gateway settings/)).toBeInTheDocument();
     expect(screen.getByText(/asks you once to approve the key/)).toBeInTheDocument();
     expect(screen.getByText(/VS Code extension's login check/)).toBeInTheDocument();
+    expect(screen.getByText(/linked to a file outside ~\/\.claude cannot be used/)).toBeInTheDocument();
   });
 
   it("saves through its own command and reloads the status", async () => {
@@ -136,9 +137,14 @@ describe("Agents settings custom gateway", () => {
   });
 
   it("uses a grammatical notice for two values", () => {
-    expect(leftInPlaceNotice(["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"])).toMatch(
-      /^ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN are still set/,
-    );
+    const two = leftInPlaceNotice(["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"]);
+    expect(two).toMatch(/^ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN are still set/);
+    expect(two).toMatch(/left them in place\. Remove them .* want them\.$/);
+    expect(two).not.toMatch(/\bit\b/);
+
+    const one = leftInPlaceNotice(["ANTHROPIC_AUTH_TOKEN"]);
+    expect(one).toMatch(/^ANTHROPIC_AUTH_TOKEN is still set/);
+    expect(one).toMatch(/left it in place\. Remove it .* want it\.$/);
   });
 
   it("needs a new token when the address changes", async () => {

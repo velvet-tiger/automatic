@@ -61,11 +61,6 @@ fn any_api_key_stored<'a>(
     }
 }
 
-/// Whether settings hold a custom gateway. This needs no keychain read.
-fn custom_gateway_saved() -> bool {
-    read_settings().is_ok_and(|settings| settings.custom_gateway.is_some())
-}
-
 /// Best-effort write of `agent_features_enabled`. Errors reading or writing
 /// settings are swallowed — failing to update the toggle should never block
 /// the keychain operation that triggered it.
@@ -80,7 +75,7 @@ pub(super) fn set_agent_features_enabled(value: bool) {
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
     // A saved custom gateway already counts as a credential.
-    let had_credentials_before = if custom_gateway_saved() {
+    let had_credentials_before = if super::custom_gateway::custom_gateway_saved() {
         Ok(true)
     } else {
         any_known_api_key_stored(StoreRead::Now)
@@ -152,7 +147,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     // Auto-disable agent features once no recognised keys remain. A store
     // that cannot be read may still hold a key, so the setting then stays.
     if known_agents().iter().any(|id| id.as_str() == provider)
-        && !custom_gateway_saved()
+        && !super::custom_gateway::custom_gateway_saved()
         && any_known_api_key_stored(StoreRead::Now) == Ok(false)
     {
         set_agent_features_enabled(false);

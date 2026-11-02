@@ -38,8 +38,10 @@ function sameAddress(first: string, second: string): boolean {
 /** A sentence naming the gateway variables that stayed in Claude Code's file. */
 export function leftInPlaceNotice(names: string[]): string {
   const list = names.join(", ");
-  const subject = names.length === 1 ? `${list} is` : `${list} are`;
-  return `${subject} still set in ~/.claude/settings.json. Automatic left it in place. Remove it from that file if you no longer want it.`;
+  if (names.length === 1) {
+    return `${list} is still set in ~/.claude/settings.json. Automatic left it in place. Remove it from that file if you no longer want it.`;
+  }
+  return `${list} are still set in ~/.claude/settings.json. Automatic left them in place. Remove them from that file if you no longer want them.`;
 }
 
 const inputClass =
@@ -205,6 +207,10 @@ export function CustomGatewaySection({ status, overridesCloudflare, onChanged }:
               you decline, it ignores the key from then on.
             </li>
             <li>The VS Code extension's login check does not read ~/.claude/settings.json.</li>
+            <li>
+              A ~/.claude/settings.json linked to a file outside ~/.claude cannot be used, because
+              the token could end up in a tracked repository.
+            </li>
             {overridesCloudflare && (
               <li>While this gateway is on, Automatic does not use your Cloudflare AI Gateway.</li>
             )}

@@ -3,7 +3,6 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 use super::custom_gateway::CustomGateway;
-use super::settings::Settings;
 use super::store_reads::StoreRead;
 use super::agents::{
     message::{neutral_to_anthropic, ContentBlock, NeutralContent, NeutralMessage, ToolDef},
@@ -55,13 +54,13 @@ fn active_agent_id() -> String {
 /// * `None`        → never set explicitly; derives from key presence so
 ///   upgrading users keep their previous behaviour
 pub fn agent_features_enabled() -> bool {
-    let settings = super::settings::read_settings().ok();
-    let explicit = settings.as_ref().and_then(|s| s.agent_features_enabled);
-    let gateway_saved = settings.is_some_and(|s| s.custom_gateway.is_some());
+    let explicit = super::settings::read_settings()
+        .ok()
+        .and_then(|s| s.agent_features_enabled);
     match explicit {
         Some(value) => value,
         // A saved gateway is enough. Using it reports a missing token.
-        None if gateway_saved => true,
+        None if super::custom_gateway::custom_gateway_saved() => true,
         // The answer only decides what a page shows, so it is a background
         // read and a plain bool. When the keychain could not say, the
         // features stay on. Using one then reports the keychain's own error
@@ -98,7 +97,12 @@ impl std::fmt::Debug for AgentRoute {
 
 /// The active agent, or an error when requests must not be sent. The saved
 /// gateway is returned when it applies to that agent.
-fn request_target(settings: Settings) -> Result<(String, Option<CustomGateway>), String> {
+///
+/// General settings are read leniently, because they heal. The gateway file is
+/// read strictly, and only for Anthropic. A damaged one may hide a gateway, and
+/// falling back would send the user's prompts straight to Anthropic.
+fn request_target() -> Result<(String, Option<CustomGateway>), String> {
+    let settings = super::settings::read_settings().unwrap_or_default();
     if settings.agent_features_enabled == Some(false) {
         return Err("Agent features are disabled. Enable them in Settings > Agents.".to_string());
     }
@@ -109,7 +113,11 @@ fn request_target(settings: Settings) -> Result<(String, Option<CustomGateway>),
     super::agents::check_credential_provider(&agent_id)
         .map_err(|e| format!("The active agent in settings is not supported. {}", e))?;
 
-    let gateway = settings.custom_gateway.filter(|_| agent_id == "anthropic");
+    let gateway = if agent_id == "anthropic" {
+        super::custom_gateway::read_gateway()?
+    } else {
+        None
+    };
     Ok((agent_id, gateway))
 }
 
@@ -124,13 +132,10 @@ fn request_target(settings: Settings) -> Result<(String, Option<CustomGateway>),
 ///   3. Key stored in the OS keychain for the active agent.
 ///   4. The `api_key` argument (explicitly supplied by the caller).
 ///
-/// Settings are read strictly. A damaged file may hide a gateway, and falling
-/// back would send the user's prompts somewhere they turned off.
-///
 /// Returns an error if features are disabled, no credential is found, or the
 /// keychain could not be read and the caller supplied no key.
 fn resolve_route(explicit_key: Option<&str>) -> Result<AgentRoute, String> {
-    let (agent_id, gateway) = request_target(super::settings::read_settings_strict()?)?;
+    let (agent_id, gateway) = request_target()?;
     if let Some(gateway) = gateway {
         return super::custom_gateway::gateway_route(&gateway).map(AgentRoute::CustomGateway);
     }
@@ -148,7 +153,7 @@ fn resolve_route(explicit_key: Option<&str>) -> Result<AgentRoute, String> {
 /// provider through the key presence cache. A missing gateway token is
 /// reported by the request itself.
 pub(crate) fn ensure_agent_credential(read: StoreRead) -> Result<(), String> {
-    let (agent_id, gateway) = request_target(super::settings::read_settings_strict()?)?;
+    let (agent_id, gateway) = request_target()?;
     if let Some(gateway) = gateway {
         return super::custom_gateway::parse_gateway_url(&gateway.base_url).map(|_| ());
     }
@@ -1124,6 +1129,7 @@ mod tests {
 
     // ── Choosing the route ───────────────────────────────────────────────────
 
+    use crate::core::Settings;
     use crate::core::custom_gateway::test_support::{
         gateway_store_lock, save_test_gateway, set_saved_gateway_url,
     };
@@ -1209,19 +1215,50 @@ mod tests {
     }
 
     #[test]
-    fn a_damaged_settings_file_fails_closed_with_no_direct_fallback() {
+    fn a_damaged_gateway_file_fails_closed_with_no_direct_fallback() {
         let _store = gateway_store_lock();
         let _home = crate::core::temp_test_home();
         save_test_gateway("gateway-token");
         crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
-        let settings_file = crate::core::get_automatic_dir().expect("dir").join("settings.json");
-        fs::write(&settings_file, "{not json").expect("damage the file");
+        let file = crate::core::custom_gateway::gateway_file_path().expect("path");
+        fs::write(&file, "{not json").expect("damage the file");
 
         let route = resolve_route(None);
 
         crate::core::secret_store::delete_secret("anthropic").expect("clean up");
-        assert!(route.expect_err("no fallback").contains("settings.json"));
+        assert!(route.expect_err("no fallback").contains("custom-gateway.json"));
         assert!(ensure_agent_credential(StoreRead::Now).is_err());
+    }
+
+    #[test]
+    fn a_damaged_gateway_file_does_not_stop_another_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+        let file = crate::core::custom_gateway::gateway_file_path().expect("path");
+        fs::write(&file, "{not json").expect("damage the file");
+
+        let route = resolve_route(None);
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        assert!(matches!(route, Ok(AgentRoute::Provider { .. })));
+    }
+
+    #[test]
+    fn a_damaged_settings_file_leaves_a_saved_gateway_active() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        let settings_file = crate::core::get_automatic_dir().expect("dir").join("settings.json");
+        fs::write(&settings_file, "{not json").expect("damage the file");
+
+        assert!(matches!(resolve_route(None), Ok(AgentRoute::CustomGateway(_))));
+
+        super::super::settings::write_settings(&Settings::default()).expect("heal");
+        assert!(settings_file.with_extension("json.damaged").exists());
+        assert!(matches!(resolve_route(None), Ok(AgentRoute::CustomGateway(_))));
     }
 
     #[test]
