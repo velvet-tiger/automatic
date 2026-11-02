@@ -152,7 +152,8 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
   };
 
   const handleSelectGroup = (name: string) => {
-    if (selectedName === name && !isCreating) return;
+    // No group loaded means the last read failed, so a click retries it.
+    if (selectedName === name && group && !isCreating) return;
     setIsCreating(false);
     loadGroup(name);
   };
@@ -232,14 +233,19 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     // The list only words the warning. An unreadable group must still be
     // deletable, so fall back to the copy on screen.
     let groupProfiles: string[] = group?.name === name ? group.profiles ?? [] : [];
+    let unreadable = false;
     try {
       const raw: string = await invoke("read_group", { name });
       const latest: ProjectGroup = JSON.parse(raw);
       groupProfiles = latest.profiles ?? [];
     } catch (err) {
       console.warn(`Could not re-read group '${name}' before delete:`, err);
+      unreadable = group?.name !== name;
     }
-    const confirmed = await ask(`Delete group "${name}"? ${deleteGroupWarning(groupProfiles)}`, {
+    const warning = unreadable
+      ? `${deleteGroupWarning([])}\n\nThis group's file could not be read. Its projects will lose whatever it provides the next time they are saved.`
+      : deleteGroupWarning(groupProfiles);
+    const confirmed = await ask(`Delete group "${name}"? ${warning}`, {
       title: "Delete Group",
       kind: "warning",
     });
@@ -439,7 +445,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
             </div>
             <p className="mt-2 text-[13px] text-text-muted">
               This group's file could not be read. Repair the file, or delete the group.
-              Its members keep what it provides until then.
+              Its members keep what it provides for now.
             </p>
           </div>
         )}

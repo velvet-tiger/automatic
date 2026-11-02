@@ -41,7 +41,9 @@ pub fn list_groups() -> Result<Vec<String>, String> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+        // A link whose target is missing stays listed, so it can be deleted.
+        let may_be_group = fs::metadata(&path).map_or(true, |meta| meta.is_file());
+        if may_be_group && path.extension().is_some_and(|ext| ext == "json") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 if is_valid_name(stem) {
                     groups.push(stem.to_string());
@@ -125,7 +127,8 @@ pub fn delete_group(name: &str) -> Result<(), String> {
     let groups_dir = get_groups_dir()?;
     let path = group_path(&groups_dir, name);
 
-    if path.exists() {
+    // `symlink_metadata`, so a link whose target is missing is removed too.
+    if fs::symlink_metadata(&path).is_ok() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
 
@@ -198,9 +201,9 @@ fn read_groups_listing(ident: &str) -> Result<(Vec<ProjectGroup>, Vec<String>), 
 }
 
 /// Every name that may be a group, and a message for each directory entry
-/// that could not be read. Unlike [`list_groups`] this keeps a file it cannot
-/// inspect, such as a link whose target is missing, so the read that follows
-/// reports it. Only a groups folder that does not exist means no groups.
+/// that could not be read. A file it cannot inspect, such as a link whose
+/// target is missing, is kept so the read that follows reports it. Only a
+/// groups folder that does not exist means no groups.
 fn scan_group_names(groups_dir: &PathBuf) -> Result<(Vec<String>, Vec<String>), String> {
     let read_failure = |e: std::io::Error| format!("The groups folder could not be read: {}", e);
     match fs::symlink_metadata(groups_dir) {
@@ -221,16 +224,22 @@ fn scan_group_names(groups_dir: &PathBuf) -> Result<(Vec<String>, Vec<String>), 
                 continue;
             }
         };
-        if path.extension().is_none_or(|ext| ext != "json")
-            || fs::metadata(&path).is_ok_and(|meta| meta.is_dir())
-        {
+        if path.extension().is_none_or(|ext| ext != "json") {
             continue;
         }
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            if is_valid_name(stem) {
-                names.push(stem.to_string());
-            }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !is_valid_name(stem) {
+            continue;
         }
+        // Never read something that is not a file: a FIFO would hang the
+        // caller, which may be holding the library write lock.
+        if fs::metadata(&path).is_ok_and(|meta| !meta.is_file()) {
+            unreadable.push(format!("Group '{}' could not be read: not a file", stem));
+            continue;
+        }
+        names.push(stem.to_string());
     }
     names.sort();
     Ok((names, unreadable))

@@ -1278,10 +1278,16 @@ impl AutomaticMcpServer {
 
         // Find every group this project belongs to. Members are stored as
         // project ids.
-        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&this)) {
-            Ok(groups) => groups,
-            Err(e) => return Ok(tool_error(e)),
-        };
+        // Nothing changes here, so an unreadable group need not hide the
+        // readable ones. It only fails the call when "no groups" would be
+        // the answer, because that may be untrue.
+        let ident = crate::core::checkout_ident(&this);
+        let groups = crate::core::groups_for_project(ident);
+        if groups.is_empty() {
+            if let Err(e) = crate::core::groups_listing(ident) {
+                return Ok(tool_error(e));
+            }
+        }
 
         if groups.is_empty() {
             return Ok(tool_success(

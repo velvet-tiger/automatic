@@ -3193,6 +3193,37 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    /// Something at the group's path that is not a file is unreadable, not
+    /// a removed group.
+    #[test]
+    fn group_path_that_is_a_folder_releases_nothing_on_save() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::fs::create_dir(&group_file).expect("folder at group path");
+            save_project_a_again();
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_group_link_can_be_listed_and_deleted() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::os::unix::fs::symlink(group_file.with_extension("missing"), &group_file)
+                .expect("link group file");
+
+            assert!(core::list_groups().expect("list").contains(&"team".to_string()));
+            core::delete_group("team").expect("delete");
+            assert!(std::fs::symlink_metadata(&group_file).is_err());
+        });
+    }
+
     /// A link whose target is missing is unreadable, not a removed group.
     #[cfg(unix)]
     #[test]
