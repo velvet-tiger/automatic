@@ -323,10 +323,12 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     // here: minting belongs to the create paths and the startup backfill.
     let resolved = resolve_stored_keys(&ProjectKeys::of(&project), Some(&registry_keys));
     // A state file with another key is not this checkout's: the folder was
-    // copied, or the repository committed `.automatic/project.json`. Its record
-    // must not decide what reconcile removes here.
+    // copied, or the repository committed `.automatic/project.json`. Its records
+    // must not decide what reconcile removes here. Reconcile rebuilds them.
     if !registry_keys.local_key.is_empty() && project.local_key != registry_keys.local_key {
         project.profile_contributions.clear();
+        project.group_profile_contributions.clear();
+        project.group_context_contributions.clear();
     }
     project.id = resolved.id;
     project.local_key = resolved.local_key;

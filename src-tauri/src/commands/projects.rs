@@ -2924,13 +2924,20 @@ pub(crate) mod propagation_tests {
             std::fs::create_dir(repo.path().join(".automatic")).unwrap();
             std::fs::write(
                 repo.path().join(".automatic").join("project.json"),
-                r#"{"profile_contributions":{"ghost":{"hooks":["secret-scan"]}}}"#,
+                r#"{
+                    "profile_contributions": {"ghost": {"hooks": ["secret-scan"]}},
+                    "group_profile_contributions": {"ghost": ["shared"]},
+                    "group_context_contributions": {"ghost": ["policy"]}
+                }"#,
             )
             .unwrap();
 
             let ident = core::import_existing_project(dir).expect("import").local_key;
 
-            assert!(read_back(&ident).profile_contributions.is_empty());
+            let project = read_back(&ident);
+            assert!(project.profile_contributions.is_empty());
+            assert!(project.group_profile_contributions.is_empty());
+            assert!(project.group_context_contributions.is_empty());
         });
     }
 
