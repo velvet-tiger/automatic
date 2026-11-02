@@ -2437,5 +2437,34 @@
       "method": "oauth",
       "env_vars": []
     }
+  },
+  {
+    "slug": "agentgateway",
+    "name": "io.github.agentgateway/agentgateway",
+    "title": "agentgateway",
+    "description": "Connect to your own agentgateway instance and use the MCP servers behind it through one endpoint. You must run the gateway yourself. Replace the URL with your gateway's address.",
+    "provider": "agentgateway",
+    "icon": "agentgateway.dev",
+    "classification": "official",
+    "repository_url": "https://github.com/agentgateway/agentgateway",
+    "docs_url": "https://agentgateway.dev/docs/standalone/latest/",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://my-agentgateway-instance/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AGENTGATEWAY_API_KEY}"
+      }
+    },
+    "local": null,
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "AGENTGATEWAY_API_KEY",
+          "description": "An API key from your gateway's apiKey policy.",
+          "secret": true
+        }
+      ]
+    }
   }
 ]
