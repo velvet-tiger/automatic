@@ -1107,6 +1107,20 @@ impl ReadingScope {
         Err(format!("Only this folder's own project '{}' can be used here.", own.name))
     }
 
+    /// Whether an agent may link `path` into a context. Only inside this
+    /// folder's own project, or a link would open any file on the machine to a
+    /// later read. Compared after canonicalising, so a symlink cannot leave.
+    fn check_linkable(&self, path: &str) -> Result<(), String> {
+        let own = self.own_checkout()?;
+        let refused = || format!("'{}' is not inside this folder's own project.", path);
+        let target = std::fs::canonicalize(path.trim()).map_err(|_| refused())?;
+        let root = std::fs::canonicalize(&own.directory).map_err(|_| refused())?;
+        if target.starts_with(&root) {
+            return Ok(());
+        }
+        Err(refused())
+    }
+
     /// Whether `slug` is offered to this folder. The slug is compared exactly:
     /// a case-insensitive filesystem must not widen it.
     fn check_context(&self, slug: &str) -> Result<(), String> {
@@ -2840,7 +2854,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_add_context_folder",
-        description = "Link a local folder or file into a local context. Agents \
+        description = "Only a path inside this folder's own project can be linked. Link a local folder or file into a local context. Agents \
                        read its Markdown and text files where they are; \
                        nothing is copied. Only when the user asks. The user's \
                        settings decide which folders are allowed (by default, \
@@ -2854,6 +2868,9 @@ impl AutomaticMcpServer {
         params: Parameters<AddContextFolderParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
+        if let Err(e) = self.reading_scope().and_then(|scope| scope.check_linkable(&p.path)) {
+            return Ok(tool_error(e));
+        }
         match crate::core::link_folder_for_agent(&p.context, &p.path, &p.name, &p.description) {
             Ok(id) => Ok(tool_success(format!(
                 "Linked '{}' into context '{}' as source '{}'.",
@@ -4325,6 +4342,48 @@ mod tests {
             assert_ne!(own.is_error, Some(true), "{}", result_text(&own));
             let own = detach(&member, SITE_KEY);
             assert_ne!(own.is_error, Some(true), "{}", result_text(&own));
+        });
+    }
+
+    fn link(server: &AutomaticMcpServer, path: &std::path::Path) -> CallToolResult {
+        call(server.add_context_folder(Parameters(AddContextFolderParams {
+            context: "notes".into(),
+            path: path.display().to_string(),
+            name: "Notes".into(),
+            description: String::new(),
+        })))
+    }
+
+    #[test]
+    fn a_folder_is_linked_only_from_inside_the_own_project() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            crate::core::create_local_context("Notes", "").expect("context");
+            let server = server_in(&folders.site, None);
+
+            let outside = link(&server, &folders.api);
+            assert_eq!(outside.is_error, Some(true), "{}", result_text(&outside));
+            assert!(result_text(&outside).contains("not inside"), "{}", result_text(&outside));
+            let missing = link(&server, &folders.site.join("gone"));
+            assert_eq!(missing.is_error, Some(true), "{}", result_text(&missing));
+
+            let unregistered = server_in(&folders.outside, None);
+            let refused = link(&unregistered, &folders.outside);
+            assert_eq!(result_text(&refused), no_reading_checkout(Some(&folders.outside)));
+
+            // Passes a string check, and resolves outside the project.
+            #[cfg(unix)]
+            {
+                let escape = folders.site.join("escape");
+                std::os::unix::fs::symlink(&folders.api, &escape).expect("symlink");
+                let linked = link(&server, &escape);
+                assert_eq!(linked.is_error, Some(true), "{}", result_text(&linked));
+                assert!(result_text(&linked).contains("not inside"), "{}", result_text(&linked));
+                std::fs::remove_file(&escape).expect("remove");
+            }
+
+            assert!(server.reading_scope().unwrap().check_linkable(folders.site.to_str().unwrap()).is_ok());
         });
     }
 
