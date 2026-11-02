@@ -19,7 +19,7 @@ interface ProfilesPanelProps {
   onNavigateToGroup?: (groupName: string) => void;
 }
 
-const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
+export const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
   skills: ["skill", "skills"],
   mcp_servers: ["MCP server", "MCP servers"],
   providers: ["provider", "providers"],
@@ -59,6 +59,8 @@ export function ProfilesPanel({
   const attached = project.profiles ?? [];
   const contributions = project.profile_contributions ?? {};
   const groupContributions = project.group_profile_contributions ?? {};
+  const pending = project.pending_profiles ?? [];
+  const ignored = project.local_ignored_profiles ?? [];
   const unattached = availableProfiles.filter((name) => !attached.includes(name));
   const filtered = search.trim()
     ? unattached.filter((name) => name.toLowerCase().includes(search.toLowerCase()))
@@ -84,6 +86,19 @@ export function ProfilesPanel({
       await reloadProject(selectedKey!);
     } catch (err) {
       setError(`Failed to attach profile "${profileName}": ${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const ignore = async (profileName: string) => {
+    setError(null);
+    setBusy(profileName);
+    try {
+      await invoke("ignore_project_profile", { projectName: selectedKey, profileName });
+      await reloadProject(selectedKey!);
+    } catch (err) {
+      setError(`Failed to ignore profile "${profileName}": ${err}`);
     } finally {
       setBusy(null);
     }
@@ -196,6 +211,13 @@ export function ProfilesPanel({
             {attached.map((name) => {
               const missing = availableProfiles.length > 0 && !availableProfiles.includes(name);
               const group = providingGroup(groupContributions, name);
+              const isPending = pending.includes(name);
+              const isIgnored = ignored.includes(name);
+              const summary = !isPending
+                ? summariseContribution(contributions[name])
+                : isIgnored
+                  ? "Ignored on this computer. Nothing from it applies here."
+                  : "The repository asks for this profile. Nothing from it applies here yet.";
               return (
                 <div
                   key={name}
@@ -212,7 +234,7 @@ export function ProfilesPanel({
                       )}
                     </div>
                     <div className="text-[11px] text-text-muted truncate">
-                      {persisted ? summariseContribution(contributions[name]) : "Applied when the project is saved"}
+                      {persisted ? summary : "Applied when the project is saved"}
                     </div>
                   </div>
                   {group ? (
@@ -223,6 +245,25 @@ export function ProfilesPanel({
                     >
                       <Layers size={10} /> From group: {group}
                     </button>
+                  ) : isPending ? (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => attach(name)}
+                        disabled={busy !== null}
+                        className="text-[12px] font-medium text-brand hover:text-brand-hover transition-colors disabled:opacity-50"
+                      >
+                        Attach
+                      </button>
+                      {!isIgnored && (
+                        <button
+                          onClick={() => ignore(name)}
+                          disabled={busy !== null}
+                          className="text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50"
+                        >
+                          Ignore
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <button
                       onClick={() => detach(name)}

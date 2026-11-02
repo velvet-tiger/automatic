@@ -86,6 +86,7 @@ import { AttachProfileModal } from "./AttachProfileModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
+import { PendingProfilesNotice } from "./panels/PendingProfilesNotice";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
 import { ContextsPanel } from "./panels/ContextsPanel";
 import { ActivityPanel } from "./panels/ActivityPanel";
@@ -307,7 +308,7 @@ export function ProjectEditor({
   // so the user can open that project. `local_key` addresses it even when
   // another project shares its name; empty while it has no key.
   const [registeredHere, setRegisteredHere] = useState<{ directory: string; name: string; local_key: string } | null>(null);
-  const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; pendingName: string } | null>(null);
+  const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; profiles: string[]; pendingName: string } | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanError, setOrphanError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -2163,6 +2164,8 @@ export function ProjectEditor({
         manage_gitignore: stored.manage_gitignore === true,
         read_only: stored.read_only === true,
         local_read_only: stored.local_read_only === true,
+        local_ignored_profiles: stored.local_ignored_profiles || [],
+        pending_profiles: stored.pending_profiles || [],
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
       };
@@ -2266,6 +2269,8 @@ export function ProjectEditor({
         manage_gitignore: parsed.manage_gitignore === true,
         read_only: parsed.read_only === true,
         local_read_only: parsed.local_read_only === true,
+        local_ignored_profiles: parsed.local_ignored_profiles || [],
+        pending_profiles: parsed.pending_profiles || [],
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
       };
@@ -3939,7 +3944,7 @@ export function ProjectEditor({
                               setWizardDiscovering(true);
                               let status: { kind: "Available" }
                                 | { kind: "RegisteredHere"; name: string; local_key: string }
-                                | { kind: "OrphanConfig"; name: string }
+                                | { kind: "OrphanConfig"; name: string; profiles?: string[] }
                                 | null = null;
                               try {
                                 status = await invoke("inspect_project_directory", { directory: dir });
@@ -3961,6 +3966,7 @@ export function ProjectEditor({
                                 setOrphanDialog({
                                   directory: dir,
                                   existingName: status.name,
+                                  profiles: status.profiles ?? [],
                                   pendingName: name,
                                 });
                                 return;
@@ -4339,6 +4345,11 @@ export function ProjectEditor({
             {/* Tab content */}
 
             {/* ── Project File tab (full-bleed layout) ──────────── */}
+            {!isCreating && !readOnly && selectedKey && (project.pending_profiles?.length ?? 0) > 0 && (
+              <div className="px-6 pt-3 flex-shrink-0">
+                <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
+              </div>
+            )}
             {projectTab === "project_file" && project && (
               <ProjectFilePanel
                 project={project}
@@ -4910,6 +4921,7 @@ export function ProjectEditor({
       <OrphanConfigDialog
         directory={orphanDialog.directory}
         existingName={orphanDialog.existingName}
+        profiles={orphanDialog.profiles}
         busy={orphanBusy}
         error={orphanError}
         onImport={handleOrphanImport}

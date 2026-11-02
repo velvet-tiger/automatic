@@ -4,6 +4,8 @@ import { X, FolderInput, Trash2 } from "lucide-react";
 interface OrphanConfigDialogProps {
   directory: string;
   existingName: string;
+  /** Library profiles the config names. Each needs a decision after import. */
+  profiles: string[];
   busy: boolean;
   error: string | null;
   onImport: () => void;
@@ -14,6 +16,7 @@ interface OrphanConfigDialogProps {
 export function OrphanConfigDialog({
   directory,
   existingName,
+  profiles,
   busy,
   error,
   onImport,
@@ -76,6 +79,19 @@ export function OrphanConfigDialog({
             <div className="text-[12px] font-mono text-text-base">
               {displayName}
             </div>
+            {profiles.length > 0 && (
+              <>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted pt-1">
+                  Profiles it asks for
+                </div>
+                <div className="text-[12px] font-mono text-text-base break-all">
+                  {profiles.join(", ")}
+                </div>
+                <p className="text-[12px] text-text-muted leading-relaxed pt-1">
+                  These do not apply until you attach them in the project.
+                </p>
+              </>
+            )}
           </div>
 
           <p className="text-[13px] text-text-base leading-relaxed">
