@@ -22,8 +22,8 @@ use super::*;
 // project claims is kept as stored in both directions, so a legacy name
 // that the startup migration has not converted, or the id of a deleted
 // project, never silently disappears: the UI shows it as it is. The raw
-// helpers below (`*_in_dir`) and `groups_for_project` work on stored
-// values.
+// helpers below (`*_in_dir`), `groups_listing` and `groups_for_project` work
+// on stored values.
 
 fn group_path(groups_dir: &PathBuf, name: &str) -> PathBuf {
     groups_dir.join(format!("{}.json", name))
@@ -82,16 +82,17 @@ fn read_group_for_display(
 }
 
 /// Read the group file at `path` with its members as stored.
+///
+/// A file that cannot be parsed is an error. An empty stand-in would look
+/// like a group with no members: every project would release what the group
+/// provides, and a read-edit-save would overwrite the damaged file.
 fn read_stored_group(path: &std::path::Path, name: &str) -> Result<ProjectGroup, String> {
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
     // Round-trip through the struct to ensure forward-compatibility: unknown
     // fields are silently dropped and defaults are applied.
-    Ok(serde_json::from_str::<ProjectGroup>(&raw).unwrap_or_else(|_| ProjectGroup {
-        name: name.to_string(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        updated_at: chrono::Utc::now().to_rfc3339(),
-        ..Default::default()
-    }))
+    serde_json::from_str::<ProjectGroup>(&raw)
+        .map_err(|e| format!("Group '{}' could not be read: {}", name, e))
 }
 
 pub fn save_group(name: &str, data: &str) -> Result<(), String> {
@@ -134,37 +135,63 @@ pub fn delete_group(name: &str) -> Result<(), String> {
 /// [`ProjectKeyIndex::member_is`]). An identifier that names no registered
 /// project matches a member equal to it, so an orphan still finds its
 /// groups. The registry is read once for the whole pass.
-pub fn groups_for_project(ident: &str) -> Vec<ProjectGroup> {
-    let names = match list_groups() {
-        Ok(n) => n,
-        Err(_) => return Vec::new(),
-    };
-    let index = match ProjectKeyIndex::load() {
-        Ok(index) => index,
-        Err(e) => {
-            eprintln!("groups_for_project: could not read the project registry: {}", e);
-            return Vec::new();
-        }
-    };
-    let groups_dir = match get_groups_dir() {
-        Ok(dir) => dir,
-        Err(_) => return Vec::new(),
-    };
-    let project = index.resolve_for_group(ident).cloned();
+///
+/// An error means membership is unknown, because any unreadable group might
+/// list the project. Anything that releases group-provided entries must use
+/// this and stop on an error: a group left out reads as a group the project
+/// has left.
+pub(crate) fn groups_listing(ident: &str) -> Result<Vec<ProjectGroup>, String> {
+    let (groups, unreadable) = read_groups_listing(ident)?;
+    if unreadable.is_empty() {
+        Ok(groups)
+    } else {
+        Err(unreadable.join("; "))
+    }
+}
 
-    let mut result = Vec::new();
-    for name in names {
-        if let Ok(group) = read_stored_group(&group_path(&groups_dir, &name), &name) {
-            let listed = group.projects.iter().any(|member| match &project {
-                Some(summary) => index.member_is(member, summary),
-                None => member == ident,
-            });
-            if listed {
-                result.push(group);
+/// [`groups_listing`] for callers that only show or describe groups: what
+/// cannot be read is logged and left out. Never reconcile from this list.
+pub fn groups_for_project(ident: &str) -> Vec<ProjectGroup> {
+    match read_groups_listing(ident) {
+        Ok((groups, unreadable)) => {
+            for problem in unreadable {
+                eprintln!("groups_for_project: {}", problem);
             }
+            groups
+        }
+        Err(e) => {
+            eprintln!("groups_for_project: {}", e);
+            Vec::new()
         }
     }
-    result
+}
+
+/// The readable groups that list `ident`, and a message for each group file
+/// that could not be read.
+fn read_groups_listing(ident: &str) -> Result<(Vec<ProjectGroup>, Vec<String>), String> {
+    let names = list_groups()?;
+    let index = ProjectKeyIndex::load()
+        .map_err(|e| format!("Could not read the project registry: {}", e))?;
+    let groups_dir = get_groups_dir()?;
+    let project = index.resolve_for_group(ident).cloned();
+
+    let mut groups = Vec::new();
+    let mut unreadable = Vec::new();
+    for name in names {
+        match read_stored_group(&group_path(&groups_dir, &name), &name) {
+            Ok(group) => {
+                let listed = group.projects.iter().any(|member| match &project {
+                    Some(summary) => index.member_is(member, summary),
+                    None => member == ident,
+                });
+                if listed {
+                    groups.push(group);
+                }
+            }
+            Err(e) => unreadable.push(e),
+        }
+    }
+    Ok((groups, unreadable))
 }
 
 /// Remove each of `stored_values` (a project `id`, or a legacy name) from

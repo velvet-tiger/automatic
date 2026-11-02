@@ -111,10 +111,11 @@ pub fn get_groups_referencing_profile(profile_name: &str) -> Result<Vec<String>,
 /// Return the names of all groups that contain the given project.
 /// `project_name` is an identifier: a `local_key`, an `id`, or a name only
 /// one project has (a shared name is an ambiguity error). An unknown one
-/// matches a member stored under it.
+/// matches a member stored under it. An unreadable group is an error, which
+/// is how the editor tells the user about a damaged group file.
 #[tauri::command]
 pub fn groups_for_project(project_name: &str) -> Result<Vec<String>, String> {
     let keys = crate::core::project_store_keys(project_name)?;
-    let groups = core::groups_for_project(&keys.local_key);
+    let groups = core::groups_listing(&keys.local_key)?;
     Ok(groups.into_iter().map(|g| g.name).collect())
 }

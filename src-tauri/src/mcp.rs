@@ -2131,11 +2131,12 @@ impl AutomaticMcpServer {
                 profile_name, project_name
             )));
         }
+        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&checkout)) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
         // Group profiles first: they decide which profiles are attached.
-        crate::core::reconcile_group_profiles(
-            &mut project,
-            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
-        );
+        crate::core::reconcile_group_profiles(&mut project, &groups);
         if !project.profiles.iter().any(|p| p == profile_name) {
             project.profiles.push(profile_name.to_string());
         }
@@ -2191,10 +2192,11 @@ impl AutomaticMcpServer {
 
         // Reconcile against the groups on disk first, so a stale record
         // cannot refuse a detach the group no longer stands behind.
-        let groups_changed = crate::core::reconcile_group_profiles(
-            &mut project,
-            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
-        );
+        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&checkout)) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let groups_changed = crate::core::reconcile_group_profiles(&mut project, &groups);
         if let Some(group) = crate::core::group_providing_profile(&project, profile_name) {
             return Ok(tool_error(format!(
                 "Profile '{}' is provided by group '{}'. Detach it from the group instead: \
