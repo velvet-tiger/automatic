@@ -3552,7 +3552,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     fn offered_contexts(key: &str) -> Vec<String> {
-        core::project_context_entries(&read_back(key)).into_iter().map(|e| e.slug).collect()
+        core::project_context_entries(&read_back(key)).expect("entries").into_iter().map(|e| e.slug).collect()
     }
 
     /// A clone of a member carries the member's `id` and its committed
@@ -3591,6 +3591,29 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(left.contexts.is_empty());
             assert!(left.group_context_contributions.is_empty());
             assert!(read_back(&member).contexts.is_empty());
+        });
+    }
+
+    /// A read-only checkout keeps its records after a leave, because nothing
+    /// can write them. They must stop being offered anyway.
+    #[test]
+    fn a_read_only_checkout_stops_reading_after_a_leave_or_delete() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", std::slice::from_ref(&member), &["private"], std::slice::from_ref(&member));
+            save_context_group("kept", std::slice::from_ref(&member), &["private", "open"], std::slice::from_ref(&member));
+            let both = offered_contexts(&member);
+            assert_eq!(both, vec!["private", "open"]);
+            core::set_project_read_only(&member, true).expect("on");
+
+            save_context_group("team", &[], &["private"], &[]);
+            assert_eq!(read_back(&member).contexts, vec!["private", "open"], "not writable");
+            assert_eq!(offered_contexts(&member), vec!["private", "open"], "a joined group lists both");
+
+            super::super::groups::delete_group("kept").expect("delete");
+            assert_eq!(read_back(&member).contexts, vec!["private", "open"], "not writable");
+            assert_eq!(offered_contexts(&member), Vec::<String>::new());
         });
     }
 

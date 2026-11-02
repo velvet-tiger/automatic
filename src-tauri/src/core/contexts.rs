@@ -1475,9 +1475,9 @@ pub struct ProjectContextEntry {
     pub group: Option<String>,
 }
 
-pub fn project_context_entries(project: &Project) -> Vec<ProjectContextEntry> {
-    let withheld = unjoined_group_contexts(project);
-    project
+pub fn project_context_entries(project: &Project) -> Result<Vec<ProjectContextEntry>, String> {
+    let withheld = withheld_group_contexts(project)?;
+    Ok(project
         .contexts
         .iter()
         .filter(|slug| !withheld.contains(*slug))
@@ -1485,24 +1485,42 @@ pub fn project_context_entries(project: &Project) -> Vec<ProjectContextEntry> {
             slug: slug.clone(),
             group: group_providing(project, slug),
         })
-        .collect()
+        .collect())
 }
 
-/// Slugs provided by a group that lists this checkout but that it has not
-/// joined, unless a joined group provides them too. A clone of a member carries
-/// them in its committed `contexts`, with no group record, so the reconcile
-/// cannot remove them. They stay in the file and are not offered.
-fn unjoined_group_contexts(project: &Project) -> Vec<String> {
-    let listing = groups_for_project(project_ident(project));
+/// Slugs not to offer this checkout, unless a joined group provides them too:
+/// - Those of a group that lists it but that it has not joined. A clone of a
+///   member carries them in its committed `contexts`, with no group record, so
+///   the reconcile cannot remove them.
+/// - Those recorded only under a group it is no longer joined to. A checkout
+///   that cannot be written keeps the record after it leaves.
+///
+/// An unreadable group is an error, because it might list this checkout.
+fn withheld_group_contexts(project: &Project) -> Result<Vec<String>, String> {
+    let listing = groups_listing_strict(project_ident(project))?;
     let (joined, unjoined): (Vec<_>, Vec<_>) = listing
         .iter()
         .partition(|group| project.local_confirmed_groups.contains(&group.name));
-    unjoined
+    let is_joined = |name: &str| joined.iter().any(|group| group.name == name);
+    let recorded_as_joined = |slug: &String| {
+        project
+            .group_context_contributions
+            .iter()
+            .any(|(group, slugs)| is_joined(group) && slugs.contains(slug))
+    };
+    let unearned_records = project
+        .group_context_contributions
+        .iter()
+        .filter(|(group, _)| !is_joined(group))
+        .flat_map(|(_, slugs)| slugs);
+    Ok(unjoined
         .iter()
         .flat_map(|group| group.contexts.iter())
+        .chain(unearned_records)
         .filter(|slug| !joined.iter().any(|group| group.contexts.contains(*slug)))
+        .filter(|slug| !recorded_as_joined(slug))
         .cloned()
-        .collect()
+        .collect())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

@@ -216,7 +216,9 @@ where
 /// The checkout a tool may read for: the deepest registered folder containing
 /// `folder`, the server's working directory. `AUTOMATIC_PROJECT` plays no part,
 /// because a repository commits it in `.mcp.json`, and neither does a tool's
-/// `project` argument, because the agent chooses it.
+/// `project` argument, because the agent chooses it. A repository nested inside
+/// the registered folder is its own project, so a boundary between the two
+/// gives no reading checkout.
 pub fn resolve_reading_checkout<F>(
     folder: Option<&Path>,
     summaries: &[ProjectSummary],
@@ -225,7 +227,69 @@ pub fn resolve_reading_checkout<F>(
 where
     F: Fn(&str) -> PathBuf,
 {
-    folder.and_then(|folder| deepest_containing(folder, summaries.iter(), &canonical)).cloned()
+    let folder = folder?;
+    deepest_containing(folder, summaries.iter(), &canonical)
+        .filter(|summary| !repository_boundary_between(folder, &canonical(&summary.directory)))
+        .cloned()
+}
+
+/// Whether a folder from `folder` up to, but not including, `root` starts
+/// another repository. `root`'s own linked worktrees do not count.
+fn repository_boundary_between(folder: &Path, root: &Path) -> bool {
+    let common = git_common_dir(root);
+    folder
+        .ancestors()
+        .take_while(|dir| *dir != root)
+        .any(|dir| starts_a_repository(dir, common.as_deref()))
+}
+
+/// Whether `dir` holds a `.git` or an `.automatic.json` of its own. Anything
+/// that cannot be checked counts. A worktree of `common` carries the project's
+/// committed `.automatic.json`, so it is settled by its `.git` file alone.
+fn starts_a_repository(dir: &Path, common: Option<&Path>) -> bool {
+    let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    match std::fs::symlink_metadata(dir.join(".git")) {
+        Ok(meta) if meta.is_file() => return !is_linked_worktree(dir, common),
+        Ok(_) => return true,
+        Err(e) if absent(&e) => {}
+        Err(_) => return true,
+    }
+    !matches!(std::fs::symlink_metadata(dir.join(".automatic.json")), Err(e) if absent(&e))
+}
+
+/// The folder a `.git` file in `dir` points at.
+fn linked_git_dir(dir: &Path) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(dir.join(".git")).ok()?;
+    let target = raw.trim().strip_prefix("gitdir:")?.trim();
+    std::fs::canonicalize(dir.join(target)).ok()
+}
+
+/// The `.git` folder shared by `root` and its linked worktrees. `root` may be
+/// a linked worktree itself.
+fn git_common_dir(root: &Path) -> Option<PathBuf> {
+    let dot_git = root.join(".git");
+    if dot_git.is_dir() {
+        return std::fs::canonicalize(dot_git).ok();
+    }
+    let git_dir = linked_git_dir(root)?;
+    let common = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    std::fs::canonicalize(git_dir.join(common.trim())).ok()
+}
+
+/// Whether `dir` is a linked worktree of `common`: its `.git` file points into
+/// `common/worktrees`, and git's record there points back at it. A `.git` file
+/// alone proves nothing, because anything that can write a folder can write one.
+fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
+    let (Some(common), Some(git_dir)) = (common, linked_git_dir(dir)) else {
+        return false;
+    };
+    if !git_dir.starts_with(common.join("worktrees")) {
+        return false;
+    }
+    let recorded = std::fs::read_to_string(git_dir.join("gitdir"))
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path.trim()).ok());
+    recorded.is_some() && recorded == std::fs::canonicalize(dir.join(".git")).ok()
 }
 
 /// [`resolve_reading_checkout`] against registered directories on disk.
@@ -518,6 +582,91 @@ mod tests {
         assert_eq!(reading(Some("/work/site/src")).as_deref(), Some(KEY_A1));
         assert_eq!(reading(Some("/unregistered")), None);
         assert_eq!(reading(None), None);
+    }
+
+    /// A registered folder with a real `.git` folder, and a worktree of it at
+    /// `.claude/worktrees/wt` that carries the committed `.automatic.json`.
+    fn repository_with_worktree() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonical");
+        let worktree = root.join(".claude/worktrees/wt");
+        let git_dir = root.join(".git/worktrees/wt");
+        std::fs::create_dir_all(worktree.join("src")).expect("mkdir");
+        std::fs::create_dir_all(&git_dir).expect("mkdir");
+        std::fs::write(worktree.join(".automatic.json"), "{}").expect("config");
+        std::fs::write(worktree.join(".git"), format!("gitdir: {}\n", git_dir.display()))
+            .expect("link");
+        std::fs::write(git_dir.join("gitdir"), format!("{}\n", worktree.join(".git").display()))
+            .expect("record");
+        (tmp, root, worktree)
+    }
+
+    fn reads_as_root(root: &Path, folder: &Path) -> bool {
+        let registered = [summary("app", ID_A, KEY_A1, root.to_str().unwrap())];
+        resolve_reading_checkout(Some(folder), &registered, identity).is_some()
+    }
+
+    #[test]
+    fn the_parents_own_worktree_reads_as_the_parent() {
+        let (_tmp, root, worktree) = repository_with_worktree();
+        assert!(reads_as_root(&root, &root));
+        assert!(reads_as_root(&root, &worktree));
+        assert!(reads_as_root(&root, &worktree.join("src")));
+    }
+
+    #[test]
+    fn a_nested_repository_is_not_read_as_the_parent() {
+        let (_tmp, root, _worktree) = repository_with_worktree();
+
+        let cloned = root.join("vendor/clone");
+        std::fs::create_dir_all(cloned.join(".git")).expect("mkdir");
+        std::fs::create_dir_all(cloned.join("src")).expect("mkdir");
+        assert!(!reads_as_root(&root, &cloned));
+        assert!(!reads_as_root(&root, &cloned.join("src")));
+
+        let config_only = root.join("vendor/config");
+        std::fs::create_dir_all(&config_only).expect("mkdir");
+        std::fs::write(config_only.join(".automatic.json"), "{}").expect("config");
+        assert!(!reads_as_root(&root, &config_only));
+
+        assert!(reads_as_root(&root, &root.join("vendor")), "a plain folder is part of the parent");
+    }
+
+    #[test]
+    fn a_git_file_must_be_a_worktree_git_knows() {
+        let (_tmp, root, worktree) = repository_with_worktree();
+
+        // Points into the parent, with no record pointing back.
+        let forged = root.join("forged");
+        std::fs::create_dir_all(&forged).expect("mkdir");
+        std::fs::write(
+            forged.join(".git"),
+            format!("gitdir: {}\n", root.join(".git/worktrees/wt").display()),
+        )
+        .expect("link");
+        assert!(!reads_as_root(&root, &forged));
+
+        // A submodule's `.git` file points elsewhere in the parent's `.git`.
+        let module_dir = root.join(".git/modules/lib");
+        std::fs::create_dir_all(&module_dir).expect("mkdir");
+        let submodule = root.join("lib");
+        std::fs::create_dir_all(&submodule).expect("mkdir");
+        std::fs::write(submodule.join(".git"), format!("gitdir: {}\n", module_dir.display()))
+            .expect("link");
+        assert!(!reads_as_root(&root, &submodule));
+
+        // A worktree of another repository.
+        let other = tempfile::tempdir().expect("tempdir");
+        let other_git = std::fs::canonicalize(other.path()).expect("canonical").join(".git/worktrees/x");
+        std::fs::create_dir_all(&other_git).expect("mkdir");
+        let foreign = root.join("foreign");
+        std::fs::create_dir_all(&foreign).expect("mkdir");
+        std::fs::write(foreign.join(".git"), format!("gitdir: {}\n", other_git.display()))
+            .expect("link");
+        std::fs::write(other_git.join("gitdir"), foreign.join(".git").display().to_string())
+            .expect("record");
+        assert!(!reads_as_root(&root, &foreign));
+        assert!(reads_as_root(&root, &worktree));
     }
 
     #[test]

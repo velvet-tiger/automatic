@@ -974,20 +974,71 @@ fn related_peers(
     peers
 }
 
+/// The peers of `group` that joined it on this machine. A member `id` expands
+/// to every checkout of that project, and a clone must not show as a peer.
+fn joined_peers(
+    index: &crate::core::ProjectKeyIndex,
+    group: &crate::core::ProjectGroup,
+    this: &crate::core::ProjectSummary,
+) -> Vec<RelatedPeer> {
+    related_peers(index, &group.projects, this)
+        .into_iter()
+        .filter(|peer| {
+            crate::core::read_project(&peer.ident)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<crate::core::Project>(&raw).ok())
+                .is_some_and(|p| p.local_confirmed_groups.contains(&group.name))
+        })
+        .collect()
+}
+
 // ── Reading scope ────────────────────────────────────────────────────────────
 
-const NO_READING_CHECKOUT: &str = "This folder is not a project registered in Automatic, so \
-     Automatic will not share contexts or project details here. Ask the user to add the folder \
-     in the Automatic app.";
+/// The refusal for a folder with no reading checkout. It names the folder, and
+/// does not ask for it to be added, because it may be registered already: a
+/// client can start the server elsewhere, or a repository can sit between.
+fn no_reading_checkout(folder: Option<&std::path::Path>) -> String {
+    let seen = folder.map_or_else(|| "an unknown folder".to_string(), |f| format!("'{}'", f.display()));
+    format!(
+        "This Automatic server runs in {}, which is not inside a registered project with no \
+         other repository in between, so it will not share contexts or project details here.",
+        seen
+    )
+}
+
+const GROUP_REFUSED: &str = "A group can only be changed from a project that joined it.";
+
+/// Refuse to register a folder holding the server's working directory, so that
+/// an agent cannot make its own folder a reading checkout. A server that does
+/// not know its folder cannot tell, so it refuses too.
+fn check_registrable(reading_folder: Option<&std::path::Path>, directory: &str) -> Result<(), String> {
+    let refused = || {
+        format!(
+            "'{}' holds the folder this server runs in. The user adds it in the Automatic app.",
+            directory.trim()
+        )
+    };
+    let folder = reading_folder.ok_or_else(refused)?;
+    let requested = std::path::PathBuf::from(directory.trim());
+    let requested = std::fs::canonicalize(&requested).unwrap_or(requested);
+    if folder.starts_with(&requested) {
+        return Err(refused());
+    }
+    Ok(())
+}
 
 /// What the folder this server runs in may read. A repository can commit any
 /// `id` or `AUTOMATIC_PROJECT`, and an agent can pass any `project`, so neither
 /// decides this.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct ReadingScope {
+    /// The folder the server runs in, for refusals.
+    folder: Option<std::path::PathBuf>,
     /// The registered checkout containing the server's working directory.
     checkout: Option<crate::core::ProjectSummary>,
-    /// Checkouts of the other projects in the groups `checkout` joined.
+    /// The groups `checkout` joined.
+    groups: Vec<String>,
+    /// Checkouts of the other projects in those groups that joined them too.
     peers: Vec<crate::core::ProjectSummary>,
     /// Context slugs offered to `checkout`.
     contexts: Vec<String>,
@@ -995,7 +1046,16 @@ struct ReadingScope {
 
 impl ReadingScope {
     fn own_checkout(&self) -> Result<&crate::core::ProjectSummary, String> {
-        self.checkout.as_ref().ok_or_else(|| NO_READING_CHECKOUT.to_string())
+        self.checkout.as_ref().ok_or_else(|| no_reading_checkout(self.folder.as_deref()))
+    }
+
+    /// Whether this folder may change `group`. The refusal is the same for a
+    /// group that does not exist.
+    fn check_group(&self, group: &str) -> Result<(), String> {
+        if self.groups.iter().any(|g| g == group) {
+            return Ok(());
+        }
+        Err(GROUP_REFUSED.to_string())
     }
 
     /// The checkout `explicit` names among those this scope can see, or the
@@ -1063,15 +1123,22 @@ impl ReadingScope {
 /// live in the registry pointer.
 fn reading_scope_of(
     checkout: Option<crate::core::ProjectSummary>,
+    folder: Option<std::path::PathBuf>,
     index: &crate::core::ProjectKeyIndex,
 ) -> Result<ReadingScope, String> {
     let Some(checkout) = checkout else {
-        return Ok(ReadingScope::default());
+        return Ok(ReadingScope { folder, ..Default::default() });
     };
     let project = load_project(&checkout)?;
+    // First, so an unreadable group refuses before anything is shared.
+    let contexts = crate::core::project_context_entries(&project)?
+        .into_iter()
+        .map(|entry| entry.slug)
+        .collect();
+    let joined = crate::core::joined_groups(&project);
     let mut peers = Vec::new();
-    for group in crate::core::joined_groups(&project) {
-        for peer in related_peers(index, &group.projects, &checkout) {
+    for group in &joined {
+        for peer in joined_peers(index, group, &checkout) {
             let found = index.summaries().iter().find(|s| crate::core::checkout_ident(s) == peer.ident);
             if let Some(summary) = found {
                 if !peers.contains(summary) {
@@ -1080,11 +1147,8 @@ fn reading_scope_of(
             }
         }
     }
-    let contexts = crate::core::project_context_entries(&project)
-        .into_iter()
-        .map(|entry| entry.slug)
-        .collect();
-    Ok(ReadingScope { checkout: Some(checkout), peers, contexts })
+    let groups = joined.into_iter().map(|group| group.name).collect();
+    Ok(ReadingScope { folder, checkout: Some(checkout), groups, peers, contexts })
 }
 
 // ── MCP Server Handler ──────────────────────────────────────────────────────
@@ -1113,7 +1177,16 @@ impl AutomaticMcpServer {
             .map_err(|e| format!("Failed to read the project registry: {}", e))?;
         let checkout =
             crate::core::reading_checkout_of(self.reading_folder.as_deref(), index.summaries());
-        reading_scope_of(checkout, &index)
+        reading_scope_of(checkout, self.reading_folder.clone(), &index)
+    }
+
+    /// Refuse a group target this folder has not joined, before anything
+    /// reveals whether the group exists.
+    fn check_group_target(&self, project: &Option<String>, group: &Option<String>) -> Result<(), String> {
+        match (project, group) {
+            (None, Some(group)) => self.reading_scope()?.check_group(group),
+            _ => Ok(()),
+        }
     }
 
     /// The context `slug`, when this server's folder may read it.
@@ -1122,8 +1195,14 @@ impl AutomaticMcpServer {
         crate::core::read_context(slug)
     }
 
-    fn created_contexts(&self) -> Vec<String> {
-        self.created_contexts.lock().map(|c| c.clone()).unwrap_or_default()
+    /// The contexts this server created that still exist. No MCP tool deletes
+    /// a context, but the app can, and the slug may then be used again.
+    fn live_created_contexts(&self) -> Vec<String> {
+        let Ok(mut created) = self.created_contexts.lock() else {
+            return Vec::new();
+        };
+        created.retain(|slug| crate::core::context_exists(slug).unwrap_or(false));
+        created.clone()
     }
 
     /// Resolve `explicit`, or the current project when it is omitted.
@@ -1168,9 +1247,11 @@ impl AutomaticMcpServer {
         &self,
         params: &AttachContextParams,
     ) -> Result<(crate::core::ContextTarget, String), String> {
+        let scope = self.reading_scope()?;
         match (&params.project, &params.group) {
             (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
             (None, Some(group)) => {
+                scope.check_group(group)?;
                 require_known_group(group)?;
                 Ok((
                     crate::core::ContextTarget::Group(group.clone()),
@@ -1178,10 +1259,10 @@ impl AutomaticMcpServer {
                 ))
             }
             (project, None) => {
-                let checkout = self.project_checkout(project.as_deref())?;
+                let checkout = scope.own_project(project.as_deref())?;
                 Ok((
                     crate::core::ContextTarget::Project(
-                        crate::core::checkout_ident(&checkout).to_string(),
+                        crate::core::checkout_ident(checkout).to_string(),
                     ),
                     format!("project '{}'", checkout.name),
                 ))
@@ -1402,6 +1483,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<RegisterProjectParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = check_registrable(self.reading_folder.as_deref(), &params.0.directory) {
+            return Ok(tool_error(e));
+        }
         match register_project_impl(&params.0) {
             Ok(report) => Ok(tool_success(report)),
             Err(e) => Ok(tool_error(format!("Failed to register project: {}", e))),
@@ -1411,7 +1495,7 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_get_related_projects",
         description = "Return the projects related to this folder's project through the \
-                       Project Groups it joined, \
+                       Project Groups it joined, listing the peers that joined them too, \
                        including each peer's name, description, directory, and relative path \
                        from this project's directory. `project` can only name this folder's \
                        own project. Use this to discover sibling projects you can explore or \
@@ -1440,7 +1524,7 @@ impl AutomaticMcpServer {
 
         if groups.is_empty() {
             return Ok(tool_success(
-                "This project does not belong to any groups and has no related projects.",
+                "This checkout has joined no groups, so it has no related projects.",
             ));
         }
         let index = match crate::core::ProjectKeyIndex::load() {
@@ -1462,7 +1546,7 @@ impl AutomaticMcpServer {
                 output.push('\n');
             }
 
-            let peers = related_peers(&index, &group.projects, &this);
+            let peers = joined_peers(&index, group, &this);
             if peers.is_empty() {
                 output.push_str("No other projects in this group yet.\n");
             } else {
@@ -2251,7 +2335,8 @@ impl AutomaticMcpServer {
                        automatic_sync_project to write the change to disk. \
                        Attaching to a group gives the profile to every member \
                        project and syncs each one that changed; only the \
-                       group can remove it again."
+                       group can remove it again. `group` must be one this \
+                       folder's project joined."
     )]
     async fn attach_profile(
         &self,
@@ -2259,6 +2344,9 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
 
+        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group) {
+            return Ok(tool_error(e));
+        }
         match profile_group_target(&params.0.project, &params.0.group) {
             Ok(Some(group)) => return Ok(attach_profile_to_group_result(group, profile_name)),
             Ok(None) => {}
@@ -2330,7 +2418,8 @@ impl AutomaticMcpServer {
                        automatic_sync_project to write the change to disk. \
                        Detaching from a group removes the profile from every \
                        member project no other group provides it to, and \
-                       syncs each one that changed."
+                       syncs each one that changed. `group` must be one this \
+                       folder's project joined."
     )]
     async fn detach_profile(
         &self,
@@ -2338,6 +2427,9 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
 
+        if let Err(e) = self.check_group_target(&params.0.project, &params.0.group) {
+            return Ok(tool_error(e));
+        }
         match profile_group_target(&params.0.project, &params.0.group) {
             Ok(Some(group)) => return Ok(detach_profile_from_group_result(group, profile_name)),
             Ok(None) => {}
@@ -2428,8 +2520,10 @@ impl AutomaticMcpServer {
             Ok(checkout) => checkout,
             Err(e) => return Ok(tool_error(e)),
         };
-        let slugs = match load_project(checkout) {
-            Ok(p) => crate::core::project_context_entries(&p),
+        let slugs = match load_project(checkout)
+            .and_then(|project| crate::core::project_context_entries(&project))
+        {
+            Ok(slugs) => slugs,
             Err(e) => return Ok(tool_error(e)),
         };
         let entries: Vec<serde_json::Value> = slugs
@@ -2546,8 +2640,8 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_attach_context",
         description = "Attach a context to a project or to a project group. \
-                       Give `project`, `group`, or neither for the current \
-                       project. A group's \
+                       Give neither for this folder's project, or `group` for \
+                       a group it joined. A group's \
                        contexts are added to every member project and recorded \
                        as provided by that group. Idempotent. Only a context \
                        this folder can already read, or one this server \
@@ -2565,7 +2659,7 @@ impl AutomaticMcpServer {
         let slug = &params.0.context;
         if let Err(e) = self
             .reading_scope()
-            .and_then(|scope| scope.check_attach(slug, &self.created_contexts()))
+            .and_then(|scope| scope.check_attach(slug, &self.live_created_contexts()))
         {
             return Ok(tool_error(e));
         }
@@ -3432,14 +3526,23 @@ impl ServerHandler for AutomaticMcpServer {
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
-    // Resolved once. Agents start one `mcp-serve` per session, and the
-    // working directory and `AUTOMATIC_PROJECT` do not change during it.
-    let server = AutomaticMcpServer::with_current_project(crate::core::detect_current_project())
-        .with_reading_folder(crate::core::detect_reading_folder());
-    let service = server.serve(stdio()).await?;
+    let service = serving_server().serve(stdio()).await?;
     service.waiting().await?;
 
     Ok(())
+}
+
+/// The server for this process. The profile migration runs first: joins decide
+/// what can be read, and `mcp-serve` can start before the app does after an
+/// upgrade.
+fn serving_server() -> AutomaticMcpServer {
+    if let Err(e) = crate::core::confirm_attached_profiles_once() {
+        eprintln!("[automatic] profile confirmation error: {}", e);
+    }
+    // Resolved once. Agents start one `mcp-serve` per session, and the
+    // working directory and `AUTOMATIC_PROJECT` do not change during it.
+    AutomaticMcpServer::with_current_project(crate::core::detect_current_project())
+        .with_reading_folder(crate::core::detect_reading_folder())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -3692,8 +3795,14 @@ mod tests {
     #[test]
     fn profile_tools_take_a_group_and_lock_group_profiles() {
         let home = tempfile::tempdir().expect("tempdir");
+        let folder = tempfile::tempdir().expect("tempdir");
+        let reading_folder = std::fs::canonicalize(folder.path()).expect("canonical");
         with_test_home(home.path().to_path_buf(), || {
-            let mut project = crate::core::Project { name: "site".into(), ..Default::default() };
+            let mut project = crate::core::Project {
+                name: "site".into(),
+                directory: reading_folder.display().to_string(),
+                ..Default::default()
+            };
             crate::core::prepare_new_project_keys(&mut project).expect("keys");
             crate::core::save_project(
                 &project.local_key.clone(),
@@ -3707,7 +3816,7 @@ mod tests {
             crate::core::record_group_joins("team", &group.to_string(), &["site".to_string()])
                 .expect("join");
 
-            let server = AutomaticMcpServer::new();
+            let server = AutomaticMcpServer::new().with_reading_folder(Some(reading_folder));
             let attach = |project: Option<&str>, group: Option<&str>| {
                 let result = tauri::async_runtime::block_on(server.attach_profile(Parameters(
                     AttachProfileParams {
@@ -3736,8 +3845,8 @@ mod tests {
 
             let (failed, text) = attach(Some("site"), Some("team"));
             assert!(failed && text.contains("not both"), "{text}");
-            let (failed, text) = attach(None, Some("nope"));
-            assert!(failed && text.contains("Unknown group"), "{text}");
+            let (failed, unknown) = attach(None, Some("nope"));
+            assert!(failed && unknown.contains(GROUP_REFUSED), "{unknown}");
 
             let (failed, text) = attach(None, Some("team"));
             assert!(!failed, "{text}");
@@ -3786,6 +3895,8 @@ mod tests {
             let group = serde_json::json!({"name": "team", "projects": ["site", "api"]});
             crate::core::save_group("team", &group.to_string()).expect("save group");
             crate::core::confirm_project_group("5b1f0c7e-0000-4000-8000-0000000000d1", "team")
+                .expect("join");
+            crate::core::confirm_project_group("5b1f0c7e-0000-4000-8000-0000000000d2", "team")
                 .expect("join");
 
             let server = AutomaticMcpServer::new().with_reading_folder(Some(site_dir));
@@ -3947,12 +4058,16 @@ mod tests {
             read_only: false,
         };
         let empty = ReadingScope::default();
-        assert_eq!(empty.project(None), Err(NO_READING_CHECKOUT.to_string()));
+        assert_eq!(empty.project(None), Err(no_reading_checkout(None)));
         assert!(empty.check_context("x").is_err());
         assert!(empty.check_attach("x", &["x".to_string()]).is_err(), "no folder, no attach");
 
+        assert_eq!(empty.check_group("team"), Err(GROUP_REFUSED.to_string()));
+
         let scope = ReadingScope {
+            folder: None,
             checkout: Some(summary("site", SITE_ID, SITE_KEY)),
+            groups: vec!["team".into()],
             peers: vec![summary("api", API_ID, API_KEY)],
             contexts: vec!["shared".into()],
         };
@@ -3964,6 +4079,8 @@ mod tests {
         assert!(scope.project(Some(SITE_WT_KEY)).is_err());
         assert!(scope.own_project(Some(API_KEY)).is_err());
         assert!(scope.own_project(Some(SITE_KEY)).is_ok());
+        assert!(scope.check_group("team").is_ok());
+        assert_eq!(scope.check_group("nope"), Err(GROUP_REFUSED.to_string()));
         assert!(scope.check_context("shared").is_ok());
         assert!(scope.check_context("Shared").is_err(), "compared exactly");
         assert!(scope.check_context("other").is_err());
@@ -3983,7 +4100,10 @@ mod tests {
             let server = server_in(&folders.outside, Some(API_ID));
             assert!(matches!(&server.current_project, crate::core::CurrentProject::Checkout(s) if s.local_key == API_KEY));
 
-            assert_eq!(slugs_listed(&server).unwrap_err(), NO_READING_CHECKOUT);
+            let refusal = slugs_listed(&server).unwrap_err();
+            assert_eq!(refusal, no_reading_checkout(Some(&folders.outside)));
+            assert!(refusal.contains(folders.outside.to_str().unwrap()), "{refusal}");
+            assert!(!refusal.contains("add"), "{refusal}");
             assert_refused(&read_slug(&server, "private"));
             assert_refused(&entries_of(&server, "private"));
             assert_refused(&entry_of(&server, "private"));
@@ -4044,6 +4164,189 @@ mod tests {
             assert_refused(&call(server.list_contexts(Parameters(peer))));
             let own = ListContextsParams { project: Some(SITE_ID.into()), all: None };
             assert_ne!(call(server.list_contexts(Parameters(own))).is_error, Some(true));
+        });
+    }
+
+    fn corrupt_group() {
+        let path = crate::core::get_groups_dir().expect("dir").join("broken.json");
+        std::fs::write(path, "{ not json").expect("write");
+    }
+
+    #[test]
+    fn a_corrupt_group_refuses_rather_than_withholding_nothing() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            corrupt_group();
+            let member = server_in(&folders.site, None);
+            let refusal = slugs_listed(&member).unwrap_err();
+            assert!(refusal.contains("broken"), "{refusal}");
+            assert_refused(&read_slug(&member, "private"));
+            assert_refused(&related(&member, None));
+        });
+    }
+
+    #[test]
+    fn a_group_is_only_changed_from_a_project_that_joined_it() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let profile = serde_json::json!({"name": "base", "skills": ["react"]});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
+            let group = |server: &AutomaticMcpServer, name: &str| {
+                let context = AttachContextParams {
+                    context: "private".into(),
+                    project: None,
+                    group: Some(name.into()),
+                };
+                let attach = AttachProfileParams {
+                    project: None,
+                    group: Some(name.into()),
+                    profile: "base".into(),
+                };
+                let detach = DetachProfileParams {
+                    project: None,
+                    group: Some(name.into()),
+                    profile: "base".into(),
+                };
+                [
+                    attach_context_result(server, &context),
+                    call(server.detach_context(Parameters(context))),
+                    call(server.attach_profile(Parameters(attach))),
+                    call(server.detach_profile(Parameters(detach))),
+                ]
+                .map(|result| (result.is_error, result_text(&result)))
+            };
+
+            let clone = server_in(&folders.site_wt, None);
+            let existing = group(&clone, "team");
+            assert!(existing.iter().all(|(failed, _)| *failed == Some(true)), "{existing:?}");
+            assert_eq!(existing, group(&clone, "nope"), "the refusal hides whether it exists");
+            let stored = crate::core::read_group("team").expect("group");
+            assert!(stored.contains("private") && !stored.contains("base"), "{stored}");
+
+            let member = server_in(&folders.site, None);
+            let context = AttachContextParams {
+                context: "private".into(),
+                project: None,
+                group: Some("team".into()),
+            };
+            let attached = attach_context_result(&member, &context);
+            assert_ne!(attached.is_error, Some(true), "{}", result_text(&attached));
+        });
+    }
+
+    fn attach_context_result(server: &AutomaticMcpServer, params: &AttachContextParams) -> CallToolResult {
+        call(server.attach_context(Parameters(AttachContextParams {
+            context: params.context.clone(),
+            project: params.project.clone(),
+            group: params.group.clone(),
+        })))
+    }
+
+    #[test]
+    fn a_project_target_must_be_the_reading_checkout() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            save_private_group();
+            let target = |project: &str| AttachContextParams {
+                context: "private".into(),
+                project: Some(project.into()),
+                group: None,
+            };
+            let member = server_in(&folders.site, None);
+            assert_refused(&attach_context_result(&member, &target(API_KEY)));
+            let detach = call(member.detach_context(Parameters(target(API_KEY))));
+            assert_refused(&detach);
+
+            let own = attach_context_result(&member, &target(SITE_KEY));
+            assert_ne!(own.is_error, Some(true), "{}", result_text(&own));
+        });
+    }
+
+    #[test]
+    fn a_server_cannot_register_the_folder_it_runs_in() {
+        let folder = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(folder.path()).expect("canonical");
+        let inner = root.join("repo");
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir_all(inner.join("src")).expect("mkdir");
+        std::fs::create_dir_all(&elsewhere).expect("mkdir");
+        let cwd = Some(inner.as_path());
+
+        assert!(check_registrable(cwd, inner.to_str().unwrap()).is_err());
+        assert!(check_registrable(cwd, root.to_str().unwrap()).is_err(), "a parent holds it too");
+        assert!(check_registrable(cwd, &format!("  {}/ ", inner.display())).is_err());
+        assert!(check_registrable(cwd, elsewhere.to_str().unwrap()).is_ok());
+        assert!(check_registrable(cwd, inner.join("src").to_str().unwrap()).is_ok());
+        assert!(check_registrable(None, elsewhere.to_str().unwrap()).is_err());
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let server = AutomaticMcpServer::new().with_reading_folder(Some(inner.clone()));
+            let result = call(server.register_project(Parameters(RegisterProjectParams {
+                name: "own".into(),
+                directory: inner.display().to_string(),
+                description: None,
+                agents: None,
+            })));
+            assert_eq!(result.is_error, Some(true), "{}", result_text(&result));
+            assert!(crate::core::get_project_summaries().expect("summaries").is_empty());
+        });
+    }
+
+    #[test]
+    fn a_peer_that_did_not_join_is_not_shown() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let group = serde_json::json!({"name": "team", "projects": [SITE_ID, API_ID]});
+            crate::core::save_group("team", &group.to_string()).expect("group");
+            crate::core::confirm_project_group(SITE_KEY, "team").expect("join");
+
+            let member = server_in(&folders.site, None);
+            assert!(!result_text(&related(&member, None)).contains("**api**"));
+            assert_eq!(listed_keys(&member), vec![SITE_KEY]);
+            assert_refused(&read(&member, Some(API_KEY)));
+
+            crate::core::confirm_project_group(API_KEY, "team").expect("join");
+            assert!(result_text(&related(&member, None)).contains("**api**"));
+            assert_eq!(listed_keys(&member), vec![SITE_KEY, API_KEY]);
+        });
+    }
+
+    #[test]
+    fn the_server_runs_the_profile_migration_at_start() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            save_registry();
+            let group = serde_json::json!({"name": "team", "projects": [API_ID]});
+            crate::core::save_group("team", &group.to_string()).expect("group");
+            serving_server();
+            let project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project(API_KEY).unwrap()).unwrap();
+            assert_eq!(project.local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn a_created_context_can_no_longer_be_attached_once_it_is_gone() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let server = server_in(&folders.site, None);
+            call(server.create_context(Parameters(CreateContextParams {
+                name: "Notes".into(),
+                description: String::new(),
+            })));
+            assert_eq!(server.live_created_contexts(), vec!["notes"]);
+            crate::core::delete_context("notes").expect("delete");
+            assert!(server.live_created_contexts().is_empty());
+            crate::core::create_local_context("Notes", "").expect("again");
+            assert_refused(&attach(&server, "notes", None));
         });
     }
 
@@ -4201,7 +4504,7 @@ mod tests {
             let text = result_text(&result);
             assert!(text.contains("Pass `project`"), "{text}");
             assert!(text.contains("automatic_list_projects"), "{text}");
-            assert_eq!(result_text(&read(&server, None)), NO_READING_CHECKOUT);
+            assert_eq!(result_text(&read(&server, None)), no_reading_checkout(None));
         });
     }
 

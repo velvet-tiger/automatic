@@ -498,13 +498,15 @@ fn attached_profile_names(entry: &RegistryEntry) -> Result<Vec<String>, String> 
 /// read-only projects are covered.
 ///
 /// A project whose folder cannot be read is skipped. Its names show as pending
-/// with a notice, which loses nothing.
+/// with a notice, which loses nothing. A pointer that cannot be written is an
+/// error and leaves the marker unset, so the next start tries again.
 pub fn confirm_attached_profiles_once() -> Result<(), String> {
     let marker = migration_marker_path()?;
     if marker.exists() {
         return Ok(());
     }
     let _writes = super::hold_library_writes();
+    let mut failed = Vec::new();
     for entry in scan_registry()? {
         let ident = entry.local_key().unwrap_or(&entry.name);
         let groups: Vec<String> = groups_for_project(ident).into_iter().map(|g| g.name).collect();
@@ -521,8 +523,11 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
             }
         });
         if let Err(e) = confirmed {
-            eprintln!("Could not confirm the profiles of '{}': {}", entry.name, e);
+            failed.push(format!("'{}': {}", entry.name, e));
         }
+    }
+    if !failed.is_empty() {
+        return Err(format!("Could not confirm the profiles of {}", failed.join("; ")));
     }
     match fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
         Ok(_) => Ok(()),
@@ -560,6 +565,34 @@ mod tests {
         };
         save_project_profile(name, &serde_json::to_string(&profile).expect("json"))
             .expect("save profile");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_pointer_edit_leaves_the_migration_to_run_again() {
+        use std::os::unix::fs::PermissionsExt;
+        with_home(|_| {
+            let local = Project { name: "local".into(), ..Default::default() };
+            save_project("local", &serde_json::to_string(&local).expect("json")).expect("save");
+            save_group("team", r#"{"name":"team","projects":["local"]}"#).expect("group");
+            let pointers = get_projects_dir().expect("dir");
+            let chmod = |mode| {
+                for entry in fs::read_dir(&pointers).expect("read").flatten() {
+                    fs::set_permissions(entry.path(), fs::Permissions::from_mode(mode)).expect("chmod");
+                }
+                let dir = fs::Permissions::from_mode(mode | 0o111);
+                fs::set_permissions(&pointers, dir).expect("chmod");
+            };
+
+            chmod(0o444);
+            let failed = confirm_attached_profiles_once();
+            chmod(0o644);
+
+            assert!(failed.is_err());
+            assert!(!migration_marker_path().unwrap().exists());
+            confirm_attached_profiles_once().expect("retry");
+            assert!(migration_marker_path().unwrap().exists());
+        });
     }
 
     /// A folder as a clone leaves it, imported the way the app imports it.

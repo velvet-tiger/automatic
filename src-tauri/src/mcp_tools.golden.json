@@ -134,7 +134,7 @@
     "name": "automatic_archive_feature"
   },
   {
-    "description": "Attach a context to a project or to a project group. Give `project`, `group`, or neither for the current project. A group's contexts are added to every member project and recorded as provided by that group. Idempotent. Only a context this folder can already read, or one this server created, can be attached. Contexts are read through MCP only, so no sync is needed.",
+    "description": "Attach a context to a project or to a project group. Give neither for this folder's project, or `group` for a group it joined. A group's contexts are added to every member project and recorded as provided by that group. Idempotent. Only a context this folder can already read, or one this server created, can be attached. Contexts are read through MCP only, so no sync is needed.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -191,7 +191,7 @@
     "name": "automatic_attach_hook"
   },
   {
-    "description": "Attach a profile to a project. Every skill, MCP server, provider, agent, sub-agent, command, hook and rule the profile lists is recorded as the profile's contribution, so later edits to the profile keep the project in step. Missing entries are added; entries the project already had are adopted by the profile. Idempotent. Give `project`, `group`, or neither for the current project. Attaching to a project does not trigger a sync — call automatic_sync_project to write the change to disk. Attaching to a group gives the profile to every member project and syncs each one that changed; only the group can remove it again.",
+    "description": "Attach a profile to a project. Every skill, MCP server, provider, agent, sub-agent, command, hook and rule the profile lists is recorded as the profile's contribution, so later edits to the profile keep the project in step. Missing entries are added; entries the project already had are adopted by the profile. Idempotent. Give `project`, `group`, or neither for the current project. Attaching to a project does not trigger a sync — call automatic_sync_project to write the change to disk. Attaching to a group gives the profile to every member project and syncs each one that changed; only the group can remove it again. `group` must be one this folder's project joined.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -634,7 +634,7 @@
     "name": "automatic_detach_hook"
   },
   {
-    "description": "Detach a profile from a project. Removes every entry the profile provides, including entries the project had before it was attached; entries no attached profile lists stay. Idempotent. Give `project`, `group`, or neither for the current project. A profile a group provides cannot be detached from a member project; detach it from the group instead. Detaching from a project does not trigger a sync — call automatic_sync_project to write the change to disk. Detaching from a group removes the profile from every member project no other group provides it to, and syncs each one that changed.",
+    "description": "Detach a profile from a project. Removes every entry the profile provides, including entries the project had before it was attached; entries no attached profile lists stay. Idempotent. Give `project`, `group`, or neither for the current project. A profile a group provides cannot be detached from a member project; detach it from the group instead. Detaching from a project does not trigger a sync — call automatic_sync_project to write the change to disk. Detaching from a group removes the profile from every member project no other group provides it to, and syncs each one that changed. `group` must be one this folder's project joined.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -763,7 +763,7 @@
     "name": "automatic_get_memory"
   },
   {
-    "description": "Return the projects related to this folder's project through the Project Groups it joined, including each peer's name, description, directory, and relative path from this project's directory. `project` can only name this folder's own project. Use this to discover sibling projects you can explore or reference.",
+    "description": "Return the projects related to this folder's project through the Project Groups it joined, listing the peers that joined them too, including each peer's name, description, directory, and relative path from this project's directory. `project` can only name this folder's own project. Use this to discover sibling projects you can explore or reference.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

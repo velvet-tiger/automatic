@@ -31,7 +31,7 @@ Automatic exposes the following tools via the `automatic` MCP server (configured
 
 **The current project.** The server knows which project you are working in. Every tool that takes a `project` (or `name` on `automatic_read_project` and `automatic_sync_project`) uses that project when you omit it. Pass it only to act on another project. It accepts a project's `name`, `local_key` or `id` from `automatic_list_projects`. When a name or id matches several folders, the error lists each one with its `local_key`; pass that key.
 
-**What can be read.** Contexts and project details are limited by the folder the server runs in. It must be inside a registered project. From there you can read that project, the contexts attached to it, and the projects in the groups it joined. A shared `id`, `AUTOMATIC_PROJECT` and the `project` argument do not widen this.
+**What can be read.** Contexts and project details are limited by the folder the server runs in. It must be inside a registered project. From there you can read that project, the contexts attached to it, and the projects in the groups it joined. A shared `id`, `AUTOMATIC_PROJECT` and the `project` argument do not widen this. A repository nested inside the project reads nothing. `automatic_register_project` refuses a folder holding the one the server runs in.
 
 ### `automatic_list_skills`
 
@@ -284,7 +284,7 @@ path: string     — the entry path (read only)
 
 ### `automatic_attach_context` / `automatic_detach_context`
 
-Attach a context to a project or a project group, or detach it. You can attach a context this project can already read, or one this server created. The user attaches any other context in the Automatic app. Give `project` or `group`, not both. Give neither to use the current project. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
+Attach a context to a project or a project group, or detach it. You can attach a context this project can already read, or one created by this server process. `project` can only name this folder's project, and `group` a group it joined. The user attaches any other context in the Automatic app. Give `project` or `group`, not both. Give neither to use the current project. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
 
 ```
 context: string   — the context slug
