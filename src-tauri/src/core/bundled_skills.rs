@@ -74,7 +74,7 @@ fn load_skill(name: &str) -> Option<SkillPayload> {
 /// Names of skills that should be installed automatically on first run.
 /// Combines the library's own `skills/skill.json` auto-install set with
 /// `bundled_app_skills::APP_AUTO_INSTALL`.
-fn auto_install_skill_names() -> Vec<String> {
+pub(crate) fn auto_install_skill_names() -> Vec<String> {
     let mut names = auto_install_from_library();
     for name in APP_AUTO_INSTALL {
         if !names.iter().any(|n| n == name) {

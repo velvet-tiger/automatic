@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use super::*;
@@ -53,6 +54,93 @@ pub struct ProjectProfile {
     /// Author/provider metadata for profiles installed from a remote source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub _author: Option<serde_json::Value>,
+}
+
+// ── Default profile ──────────────────────────────────────────────────────────
+
+const DEFAULT_PROFILE_NAME: &str = "Automatic Defaults";
+const DEFAULT_PROFILE_MARKER: &str = "default_profile_seeded";
+const DEFAULT_PROFILE_DESCRIPTION: &str = "The rules and skills Automatic recommends.";
+const DEFAULT_PROFILE_RULES: &[&str] = &[
+    "automatic-process",
+    "automatic-code",
+    "automatic-general",
+    "automatic-service",
+    "automatic-workflow",
+];
+const DEFAULT_PROFILE_SKILLS: &[&str] = &[
+    "automatic-code-review",
+    "automatic-debugging",
+    "automatic-documentation",
+    "automatic-qa-review",
+    "automatic-refactoring",
+    "automatic-security-review",
+    "automatic-testing",
+];
+
+/// Create the default profile once, on first install or the first launch
+/// after an update. After that it belongs to the user: later launches never
+/// change it, and a deleted profile stays deleted.
+///
+/// Nothing attaches the profile, so no project changes. It is not recorded as
+/// recently added, because existing users did not add it themselves.
+///
+/// The record of this is a marker file, not a settings field. `mcp-serve`
+/// processes run this while other processes write `settings.json`, and a torn
+/// read of that file returns defaults, which would then be written back.
+pub fn seed_default_profile() -> Result<(), String> {
+    let marker = default_profile_marker_path()?;
+    if marker.exists() {
+        return Ok(());
+    }
+    create_default_profile_file()?;
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Could not write {}: {}", marker.display(), e)),
+    }
+}
+
+fn default_profile_marker_path() -> Result<PathBuf, String> {
+    Ok(get_automatic_dir()?.join(DEFAULT_PROFILE_MARKER))
+}
+
+/// Write the default profile unless a file with its name exists. The GUI and
+/// `mcp-serve` can run startup together, and either may find a user's profile
+/// of the same name, so this must never overwrite.
+///
+/// The bytes go to a temporary file that then moves into place. The move
+/// fails if the target exists, and a crash cannot leave a partial profile.
+fn create_default_profile_file() -> Result<(), String> {
+    let profile = ProjectProfile {
+        name: DEFAULT_PROFILE_NAME.to_string(),
+        description: DEFAULT_PROFILE_DESCRIPTION.to_string(),
+        skills: DEFAULT_PROFILE_SKILLS.iter().map(|s| s.to_string()).collect(),
+        rules: DEFAULT_PROFILE_RULES.iter().map(|s| s.to_string()).collect(),
+        ..ProjectProfile::default()
+    };
+    let pretty = serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?;
+
+    fs::create_dir_all(get_profiles_dir()?)
+        .map_err(|e| format!("Could not create the profiles folder: {}", e))?;
+    let path = profile_path(DEFAULT_PROFILE_NAME)?;
+    let mut temp = tempfile::NamedTempFile::new_in(get_profiles_dir()?)
+        .map_err(|e| format!("Could not create a temporary profile: {}", e))?;
+    temp.write_all(pretty.as_bytes())
+        .map_err(|e| format!("Could not write the temporary profile: {}", e))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|e| format!("Could not flush the temporary profile: {}", e))?;
+
+    match temp.persist_noclobber(&path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("Could not create {}: {}", path.display(), e.error)),
+    }
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────
@@ -613,6 +701,133 @@ mod tests {
             .get(PROJECT_RULES_KEY)
             .cloned()
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn seeding_creates_the_default_profile_and_records_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            seed_default_profile().expect("seed");
+
+            let seeded = read_project_profile_parsed(DEFAULT_PROFILE_NAME).expect("read");
+            assert_eq!(seeded.rules, DEFAULT_PROFILE_RULES);
+            assert_eq!(seeded.skills, DEFAULT_PROFILE_SKILLS);
+            assert!(seeded.mcp_servers.is_empty());
+            assert!(default_profile_marker_path().expect("marker").exists());
+            // Only the profile: the temporary file must be gone.
+            let files = fs::read_dir(get_profiles_dir().expect("dir")).expect("read dir");
+            assert_eq!(files.count(), 1);
+        });
+    }
+
+    #[test]
+    fn erasing_app_data_restores_the_default_profile() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            seed_default_profile().expect("seed");
+            delete_project_profile(DEFAULT_PROFILE_NAME).expect("delete");
+
+            erase_app_data().expect("erase");
+
+            assert!(read_project_profile_parsed(DEFAULT_PROFILE_NAME).is_ok());
+        });
+    }
+
+    #[test]
+    fn default_profile_names_are_all_bundled() {
+        let skills = auto_install_skill_names();
+        for skill in DEFAULT_PROFILE_SKILLS {
+            assert!(skills.iter().any(|n| n == skill), "missing skill {skill}");
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            install_default_rules().expect("install rules");
+            for rule in DEFAULT_PROFILE_RULES {
+                assert!(read_rule(rule).is_ok(), "missing rule {rule}");
+            }
+        });
+    }
+
+    #[test]
+    fn seeding_again_keeps_the_users_edits() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            seed_default_profile().expect("seed");
+            let mut edited = read_project_profile_parsed(DEFAULT_PROFILE_NAME).expect("read");
+            edited.rules = vec!["automatic-code".into()];
+            write_profile(&edited);
+
+            seed_default_profile().expect("seed again");
+
+            let read = read_project_profile_parsed(DEFAULT_PROFILE_NAME).expect("read");
+            assert_eq!(read.rules, vec!["automatic-code"]);
+        });
+    }
+
+    #[test]
+    fn seeding_never_overwrites_a_profile_with_the_same_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let mut own = profile(DEFAULT_PROFILE_NAME);
+            own.description = "Mine".into();
+            write_profile(&own);
+
+            seed_default_profile().expect("seed");
+
+            let read = read_project_profile_parsed(DEFAULT_PROFILE_NAME).expect("read");
+            assert_eq!(read.description, "Mine");
+            assert!(read.rules.is_empty());
+            assert!(default_profile_marker_path().expect("marker").exists());
+        });
+    }
+
+    #[test]
+    fn an_update_seeds_the_profile_and_keeps_existing_settings() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let automatic_dir = get_automatic_dir().expect("dir");
+            fs::create_dir_all(&automatic_dir).expect("create dir");
+            fs::write(
+                automatic_dir.join("settings.json"),
+                r#"{"sync_mode":"copy","wizard_completed":true}"#,
+            )
+            .expect("write settings");
+
+            seed_default_profile().expect("seed");
+
+            assert!(read_project_profile_parsed(DEFAULT_PROFILE_NAME).is_ok());
+            let settings = read_settings().expect("settings");
+            assert_eq!(settings.sync_mode, "copy");
+            assert!(settings.wizard_completed);
+        });
+    }
+
+    #[test]
+    fn a_settings_reset_does_not_bring_back_a_deleted_profile() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            seed_default_profile().expect("seed");
+            delete_project_profile(DEFAULT_PROFILE_NAME).expect("delete");
+
+            reset_settings().expect("reset");
+            seed_default_profile().expect("seed again");
+
+            assert!(list_project_profiles().expect("list").is_empty());
+        });
+    }
+
+    #[test]
+    fn a_deleted_default_profile_stays_deleted() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            seed_default_profile().expect("seed");
+            delete_project_profile(DEFAULT_PROFILE_NAME).expect("delete");
+
+            seed_default_profile().expect("seed again");
+
+            assert!(list_project_profiles().expect("list").is_empty());
+        });
     }
 
     #[test]
