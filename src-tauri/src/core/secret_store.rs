@@ -730,6 +730,8 @@ mod memory {
         Unreadable,
         /// A delete fails and the secret stays, as when the keychain refuses.
         DeleteRefused,
+        /// A store fails and the old value stays. Reads still work.
+        StoreRefused,
     }
 
     fn faults() -> &'static Mutex<HashMap<String, Fault>> {
@@ -762,6 +764,9 @@ mod memory {
 
     pub(super) fn store(account: &str, secret: &str) -> Result<(), String> {
         fail_if_unreadable(account)?;
+        if fault(account)? == Some(Fault::StoreRefused) {
+            return Err(format!("test fault: the secret store refused to store '{}'", account));
+        }
         let mut secrets = secrets().lock().map_err(|e| e.to_string())?;
         secrets.insert(account.to_string(), secret.to_string());
         Ok(())

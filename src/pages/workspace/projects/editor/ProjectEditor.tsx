@@ -81,6 +81,7 @@ import {
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { OrphanConfigDialog } from "./OrphanConfigDialog";
+import { importExistingProject, type ProjectLibraryUse } from "../../../../lib/libraryUse";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
 import { AttachProfileModal } from "./AttachProfileModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
@@ -307,7 +308,12 @@ export function ProjectEditor({
   // so the user can open that project. `local_key` addresses it even when
   // another project shares its name; empty while it has no key.
   const [registeredHere, setRegisteredHere] = useState<{ directory: string; name: string; local_key: string } | null>(null);
-  const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; pendingName: string } | null>(null);
+  const [orphanDialog, setOrphanDialog] = useState<{
+    directory: string;
+    existingName: string;
+    pendingName: string;
+    libraryUse: ProjectLibraryUse | null;
+  } | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanError, setOrphanError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -2724,15 +2730,15 @@ export function ProjectEditor({
     }
   };
 
-  const handleOrphanImport = async () => {
+  const handleOrphanImport = async (readOnly: boolean) => {
     if (!orphanDialog) return;
     setOrphanBusy(true);
     setOrphanError(null);
     try {
       // Opened by its key: another project may share the name.
-      const imported = await invoke<{ name: string; local_key: string; read_only: boolean }>("import_existing_project", {
-        directory: orphanDialog.directory,
-      });
+      const imported = await importExistingProject(orphanDialog.directory, readOnly);
+      // `imported.name` is the repository's raw text. This one is escaped.
+      const shownName = orphanDialog.existingName;
       const importedName = imported.name;
       const importedKey = imported.local_key || imported.name;
       setOrphanDialog(null);
@@ -2747,7 +2753,7 @@ export function ProjectEditor({
       window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName, local_key: importedKey } }));
       if (imported.read_only) {
         await message(
-          `"${importedName}" was added in read-only mode, as its settings ask. Automatic reads its settings but will not change any of its files.\n\nYou can turn this off in Configuration > Settings.`,
+          `"${shownName}" was added in read-only mode. Automatic reads its settings but will not change any of its files.\n\nYou can turn this off in Configuration > Settings.`,
           { title: "Added as read only", kind: "info" },
         );
       }
@@ -3956,12 +3962,17 @@ export function ProjectEditor({
                                 return;
                               }
                               if (status && status.kind === "OrphanConfig") {
+                                // A failed check still opens the dialog, which says so.
+                                const libraryUse = await invoke<ProjectLibraryUse>("preview_project_library_use", {
+                                  directory: dir,
+                                }).catch(() => null);
                                 setWizardDiscovering(false);
                                 setOrphanError(null);
                                 setOrphanDialog({
                                   directory: dir,
                                   existingName: status.name,
                                   pendingName: name,
+                                  libraryUse,
                                 });
                                 return;
                               }
@@ -4910,6 +4921,7 @@ export function ProjectEditor({
       <OrphanConfigDialog
         directory={orphanDialog.directory}
         existingName={orphanDialog.existingName}
+        libraryUse={orphanDialog.libraryUse}
         busy={orphanBusy}
         error={orphanError}
         onImport={handleOrphanImport}
