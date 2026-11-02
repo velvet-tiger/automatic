@@ -103,6 +103,32 @@ describe("OrphanConfigDialog", () => {
     expect(screen.getByRole("button", { name: /Remove and start fresh/ })).toBeEnabled();
   });
 
+  it("says profiles wait for an attach only when the config names one", () => {
+    const note = "Profiles do not apply until you attach them in the project.";
+    const { unmount } = render(
+      <OrphanConfigDialog
+        directory="/repo"
+        existingName="cloned"
+        libraryUse={{
+          kind: "Readable",
+          read_only_hint: false,
+          has_unreadable_profile: false,
+          groups: [{ kind: "profile", total: 1, flagged_total: 0, names: [{ name: "team", flagged: false }], not_checked: 0 }],
+        }}
+        busy={false}
+        error={null}
+        onImport={vi.fn()}
+        onStartFresh={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(note)).toBeInTheDocument();
+    unmount();
+
+    renderDialog(readable(false));
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
+  });
+
   it("says so when the check failed, and still offers both actions", () => {
     renderDialog(null);
 

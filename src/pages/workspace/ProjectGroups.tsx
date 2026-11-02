@@ -275,7 +275,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     // Sync ALL projects in the group, not just the newly added one.
     // Each project's group block lists peer projects, so adding a project
     // means all existing projects need their peer list updated.
-    await persistGroup(updated, updated.projects);
+    await persistGroup(updated, updated.projects, [projectKey]);
   };
 
   const handleRemoveProject = async (projectKey: string) => {
@@ -293,12 +293,13 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   /** Save the group then re-sync each affected project so instruction files
    *  are updated immediately without requiring a manual sync. */
-  const persistGroup = async (changed: ProjectGroup, syncProjects: string[] = []) => {
+  const persistGroup = async (changed: ProjectGroup, syncProjects: string[] = [], joining: string[] = []) => {
     try {
       const updated = await withLatestGroupSettings(changed);
       await invoke("save_group", {
         name: updated.name,
         data: JSON.stringify(updated),
+        joining,
       });
       setGroup(updated);
       setError(null);

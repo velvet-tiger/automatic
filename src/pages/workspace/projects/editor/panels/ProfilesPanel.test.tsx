@@ -50,6 +50,51 @@ describe("ProfilesPanel", () => {
     expect(screen.queryByLabelText("Detach shared")).not.toBeInTheDocument();
   });
 
+  it("offers Attach and Ignore for a pending profile, and no Detach", async () => {
+    const props = renderPanel({
+      project: { ...project(), pending_profiles: ["own"] },
+    });
+    expect(screen.getByText("The repository asks for this profile. Nothing from it applies here yet.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Detach own")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Ignore"));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("ignore_project_profile", { projectName: "app", profileName: "own" });
+    });
+    await waitFor(() => expect(props.reloadProject).toHaveBeenCalledWith("app"));
+  });
+
+  it("keeps Attach for an ignored profile", () => {
+    renderPanel({
+      project: { ...project(), pending_profiles: ["own"], local_ignored_profiles: ["own"] },
+    });
+    expect(screen.getByText("Ignored on this computer. Nothing from it applies here.")).toBeInTheDocument();
+    expect(screen.getByText("Attach")).toBeInTheDocument();
+    expect(screen.queryByText("Ignore")).not.toBeInTheDocument();
+  });
+
+  it("hides Attach on a read-only project and keeps Ignore", () => {
+    renderPanel({ project: { ...project(), pending_profiles: ["own"] }, readOnly: true });
+    expect(screen.queryByText("Attach")).not.toBeInTheDocument();
+    expect(screen.getByText("Ignore")).toBeInTheDocument();
+  });
+
+  it("asks about a pending profile a group lists instead of showing the group", () => {
+    renderPanel({ project: { ...project(), pending_profiles: ["shared"] } });
+    expect(screen.queryByText("From group: team")).not.toBeInTheDocument();
+    expect(screen.getByText("Attach")).toBeInTheDocument();
+  });
+
+  it("names a group this checkout has not joined", () => {
+    renderPanel({
+      project: { ...project(), pending_profiles: ["shared"] },
+      unjoinedGroupProfiles: { shared: "team" },
+    });
+    expect(
+      screen.getByText('From the group "team", which this checkout has not joined. Nothing from it applies here yet.'),
+    ).toBeInTheDocument();
+  });
+
   it("opens the group from the badge", () => {
     const onNavigateToGroup = vi.fn();
     renderPanel({ onNavigateToGroup });

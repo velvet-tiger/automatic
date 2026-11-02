@@ -54,14 +54,14 @@ const PROJECT_ORDER_KEY = PROJECT_ORDER_STORAGE_KEY;
  * Every member's peer list changes when the group does. Throws when the
  * group cannot be read or saved.
  */
-async function addProjectsToGroup(groupName: string, projectKeys: string[]): Promise<void> {
+export async function addProjectsToGroup(groupName: string, projectKeys: string[]): Promise<void> {
   const raw: string = await invoke("read_group", { name: groupName });
   const group = JSON.parse(raw) as { projects: string[]; updated_at?: string };
   const fresh = projectKeys.filter((k) => !group.projects.includes(k));
   if (fresh.length === 0) return;
   group.projects.push(...fresh);
   group.updated_at = new Date().toISOString();
-  await invoke("save_group", { name: groupName, data: JSON.stringify(group) });
+  await invoke("save_group", { name: groupName, data: JSON.stringify(group), joining: fresh });
   for (const name of group.projects) {
     invoke("sync_project", { name }).catch((e: unknown) => {
       console.warn(`Group sync: could not sync project '${name}':`, e);

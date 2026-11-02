@@ -15,11 +15,15 @@ interface ProfilesPanelProps {
   /** local_key of the open project; null while creating. */
   selectedKey: string | null;
   availableProfiles: string[];
+  /** The project is read only here: Attach would be refused, Ignore writes nothing into it. */
+  readOnly?: boolean;
+  /** Profile name to a group that lists it and that this checkout has not joined. */
+  unjoinedGroupProfiles?: Record<string, string>;
   reloadProject: (projectKey: string) => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
 }
 
-const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
+export const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
   skills: ["skill", "skills"],
   mcp_servers: ["MCP server", "MCP servers"],
   providers: ["provider", "providers"],
@@ -49,7 +53,7 @@ function summariseContribution(contribution: ProfileContribution | undefined): s
  * show which group, and are detached at the group, not here.
  */
 export function ProfilesPanel({
-  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, reloadProject, onNavigateToGroup,
+  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, readOnly = false, unjoinedGroupProfiles = {}, reloadProject, onNavigateToGroup,
 }: ProfilesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -59,6 +63,8 @@ export function ProfilesPanel({
   const attached = project.profiles ?? [];
   const contributions = project.profile_contributions ?? {};
   const groupContributions = project.group_profile_contributions ?? {};
+  const pending = project.pending_profiles ?? [];
+  const ignored = project.local_ignored_profiles ?? [];
   const unattached = availableProfiles.filter((name) => !attached.includes(name));
   const filtered = search.trim()
     ? unattached.filter((name) => name.toLowerCase().includes(search.toLowerCase()))
@@ -84,6 +90,19 @@ export function ProfilesPanel({
       await reloadProject(selectedKey!);
     } catch (err) {
       setError(`Failed to attach profile "${profileName}": ${err}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const ignore = async (profileName: string) => {
+    setError(null);
+    setBusy(profileName);
+    try {
+      await invoke("ignore_project_profile", { projectName: selectedKey, profileName });
+      await reloadProject(selectedKey!);
+    } catch (err) {
+      setError(`Failed to ignore profile "${profileName}": ${err}`);
     } finally {
       setBusy(null);
     }
@@ -196,6 +215,16 @@ export function ProfilesPanel({
             {attached.map((name) => {
               const missing = availableProfiles.length > 0 && !availableProfiles.includes(name);
               const group = providingGroup(groupContributions, name);
+              const isPending = pending.includes(name);
+              const isIgnored = ignored.includes(name);
+              const unjoinedGroup = unjoinedGroupProfiles[name];
+              const summary = !isPending
+                ? summariseContribution(contributions[name])
+                : isIgnored
+                  ? "Ignored on this computer. Nothing from it applies here."
+                  : unjoinedGroup
+                    ? `From the group "${unjoinedGroup}", which this checkout has not joined. Nothing from it applies here yet.`
+                    : "The repository asks for this profile. Nothing from it applies here yet.";
               return (
                 <div
                   key={name}
@@ -212,10 +241,31 @@ export function ProfilesPanel({
                       )}
                     </div>
                     <div className="text-[11px] text-text-muted truncate">
-                      {persisted ? summariseContribution(contributions[name]) : "Applied when the project is saved"}
+                      {persisted ? summary : "Applied when the project is saved"}
                     </div>
                   </div>
-                  {group ? (
+                  {isPending ? (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {!readOnly && (
+                        <button
+                          onClick={() => attach(name)}
+                          disabled={busy !== null}
+                          className="text-[12px] font-medium text-brand hover:text-brand-hover transition-colors disabled:opacity-50"
+                        >
+                          Attach
+                        </button>
+                      )}
+                      {!isIgnored && (
+                        <button
+                          onClick={() => ignore(name)}
+                          disabled={busy !== null}
+                          className="text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50"
+                        >
+                          Ignore
+                        </button>
+                      )}
+                    </div>
+                  ) : group ? (
                     <button
                       onClick={() => onNavigateToGroup?.(group)}
                       className="flex items-center gap-1 text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded px-1.5 py-0.5 hover:text-brand transition-colors flex-shrink-0"

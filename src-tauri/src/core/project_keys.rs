@@ -165,14 +165,17 @@ pub(crate) fn registry_pointer(project: &Project) -> serde_json::Value {
     if project.local_read_only {
         map.insert("local_read_only".into(), true.into());
     }
-    serde_json::Value::Object(map)
+    let mut pointer = serde_json::Value::Object(map);
+    super::write_profile_decisions(project, &mut pointer);
+    pointer
 }
 
 /// Write the registry pointer for `project` to `registry_path`.
 ///
 /// Keeps `local_read_only` when the file on disk has it, even if `project`
 /// does not. `project` may have been read before another process turned
-/// read-only mode on, and only `set_project_read_only` may turn it off.
+/// read-only mode on, and only `set_project_read_only` may turn it off. Keeps
+/// the file's profile decisions for the same reason.
 pub(crate) fn write_registry_pointer(registry_path: &Path, project: &Project) -> Result<(), String> {
     // Held across the check of the file and the write, so a toggle cannot
     // land between them and be undone.
@@ -183,6 +186,7 @@ pub(crate) fn write_registry_pointer(registry_path: &Path, project: &Project) ->
             map.insert("local_read_only".into(), true.into());
         }
     }
+    super::keep_stored_profile_decisions(registry_path, &mut pointer);
     let pretty = serde_json::to_string_pretty(&pointer)
         .map_err(|e| format!("Failed to serialize registry entry for '{}': {}", project.name, e))?;
     write_registry_file(registry_path, &pretty)

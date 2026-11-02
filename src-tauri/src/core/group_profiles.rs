@@ -25,13 +25,50 @@ use super::*;
 /// profile keeps its `profile_contributions` record, so the
 /// `reconcile_project_profiles` call that must follow removes its entries.
 /// Returns `true` when anything changed.
+///
+/// A group this checkout has not joined does nothing: `member_groups` matches
+/// by project `id`, which a repository chooses. Records with no decision behind
+/// them are dropped first, so a forged record changes no committed list.
 pub fn reconcile_group_profiles(project: &mut Project, member_groups: &[ProjectGroup]) -> bool {
+    let joined: Vec<ProjectGroup> = member_groups
+        .iter()
+        .filter(|group| project.local_confirmed_groups.contains(&group.name))
+        .cloned()
+        .collect();
+    drop_unearned_group_records(project, &joined);
     reconcile_group_provided(
         &mut project.profiles,
         &mut project.group_profile_contributions,
-        member_groups,
+        &joined,
         group_profiles,
     )
+}
+
+/// Remove names from the group records without releasing them, unless this
+/// checkout has a decision behind them. A joined group's record keeps what the
+/// group lists or was marked as releasing. A group left on this checkout keeps
+/// its whole record, so its names can be released. A group never joined here
+/// keeps nothing. A confirmed name always stays.
+fn drop_unearned_group_records(project: &mut Project, joined: &[ProjectGroup]) {
+    let confirmed = project.local_confirmed_profiles.clone();
+    let releasing = project.local_releasing_profiles.clone();
+    let left: Vec<String> = project
+        .local_confirmed_groups
+        .iter()
+        .chain(&project.local_departed_groups)
+        .filter(|group| !joined.iter().any(|g| &g.name == *group))
+        .cloned()
+        .collect();
+    project.group_profile_contributions.retain(|group, names| {
+        if !left.contains(group) {
+            let listed = joined.iter().find(|g| &g.name == group).map(group_profiles);
+            names.retain(|name| {
+                listed.is_some_and(|list| list.contains(name) || releasing.contains(name))
+                    || is_confirmed(&confirmed, name)
+            });
+        }
+        !names.is_empty()
+    });
 }
 
 fn group_profiles(group: &ProjectGroup) -> &[String] {
@@ -92,6 +129,12 @@ fn edit_group_profiles(
     Ok(true)
 }
 
+/// Whether `group` lists `profile_name`. `false` for a group that cannot be
+/// read.
+pub(crate) fn group_lists_profile(group: &str, profile_name: &str) -> bool {
+    read_group_parsed(group).is_ok_and(|g| g.profiles.iter().any(|p| p == profile_name))
+}
+
 /// Names of the groups that list `profile_name`, sorted. Unreadable group
 /// files are skipped.
 pub fn groups_referencing_profile(profile_name: &str) -> Result<Vec<String>, String> {
@@ -139,6 +182,12 @@ fn rewrite_groups_listing_profile(
     };
     let mut changed = Vec::new();
     for name in names {
+        // A read-only member keeps its record, and the group stops listing
+        // the name, so the mark is what lets its next reconcile release it.
+        if let Err(e) = mark_group_profile_releasing(&name, profile_name) {
+            eprintln!("group profiles: could not mark group '{}': {}", name, e);
+            continue;
+        }
         let saved = read_group_parsed(&name).and_then(|mut group| {
             edit(&mut group.profiles);
             write_group(&name, &mut group)
@@ -222,6 +271,8 @@ mod tests {
         Project {
             name: "app".to_string(),
             profiles: profiles.iter().map(|p| p.to_string()).collect(),
+            local_confirmed_groups: vec!["team".into(), "alpha".into(), "beta".into()],
+            local_releasing_profiles: ["base", "a", "b", "shared", "own"].map(String::from).to_vec(),
             ..Default::default()
         }
     }
@@ -318,6 +369,18 @@ mod tests {
     }
 
     #[test]
+    fn a_forged_name_under_a_joined_group_is_dropped_and_not_released() {
+        let mut p = project(&["theirs"]);
+        p.local_releasing_profiles.clear();
+        p.group_profile_contributions.insert("team".into(), vec!["theirs".into()]);
+
+        reconcile_group_profiles(&mut p, &[group("team", &[])]);
+
+        assert_eq!(p.profiles, vec!["theirs"]);
+        assert!(p.group_profile_contributions.is_empty());
+    }
+
+    #[test]
     fn released_profile_entries_go_on_the_following_profile_reconcile() {
         with_home(|| {
             save_project_profile(
@@ -327,6 +390,7 @@ mod tests {
             .expect("save profile");
 
             let mut p = project(&[]);
+            p.local_confirmed_profiles = vec!["base".into()];
             reconcile_group_profiles(&mut p, &[group("team", &["base"])]);
             reconcile_project_profiles(&mut p);
             assert_eq!(p.skills, vec!["react"]);

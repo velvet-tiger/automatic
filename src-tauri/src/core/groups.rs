@@ -120,6 +120,27 @@ pub fn save_group(name: &str, data: &str) -> Result<(), String> {
     fs::write(group_path(&groups_dir, name), &pretty).map_err(|e| e.to_string())
 }
 
+/// Record that the checkouts in `joining` are joining group `name`, ahead of
+/// the save of `data` that lists them. An extra join is harmless until the
+/// group lists the checkout. An explicit list is the only source of joins: a
+/// checkout that shares an `id` with a member shows as listed, and the editor
+/// sends it back on every save.
+pub fn record_group_joins(name: &str, data: &str, joining: &[String]) -> Result<(), String> {
+    if joining.is_empty() {
+        return Ok(());
+    }
+    serde_json::from_str::<ProjectGroup>(data).map_err(|e| format!("Invalid group data: {}", e))?;
+    let groups_dir = get_groups_dir()?;
+    if group_path(&groups_dir, name).exists() {
+        read_group_from_dir(&groups_dir, name)
+            .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
+    }
+    for ident in joining {
+        confirm_project_group(ident, name)?;
+    }
+    Ok(())
+}
+
 pub fn delete_group(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid group name".into());
@@ -262,6 +283,34 @@ pub(crate) fn keep_group_provided_entries(incoming: &mut Project, stored: &Proje
             incoming.contexts.push(context.clone());
         }
     }
+}
+
+/// Names of the groups that list the project with `local_key`, like
+/// [`groups_for_project`]. A group file that cannot be read counts as listing
+/// it. A group list or registry that cannot be read is an error, not an empty
+/// result.
+pub(crate) fn group_names_listing(local_key: &str) -> Result<Vec<String>, String> {
+    let groups_dir = get_groups_dir()?;
+    let index = ProjectKeyIndex::load()?;
+    let project = index.resolve_for_group(local_key).cloned();
+    let mut listing = Vec::new();
+    for name in list_groups()? {
+        // A group that cannot be read might list the project, so it counts.
+        let listed = match read_group_from_dir(&groups_dir, &name) {
+            Ok(group) => group.projects.iter().any(|member| match &project {
+                Some(summary) => index.member_is(member, summary),
+                None => member == local_key,
+            }),
+            Err(e) => {
+                eprintln!("Group '{}' could not be read: {}", name, e);
+                true
+            }
+        };
+        if listed {
+            listing.push(name);
+        }
+    }
+    Ok(listing)
 }
 
 /// Remove each of `stored_values` (a project `id`, or a legacy name) from

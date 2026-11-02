@@ -6,7 +6,7 @@ use super::project_sweeps::{
 };
 use super::projects::{
     detach_profile_from_projects, reconcile_projects_referencing_profile,
-    rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
+    ensure_writable, rename_profile_in_projects, sync_project_if_configured, with_each_project_mut,
 };
 
 // ── Project Profiles ─────────────────────────────────────────────────────────
@@ -67,14 +67,17 @@ pub fn rename_project_profile(old_name: &str, new_name: &str) -> Result<(), Stri
     })
 }
 
-/// Every project that has the profile attached.
+/// Every project that has the profile attached. A checkout where the name is
+/// pending has not taken it, so a change to the profile does not reach it.
 #[tauri::command(async)]
 pub fn get_projects_referencing_profile(
     profile_name: &str,
 ) -> Result<Vec<core::ProjectRef>, String> {
     let mut referencing = Vec::new();
     with_each_project_mut(|_, project| {
-        if project.profiles.iter().any(|p| p == profile_name) {
+        if project.profiles.iter().any(|p| p == profile_name)
+            && !core::profile_is_unconfirmed(project, profile_name)
+        {
             referencing.push(core::ProjectRef {
                 name: project.name.clone(),
                 directory: project.directory.clone(),
@@ -100,11 +103,14 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
     if !project.profiles.iter().any(|p| p == profile_name) {
         project.profiles.push(profile_name.to_string());
     }
+    core::accept_profile(&mut project, profile_name);
     core::reconcile_project_profiles(&mut project);
     project.updated_at = chrono::Utc::now().to_rfc3339();
     let json = serde_json::to_string_pretty(&project)
         .map_err(|e| format!("Failed to serialise project: {}", e))?;
     core::save_project(project_name, &json)?;
+    // Last, so a failure before this leaves the name pending.
+    core::confirm_project_profile(project_name, profile_name)?;
 
     sync_project_if_configured(project_name, &mut project);
     Ok(())
@@ -129,6 +135,11 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
         ));
     }
 
+    // First, so a failure after this leaves the name pending and not trusted.
+    // `project` keeps its copy, which the release below needs.
+    ensure_writable(project_name)?;
+    core::forget_project_profile(project_name, profile_name)?;
+
     if !core::release_profile(&mut project, profile_name) && !groups_changed {
         return Ok(()); // already detached, nothing to do
     }
@@ -140,4 +151,13 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
     core::save_project(project_name, &json)?;
     sync_project_if_configured(project_name, &mut project);
     Ok(())
+}
+
+/// Hide the notice for a pending profile on this checkout. The name stays in
+/// the committed config and stays pending.
+#[tauri::command(async)]
+pub fn ignore_project_profile(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
+    let project_name = &crate::core::canonical_project_ident(project_name)?;
+    core::ignore_project_profile(project_name, profile_name)
 }

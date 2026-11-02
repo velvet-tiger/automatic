@@ -847,7 +847,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
                 existing
             ));
         }
-        crate::core::DirectoryStatus::OrphanConfig { name: orphan } => {
+        crate::core::DirectoryStatus::OrphanConfig { name: orphan, .. } => {
             return Err(format!(
                 "Directory '{}' contains an Automatic config (.automatic.json) that is \
                  not registered (project name '{}'). Ask the user to import it from the \
@@ -2134,7 +2134,8 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
 
-        if project.profiles.iter().any(|p| p == profile_name) {
+        let pending = project.pending_profiles.iter().any(|p| p == profile_name);
+        if project.profiles.iter().any(|p| p == profile_name) && !pending {
             return Ok(tool_success(format!(
                 "Profile '{}' is already attached to project '{}'.",
                 profile_name, project_name
@@ -2149,9 +2150,16 @@ impl AutomaticMcpServer {
         if !project.profiles.iter().any(|p| p == profile_name) {
             project.profiles.push(profile_name.to_string());
         }
+        crate::core::accept_profile(&mut project, profile_name);
         crate::core::reconcile_project_profiles(&mut project);
 
-        match persist_project(&checkout, &project) {
+        // Saved first, so a failure leaves the name pending.
+        match persist_project(&checkout, &project).and_then(|()| {
+            crate::core::confirm_project_profile(
+                crate::core::checkout_ident(&checkout),
+                profile_name,
+            )
+        }) {
             Ok(()) => Ok(tool_success(format!(
                 "Attached profile '{}' to project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -2212,6 +2220,17 @@ impl AutomaticMcpServer {
                  call automatic_detach_profile with `group`.",
                 profile_name, group
             )));
+        }
+
+        // First, so a failure after this leaves the name pending and not trusted.
+        if let Err(e) = crate::core::ensure_project_writable(&project) {
+            return Ok(tool_error(e));
+        }
+        if let Err(e) = crate::core::forget_project_profile(
+            crate::core::checkout_ident(&checkout),
+            profile_name,
+        ) {
+            return Ok(tool_error(e));
         }
 
         if !crate::core::release_profile(&mut project, profile_name) && !groups_changed {
@@ -3518,13 +3537,19 @@ mod tests {
     fn profile_tools_take_a_group_and_lock_group_profiles() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            let project = crate::core::Project { name: "site".into(), ..Default::default() };
-            crate::core::save_project("site", &serde_json::to_string(&project).unwrap())
-                .expect("save");
+            let mut project = crate::core::Project { name: "site".into(), ..Default::default() };
+            crate::core::prepare_new_project_keys(&mut project).expect("keys");
+            crate::core::save_project(
+                &project.local_key.clone(),
+                &serde_json::to_string(&project).unwrap(),
+            )
+            .expect("save");
             let profile = serde_json::json!({"name": "base", "skills": ["react"]});
             crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
             let group = serde_json::json!({"name": "team", "projects": ["site"]});
             crate::core::save_group("team", &group.to_string()).expect("save group");
+            crate::core::record_group_joins("team", &group.to_string(), &["site".to_string()])
+                .expect("join");
 
             let server = AutomaticMcpServer::new();
             let attach = |project: Option<&str>, group: Option<&str>| {
@@ -4106,6 +4131,94 @@ mod tests {
         crate::sync::check_project_drift(&project)
             .expect("drift check")
             .drifted
+    }
+
+    #[test]
+    fn attach_profile_tool_applies_a_pending_profile() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let profile = serde_json::json!({"name": "base", "skills": ["react"]});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
+            register_project_impl(&params("pending", ws.to_str().unwrap(), None))
+                .expect("register");
+            let mut project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("pending").expect("read"))
+                    .expect("parse");
+            project.profiles.push("base".to_string());
+            crate::core::save_project("pending", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            let read = || -> crate::core::Project {
+                serde_json::from_str(&crate::core::read_project("pending").expect("read"))
+                    .expect("parse")
+            };
+            assert_eq!(read().pending_profiles, vec!["base"]);
+
+            let server = AutomaticMcpServer::new();
+            let result = tauri::async_runtime::block_on(server.attach_profile(Parameters(
+                AttachProfileParams {
+                    project: Some("pending".into()),
+                    group: None,
+                    profile: "base".into(),
+                },
+            )))
+            .expect("tool call");
+
+            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            let attached = read();
+            assert!(attached.pending_profiles.is_empty());
+            assert_eq!(attached.skills, vec!["react"]);
+        });
+    }
+
+    #[test]
+    fn attach_profile_tool_is_refused_on_read_only_and_detach_forgets() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let profile = serde_json::json!({"name": "base", "skills": ["react"]});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
+            register_project_impl(&params("site", ws.to_str().unwrap(), None)).expect("register");
+            let read = || -> crate::core::Project {
+                serde_json::from_str(&crate::core::read_project("site").expect("read"))
+                    .expect("parse")
+            };
+            let server = AutomaticMcpServer::new();
+            let attach = || {
+                tauri::async_runtime::block_on(server.attach_profile(Parameters(
+                    AttachProfileParams {
+                        project: Some("site".into()),
+                        group: None,
+                        profile: "base".into(),
+                    },
+                )))
+                .expect("tool call")
+            };
+
+            crate::core::set_project_read_only("site", true).expect("on");
+            assert_eq!(attach().is_error, Some(true));
+            assert!(read().local_confirmed_profiles.is_empty());
+            crate::core::set_project_read_only("site", false).expect("off");
+
+            assert_ne!(attach().is_error, Some(true));
+            assert_eq!(read().local_confirmed_profiles, vec!["base"]);
+
+            let result = tauri::async_runtime::block_on(server.detach_profile(Parameters(
+                DetachProfileParams {
+                    project: Some("site".into()),
+                    group: None,
+                    profile: "base".into(),
+                },
+            )))
+            .expect("tool call");
+            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            assert!(read().local_confirmed_profiles.is_empty());
+            assert!(read().skills.is_empty());
+        });
     }
 
     #[test]

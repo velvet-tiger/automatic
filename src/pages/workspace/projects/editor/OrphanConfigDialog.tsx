@@ -111,6 +111,11 @@ export function OrphanConfigDialog({
           </div>
 
           {libraryUse?.kind === "Readable" && <LibraryUseList groups={libraryUse.groups} />}
+          {libraryUse?.kind === "Readable" && libraryUse.groups.some((g) => g.kind === "profile" && g.total > 0) && (
+            <p className="text-[12px] text-text-muted leading-relaxed">
+              Profiles do not apply until you attach them in the project.
+            </p>
+          )}
           {unreadable && (
             <div className="rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-[12px] text-danger">
               This configuration cannot be read, so it cannot be added. Fix the file, or remove it and

@@ -9,10 +9,13 @@ interface GroupsPanelProps {
    */
   projectKey: string;
   projectGroupMemberships: string[];
+  /** Groups this checkout joined. A listed group that is not here reached it through a shared project id. */
+  joinedGroups: string[];
   allGroups: string[];
   loadingGroups: boolean;
   reloadGroups: (projectKey: string) => Promise<void>;
   onAddToGroup: (groupName: string, projectKey: string) => Promise<void> | void;
+  onJoinGroup: (groupName: string, projectKey: string) => Promise<void> | void;
   onRemoveFromGroup: (groupName: string, projectKey: string) => Promise<void> | void;
   onRemoveFromAllGroups: (projectKey: string) => Promise<void> | void;
   onNavigateToGroup?: (groupName: string) => void;
@@ -21,10 +24,12 @@ interface GroupsPanelProps {
 export function GroupsPanel({
   projectKey,
   projectGroupMemberships,
+  joinedGroups,
   allGroups,
   loadingGroups,
   reloadGroups,
   onAddToGroup,
+  onJoinGroup,
   onRemoveFromGroup,
   onRemoveFromAllGroups,
   onNavigateToGroup,
@@ -78,7 +83,22 @@ export function GroupsPanel({
                 className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover transition-colors"
               >
                 <Layers size={13} className="text-text-muted flex-shrink-0" />
-                <span className="flex-1 text-[13px] text-text-base">{groupName}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] text-text-base">{groupName}</div>
+                  {!joinedGroups.includes(groupName) && (
+                    <div className="text-[11px] text-text-muted">
+                      This group lists another copy of this repository. This copy has not joined, so the group's profiles do not apply here.
+                    </div>
+                  )}
+                </div>
+                {!joinedGroups.includes(groupName) && (
+                  <button
+                    onClick={() => onJoinGroup(groupName, projectKey)}
+                    className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium text-brand hover:text-brand-hover hover:bg-brand/10 rounded transition-colors"
+                  >
+                    Join group
+                  </button>
+                )}
                 <button
                   onClick={() => onNavigateToGroup?.(groupName)}
                   className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium text-brand hover:text-brand-hover hover:bg-brand/10 rounded transition-colors flex items-center gap-1"

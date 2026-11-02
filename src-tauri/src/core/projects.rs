@@ -280,9 +280,7 @@ struct ResolvedProject {
     registry_name: String,
 }
 
-/// Resolve a project by identifier without writing to its folder. Seeds
-/// missing user-level registry entries from the project's metadata (see
-/// `restore_to_user_registries`).
+/// Resolve a project by identifier. Writes nothing.
 fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -307,6 +305,7 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     let registry_keys = ProjectKeys::of(&registry_project);
     // Per-machine state that only the pointer stores (see `read_only.rs`).
     let local_read_only = registry_project.local_read_only;
+    let profile_decisions = ProfileDecisions::of_project(&registry_project);
 
     // If directory is set, read the full project from the project directory.
     // A malformed file there is an error rather than a fallback to registry
@@ -333,6 +332,8 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     project.id = resolved.id;
     project.local_key = resolved.local_key;
     project.local_read_only = local_read_only;
+    profile_decisions.apply_to(&mut project);
+    project.pending_profiles = pending_profile_names(&project);
     // A folder inside a read-only project is read-only too. A failed check
     // is logged and left to the writers, which re-check strictly.
     project.read_only_owner = if local_read_only {
@@ -349,12 +350,6 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
         project.directory_missing = true;
     }
 
-    // Restore: write project-level metadata back into user-level registries
-    // for any entries that are missing locally.  This is the key portability
-    // mechanism — when a project arrives on a new machine, its resolved data
-    // seeds the local registries so skills regain their provenance.
-    restore_to_user_registries(&project);
-
     // Enrich with current user-level metadata so callers see the current
     // snapshot. Saves and `refresh_project_files` persist it.
     enrich_project(&mut project);
@@ -365,52 +360,11 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     })
 }
 
-// ── Restore from project to user-level registries ───────────────────────────
-//
-// When a project is opened on a machine that doesn't have the original
-// user-level registry entries (e.g. cloned repo, different Automatic
-// instance), this function seeds the local registries from the resolved
-// metadata stored in project.json.  Only missing entries are written —
-// existing local entries are never overwritten, so local state wins.
-
-fn restore_to_user_registries(project: &Project) {
-    restore_skill_sources(project);
-    restore_skill_collections(project);
-}
-
-fn restore_skill_sources(project: &Project) {
-    if project.skill_sources.is_empty() {
-        return;
-    }
-    let Ok(existing) = read_skill_sources() else {
-        return;
-    };
-    for (name, source) in &project.skill_sources {
-        if !existing.contains_key(name) {
-            let _ = record_skill_source(name, &source.source, &source.id, &source.kind);
-        }
-    }
-}
-
-fn restore_skill_collections(project: &Project) {
-    if project.skill_collections.is_empty() {
-        return;
-    }
-    let Ok(existing) = read_skill_collections() else {
-        return;
-    };
-    for (name, collection) in &project.skill_collections {
-        if !existing.contains_key(name) {
-            let _ = set_skill_collection(name, collection);
-        }
-    }
-}
-
 // ── Project enrichment ───────────────────────────────────────────────────────
 //
-// Snapshots user-level registry data into the project config so it is
-// self-contained when the project is opened on another machine.  Runs on
-// every save — fields are overwritten with the current user-level state.
+// Snapshots user-level registry data into the project's state file (see
+// `STATE_FIELDS`).  Runs on every save — fields are overwritten with the
+// current user-level state.
 // Failures in individual lookups are silently skipped so that a missing
 // registry never prevents a project from being saved.
 
@@ -585,6 +539,8 @@ fn profile_providing_mcp_server<'a>(project: &'a Project, server: &str) -> Optio
 
 fn enrich_skill_sources(project: &mut Project) {
     let Ok(all_sources) = read_skill_sources() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_sources.clear();
         return;
     };
     let mut sources = BTreeMap::new();
@@ -598,6 +554,8 @@ fn enrich_skill_sources(project: &mut Project) {
 
 fn enrich_skill_collections(project: &mut Project) {
     let Ok(all_collections) = read_skill_collections() else {
+        // A value already here may come from a state file the repo committed.
+        project.skill_collections.clear();
         return;
     };
     let mut collections = BTreeMap::new();
@@ -997,10 +955,11 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     validate_custom_asset_names(&project)?;
-    // directory_missing and read_only_owner are computed at read time —
-    // never persist them.
+    // directory_missing, read_only_owner and pending_profiles are computed at
+    // read time — never persist them.
     project.directory_missing = false;
     project.read_only_owner = None;
+    project.pending_profiles.clear();
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
@@ -1028,6 +987,8 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     // the stored value, so stale or edited data cannot turn it off, and a
     // read-only project with a folder is never saved.
     project.local_read_only = existing.as_ref().is_some_and(|e| e.local_read_only());
+    // Profile decisions work the same way: see `core::profile_confirmation`.
+    keep_entry_profile_decisions(existing.as_ref(), &mut project);
     if !project.directory.is_empty() {
         if project.local_read_only {
             let shown = existing.as_ref().map_or(name, |e| e.name.as_str());
@@ -2199,7 +2160,7 @@ mod tests {
 
             let status = inspect_project_directory(&dir).expect("inspect");
             match status {
-                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "legacy-name"),
+                DirectoryStatus::OrphanConfig { name, .. } => assert_eq!(name, "legacy-name"),
                 other => panic!("unexpected status: {:?}", other),
             }
         });
@@ -2219,7 +2180,7 @@ mod tests {
 
             let status = inspect_project_directory(&dir).expect("inspect");
             match status {
-                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "orphan-broken"),
+                DirectoryStatus::OrphanConfig { name, .. } => assert_eq!(name, "orphan-broken"),
                 other => panic!("unexpected status: {:?}", other),
             }
         });

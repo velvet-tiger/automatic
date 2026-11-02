@@ -26,6 +26,17 @@ Two fields on `Project` carry the link:
 
 A profile whose file is missing is reported and otherwise ignored, so nothing disappears because a file went missing.
 
+## Confirming a name on each checkout
+
+`profiles` is committed, so a repository can name any profile in your library. A name applies only after this checkout accepts it, or a group this checkout joined provides it. Until then it is pending, and reconcile treats it like a missing profile: nothing is added, removed or rewritten. This covers a fresh clone, a `git pull` that adds a name, and every sweep. A pending name does not follow later edits to the profile.
+
+- **Where the decisions live.** `local_confirmed_profiles`, `local_ignored_profiles`, `local_confirmed_groups`, `local_departed_groups` and `local_releasing_profiles` are stored only in the registry pointer (`~/.automatic/projects/<local_key>.json`), like `local_read_only`. No file in a repository can set them, and a save keeps the stored values. `pending_profiles` is computed on each read and never stored. The code is in `core/profile_confirmation.rs`.
+- **Confirming.** Attaching in the app, or with `automatic_attach_profile`, confirms the name after the attach is saved. Names chosen while creating a project are confirmed. A one-time migration, recorded by the `profiles_confirmed_migrated` marker file, confirmed the names and recorded the group memberships of projects that existed before this feature. A project whose folder could not be read then shows its names as pending.
+- **Groups.** Groups store members by project `id`, and a repository chooses its committed `id`. A group therefore provides profiles only to a checkout that joined it on this machine. The add paths name the checkouts being added, and only those join. The join is written before the group file. A checkout listed through a shared `id` shows as not joined in the editor's Groups tab, with a Join group action. Attach still confirms a name one at a time. `group_profile_contributions` proves nothing, because a repository can commit `.automatic/project.json`. Names in a record with no decision behind them are dropped without being released. That covers a group never joined, and a name a joined group does not list unless the group marked it as releasing (`local_releasing_profiles`). A record of a group this checkout did not join can still release a name this checkout confirmed. The repository could remove that name anyway.
+- **Ignoring.** Ignore hides the notice for that name on this checkout. The name stays pending and the committed config stays as it is.
+- **Detaching and deleting.** Detaching forgets the decision first, so a failure leaves the name pending and not trusted. Deleting a profile forgets it on every project, so a later profile with the same name is not trusted. Renaming a profile carries decisions to the new name. Delete and rename leave a pending project's committed config alone. A join of a group that no longer lists the checkout is dropped after the reconcile. If the project still records what the group provided, because the sweep failed or the project is read-only, the group moves to `local_departed_groups`. It provides nothing from there, and the next reconcile releases its names. A later group of the same name is not trusted.
+- **What this does not cover.** Group contexts still match by project `id`. `mcp_servers`, `hooks` and the other lists in `.automatic.json` still name library entries directly. A name that a repository removes and later adds back stays confirmed.
+
 ## What this means in practice
 
 - A profile owns every entry it lists on an attached project, including entries the project had before the profile was attached. Detaching the profile removes all of them. Entries no attached profile lists are the project's own and are never touched.
@@ -73,12 +84,14 @@ Tauri commands: `attach_profile_to_group(group_name, profile_name)`, `detach_pro
 ## In the app
 
 - Library, Profiles: create and edit profiles, see which projects use one, attach one to a project.
-- Project editor, Configuration, Profiles: attach and detach profiles for one project.
+- Project editor, Configuration, Profiles: attach and detach profiles for one project. A pending profile shows Attach and Ignore, and no Detach.
+- Project editor: a notice lists what each pending profile would add, with Attach and Ignore. The notice is hidden while the project is read-only, because Attach would be refused.
+- Import dialog: lists the library profiles the config asks for.
 - Entries a profile provides carry a `Profile: name` badge and have no remove, edit, or toggle control in the Skills, MCP, Rules, Hooks, Agents, Commands, and Providers tabs.
 
 ## MCP tools
 
-`automatic_list_profiles`, `automatic_read_profile`, `automatic_attach_profile`, `automatic_detach_profile`. `automatic_read_project` returns `profiles`, `profile_contributions` and `group_profile_contributions`.
+`automatic_list_profiles`, `automatic_read_profile`, `automatic_attach_profile`, `automatic_detach_profile`. `automatic_read_project` returns `profiles`, `profile_contributions`, `group_profile_contributions` and, when there are any, `pending_profiles`.
 
 Attach and detach take `project`, `group`, or neither for the current project. On a project they do not sync; call `automatic_sync_project` afterwards. On a group they reconcile every member and sync the ones that changed. Detaching a group-provided profile from a project is refused.
 

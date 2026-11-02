@@ -452,6 +452,41 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "is_false")]
     pub local_read_only: bool,
 
+    /// Names in `profiles` this checkout has accepted. Stored only in this
+    /// machine's registry pointer, like `local_read_only`, so a repository
+    /// can never grant one. See `core::profile_confirmation`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_confirmed_profiles: Vec<String>,
+
+    /// Pending names whose notice this checkout has hidden. Stored only in
+    /// the registry pointer. The names stay pending.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_ignored_profiles: Vec<String>,
+
+    /// Groups this checkout joined on this machine. Group members are stored
+    /// by project `id`, which a repository chooses, so a group provides its
+    /// profiles only to a checkout listed here. Stored only in the registry
+    /// pointer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_confirmed_groups: Vec<String>,
+
+    /// Groups this checkout left whose records it still holds, because the
+    /// reconcile that releases them failed or was skipped. Stored only in the
+    /// registry pointer. They provide nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_departed_groups: Vec<String>,
+
+    /// Profile names a joined group stopped listing, kept until the reconcile
+    /// releases them. Stored only in the registry pointer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_releasing_profiles: Vec<String>,
+
+    /// Computed at read-time: names in `profiles` that are not applied here,
+    /// because this checkout has not confirmed them and no group provides
+    /// them. Never persisted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_profiles: Vec<String>,
+
     /// Computed at read-time: the name of the read-only project whose folder
     /// holds this project's folder, when this project is not read-only
     /// itself. Such a project is read-only too, because its files belong to
@@ -472,10 +507,11 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "is_false")]
     pub directory_missing: bool,
 
-    // ── Resolved metadata (project portability) ─────────────────────────────
+    // ── Resolved metadata (machine-local snapshots) ─────────────────────────
     //
-    // These fields snapshot user-level registry data into the project config
-    // so that the project is self-contained when opened on another machine.
+    // These fields snapshot this machine's user-level registry data. They live
+    // in the state file, never in the committed config, and do not travel to
+    // another machine.
     // They are populated automatically on save and should not be edited by hand.
     /// Provenance metadata for skills in the `skills` list.
     /// Keyed by skill name → SkillSource (GitHub owner/repo, skills.sh id, kind).

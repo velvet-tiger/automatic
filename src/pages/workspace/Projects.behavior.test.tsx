@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockInvoke, resetInvokeMock, invokeMock, type InvokeArgs } from "../../test/tauriMock";
 import { renderProjects } from "../../test/renderProjects";
-import Projects from "./Projects";
+import Projects, { addProjectsToGroup } from "./Projects";
 import { screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -562,3 +562,17 @@ describe("Projects — characterization", () => {
 
 // Suppress unused warning for fireEvent (kept in import list for future tests)
 void fireEvent;
+
+describe("addProjectsToGroup", () => {
+  it("names only the new checkouts as joining", async () => {
+    resetInvokeMock();
+    mockInvoke({
+      read_group: JSON.stringify({ name: "team", projects: ["listed"] }),
+    });
+
+    await addProjectsToGroup("team", ["listed", "fresh"]);
+
+    const saved = invokeMock.mock.calls.find(([command]) => command === "save_group");
+    expect(saved?.[1]).toMatchObject({ name: "team", joining: ["fresh"] });
+  });
+});

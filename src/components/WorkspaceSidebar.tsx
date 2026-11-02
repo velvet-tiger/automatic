@@ -212,7 +212,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       if (!g.projects.includes(projectKey)) {
         g.projects.push(projectKey);
         g.updated_at = new Date().toISOString();
-        await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+        await invoke("save_group", { name: groupName, data: JSON.stringify(g), joining: [projectKey] });
         for (const name of g.projects) {
           invoke("sync_project", { name }).catch(() => {});
         }

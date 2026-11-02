@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ProjectSummary } from "../pages/workspace/projects/types";
 import {
   membersWithoutProject,
+  withCheckoutDecisions,
   projectKeyOf,
   projectLabelFor,
   projectLabels,
@@ -157,6 +158,20 @@ describe("shared names in the Add Project wizard", () => {
       "2 other projects are also called \u201cwebsite\u201d. You can keep this name.",
     );
     expect(sharedNameNote("docs", [])).toBeNull();
+  });
+});
+
+describe("withCheckoutDecisions", () => {
+  it("takes the decisions and keeps the held edits", () => {
+    const held = { description: "unsaved", pending_profiles: ["old"], local_confirmed_groups: [] };
+    const fresh = { description: "stored", local_confirmed_groups: ["team"] };
+
+    expect(withCheckoutDecisions(held, fresh)).toEqual({
+      description: "unsaved",
+      local_confirmed_groups: ["team"],
+      local_ignored_profiles: [],
+      pending_profiles: [],
+    });
   });
 });
 

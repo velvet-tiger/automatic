@@ -331,6 +331,7 @@ fn save_project_with(
         core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string())
     };
     let name = &ident;
+    core::load_profile_decisions(name, &mut incoming, creating)?;
 
     // Profiles: bring the project's lists in step with its attached profiles
     // before anything is persisted or synced. This one hook covers the
@@ -635,8 +636,9 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 /// folder's files are refreshed (keys and enrichment), and group profiles
 /// and plugin-owned resources are reconciled. Renames and removals of
 /// library items made in the meantime are not replayed; the project keeps
-/// the names its committed config uses. Agent files are not synced here, so
-/// any drift shows and the user syncs when ready.
+/// the names its committed config uses. A project the reconcile changes is
+/// synced. Any other project is not, so its drift shows and the user syncs
+/// when ready.
 #[tauri::command(async)]
 pub fn set_project_read_only(name: &str, read_only: bool) -> Result<(), String> {
     // A sweep holds this while it works on a project, so the toggle lands
@@ -1856,7 +1858,7 @@ pub(crate) fn reconcile_group_profiles_for_projects(
     progress: &SweepProgress,
 ) {
     let mut seen = std::collections::HashSet::new();
-    let unique = project_idents
+    let unique: Vec<String> = project_idents
         .iter()
         .filter(|ident| seen.insert(ident.as_str()))
         .filter(|ident| match core::groups_listing(ident) {
@@ -1869,7 +1871,7 @@ pub(crate) fn reconcile_group_profiles_for_projects(
         .cloned()
         .collect();
     sweep_project_changes(
-        unique,
+        unique.clone(),
         progress,
         Unreadable::Log,
         "group profile reconcile",
@@ -1890,19 +1892,33 @@ pub(crate) fn reconcile_group_profiles_for_projects(
         },
         |_, project| sync_configured_project(project),
     );
+    // After the reconcile, which needs a join to release what the group
+    // provided.
+    for ident in unique {
+        if let Err(e) = core::settle_group_joins(&ident) {
+            progress.report_failure(&ident, e);
+        }
+    }
 }
 
 /// Detach `profile_name` from every group and every project, dropping every
 /// item the profile provides, then re-sync. Used before a profile is deleted.
 /// Groups are cleared too, or a group would put the missing profile back.
+///
+/// A project where the name is pending is left alone: this checkout never
+/// took the profile, so its committed config must not change. Groups are
+/// cleared after the sweep, because a group-provided name counts as confirmed
+/// only while a group lists it.
 pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepProgress) {
-    core::prune_profile_from_groups(profile_name);
     sweep_project_changes(
         all_project_idents(progress),
         progress,
         Unreadable::Report,
         "profile detach",
         |_, project| {
+            if core::profile_is_unconfirmed(project, profile_name) {
+                return false;
+            }
             let released = core::release_profile(project, profile_name);
             let group_recorded = core::strip_group_profile_contribution(project, profile_name);
             if !released && !group_recorded {
@@ -1913,11 +1929,22 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepP
         },
         |_, project| sync_configured_project(project),
     );
+    core::prune_profile_from_groups(profile_name);
+    for (project, error) in core::forget_profile_everywhere(profile_name) {
+        progress.report_failure(&project, error);
+    }
+    // Clears the marks of projects the sweep already released.
+    for (project, error) in core::settle_all_group_joins() {
+        progress.report_failure(&project, error);
+    }
 }
 
 /// Rewrite `profiles` entries and contribution keys from `old_name` to
 /// `new_name` in every group and every project. Content is unchanged, so no
 /// sync is needed.
+///
+/// A project where the old name is pending keeps it in its committed config.
+/// Groups and decisions follow the sweep, because the check reads both.
 pub(crate) fn rename_profile_in_projects(
     old_name: &str,
     new_name: &str,
@@ -1926,15 +1953,25 @@ pub(crate) fn rename_profile_in_projects(
     if old_name == new_name {
         return;
     }
-    core::rename_profile_in_groups(old_name, new_name);
     sweep_project_changes(
         all_project_idents(progress),
         progress,
         Unreadable::Report,
         "profile rename",
-        |_, project| core::rename_profile_in_project(project, old_name, new_name),
+        |_, project| {
+            !core::profile_is_unconfirmed(project, old_name)
+                && core::rename_profile_in_project(project, old_name, new_name)
+        },
         |_, _| Ok(()),
     );
+    core::rename_profile_in_groups(old_name, new_name);
+    for (project, error) in core::rename_profile_decisions(old_name, new_name) {
+        progress.report_failure(&project, error);
+    }
+    // Clears the marks of projects the sweep already renamed.
+    for (project, error) in core::settle_all_group_joins() {
+        progress.report_failure(&project, error);
+    }
 }
 
 pub(crate) fn prune_hook_from_projects(machine_name: &str, progress: &SweepProgress) {
@@ -2763,8 +2800,14 @@ pub(crate) mod propagation_tests {
             ..Default::default()
         };
         mutate(&mut project);
+        // Every fixture stands for profiles the user chose. Tests of a pending
+        // name forget the confirmation afterwards.
+        project.local_confirmed_profiles = project.profiles.clone();
+        // A group reaches only a checkout it can find by `local_key`.
+        core::prepare_new_project_keys(&mut project).expect("keys");
+        let key = project.local_key.clone();
         let json = serde_json::to_string_pretty(&project).expect("project json");
-        core::save_project(name, &json).expect("save project");
+        core::save_project(&key, &json).expect("save project");
         let dir = project_dir.path().to_path_buf();
         (project_dir, dir)
     }
@@ -2911,6 +2954,8 @@ pub(crate) mod propagation_tests {
         let sam = on_machine(sam_home.path(), || {
             save_shared_profile(&["react", "python"]);
             let ident = core::import_existing_project(&sam_dir, None).expect("import").local_key;
+            // Sam chose to attach it. A name left pending changes nothing.
+            core::confirm_project_profile(&ident, "shared").expect("confirm");
             autosave(&ident);
             let skills = read_back(&ident).skills;
             assert!(skills.contains(&"vitest".to_string()), "Sam removed vitest: {skills:?}");
@@ -2945,7 +2990,10 @@ pub(crate) mod propagation_tests {
             r#"{"name":"demo","profiles":["shared"],"skills":["react"]}"#,
         )
         .unwrap();
-        core::import_existing_project(repo.to_str().unwrap(), None).expect("import").local_key
+        let ident =
+            core::import_existing_project(repo.to_str().unwrap(), None).expect("import").local_key;
+        core::confirm_project_profile(&ident, "shared").expect("confirm");
+        ident
     }
 
     #[test]
@@ -3308,7 +3356,8 @@ fn detach_profile_from_projects_removes_provided_entries() {
             ..Default::default()
         };
         let data = serde_json::to_string(&group).expect("group json");
-        super::super::groups::save_group(name, &data).expect("save group");
+        let joining = projects.iter().map(|p| p.to_string()).collect();
+        super::super::groups::save_group(name, &data, Some(joining)).expect("save group");
     }
 
     fn read_group_back(name: &str) -> core::ProjectGroup {
@@ -3355,6 +3404,625 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(b.profiles.is_empty());
             assert!(b.group_profile_contributions.is_empty());
             assert!(b.file_rules.is_empty());
+        });
+    }
+
+    /// `make_project` confirms what it attaches. These tests need the name
+    /// pending, as it is on a checkout that received it through a commit.
+    fn make_pending_project(name: &str, profile: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let made = make_project(name, |p| p.profiles = vec![profile.to_string()]);
+        core::forget_project_profile(name, profile).expect("forget");
+        made
+    }
+
+    fn committed_config(dir: &std::path::Path) -> Vec<u8> {
+        std::fs::read(dir.join(".automatic.json")).expect("read config")
+    }
+
+    /// A folder with a committed `id` copied from `member`, imported the way
+    /// the app imports it. `state` is a committed `.automatic/project.json`.
+    fn import_id_clone(
+        member: &str,
+        profiles: &[&str],
+        state: Option<serde_json::Value>,
+    ) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let keep = tempdir().expect("clone dir");
+        let dir = keep.path().to_path_buf();
+        let config = serde_json::json!({
+            "name": "clone",
+            "id": read_back(member).id,
+            "profiles": profiles,
+        });
+        std::fs::write(dir.join(".automatic.json"), config.to_string()).expect("config");
+        if let Some(state) = state {
+            std::fs::create_dir_all(dir.join(".automatic")).expect("mkdir");
+            std::fs::write(dir.join(".automatic/project.json"), state.to_string()).expect("state");
+        }
+        let imported =
+            core::import_existing_project(dir.to_str().expect("utf-8"), None).expect("import");
+        (keep, dir, imported.local_key)
+    }
+
+    #[test]
+    fn a_committed_id_matching_a_member_stays_pending_on_import_and_after_a_pull() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            save_profile_with_rule("extra", "extra-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_group_command("team", &[&member], &["baseline", "extra"]);
+            let (_clone, dir, key) = import_id_clone("member", &["baseline"], None);
+
+            assert_eq!(read_back(&key).pending_profiles, vec!["baseline"]);
+
+            std::fs::write(
+                dir.join(".automatic.json"),
+                serde_json::json!({
+                    "name": "clone",
+                    "id": read_back("member").id,
+                    "profiles": ["baseline", "extra"],
+                })
+                .to_string(),
+            )
+            .expect("pull");
+            reconcile_group_profiles_for_projects(std::slice::from_ref(&key), &SweepProgress::silent());
+
+            let clone = read_back(&key);
+            assert_eq!(clone.pending_profiles, vec!["baseline", "extra"]);
+            assert!(clone.group_profile_contributions.is_empty());
+            assert!(clone.file_rules.is_empty());
+        });
+    }
+
+    #[test]
+    fn saving_a_group_does_not_join_a_clone_it_shows_as_listed() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_group_command("team", &[&member], &["baseline"]);
+            let (_clone, _dir2, key) = import_id_clone("member", &["baseline"], None);
+
+            // The editor sends back every checkout `read_group` shows.
+            let shown = core::group_member_idents("team");
+            assert!(shown.contains(&key));
+            let group = core::ProjectGroup {
+                name: "team".to_string(),
+                projects: shown,
+                profiles: vec!["baseline".to_string()],
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&group).expect("group json");
+            super::super::groups::save_group("team", &data, None).expect("save group");
+
+            let clone = read_back(&key);
+            assert!(clone.local_confirmed_groups.is_empty());
+            assert_eq!(clone.pending_profiles, vec!["baseline"]);
+            assert_eq!(read_back("member").local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
+    fn an_editor_save_with_no_key_and_a_members_name_stays_pending() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_group_command("team", &[&member], &["baseline"]);
+            let (_clone, _dir2, key) = import_id_clone("member", &["baseline"], None);
+
+            let mut payload = read_back(&key);
+            payload.local_key.clear();
+            payload.name = "member".to_string();
+            save_project(&key, &serde_json::to_string(&payload).unwrap(), None).expect("save");
+
+            let clone = read_back(&key);
+            assert_eq!(clone.local_key, key);
+            assert_eq!(clone.pending_profiles, vec!["baseline"]);
+            assert!(clone.file_rules.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_forged_group_record_removes_nothing_through_a_full_save() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let state = serde_json::json!({
+                "group_profile_contributions": { "forged": ["baseline"] },
+            });
+            let (_clone, _dir2, key) = import_id_clone("member", &["baseline"], Some(state));
+
+            let payload = core::read_project(&key).expect("read");
+            save_project(&key, &payload, None).expect("save");
+
+            let clone = read_back(&key);
+            assert_eq!(clone.profiles, vec!["baseline"]);
+            assert_eq!(clone.pending_profiles, vec!["baseline"]);
+            assert!(clone.group_profile_contributions.is_empty());
+        });
+    }
+
+    #[test]
+    fn leaving_and_deleting_a_group_update_the_pointer() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, _) = make_project("a", |_| {});
+            let (_keep_b, _) = make_project("b", |_| {});
+            save_group_command("team", &["a", "b"], &["baseline"]);
+            assert_eq!(read_back("a").local_confirmed_groups, vec!["team"]);
+
+            save_group_command("team", &["b"], &["baseline"]);
+            let left = read_back("a");
+            assert!(left.local_confirmed_groups.is_empty());
+            assert!(left.profiles.is_empty(), "the join released the name");
+
+            core::set_project_read_only("b", true).expect("on");
+            super::super::groups::delete_group("team").expect("delete");
+            assert!(read_back("b").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_of_a_deleted_group_releases_its_names_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            assert_eq!(read_back("member").file_rules["_project"], vec!["profile-rule"]);
+
+            core::set_project_read_only("member", true).expect("on");
+            super::super::groups::delete_group("team").expect("delete");
+            let waiting = read_back("member");
+            assert!(waiting.local_confirmed_groups.is_empty(), "the name is not trusted");
+            assert_eq!(waiting.local_departed_groups, vec!["team"]);
+
+            set_project_read_only("member", false).expect("off");
+
+            let released = read_back("member");
+            assert!(released.profiles.is_empty());
+            assert!(released.file_rules.is_empty());
+            assert!(released.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_releases_a_deleted_profile_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+
+            detach_profile_from_projects("baseline", &SweepProgress::silent());
+            core::delete_project_profile("baseline").expect("delete");
+            assert_eq!(read_back("member").local_releasing_profiles, vec!["baseline"]);
+
+            set_project_read_only("member", false).expect("off");
+
+            let released = read_back("member");
+            assert!(released.profiles.is_empty());
+            assert!(released.file_rules.is_empty());
+            assert!(released.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_moves_to_a_renamed_profile_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            set_project_read_only("member", false).expect("off");
+
+            let moved = read_back("member");
+            assert_eq!(moved.profiles, vec!["renamed"]);
+            assert_eq!(moved.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(moved.group_profile_contributions["team"], vec!["renamed"]);
+            assert!(moved.profile_contributions.contains_key("renamed"));
+            assert!(!moved.profile_contributions.contains_key("baseline"));
+            assert!(moved.pending_profiles.is_empty());
+            assert!(moved.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_corrupt_group_file_keeps_its_joins_when_another_group_is_deleted() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &[]);
+            save_group_command("other", &["member"], &[]);
+            let dir = core::get_groups_dir().expect("dir");
+            std::fs::write(dir.join("team.json"), "<<<<<<< conflict").expect("corrupt");
+
+            super::super::groups::delete_group("other").expect("delete");
+
+            let member = read_back("member");
+            assert_eq!(member.local_confirmed_groups, vec!["team"]);
+            assert!(member.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_rename_leaves_no_mark_on_a_writable_member() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            let moved = read_back("member");
+            assert_eq!(moved.profiles, vec!["renamed"]);
+            assert!(moved.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_mark_leaves_the_group_listing_the_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            let pointers = core::get_projects_dir().expect("dir");
+            let lock = |mode| {
+                for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    std::fs::set_permissions(entry.path(), perms).expect("chmod");
+                }
+                let perms = std::fs::Permissions::from_mode(mode | 0o111);
+                std::fs::set_permissions(&pointers, perms).expect("chmod");
+            };
+
+            lock(0o444);
+            let marked = core::mark_group_profile_releasing("team", "baseline");
+            let changed = core::prune_profile_from_groups("baseline");
+            lock(0o644);
+
+            assert!(marked.is_err());
+            assert!(changed.is_empty());
+            assert_eq!(read_group_back("team").profiles, vec!["baseline"]);
+        });
+    }
+
+    #[test]
+    fn a_group_recreated_under_a_deleted_name_is_not_trusted() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+            super::super::groups::delete_group("team").expect("delete");
+
+            let key = read_back("member").local_key;
+            let group = core::ProjectGroup {
+                name: "team".to_string(),
+                projects: vec![key],
+                profiles: vec!["baseline".to_string()],
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&group).expect("json");
+            super::super::groups::save_group("team", &data, None).expect("save");
+            assert!(read_back("member").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_reconcile_keeps_a_group_releasable() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, dir) = make_project("a", |_| {});
+            let (_keep_b, _) = make_project("b", |_| {});
+            save_group_command("team", &["a", "b"], &["baseline"]);
+
+            // A folder that refuses the write fails the sweep's save.
+            let config = std::fs::read(dir.join(".automatic.json")).expect("config");
+            let mut perms = std::fs::metadata(&dir).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o555);
+            let state = dir.join(".automatic/project.json");
+            let mut locked = std::fs::metadata(&state).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut locked, 0o444);
+            std::fs::set_permissions(&state, locked.clone()).expect("lock");
+            std::fs::set_permissions(dir.join(".automatic.json"), locked).expect("lock");
+            std::fs::set_permissions(&dir, perms).expect("lock dir");
+            save_group_command("team", &["b"], &["baseline"]);
+            let waiting = read_back("a");
+            assert_eq!(waiting.local_departed_groups, vec!["team"]);
+            assert_eq!(waiting.profiles, vec!["baseline"]);
+
+            let mut open = std::fs::metadata(&dir).expect("meta").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut open, 0o755);
+            std::fs::set_permissions(&dir, open.clone()).expect("unlock dir");
+            std::fs::set_permissions(dir.join(".automatic.json"), open.clone()).expect("unlock");
+            std::fs::set_permissions(&state, open).expect("unlock");
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).unwrap(), config);
+
+            let key = read_back("a").local_key;
+            reconcile_group_profiles_for_projects(&[key], &SweepProgress::silent());
+
+            let released = read_back("a");
+            assert!(released.profiles.is_empty());
+            assert!(released.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_listed_clone_joins_explicitly() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_group_command("team", &[&member], &["baseline"]);
+            let (_clone, _dir2, key) = import_id_clone("member", &["baseline"], None);
+
+            super::super::groups::join_group("team", &key).expect("join");
+
+            let clone = read_back(&key);
+            assert_eq!(clone.local_confirmed_groups, vec!["team"]);
+            assert!(clone.pending_profiles.is_empty());
+            assert_eq!(clone.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(read_back("member").file_rules["_project"], vec!["profile-rule"]);
+        });
+    }
+
+    #[test]
+    fn join_is_refused_for_a_group_that_does_not_list_the_checkout() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("outsider", |_| {});
+            save_group_command("team", &[], &[]);
+            assert!(super::super::groups::join_group("team", "outsider").is_err());
+            assert!(read_back("outsider").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn an_unreadable_group_file_makes_nothing_join() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let dir = core::get_groups_dir().expect("dir");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(dir.join("team.json"), "<<<<<<< conflict").expect("write");
+            let group = core::ProjectGroup { name: "team".to_string(), ..Default::default() };
+            let data = serde_json::to_string(&group).expect("json");
+
+            let joining = Some(vec!["member".to_string()]);
+            assert!(super::super::groups::save_group("team", &data, joining).is_err());
+            assert!(read_back("member").local_confirmed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn attach_and_detach_leave_the_pointer_alone_on_a_malformed_config() {
+        use super::super::project_profiles::{
+            attach_profile_to_project, detach_profile_from_project,
+        };
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, broken) = make_pending_project("attaching", "baseline");
+            std::fs::write(broken.join(".automatic.json"), "<<<<<<< conflict").expect("break");
+            assert!(attach_profile_to_project("attaching", "baseline").is_err());
+            let pointer = core::resolve_project_pointer_for_test("attaching");
+            assert!(pointer.get("local_confirmed_profiles").is_none());
+
+            let (_keep_b, attached) = make_project("detaching", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            std::fs::write(attached.join(".automatic.json"), "<<<<<<< conflict").expect("break");
+            assert!(detach_profile_from_project("detaching", "baseline").is_err());
+            let pointer = core::resolve_project_pointer_for_test("detaching");
+            assert_eq!(pointer["local_confirmed_profiles"], serde_json::json!(["baseline"]));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_attach_save_leaves_the_name_pending() {
+        use super::super::project_profiles::attach_profile_to_project;
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            // Reads succeed, and the write of the state file is refused.
+            let outside = tempdir().expect("outside");
+            std::fs::remove_dir_all(dir.join(".automatic")).expect("clear");
+            std::os::unix::fs::symlink(outside.path(), dir.join(".automatic")).expect("link");
+
+            assert!(attach_profile_to_project("pending", "baseline").is_err());
+
+            let pointer = core::resolve_project_pointer_for_test("pending");
+            assert!(pointer.get("local_confirmed_profiles").is_none());
+        });
+    }
+
+    #[test]
+    fn duplicates_of_a_pending_name_do_not_rewrite_the_config_in_a_sweep() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            let before = serde_json::json!({
+                "name": "pending",
+                "id": read_back("pending").id,
+                "profiles": ["baseline", "baseline"],
+            })
+            .to_string();
+            std::fs::write(dir.join(".automatic.json"), &before).expect("write");
+
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
+
+            assert_eq!(std::fs::read_to_string(dir.join(".automatic.json")).unwrap(), before);
+        });
+    }
+
+    #[test]
+    fn referencing_projects_leave_out_a_pending_checkout() {
+        use super::super::project_profiles::get_projects_referencing_profile;
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, _) = make_pending_project("pending", "baseline");
+            let (_keep_b, _) = make_project("attached", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+
+            let names: Vec<String> = get_projects_referencing_profile("baseline")
+                .unwrap()
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+            assert_eq!(names, vec!["attached"]);
+        });
+    }
+
+    #[test]
+    fn saving_a_profile_does_not_touch_a_checkout_where_it_is_pending() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            let before = committed_config(&dir);
+
+            reconcile_projects_referencing_profile("baseline", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&dir), before);
+            assert!(!dir.join(".claude").exists(), "nothing was synced");
+        });
+    }
+
+    #[test]
+    fn a_stale_editor_copy_cannot_confirm_a_profile() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            let mut stale = read_back("pending");
+            stale.local_confirmed_profiles = vec!["baseline".to_string()];
+
+            save_project("pending", &serde_json::to_string(&stale).unwrap(), None)
+                .expect("save");
+
+            let saved = read_back("pending");
+            assert_eq!(saved.pending_profiles, vec!["baseline"]);
+            assert!(saved.file_rules.is_empty());
+        });
+    }
+
+    #[test]
+    fn turning_read_only_off_does_not_apply_a_pending_profile() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_pending_project("pending", "baseline");
+            set_project_read_only("pending", true).expect("on");
+
+            set_project_read_only("pending", false).expect("off");
+
+            assert!(read_back("pending").file_rules.is_empty());
+            assert!(!dir.join(".claude").exists(), "nothing was synced");
+        });
+    }
+
+    #[test]
+    fn attach_applies_a_pending_profile_and_detach_forgets_it() {
+        use super::super::project_profiles::{
+            attach_profile_to_project, detach_profile_from_project,
+        };
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            core::ignore_project_profile("pending", "baseline").expect("ignore");
+
+            attach_profile_to_project("pending", "baseline").expect("attach");
+            let attached = read_back("pending");
+            assert_eq!(attached.local_confirmed_profiles, vec!["baseline"]);
+            assert!(attached.local_ignored_profiles.is_empty());
+            assert!(attached.pending_profiles.is_empty());
+            assert_eq!(attached.file_rules["_project"], vec!["profile-rule"]);
+
+            detach_profile_from_project("pending", "baseline").expect("detach");
+            assert!(read_back("pending").local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn attach_to_a_read_only_project_records_no_confirmation() {
+        use super::super::project_profiles::attach_profile_to_project;
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_pending_project("pending", "baseline");
+            core::set_project_read_only("pending", true).expect("on");
+
+            assert!(attach_profile_to_project("pending", "baseline").is_err());
+            assert!(read_back("pending").local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_a_profile_leaves_a_pending_checkout_and_forgets_confirmations() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, pending) = make_pending_project("pending", "baseline");
+            let (_keep_b, _) = make_project("attached", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let before = committed_config(&pending);
+
+            detach_profile_from_projects("baseline", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&pending), before);
+            let attached = read_back("attached");
+            assert!(attached.profiles.is_empty());
+            assert!(attached.local_confirmed_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn renaming_a_profile_leaves_a_pending_checkout_and_keeps_attached_ones_working() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, pending) = make_pending_project("pending", "baseline");
+            let (_keep_b, _) = make_project("attached", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let before = committed_config(&pending);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            assert_eq!(committed_config(&pending), before);
+            let attached = read_back("attached");
+            assert_eq!(attached.profiles, vec!["renamed"]);
+            assert_eq!(attached.local_confirmed_profiles, vec!["renamed"]);
+            assert!(attached.pending_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn deleting_and_renaming_still_reach_group_provided_profiles() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            assert_eq!(read_back("member").profiles, vec!["baseline"]);
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+            let renamed = read_back("member");
+            assert_eq!(renamed.profiles, vec!["renamed"]);
+            assert!(renamed.pending_profiles.is_empty());
+            assert_eq!(read_group_back("team").profiles, vec!["renamed"]);
+
+            detach_profile_from_projects("renamed", &SweepProgress::silent());
+            assert!(read_back("member").profiles.is_empty());
+            assert!(read_group_back("team").profiles.is_empty());
         });
     }
 
@@ -4416,6 +5084,7 @@ mod identifier_tests {
             project.hooks.push("h".into());
             project.profiles.push("p".into());
             core::save_project("site", &serde_json::to_string(&project).unwrap()).unwrap();
+            core::confirm_project_profile("site", "p").unwrap();
 
             let hooks = super::super::hooks::get_projects_referencing_hook("h").unwrap();
             assert_eq!(hooks[0].name, "site");
@@ -5906,5 +6575,200 @@ mod tests {
         assert!(remove_stale_skill("no-such-project", "../..").is_err_and(|e| e.contains("Skill")));
         assert!(ensure_custom_asset_name("command", "deploy").is_ok());
         assert!(ensure_custom_asset_name("rule", "CI/CD").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod teammate_skill_registry_tests {
+    use super::*;
+
+    const SKILL: &str = "shared-skill";
+
+    /// Run `body` as one machine: `home` is its `~/.automatic`.
+    fn on_machine<T>(home: &std::path::Path, body: impl FnOnce() -> T) -> T {
+        crate::core::with_test_home(home.to_path_buf(), body)
+    }
+
+    /// Stand in for a git push and pull: only the committed file travels.
+    fn pull_config(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::copy(from.join(".automatic.json"), to.join(".automatic.json")).expect("pull");
+    }
+
+    /// An edit in the app: read the project and save it back unchanged.
+    fn autosave(ident: &str) {
+        let data = core::read_project(ident).expect("read");
+        save_project_with(ident, &data, false, NewProjectRecommendations::Skip).expect("save");
+    }
+
+    fn committed(repo: &std::path::Path) -> String {
+        std::fs::read_to_string(repo.join(".automatic.json")).expect("config")
+    }
+
+    fn create_project(directory: &str) -> String {
+        let project = serde_json::json!({
+            "name": "demo",
+            "directory": directory,
+            "skills": [SKILL],
+            "agents": ["claude"],
+        });
+        save_project_with("demo", &project.to_string(), true, NewProjectRecommendations::Skip)
+            .expect("create")
+    }
+
+    /// Alex creates the project, Sam clones it, and each then saves it
+    /// unchanged in turn. Once both have saved, neither save may change the
+    /// committed file.
+    fn assert_saves_settle(alex_setup: fn(), sam_setup: fn()) {
+        let alex_home = tempfile::tempdir().expect("home");
+        let sam_home = tempfile::tempdir().expect("home");
+        let alex_repo = tempfile::tempdir().expect("repo");
+        let sam_repo = tempfile::tempdir().expect("repo");
+        let alex_dir = alex_repo.path().to_str().unwrap().to_string();
+        let sam_dir = sam_repo.path().to_str().unwrap().to_string();
+
+        let alex = on_machine(alex_home.path(), || {
+            alex_setup();
+            create_project(&alex_dir)
+        });
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        let sam = on_machine(sam_home.path(), || {
+            sam_setup();
+            let ident = import_existing_project(&sam_dir, Some(false)).expect("import").local_key;
+            autosave(&ident);
+            ident
+        });
+
+        pull_config(sam_repo.path(), alex_repo.path());
+        let before = committed(alex_repo.path());
+        on_machine(alex_home.path(), || autosave(&alex));
+        let after_alex = committed(alex_repo.path());
+        assert_eq!(after_alex, before, "Alex's save rewrote the committed config");
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        on_machine(sam_home.path(), || autosave(&sam));
+        assert_eq!(
+            committed(sam_repo.path()),
+            after_alex,
+            "Sam's save rewrote the committed config"
+        );
+    }
+
+    fn no_registry_entry() {}
+
+    fn source_from_acme() {
+        core::record_skill_source(SKILL, "acme/skills", "acme/skills/shared-skill", "github")
+            .expect("record");
+    }
+
+    fn source_from_fork() {
+        core::record_skill_source(SKILL, "fork/skills", "fork/skills/shared-skill", "github")
+            .expect("record");
+    }
+
+    fn source_from_acme_with_install_record() {
+        core::record_skill_source_with_meta(
+            SKILL,
+            "acme/skills",
+            "acme/skills/shared-skill",
+            "github",
+            Some("abc123".to_string()),
+            Some("1.0.0".to_string()),
+            Some("2026-11-02T00:00:00Z".to_string()),
+        )
+        .expect("record");
+    }
+
+    fn collection_frontend() {
+        core::set_skill_collection(SKILL, "frontend").expect("collection");
+    }
+
+    fn collection_tooling() {
+        core::set_skill_collection(SKILL, "tooling").expect("collection");
+    }
+
+    #[test]
+    fn different_skill_sources_leave_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme, source_from_fork);
+    }
+
+    #[test]
+    fn different_skill_collections_leave_the_committed_config_alone() {
+        assert_saves_settle(collection_frontend, collection_tooling);
+    }
+
+    #[test]
+    fn same_skill_source_with_an_install_record_leaves_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme_with_install_record, no_registry_entry);
+    }
+
+    #[test]
+    fn registry_entry_on_one_machine_only_leaves_the_committed_config_alone() {
+        assert_saves_settle(source_from_acme, no_registry_entry);
+    }
+
+    /// A cloned repo must not write into this machine's registries. Update
+    /// checks and "Update Now" trust them, so a committed source could point a
+    /// library skill at another repository.
+    #[test]
+    fn opening_a_clone_leaves_this_machines_registries_alone() {
+        let home = tempfile::tempdir().expect("home");
+        let repo = tempfile::tempdir().expect("repo");
+        std::fs::write(
+            repo.path().join(".automatic.json"),
+            serde_json::json!({
+                "name": "demo",
+                "skills": [SKILL],
+                "skill_sources": {
+                    SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
+                },
+                "skill_collections": { SKILL: "frontend" },
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        on_machine(home.path(), || {
+            let ident = import_existing_project(repo.path().to_str().unwrap(), Some(false))
+                .expect("import")
+                .local_key;
+            autosave(&ident);
+            assert!(core::read_skill_sources().expect("sources").is_empty());
+            assert!(core::read_skill_collections().expect("collections").is_empty());
+        });
+        let config = committed(repo.path());
+        assert!(!config.contains("skill_sources"), "{config}");
+        assert!(!config.contains("skill_collections"), "{config}");
+    }
+
+    /// A repo can commit a state file. An unreadable registry must not leave
+    /// its values in what the project reports.
+    #[test]
+    fn unreadable_registries_do_not_keep_a_committed_state_files_values() {
+        let home = tempfile::tempdir().expect("home");
+        let repo = tempfile::tempdir().expect("repo");
+        let directory = repo.path().to_str().unwrap().to_string();
+
+        on_machine(home.path(), || {
+            let ident = create_project(&directory);
+            let state_path = repo.path().join(".automatic").join("project.json");
+            let mut state: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&state_path).unwrap()).unwrap();
+            state["skill_sources"] = serde_json::json!({
+                SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
+            });
+            state["skill_collections"] = serde_json::json!({ SKILL: "frontend" });
+            std::fs::write(&state_path, state.to_string()).unwrap();
+            let automatic_dir = core::get_automatic_dir().expect("automatic dir");
+            std::fs::create_dir_all(&automatic_dir).unwrap();
+            for file in ["skills.json", "skill-collections.json"] {
+                std::fs::write(automatic_dir.join(file), "{ not json").unwrap();
+            }
+
+            let raw = core::read_project(&ident).expect("read");
+            let project: core::Project = serde_json::from_str(&raw).expect("parse");
+            assert!(project.skill_sources.is_empty());
+            assert!(project.skill_collections.is_empty());
+        });
     }
 }
