@@ -474,8 +474,9 @@ pub struct Project {
 
     // ── Resolved metadata (project portability) ─────────────────────────────
     //
-    // These fields snapshot user-level registry data into the project config
-    // so that the project is self-contained when opened on another machine.
+    // These fields snapshot this machine's user-level registry data. They live
+    // in the state file, never in the committed config, and do not travel to
+    // another machine.
     // They are populated automatically on save and should not be edited by hand.
     /// Provenance metadata for skills in the `skills` list.
     /// Keyed by skill name → SkillSource (GitHub owner/repo, skills.sh id, kind).

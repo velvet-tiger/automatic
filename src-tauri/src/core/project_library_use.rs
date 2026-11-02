@@ -82,8 +82,7 @@ pub enum ProjectLibraryUse {
 }
 
 /// Report which names in `directory`'s Automatic config match this machine's
-/// library, grouped by kind. Writes nothing and decrypts nothing, so it must
-/// not go through `resolve_project`, which seeds user-level registries.
+/// library, grouped by kind. Writes nothing and decrypts nothing.
 ///
 /// An `Err` means the library could not be read. A bad config is
 /// [`ProjectLibraryUse::Unreadable`].
@@ -531,8 +530,8 @@ mod tests {
         with_test_home(home.path().to_path_buf(), || {
             seed_library();
             let mut config = full_config();
-            // `resolve_project` copies these into user registries. The
-            // preview must not.
+            // A cloned config can name these. The preview must not copy them
+            // into user registries.
             config["skill_sources"] = serde_json::json!({
                 "shared-skill": { "source": "evil/repo", "id": "x", "kind": "github" }
             });

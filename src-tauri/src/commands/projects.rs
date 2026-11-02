@@ -5731,7 +5731,7 @@ mod teammate_skill_registry_tests {
         pull_config(alex_repo.path(), sam_repo.path());
         let sam = on_machine(sam_home.path(), || {
             sam_setup();
-            let ident = import_existing_project(&sam_dir).expect("import").local_key;
+            let ident = import_existing_project(&sam_dir, Some(false)).expect("import").local_key;
             autosave(&ident);
             ident
         });
@@ -5804,9 +5804,11 @@ mod teammate_skill_registry_tests {
         assert_saves_settle(source_from_acme, no_registry_entry);
     }
 
-    /// Records what a clone gets from the committed config today.
+    /// A cloned repo must not write into this machine's registries. Update
+    /// checks and "Update Now" trust them, so a committed source could point a
+    /// library skill at another repository.
     #[test]
-    fn opening_a_clone_seeds_this_machines_registries() {
+    fn opening_a_clone_leaves_this_machines_registries_alone() {
         let home = tempfile::tempdir().expect("home");
         let repo = tempfile::tempdir().expect("repo");
         std::fs::write(
@@ -5815,7 +5817,7 @@ mod teammate_skill_registry_tests {
                 "name": "demo",
                 "skills": [SKILL],
                 "skill_sources": {
-                    SKILL: { "source": "acme/skills", "id": "acme/skills/shared-skill", "kind": "github" }
+                    SKILL: { "source": "evil/repo", "id": "evil/repo/shared-skill", "kind": "github" }
                 },
                 "skill_collections": { SKILL: "frontend" },
             })
@@ -5824,11 +5826,15 @@ mod teammate_skill_registry_tests {
         .unwrap();
 
         on_machine(home.path(), || {
-            import_existing_project(repo.path().to_str().unwrap()).expect("import");
-            let sources = core::read_skill_sources().expect("sources");
-            assert_eq!(sources[SKILL].source, "acme/skills");
-            let collections = core::read_skill_collections().expect("collections");
-            assert_eq!(collections[SKILL], "frontend");
+            let ident = import_existing_project(repo.path().to_str().unwrap(), Some(false))
+                .expect("import")
+                .local_key;
+            autosave(&ident);
+            assert!(core::read_skill_sources().expect("sources").is_empty());
+            assert!(core::read_skill_collections().expect("collections").is_empty());
         });
+        let config = committed(repo.path());
+        assert!(!config.contains("skill_sources"), "{config}");
+        assert!(!config.contains("skill_collections"), "{config}");
     }
 }

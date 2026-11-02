@@ -58,6 +58,12 @@ const STATE_FIELDS: &[&str] = &[
     // record would make each machine's reconcile remove what the other's
     // profile added.
     "profile_contributions",
+    // This machine's own registry entries. Teammates can record a skill
+    // differently, and these entries carry per-install timestamps and hashes,
+    // so each save would rewrite the other machine's values. A committed
+    // value is ignored and leaves the config on the next write.
+    "skill_sources",
+    "skill_collections",
     // Snapshots of this machine's registries. Nothing reads them yet. They
     // hold machine-specific command paths and full rule bodies, which would
     // churn a committed file on every library edit.
@@ -465,6 +471,18 @@ mod tests {
                     ..Default::default()
                 },
             )]),
+            skill_sources: BTreeMap::from([(
+                "a-skill".into(),
+                crate::core::SkillSource {
+                    source: "owner/repo".into(),
+                    id: "owner/repo/a-skill".into(),
+                    kind: "github".into(),
+                    installed_sha: None,
+                    installed_version: None,
+                    installed_at: None,
+                },
+            )]),
+            skill_collections: BTreeMap::from([("a-skill".into(), "tools".into())]),
             ..Default::default()
         }
     }
@@ -504,6 +522,8 @@ mod tests {
             "group_context_contributions",
             "group_profile_contributions",
             "profile_contributions",
+            "skill_sources",
+            "skill_collections",
         ] {
             assert!(state.contains_key(key), "state is missing {key}");
             assert!(!config.contains_key(key), "config must not hold {key}");
@@ -734,6 +754,28 @@ mod tests {
             fs::read_to_string(project_legacy_backup_path(dir)).unwrap(),
             "{ not json"
         );
+    }
+
+    #[test]
+    fn committed_skill_registry_fields_are_ignored_and_leave_the_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        fs::write(
+            tmp.path().join(CONFIG_FILE_NAME),
+            r#"{"name":"demo","skills":["s"],
+                "skill_sources":{"s":{"source":"evil/repo","id":"x","kind":"github"}},
+                "skill_collections":{"s":"tools"}}"#,
+        )
+        .unwrap();
+
+        let loaded = read_project_files(dir, "fallback").unwrap().unwrap();
+        assert!(loaded.skill_sources.is_empty());
+        assert!(loaded.skill_collections.is_empty());
+
+        write_project_files(&loaded).expect("write");
+        let config = read_object(&tmp.path().join(CONFIG_FILE_NAME));
+        assert!(!config.contains_key("skill_sources"));
+        assert!(!config.contains_key("skill_collections"));
     }
 
     #[test]
