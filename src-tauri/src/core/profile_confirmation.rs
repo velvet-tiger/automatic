@@ -167,14 +167,15 @@ pub(crate) fn keep_entry_profile_decisions(entry: Option<&RegistryEntry>, projec
 
 /// The groups `project` has joined on this machine that still list it. Group
 /// files are read only for a checkout that joined one. The checkout is found
-/// by its `local_key`, never by its name or committed `id`.
-pub(crate) fn joined_groups(project: &Project) -> Vec<ProjectGroup> {
+/// by its `local_key`, never by its name or committed `id`. An error means a
+/// group file could not be read, so what the checkout has joined is unknown.
+pub(crate) fn joined_groups(project: &Project) -> Result<Vec<ProjectGroup>, String> {
     if project.local_confirmed_groups.is_empty() || project.local_key.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let mut groups = groups_for_project(&project.local_key);
+    let mut groups = groups_listing(&project.local_key)?;
     groups.retain(|group| project.local_confirmed_groups.contains(&group.name));
-    groups
+    Ok(groups)
 }
 
 fn same_profile(a: &str, b: &str) -> bool {
@@ -212,8 +213,21 @@ pub(crate) fn unconfirmed_profiles(project: &Project) -> Vec<String> {
     if names.is_empty() {
         return names;
     }
-    let groups = joined_groups(project);
-    names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
+    match joined_groups(project) {
+        Ok(groups) => {
+            names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
+        }
+        // A damaged group file must not turn the profiles a joined group
+        // provides into pending ones, so the stored record stands in for it.
+        Err(_) => names.retain(|name| {
+            !project.local_confirmed_groups.iter().any(|group| {
+                project
+                    .group_profile_contributions
+                    .get(group)
+                    .is_some_and(|recorded| recorded.contains(name))
+            })
+        }),
+    }
     names
 }
 

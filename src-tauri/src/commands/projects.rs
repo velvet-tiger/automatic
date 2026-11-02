@@ -3131,8 +3131,12 @@ fn detach_profile_from_projects_removes_provided_entries() {
         save_group_command("team", &["project-a"], &["baseline"]);
         let mut group = read_group_back("team");
         group.contexts = vec!["shared".to_string()];
-        super::super::groups::save_group("team", &serde_json::to_string(&group).expect("json"))
-            .expect("save group");
+        super::super::groups::save_group(
+            "team",
+            &serde_json::to_string(&group).expect("json"),
+            None,
+        )
+        .expect("save group");
         assert_keeps_group_entries();
         let path = core::get_groups_dir().expect("groups dir").join("team.json");
         (path, keep, dir)
