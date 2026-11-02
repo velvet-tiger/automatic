@@ -188,6 +188,28 @@ pub fn groups_for_project(ident: &str) -> Vec<ProjectGroup> {
     result
 }
 
+/// Names of the groups that list the project with `local_key`, like
+/// [`groups_for_project`], but a group file, the group list or the registry
+/// that cannot be read is an error and not a group that does not list it.
+pub(crate) fn group_names_listing(local_key: &str) -> Result<Vec<String>, String> {
+    let groups_dir = get_groups_dir()?;
+    let index = ProjectKeyIndex::load()?;
+    let project = index.resolve_for_group(local_key).cloned();
+    let mut listing = Vec::new();
+    for name in list_groups()? {
+        let group = read_group_from_dir(&groups_dir, &name)
+            .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
+        let listed = group.projects.iter().any(|member| match &project {
+            Some(summary) => index.member_is(member, summary),
+            None => member == local_key,
+        });
+        if listed {
+            listing.push(name);
+        }
+    }
+    Ok(listing)
+}
+
 /// Remove each of `stored_values` (a project `id`, or a legacy name) from
 /// every group's stored `projects` list and persist the changes. Returns the
 /// names of groups that were modified.

@@ -176,6 +176,11 @@ fn rewrite_groups_listing_profile(
     };
     let mut changed = Vec::new();
     for name in names {
+        // A read-only member keeps its record, and the group stops listing
+        // the name, so the mark is what lets its next reconcile release it.
+        if let Err(e) = mark_group_profile_releasing(&name, profile_name) {
+            eprintln!("group profiles: could not mark group '{}': {}", name, e);
+        }
         let saved = read_group_parsed(&name).and_then(|mut group| {
             edit(&mut group.profiles);
             write_group(&name, &mut group)

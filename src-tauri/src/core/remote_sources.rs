@@ -1744,7 +1744,7 @@ fn conflict_for(
 /// A name folded the way a case- and normalisation-insensitive file system
 /// compares it, and a little further: NFKC also folds compatibility letters
 /// such as `ſ`, which APFS opens as `s`.
-fn fold_name(name: &str) -> String {
+pub(crate) fn fold_name(name: &str) -> String {
     name.nfkc().collect::<String>().to_lowercase()
 }
 

@@ -1898,6 +1898,10 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepP
     for (project, error) in core::forget_profile_everywhere(profile_name) {
         progress.report_failure(&project, error);
     }
+    // Clears the marks of projects the sweep already released.
+    for (project, error) in core::settle_all_group_joins() {
+        progress.report_failure(&project, error);
+    }
 }
 
 /// Rewrite `profiles` entries and contribution keys from `old_name` to
@@ -1927,6 +1931,10 @@ pub(crate) fn rename_profile_in_projects(
     );
     core::rename_profile_in_groups(old_name, new_name);
     for (project, error) in core::rename_profile_decisions(old_name, new_name) {
+        progress.report_failure(&project, error);
+    }
+    // Clears the marks of projects the sweep already renamed.
+    for (project, error) in core::settle_all_group_joins() {
         progress.report_failure(&project, error);
     }
 }
@@ -3341,6 +3349,68 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(released.profiles.is_empty());
             assert!(released.file_rules.is_empty());
             assert!(released.local_departed_groups.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_releases_a_deleted_profile_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+
+            detach_profile_from_projects("baseline", &SweepProgress::silent());
+            core::delete_project_profile("baseline").expect("delete");
+            assert_eq!(read_back("member").local_releasing_profiles, vec!["baseline"]);
+
+            set_project_read_only("member", false).expect("off");
+
+            let released = read_back("member");
+            assert!(released.profiles.is_empty());
+            assert!(released.file_rules.is_empty());
+            assert!(released.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_read_only_member_moves_to_a_renamed_profile_when_the_mode_goes_off() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &["baseline"]);
+            core::set_project_read_only("member", true).expect("on");
+
+            core::rename_project_profile("baseline", "renamed").expect("rename");
+            rename_profile_in_projects("baseline", "renamed", &SweepProgress::silent());
+
+            set_project_read_only("member", false).expect("off");
+
+            let moved = read_back("member");
+            assert_eq!(moved.profiles, vec!["renamed"]);
+            assert_eq!(moved.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(moved.group_profile_contributions["team"], vec!["renamed"]);
+            assert!(moved.profile_contributions.contains_key("renamed"));
+            assert!(!moved.profile_contributions.contains_key("baseline"));
+            assert!(moved.pending_profiles.is_empty());
+            assert!(moved.local_releasing_profiles.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_corrupt_group_file_keeps_its_joins_when_another_group_is_deleted() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            save_group_command("team", &["member"], &[]);
+            save_group_command("other", &["member"], &[]);
+            let dir = core::get_groups_dir().expect("dir");
+            std::fs::write(dir.join("team.json"), "<<<<<<< conflict").expect("corrupt");
+
+            super::super::groups::delete_group("other").expect("delete");
+
+            let member = read_back("member");
+            assert_eq!(member.local_confirmed_groups, vec!["team", "other"]);
+            assert!(member.local_departed_groups.is_empty());
         });
     }
 

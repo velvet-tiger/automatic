@@ -1,9 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use unicode_normalization::UnicodeNormalization;
-
 use super::project_registry::RegistryEntry;
+use super::remote_sources::fold_name;
 use super::*;
 
 // ── Profile confirmation ─────────────────────────────────────────────────────
@@ -176,12 +175,6 @@ pub(crate) fn joined_groups(project: &Project) -> Vec<ProjectGroup> {
     let mut groups = groups_for_project(&project.local_key);
     groups.retain(|group| project.local_confirmed_groups.contains(&group.name));
     groups
-}
-
-/// A name as a case-insensitive filesystem sees it: Unicode form, case, and
-/// `ſ`, which APFS folds to `s` though lowercasing does not.
-fn fold_name(name: &str) -> String {
-    name.nfc().collect::<String>().to_lowercase().replace('ſ', "s")
 }
 
 fn same_profile(a: &str, b: &str) -> bool {
@@ -383,7 +376,14 @@ pub(crate) fn settle_group_joins(ident: &str) -> Result<(), String> {
         return Ok(());
     }
     let key = entry.local_key().unwrap_or(ident).to_string();
-    let listing: Vec<String> = groups_for_project(&key).into_iter().map(|g| g.name).collect();
+    // A group that cannot be read might list this checkout. Leave its joins.
+    let listing = match group_names_listing(&key) {
+        Ok(listing) => listing,
+        Err(e) => {
+            eprintln!("Could not settle the group joins of '{}': {}", entry.name, e);
+            return Ok(());
+        }
+    };
     // An unreadable project may still hold the records, so keep the marks.
     let project: Option<Project> = read_project(&key)
         .ok()
@@ -463,6 +463,11 @@ pub fn rename_profile_decisions(old: &str, new: &str) -> Vec<(String, String)> {
     edit_all_decisions(|decisions| {
         rename_in(&mut decisions.confirmed, old, new);
         rename_in(&mut decisions.ignored, old, new);
+        // Added, not moved: a project the rename skipped still records the old
+        // name, and its next reconcile must release that too.
+        if decisions.releasing.iter().any(|name| same_profile(name, old)) {
+            add_name(&mut decisions.releasing, new);
+        }
     })
 }
 
