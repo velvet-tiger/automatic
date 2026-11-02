@@ -91,7 +91,12 @@ import { GroupsPanel } from "./panels/GroupsPanel";
 import { PendingProfilesNotice } from "./panels/PendingProfilesNotice";
 import { PendingContextsNotice } from "./panels/PendingContextsNotice";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
-import { ContextsPanel } from "./panels/ContextsPanel";
+import {
+  ContextsPanel,
+  forgetAttaches,
+  useForgetAttachesOnUnmount,
+  type UnsavedAttaches,
+} from "./panels/ContextsPanel";
 import { ActivityPanel } from "./panels/ActivityPanel";
 import { RecommendationsPanel } from "./panels/RecommendationsPanel";
 import { DocsFilesPanel } from "./panels/DocsFilesPanel";
@@ -284,7 +289,8 @@ export function ProjectEditor({
   /** The stored `contexts` at the last read or save, the base of a merge. */
   const storedContexts = useRef<string[]>([]);
   /** Attaches confirmed at the click and not yet saved. */
-  const unsavedAttaches = useRef<{ key: string; slugs: string[] } | null>(null);
+  const unsavedAttaches = useRef<UnsavedAttaches | null>(null);
+  useForgetAttachesOnUnmount(unsavedAttaches);
   // Groups and profiles need a saved project, so the wizard only records the
   // choices here and applies them after the final save.
   const [wizardGroups, setWizardGroups] = useState<string[]>([]);
@@ -1651,11 +1657,7 @@ export function ProjectEditor({
     storedContexts.current = contexts;
     if (!attaches) return;
     const lost = attaches.key === projectKey ? attaches.slugs.filter((slug) => !contexts.includes(slug)) : attaches.slugs;
-    for (const slug of lost) {
-      invoke("decide_project_context", { projectName: attaches.key, slug, confirmed: false }).catch((e: unknown) => {
-        console.warn(`Could not forget the discarded context '${slug}':`, e);
-      });
-    }
+    forgetAttaches(attaches.key, lost);
   };
 
   const noteUnsavedAttach = (slug: string) => {

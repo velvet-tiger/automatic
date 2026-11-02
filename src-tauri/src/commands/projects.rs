@@ -3993,6 +3993,65 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    /// Ignoring or removing a slug is a later decision than the migration's.
+    #[cfg(unix)]
+    #[test]
+    fn a_retry_respects_an_ignore_and_a_saved_removal() {
+        with_temp_home(|_| {
+            let kept = save_library_context("Kept");
+            let ignored = save_library_context("Ignored");
+            let removed = save_library_context("Removed");
+            let keep = tempdir().expect("repo");
+            let dir = keep.path().to_path_buf();
+            let config = serde_json::json!({
+                "name": "repo",
+                "id": uuid::Uuid::new_v4().to_string(),
+                "contexts": [kept, ignored, removed],
+            });
+            std::fs::write(dir.join(".automatic.json"), config.to_string()).expect("config");
+            let key = core::import_existing_project(dir.to_str().unwrap(), None).expect("import").local_key;
+
+            migrate_with_locked_pointers();
+
+            let marker = core::get_automatic_dir().expect("dir").join("contexts_confirmed_migrated");
+            let retried = || std::fs::read_to_string(&marker).expect("marker");
+            core::ignore_project_context(&key, &ignored).expect("ignore");
+            assert!(!retried().contains(&ignored), "{}", retried());
+
+            let without = core::Project {
+                contexts: vec![kept.clone(), ignored.clone()],
+                ..read_back(&key)
+            };
+            save_project(&key, &serde_json::to_string(&without).expect("json"), None).expect("save");
+            assert!(!retried().contains(&removed), "{}", retried());
+
+            // Restored by a later edit of the list, the slug is still not swept up.
+            std::fs::write(dir.join(".automatic.json"), config.to_string()).expect("pull");
+            core::confirm_attached_contexts_once().expect("retry");
+            let project = read_back(&key);
+            assert_eq!(project.local_confirmed_contexts, vec![kept]);
+            assert_eq!(project.local_ignored_contexts, vec![ignored]);
+        });
+    }
+
+    /// The skip itself, for a slug ignored without the marker being updated.
+    #[cfg(unix)]
+    #[test]
+    fn a_retry_skips_a_slug_the_pointer_ignores() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            let pointer_marker = core::get_automatic_dir().expect("dir").join("contexts_confirmed_migrated");
+            core::ignore_project_context(&key, &slug).expect("ignore");
+            let retry = serde_json::json!({ "retry": { key.clone(): [slug.clone()] } });
+            std::fs::write(&pointer_marker, retry.to_string()).expect("marker");
+
+            core::confirm_attached_contexts_once().expect("retry");
+
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+        });
+    }
+
     #[test]
     fn a_keyless_pointer_is_confirmed_and_not_kept_for_retry() {
         with_temp_home(|_| {

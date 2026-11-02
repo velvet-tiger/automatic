@@ -25,7 +25,7 @@ pub fn read_context(slug: &str) -> Result<core::Context, String> {
 }
 
 /// Create or update a context. Returns it with timestamps filled in.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_context(context: core::Context) -> Result<core::Context, String> {
     core::save_context(context)
 }

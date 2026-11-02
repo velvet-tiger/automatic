@@ -388,7 +388,17 @@ pub fn read_context(slug: &str) -> Result<Context, String> {
 /// Validate and write a context. Sets `updated_at`, and `created_at` when it
 /// is empty. Documentation pages for sources the context no longer lists
 /// are left on disk; `delete_context` removes them with the context.
-pub fn save_context(mut context: Context) -> Result<Context, String> {
+pub fn save_context(context: Context) -> Result<Context, String> {
+    validate_context(&context)?;
+    // A slug going live must not inherit a decision made about an earlier
+    // context, such as one a read-only project kept through a rename.
+    if !context_file(&get_contexts_dir()?, &context.slug).exists() {
+        decisions_updated(forget_context_everywhere(&context.slug))?;
+    }
+    write_context(context)
+}
+
+fn write_context(mut context: Context) -> Result<Context, String> {
     validate_context(&context)?;
     let now = chrono::Utc::now().to_rfc3339();
     if context.created_at.is_empty() {
@@ -446,6 +456,7 @@ pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<ContextReference
     }
 
     let pending = projects_with_pending_context(old_slug)?;
+    decisions_updated(forget_context_everywhere(new_slug))?;
     rename_decisions_first(old_slug, new_slug, rename_context_decisions)?;
 
     context.slug = new_slug.to_string();
@@ -482,7 +493,8 @@ fn move_context_files(
         fs::rename(&old_data, context_data_dir(dir, new_slug))
             .map_err(|e| format!("Failed to move stored pages for '{}': {}", old_slug, e))?;
     }
-    save_context(context)?;
+    // Not `save_context`: the decisions already moved to this slug.
+    write_context(context)?;
     fs::remove_file(context_file(dir, old_slug))
         .map_err(|e| format!("Failed to remove old context file '{}': {}", old_slug, e))
 }
@@ -1939,6 +1951,79 @@ mod tests {
 
     fn save_group_value(g: &ProjectGroup) {
         save_group(&g.name, &serde_json::to_string(g).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_new_context_does_not_inherit_a_decision_on_its_slug() {
+        with_home(|| {
+            write_project("app", &project("app", &["old"])).unwrap();
+            confirm_project_context("app", "old").unwrap();
+            confirm_project_context("app", "taken").unwrap();
+
+            save_context(local_context("old", vec![])).unwrap();
+            let decisions = read_project_parsed("app").unwrap().local_confirmed_contexts;
+            assert_eq!(decisions, vec!["taken"]);
+
+            // An update of a live context keeps its decisions.
+            confirm_project_context("app", "old").unwrap();
+            save_context(local_context("old", vec![])).unwrap();
+            assert!(read_project_parsed("app").unwrap().local_confirmed_contexts.contains(&"old".to_string()));
+
+            // Renaming into a slug clears what that slug held, and carries the
+            // renamed context's own decision.
+            rename_context("old", "taken").unwrap();
+            let decisions = read_project_parsed("app").unwrap().local_confirmed_contexts;
+            assert_eq!(decisions, vec!["taken"]);
+
+            create_local_context("Fresh", "").unwrap();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_forget_stops_a_create_and_a_rename() {
+        use std::os::unix::fs::PermissionsExt;
+        with_home(|| {
+            save_context(local_context("old", vec![])).unwrap();
+            write_project("app", &project("app", &["old"])).unwrap();
+            confirm_project_context("app", "fresh").unwrap();
+            let pointers = get_projects_dir().unwrap();
+            let chmod = |mode| {
+                for entry in fs::read_dir(&pointers).unwrap().flatten() {
+                    fs::set_permissions(entry.path(), fs::Permissions::from_mode(mode)).unwrap();
+                }
+                fs::set_permissions(&pointers, fs::Permissions::from_mode(mode | 0o111)).unwrap();
+            };
+
+            chmod(0o444);
+            let created = create_local_context("Fresh", "");
+            let renamed = rename_context("old", "fresh");
+            chmod(0o644);
+
+            assert!(created.is_err());
+            assert!(renamed.is_err());
+            assert!(!context_exists("fresh").unwrap());
+            assert!(context_exists("old").unwrap());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_marker_that_cannot_be_written_stops_a_delete() {
+        use std::os::unix::fs::PermissionsExt;
+        with_home(|| {
+            save_context(local_context("old", vec![])).unwrap();
+            let marker = get_automatic_dir().unwrap().join("contexts_confirmed_migrated");
+            fs::write(&marker, r#"{"retry":{"key":["old"]}}"#).unwrap();
+            fs::set_permissions(&marker, fs::Permissions::from_mode(0o444)).unwrap();
+
+            let deleted = delete_context("old");
+            fs::set_permissions(&marker, fs::Permissions::from_mode(0o644)).unwrap();
+
+            assert!(deleted.is_err());
+            assert!(context_exists("old").unwrap());
+            assert!(fs::read_to_string(&marker).unwrap().contains("old"));
+        });
     }
 
     #[test]

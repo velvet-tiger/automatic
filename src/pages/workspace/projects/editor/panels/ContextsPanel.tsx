@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, BookMarked, Check, Cloud, Layers, Plus, Search, X } from "lucide-react";
 import type { Project } from "../../types";
@@ -25,6 +25,31 @@ interface ContextsPanelProps {
   onNavigateToGroup?: (groupName: string) => void;
   /** Opens Library → Contexts, where contexts are created. */
   onNavigateToContexts?: () => void;
+}
+
+/** Attaches confirmed at the click, with the list that holds them not saved yet. */
+export interface UnsavedAttaches {
+  key: string;
+  slugs: string[];
+}
+
+/** Take back confirmations whose list entry will never be saved. */
+export function forgetAttaches(key: string, slugs: string[]) {
+  for (const slug of slugs) {
+    invoke("decide_project_context", { projectName: key, slug, confirmed: false }).catch((e: unknown) => {
+      console.warn(`Could not forget the discarded context '${slug}':`, e);
+    });
+  }
+}
+
+/** Leaving the editor discards what `attaches` still holds. */
+export function useForgetAttachesOnUnmount(attaches: RefObject<UnsavedAttaches | null>) {
+  useEffect(
+    () => () => {
+      if (attaches.current) forgetAttaches(attaches.current.key, attaches.current.slugs);
+    },
+    [attaches],
+  );
 }
 
 function ContextIcon({ context, size = 15 }: { context: Context | undefined; size?: number }) {

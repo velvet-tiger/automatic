@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockInvoke, resetInvokeMock, invokeMock } from "../../../../../test/tauriMock";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { ContextsPanel } from "./ContextsPanel";
+import { render, renderHook, screen, waitFor, fireEvent } from "@testing-library/react";
+import { ContextsPanel, useForgetAttachesOnUnmount } from "./ContextsPanel";
 import type { Project } from "../../types";
 
 const LIBRARY = [
@@ -145,5 +145,34 @@ describe("ContextsPanel", () => {
     fireEvent.click(await screen.findByText("Extra"));
     fireEvent.click(await screen.findByRole("button", { name: /^Attach$/ }));
     await waitFor(() => expect(onUnsavedAttach).toHaveBeenCalledWith("extra"));
+  });
+});
+
+describe("useForgetAttachesOnUnmount", () => {
+  beforeEach(() => {
+    resetInvokeMock();
+    mockInvoke({ decide_project_context: null });
+  });
+
+  it("takes back each attach still unsaved when the editor goes away", () => {
+    const attaches = { current: { key: "app", slugs: ["own", "extra"] } };
+    const { unmount } = renderHook(() => useForgetAttachesOnUnmount(attaches));
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    unmount();
+
+    for (const slug of ["own", "extra"]) {
+      expect(invokeMock).toHaveBeenCalledWith(
+        "decide_project_context",
+        expect.objectContaining({ projectName: "app", slug, confirmed: false }),
+      );
+    }
+  });
+
+  it("does nothing when every attach was saved", () => {
+    const attaches = { current: null };
+    const { unmount } = renderHook(() => useForgetAttachesOnUnmount(attaches));
+    unmount();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

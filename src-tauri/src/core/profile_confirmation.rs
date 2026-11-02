@@ -376,18 +376,25 @@ pub fn ignore_project_context(ident: &str, slug: &str) -> Result<(), String> {
     if !is_valid_context_slug(slug) {
         return Err(format!("Invalid context slug '{}'", slug));
     }
-    edit_decisions(ident, |decisions| add_name(&mut decisions.ignored_contexts, slug))
+    edit_decisions(ident, |decisions| add_name(&mut decisions.ignored_contexts, slug))?;
+    drop_project_context_retries(ident, &[slug.to_string()])
 }
 
 /// Drop this checkout's decisions about the context `slug`.
 pub fn forget_project_context(ident: &str, slug: &str) -> Result<(), String> {
     edit_decisions(ident, |decisions| forget_context(decisions, slug))?;
+    drop_project_context_retries(ident, &[slug.to_string()])
+}
+
+/// Take `slugs` out of the migration's retry for `ident`: a later decision wins
+/// over the one the migration made.
+fn drop_project_context_retries(ident: &str, slugs: &[String]) -> Result<(), String> {
     let key = resolve_registry_entry(ident)?
         .and_then(|entry| entry.local_key().map(str::to_string))
         .unwrap_or_else(|| ident.to_string());
     edit_context_retries(|retry| {
-        if let Some(slugs) = retry.get_mut(&key) {
-            slugs.retain(|name| name != slug);
+        if let Some(waiting) = retry.get_mut(&key) {
+            waiting.retain(|name| !slugs.contains(name));
         }
     })
 }
@@ -430,7 +437,8 @@ pub fn record_context_edits(ident: &str, edits: &ContextEdits) -> Result<(), Str
     }
     edit_decisions(ident, |decisions| {
         decisions.confirmed_contexts.retain(|slug| !edits.removed.contains(slug));
-    })
+    })?;
+    drop_project_context_retries(ident, &edits.removed)
 }
 
 /// Record what the user chose for `slug` on this checkout, at the click. The
@@ -588,25 +596,27 @@ pub fn forget_profile_everywhere(profile: &str) -> Vec<(String, String)> {
 /// Drop every project's decisions about a deleted context, so a later context
 /// with the same slug is not trusted.
 pub fn forget_context_everywhere(slug: &str) -> Vec<(String, String)> {
-    drop_context_retries(slug);
-    edit_all_decisions(|decisions| forget_context(decisions, slug))
+    let mut failures = edit_all_decisions(|decisions| forget_context(decisions, slug));
+    if let Err(e) = drop_context_retries(slug) {
+        failures.push(("Context migration marker".to_string(), e));
+    }
+    failures
 }
 
 /// Take `slug` out of the migration's retries on every project.
-fn drop_context_retries(slug: &str) {
-    let dropped = edit_context_retries(|retry| {
+fn drop_context_retries(slug: &str) -> Result<(), String> {
+    edit_context_retries(|retry| {
         for slugs in retry.values_mut() {
             slugs.retain(|name| name != slug);
         }
-    });
-    if let Err(e) = dropped {
-        eprintln!("Could not update the context migration marker: {}", e);
-    }
+    })
 }
 
 /// Carry every project's decisions over to a renamed context.
 pub fn rename_context_decisions(old: &str, new: &str) -> Vec<(String, String)> {
-    drop_context_retries(old);
+    if let Err(e) = drop_context_retries(old) {
+        eprintln!("Could not update the context migration marker: {}", e);
+    }
     move_context_decisions(old, new)
 }
 
@@ -801,7 +811,9 @@ fn confirm_context_slugs(entry: &RegistryEntry, key: &str, slugs: &[String]) -> 
         slugs.iter().filter(|slug| listed.contains(slug) && read_context(slug).is_ok()).collect();
     edit_pointer_file(&entry.path, &entry.name, |decisions| {
         for slug in &current {
-            add_name(&mut decisions.confirmed_contexts, slug);
+            if !decisions.ignored_contexts.contains(*slug) {
+                add_name(&mut decisions.confirmed_contexts, slug);
+            }
         }
     })
 }
