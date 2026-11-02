@@ -194,6 +194,9 @@ pub fn run_startup_housekeeping() {
     if let Err(e) = core::install_default_subagents() {
         eprintln!("[automatic] sub-agent install error: {}", e);
     }
+    if let Err(e) = core::seed_default_profile() {
+        eprintln!("[automatic] default profile error: {}", e);
+    }
 
     // Carry what a read resolves into each project folder: keys cached in
     // the registry, current enrichment and the legacy `project.json` split.

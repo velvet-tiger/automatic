@@ -10,6 +10,11 @@
 /// Subscribe an email address to the Automatic newsletter via Attio.
 /// Returns `Ok(())` on success, or a human-readable error string.
 pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
+    if super::is_fresh_run() {
+        eprintln!("[newsletter] fresh run: skipped subscribe");
+        return Ok(());
+    }
+
     let api_key = option_env!("ATTIO_API_KEY")
         .ok_or("Newsletter subscription is not configured in this build")?;
 
@@ -96,6 +101,11 @@ pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
 ///
 /// Returns `Ok(())` on success (including if the email was never subscribed).
 pub async fn unsubscribe_newsletter(email: &str) -> Result<(), String> {
+    if super::is_fresh_run() {
+        eprintln!("[newsletter] fresh run: skipped unsubscribe");
+        return Ok(());
+    }
+
     let api_key = option_env!("ATTIO_API_KEY")
         .ok_or("Newsletter subscription is not configured in this build")?;
 
@@ -230,6 +240,11 @@ pub async fn track_event(
     enabled: bool,
     allow_when_disabled: bool,
 ) -> Result<(), String> {
+    if super::is_fresh_run() {
+        eprintln!("[analytics] fresh run: skipped '{}'", event);
+        return Ok(());
+    }
+
     if !enabled && !allow_when_disabled {
         eprintln!("[analytics] disabled by user preference");
         return Ok(());
@@ -285,4 +300,21 @@ pub async fn track_event(
 /// Returns true if an Amplitude API key was compiled into this build.
 pub fn is_analytics_configured() -> bool {
     matches!(option_env!("AMPLITUDE_API_KEY"), Some(k) if !k.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // This is the only test that sets the variable.
+    #[tokio::test]
+    async fn fresh_run_skips_the_newsletter_without_a_network_call() {
+        std::env::set_var("AUTOMATIC_FRESH_RUN", "1");
+        let subscribed = subscribe_newsletter("nobody@example.com").await;
+        let unsubscribed = unsubscribe_newsletter("nobody@example.com").await;
+        std::env::remove_var("AUTOMATIC_FRESH_RUN");
+
+        assert_eq!(subscribed, Ok(()));
+        assert_eq!(unsubscribed, Ok(()));
+    }
 }

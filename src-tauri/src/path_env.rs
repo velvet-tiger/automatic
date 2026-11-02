@@ -86,6 +86,10 @@ static PROBE_STATE: Mutex<ProbeState> = Mutex::new(ProbeState {
 /// log why and append common install folders instead.
 #[cfg(unix)]
 pub fn fix_path_env() {
+    // `make fresh` sets a minimal PATH on purpose, to imitate a bare machine.
+    if crate::core::is_fresh_run() {
+        return;
+    }
     let mut state = PROBE_STATE.lock().unwrap_or_else(|e| e.into_inner());
     match probe_login_shell_path(STARTUP_PROBE_TIMEOUT) {
         Ok(path) => {
@@ -117,7 +121,7 @@ pub fn fix_path_env() {}
 pub fn reprobe_login_shell_path() {
     // Tests must never replace the test process's PATH or wait on the
     // developer's shell profile.
-    if cfg!(test) {
+    if cfg!(test) || crate::core::is_fresh_run() {
         return;
     }
     let mut state = PROBE_STATE.lock().unwrap_or_else(|e| e.into_inner());
