@@ -923,7 +923,8 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
         );
     }
     report.push_str(
-        "Agents cannot read this project until the user keeps it in the Automatic app.",
+        "Agents cannot read its contexts or project details until the user keeps it in the \
+         Automatic app.",
     );
 
     Ok(report)
@@ -1065,6 +1066,30 @@ fn awaiting_confirmation(name: &str) -> String {
          confirm it in the Automatic app.",
         name
     )
+}
+
+/// `target` with any checkout the user has not kept taken out. Every tool that
+/// acts on a project comes through here, so a held project reaches nothing.
+fn without_held_checkouts(
+    target: crate::core::ProjectTarget,
+) -> Result<crate::core::ProjectTarget, String> {
+    use crate::core::ProjectTarget;
+    match target {
+        ProjectTarget::Checkout(summary) if summary.awaiting_confirmation => {
+            Err(awaiting_confirmation(&summary.name))
+        }
+        ProjectTarget::Project { id, checkouts } => {
+            let first = checkouts[0].name.clone();
+            let mut kept: Vec<_> =
+                checkouts.into_iter().filter(|s| !s.awaiting_confirmation).collect();
+            match kept.len() {
+                0 => Err(awaiting_confirmation(&first)),
+                1 => Ok(ProjectTarget::Checkout(kept.remove(0))),
+                _ => Ok(ProjectTarget::Project { id, checkouts: kept }),
+            }
+        }
+        target => Ok(target),
+    }
 }
 
 const GROUPS_UNREADABLE: &str = "Automatic could not read its project groups, so it will not \
@@ -1395,7 +1420,8 @@ impl AutomaticMcpServer {
     fn project_target(&self, explicit: Option<&str>) -> Result<crate::core::ProjectTarget, String> {
         let summaries = crate::core::get_project_summaries()
             .map_err(|e| format!("Failed to read the project registry: {}", e))?;
-        crate::core::resolve_project_target(explicit, &self.current_project, &summaries)
+        let target = crate::core::resolve_project_target(explicit, &self.current_project, &summaries)?;
+        without_held_checkouts(target)
     }
 
     /// For tools that read or write one checkout's configuration or folder.
@@ -1663,8 +1689,8 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_register_project",
-        description = "Register a new project in Automatic. Its agents can read nothing until \
-                       the user keeps it in the Automatic app. Requires a project name and \
+        description = "Register a new project in Automatic. Agents cannot read its contexts or \
+                       project details until the user keeps it in the Automatic app. Requires a project name and \
                        an absolute path to an existing directory on disk. Optionally provide a \
                        description and a list of agent tool ids (e.g. claude, cursor, codex) — \
                        when agents are given, their configuration files are synced into the \
@@ -4298,6 +4324,7 @@ mod tests {
             local_key: key.into(),
             directory: String::new(),
             read_only: false,
+            awaiting_confirmation: false,
         };
         let empty = ReadingScope::default();
         assert_eq!(empty.project(None), Err(no_reading_checkout(None)));
@@ -4640,6 +4667,66 @@ mod tests {
     }
 
     #[test]
+    fn no_tool_that_acts_on_a_project_reaches_a_held_one() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            let repo = folders.outside.join("repo");
+            std::fs::create_dir_all(&repo).expect("mkdir");
+            let key = register_from(&server_in(&folders.site, None), &repo);
+            let refusal = awaiting_confirmation("repo");
+
+            // Both ways in: the folder's own server, and naming it from a kept one.
+            let own = server_in(&repo, None);
+            let elsewhere = server_in(&folders.site, None);
+            assert!(matches!(&own.current_project, crate::core::CurrentProject::Checkout(s) if s.local_key == key));
+            let results = |server: &AutomaticMcpServer, project: Option<String>| {
+                [
+                    store(server, project.as_deref(), "k"),
+                    call(server.read_claude_memory(Parameters(ReadClaudeMemoryParams {
+                        project: project.clone(),
+                    }))),
+                    call(server.read_skill(Parameters(ReadSkillParams {
+                        name: "anything".into(),
+                        project: project.clone(),
+                    }))),
+                    call(server.attach_rule(Parameters(AttachRuleParams {
+                        project: project.clone(),
+                        machine_name: "rule".into(),
+                        file: None,
+                    }))),
+                    call(server.sync_project(Parameters(SyncProjectParams { name: project.clone() }))),
+                ]
+            };
+            for result in results(&own, None).iter().chain(&results(&elsewhere, Some(key.clone()))) {
+                assert_eq!(result.is_error, Some(true), "{}", result_text(result));
+                assert!(result_text(result).contains(&refusal), "{}", result_text(result));
+            }
+
+            crate::core::confirm_project_registration(&key).expect("keep");
+            assert_ne!(store(&own, None, "k").is_error, Some(true));
+        });
+    }
+
+    /// A held checkout on a shared id must not make the id unusable, or point
+    /// the id at itself.
+    #[test]
+    fn an_id_target_leaves_out_a_held_checkout() {
+        let summary = |key: &str, held: bool| crate::core::ProjectSummary {
+            name: key.into(),
+            id: SITE_ID.into(),
+            local_key: key.into(),
+            directory: String::new(),
+            read_only: false,
+            awaiting_confirmation: held,
+        };
+        let target = |checkouts| crate::core::ProjectTarget::Project { id: SITE_ID.into(), checkouts };
+        let single = without_held_checkouts(target(vec![summary("a", true), summary("b", false)]));
+        assert_eq!(single.unwrap().into_checkout().unwrap().local_key, "b");
+        assert!(without_held_checkouts(target(vec![summary("a", true)])).is_err());
+    }
+
+    #[test]
     fn a_root_naming_an_unconfirmed_project_reads_nothing() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
@@ -4712,7 +4799,8 @@ mod tests {
             assert!(awaiting(), "a committed value is ignored");
 
             let server = server_in(&repo, None);
-            call(server.sync_project(Parameters(SyncProjectParams { name: Some(key.clone()) })));
+            let synced = call(server.sync_project(Parameters(SyncProjectParams { name: Some(key.clone()) })));
+            assert_eq!(result_text(&synced), awaiting_confirmation("repo"));
             assert!(awaiting(), "a sync keeps it");
 
             let tools: Vec<String> = serde_json::from_str::<serde_json::Value>(
@@ -5436,6 +5524,7 @@ mod tests {
             name: name.into(),
             directory: dir.into(),
             read_only: false,
+            awaiting_confirmation: false,
         };
         let this = summary("api", ID_A, "aaaaaaaa-0000-4000-8000-000000000001", "/w/api");
         let index = crate::core::ProjectKeyIndex::new(vec![
@@ -5809,6 +5898,7 @@ mod tests {
             .expect("save server");
             register_project_impl(&params("toggle", ws.to_str().unwrap(), Some(vec!["claude"])))
                 .expect("register");
+            crate::core::confirm_project_registration("toggle").expect("keep");
             let mut project: crate::core::Project =
                 serde_json::from_str(&crate::core::read_project("toggle").expect("read"))
                     .expect("parse");

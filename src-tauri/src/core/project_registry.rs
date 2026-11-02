@@ -70,6 +70,17 @@ impl RegistryEntry {
             .unwrap_or(false)
     }
 
+    /// Whether the entry's project waits for the user to keep it. An entry
+    /// that could not be parsed reports `false`, and reads as nothing anyway.
+    pub fn awaiting_confirmation(&self) -> bool {
+        self.contents
+            .as_ref()
+            .ok()
+            .and_then(|v| v.get("local_awaiting_confirmation"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
     /// The `id` cached in the entry's file, if any.
     pub fn cached_id(&self) -> Option<&str> {
         self.string_field("id")
@@ -93,6 +104,7 @@ impl RegistryEntry {
             name: self.name.clone(),
             directory: self.directory().ok().flatten().unwrap_or_default(),
             read_only: self.local_read_only(),
+            awaiting_confirmation: self.awaiting_confirmation(),
         }
     }
 

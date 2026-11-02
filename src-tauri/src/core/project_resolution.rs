@@ -606,6 +606,7 @@ mod tests {
             name: name.into(),
             directory: directory.into(),
             read_only: false,
+            awaiting_confirmation: false,
         }
     }
 

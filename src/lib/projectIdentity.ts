@@ -88,6 +88,11 @@ interface CheckoutDecisions {
   local_awaiting_confirmation?: boolean;
 }
 
+/** Whether an agent registered the project and the user has not kept it. */
+export function isHeldProject(summaries: readonly ProjectSummary[], projectKey: string): boolean {
+  return summaries.some((s) => projectKeyOf(s) === projectKey && s.awaiting_confirmation === true);
+}
+
 /**
  * `held`'s list with what changed in storage since `base`, the stored list at
  * the last read. An unsaved attach or detach survives. A slug that left storage

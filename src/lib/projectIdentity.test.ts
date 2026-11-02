@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ProjectSummary } from "../pages/workspace/projects/types";
 import {
   membersWithoutProject,
+  isHeldProject,
   mergeContexts,
   withCheckoutDecisions,
   projectKeyOf,
@@ -159,6 +160,19 @@ describe("shared names in the Add Project wizard", () => {
       "2 other projects are also called \u201cwebsite\u201d. You can keep this name.",
     );
     expect(sharedNameNote("docs", [])).toBeNull();
+  });
+});
+
+describe("isHeldProject", () => {
+  const summaries: ProjectSummary[] = [
+    { name: "kept", local_key: "k1", id: "a", directory: "/a" },
+    { name: "held", local_key: "k2", id: "b", directory: "/b", awaiting_confirmation: true },
+  ];
+
+  it("marks only the project waiting for the user", () => {
+    expect(isHeldProject(summaries, "k2")).toBe(true);
+    expect(isHeldProject(summaries, "k1")).toBe(false);
+    expect(isHeldProject(summaries, "gone")).toBe(false);
   });
 });
 

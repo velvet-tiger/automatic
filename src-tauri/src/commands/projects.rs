@@ -4194,6 +4194,64 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
+    fn a_keyless_pointer_adopts_no_record_from_a_committed_state_file() {
+        with_temp_home(|_| {
+            let (member, _clone, _keep, _clone_keep) = shared_id_before_migration();
+            let id = read_back(&member).id;
+            let keep = tempdir().expect("repo");
+            let project = core::Project {
+                name: "keyless".to_string(),
+                id,
+                directory: keep.path().display().to_string(),
+                ..Default::default()
+            };
+            core::save_project("keyless", &serde_json::to_string(&project).expect("json")).expect("save");
+            let state = keep.path().join(".automatic/project.json");
+            let committed = serde_json::json!({"group_context_contributions": {"team": ["provided"]}});
+            std::fs::create_dir_all(state.parent().expect("parent")).expect("mkdir");
+            std::fs::write(&state, committed.to_string()).expect("write");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+
+            assert!(read_back("keyless").local_confirmed_groups.is_empty());
+        });
+    }
+
+    /// A held project with the member's `id`: not joined, not confirmed, and
+    /// no reason for the single real checkout to lose its join.
+    #[test]
+    fn the_migrations_skip_a_held_project() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_member_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            let group = serde_json::json!({"name": "team", "projects": [member]});
+            core::save_group("team", &group.to_string()).expect("group");
+            let keep = tempdir().expect("repo");
+            let mut held = core::Project {
+                name: "held".to_string(),
+                id: read_back(&member).id,
+                directory: keep.path().display().to_string(),
+                contexts: vec![slug],
+                local_awaiting_confirmation: true,
+                ..Default::default()
+            };
+            core::prepare_new_project_keys(&mut held).expect("keys");
+            let key = held.local_key.clone();
+            held.id = read_back(&member).id;
+            core::save_project(&key, &serde_json::to_string(&held).expect("json")).expect("save");
+
+            core::confirm_attached_profiles_once().expect("migrate");
+            core::confirm_attached_contexts_once().expect("migrate");
+
+            let project = read_back(&key);
+            assert!(project.local_confirmed_groups.is_empty());
+            assert!(project.local_confirmed_contexts.is_empty());
+            assert_eq!(read_back(&member).local_confirmed_groups, vec!["team"]);
+        });
+    }
+
+    #[test]
     fn the_migration_still_joins_a_single_checkout() {
         with_temp_home(|_| {
             let (_keep, _dir) = make_project("member", |_| {});

@@ -3663,6 +3663,7 @@ mod tests {
             name: name.to_string(),
             directory: format!("/work/{}", project.name),
             read_only: false,
+            awaiting_confirmation: false,
         }
     }
 

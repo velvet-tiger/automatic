@@ -705,26 +705,42 @@ fn attached_profile_names(entry: &RegistryEntry) -> Result<Vec<String>, String> 
     }
 }
 
+/// How the migrations name an entry, on both sides of a comparison.
+fn entry_ident(entry: &RegistryEntry) -> &str {
+    entry.local_key().unwrap_or(&entry.name)
+}
+
 /// Identifiers of the checkouts whose committed `id` another registered checkout
 /// also has. A repository chooses its `id`, so nothing tells which of them the
-/// group meant: each joins with the Join group action.
-fn checkouts_sharing_an_id() -> Result<Vec<String>, String> {
-    let summaries = get_project_summaries()?;
-    Ok(summaries
+/// group meant. A held project does not count: it may be only an agent's.
+fn checkouts_sharing_an_id(entries: &[RegistryEntry]) -> Vec<String> {
+    let kept: Vec<(String, String)> = entries
         .iter()
-        .filter(|s| !s.id.is_empty() && summaries.iter().filter(|o| o.id == s.id).count() > 1)
-        .map(|s| checkout_ident(s).to_string())
-        .collect())
+        .filter(|entry| !entry.awaiting_confirmation())
+        .map(|entry| (entry_ident(entry).to_string(), project_summary(entry).id))
+        .collect();
+    kept.iter()
+        .filter(|(_, id)| !id.is_empty() && kept.iter().filter(|(_, other)| other == id).count() > 1)
+        .map(|(ident, _)| ident.clone())
+        .collect()
 }
 
 /// The groups a checkout's own state records, read through `resolve_project`,
-/// which clears the records of a state file copied from another checkout.
-fn groups_recorded_by(ident: &str) -> Vec<String> {
-    let Some(project) = read_project(ident)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Project>(&raw).ok())
-    else {
+/// which clears the records of a state file copied from another checkout. A
+/// pointer with no `local_key` has nothing to compare a state file against, so
+/// it can hold no record.
+fn groups_recorded_by(entry: &RegistryEntry) -> Vec<String> {
+    let Some(key) = entry.local_key() else {
         return Vec::new();
+    };
+    let project = read_project(key)
+        .and_then(|raw| serde_json::from_str::<Project>(&raw).map_err(|e| e.to_string()));
+    let project = match project {
+        Ok(project) => project,
+        Err(e) => {
+            eprintln!("Could not read the group records of '{}': {}", entry.name, e);
+            return Vec::new();
+        }
     };
     project
         .group_context_contributions
@@ -750,16 +766,17 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     }
     let _writes = super::hold_library_writes();
     let mut failed = Vec::new();
-    let shared = checkouts_sharing_an_id()?;
-    for entry in scan_registry()? {
-        let ident = entry.local_key().unwrap_or(&entry.name);
+    let entries = scan_registry()?;
+    let shared = checkouts_sharing_an_id(&entries);
+    for entry in entries.iter().filter(|entry| !entry.awaiting_confirmation()) {
+        let ident = entry_ident(entry);
         let mut groups: Vec<String> =
             groups_for_project(ident).into_iter().map(|g| g.name).collect();
         if shared.iter().any(|key| key == ident) {
-            let recorded = groups_recorded_by(ident);
+            let recorded = groups_recorded_by(entry);
             groups.retain(|group| recorded.contains(group));
         }
-        let confirmed = attached_profile_names(&entry).unwrap_or_else(|e| {
+        let confirmed = attached_profile_names(entry).unwrap_or_else(|e| {
             eprintln!("Could not read the profiles of '{}': {}", entry.name, e);
             Vec::new()
         });
@@ -915,7 +932,8 @@ pub fn confirm_attached_contexts_once() -> Result<(), String> {
     }
     let mut retry = BTreeMap::new();
     let mut keyless = Vec::new();
-    for entry in scan_registry()? {
+    let held = |entry: &RegistryEntry| entry.awaiting_confirmation();
+    for entry in scan_registry()?.into_iter().filter(|entry| !held(entry)) {
         let slugs = attached_context_slugs(&entry).unwrap_or_else(|e| {
             eprintln!("Could not read the contexts of '{}': {}", entry.name, e);
             Vec::new()

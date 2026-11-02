@@ -1130,7 +1130,7 @@
     "name": "automatic_read_skill"
   },
   {
-    "description": "Register a new project in Automatic. Its agents can read nothing until the user keeps it in the Automatic app. Requires a project name and an absolute path to an existing directory on disk. Optionally provide a description and a list of agent tool ids (e.g. claude, cursor, codex) — when agents are given, their configuration files are synced into the directory immediately. Another project may share the name. Fails when the directory is already registered to another project, or the directory holds an unregistered Automatic config.",
+    "description": "Register a new project in Automatic. Agents cannot read its contexts or project details until the user keeps it in the Automatic app. Requires a project name and an absolute path to an existing directory on disk. Optionally provide a description and a list of agent tool ids (e.g. claude, cursor, codex) — when agents are given, their configuration files are synced into the directory immediately. Another project may share the name. Fails when the directory is already registered to another project, or the directory holds an unregistered Automatic config.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

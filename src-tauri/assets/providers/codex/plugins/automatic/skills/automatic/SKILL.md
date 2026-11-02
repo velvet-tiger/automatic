@@ -73,7 +73,7 @@ Use Automatic when you need to:
 - `automatic_get_credential`
 - `automatic_list_mcp_servers`
 - `automatic_get_related_projects`
-- `automatic_register_project` refuses a folder that holds the one the server runs in, or a client root; a project it registers reads nothing until the user keeps it in the app
+- `automatic_register_project` refuses a folder that holds the one the server runs in, or a client root; agents cannot read the contexts or project details of a project it registers until the user keeps it in the app
 - `automatic_read_claude_memory`
 
 ## MCP configuration

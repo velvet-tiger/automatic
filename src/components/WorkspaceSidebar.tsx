@@ -1,12 +1,13 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, Layers, LayoutGrid, Lock, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, LayoutGrid, Lock, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
 import { resolveGroupDrop, UNGROUPED_DROP_TARGET } from "../lib/groupDrop";
 import {
   loadProjectSummaries,
   membersWithoutProject,
+  isHeldProject,
   projectKeyOf,
   projectLabelFor,
   projectLabels,
@@ -340,6 +341,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     const isActive = activeTab === "projects" && projectKey === activeProjectKey;
     const label = labelForKey(projectKey);
     const readOnly = summaries.some((s) => projectKeyOf(s) === projectKey && s.read_only === true);
+    const held = isHeldProject(summaries, projectKey);
     return (
       <div key={projectKey} className="group/project relative">
         <button
@@ -360,6 +362,13 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
               size={10}
               className="ml-1.5 inline -mt-0.5 text-text-muted/60"
               aria-label="Read only"
+            />
+          )}
+          {held && (
+            <ShieldAlert
+              size={10}
+              className="ml-1.5 inline -mt-0.5 text-warning"
+              aria-label="An agent added this project. Open it to keep or remove it."
             />
           )}
         </button>

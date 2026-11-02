@@ -140,6 +140,10 @@ pub struct ProjectSummary {
     /// inside a read-only project.
     #[serde(default)]
     pub read_only: bool,
+    /// An agent registered this project and the user has not kept it. See
+    /// [`Project::local_awaiting_confirmation`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub awaiting_confirmation: bool,
 }
 
 /// Every registered project with its keys, sorted by name.
@@ -185,6 +189,7 @@ pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
                 name: entry.name.clone(),
                 directory: String::new(),
                 read_only: false,
+                awaiting_confirmation: false,
             };
         }
     };
@@ -213,6 +218,7 @@ pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
         name: entry.name.clone(),
         directory,
         read_only: entry.local_read_only(),
+        awaiting_confirmation: entry.awaiting_confirmation(),
     }
 }
 
@@ -3595,6 +3601,7 @@ mod tests {
                         name: "alpha".into(),
                         directory: String::new(),
                         read_only: false,
+                        awaiting_confirmation: false,
                     },
                     ProjectSummary {
                         local_key: String::new(),
@@ -3602,6 +3609,7 @@ mod tests {
                         name: "broken".into(),
                         directory: String::new(),
                         read_only: false,
+                        awaiting_confirmation: false,
                     },
                     ProjectSummary {
                         local_key: keyed.local_key.clone(),
@@ -3609,6 +3617,7 @@ mod tests {
                         name: "zeta".into(),
                         directory: dir.to_str().unwrap().to_string(),
                         read_only: false,
+                        awaiting_confirmation: false,
                     },
                 ]
             );

@@ -387,6 +387,8 @@ export interface ProjectSummary {
   directory: string;
   /** Whether this machine treats the project as read-only. */
   read_only?: boolean;
+  /** An agent registered this project and the user has not kept it. */
+  awaiting_confirmation?: boolean;
 }
 
 export interface ActivityEntry {

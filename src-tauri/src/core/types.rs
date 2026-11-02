@@ -493,8 +493,9 @@ pub struct Project {
     pub local_ignored_contexts: Vec<String>,
 
     /// Set when an agent registered this project over MCP, until the user keeps
-    /// it in the app. Until then it reads as nothing and is nobody's peer, or an
-    /// agent could make any folder a reading checkout. Stored only in the
+    /// it in the app. Until then agents cannot read its contexts or project
+    /// details, and it is nobody's peer, or an agent could make any folder a
+    /// reading checkout. Stored only in the
     /// registry pointer, so a repository cannot clear it. Absent means confirmed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local_awaiting_confirmation: bool,
