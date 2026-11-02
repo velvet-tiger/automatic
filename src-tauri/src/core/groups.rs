@@ -91,8 +91,12 @@ fn read_stored_group(path: &std::path::Path, name: &str) -> Result<ProjectGroup,
         .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?;
     // Round-trip through the struct to ensure forward-compatibility: unknown
     // fields are silently dropped and defaults are applied.
-    serde_json::from_str::<ProjectGroup>(&raw)
-        .map_err(|e| format!("Group '{}' could not be read: {}", name, e))
+    serde_json::from_str::<ProjectGroup>(&raw).map_err(|e| {
+        // This message reaches the UI and agents, and a parse error can quote
+        // the file, so the detail stays in stderr.
+        eprintln!("Group '{}' could not be parsed: {}", name, e);
+        format!("Group '{}' could not be parsed (line {}, column {})", name, e.line(), e.column())
+    })
 }
 
 pub fn save_group(name: &str, data: &str) -> Result<(), String> {
@@ -169,14 +173,13 @@ pub fn groups_for_project(ident: &str) -> Vec<ProjectGroup> {
 /// The readable groups that list `ident`, and a message for each group file
 /// that could not be read.
 fn read_groups_listing(ident: &str) -> Result<(Vec<ProjectGroup>, Vec<String>), String> {
-    let names = list_groups()?;
+    let groups_dir = get_groups_dir()?;
+    let (names, mut unreadable) = scan_group_names(&groups_dir)?;
     let index = ProjectKeyIndex::load()
         .map_err(|e| format!("Could not read the project registry: {}", e))?;
-    let groups_dir = get_groups_dir()?;
     let project = index.resolve_for_group(ident).cloned();
 
     let mut groups = Vec::new();
-    let mut unreadable = Vec::new();
     for name in names {
         match read_stored_group(&group_path(&groups_dir, &name), &name) {
             Ok(group) => {
@@ -192,6 +195,64 @@ fn read_groups_listing(ident: &str) -> Result<(Vec<ProjectGroup>, Vec<String>), 
         }
     }
     Ok((groups, unreadable))
+}
+
+/// Every name that may be a group, and a message for each directory entry
+/// that could not be read. Unlike [`list_groups`] this keeps a file it cannot
+/// inspect, such as a link whose target is missing, so the read that follows
+/// reports it. Only a groups folder that does not exist means no groups.
+fn scan_group_names(groups_dir: &PathBuf) -> Result<(Vec<String>, Vec<String>), String> {
+    let read_failure = |e: std::io::Error| format!("The groups folder could not be read: {}", e);
+    match fs::symlink_metadata(groups_dir) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        Err(e) => return Err(read_failure(e)),
+    }
+
+    let mut names = Vec::new();
+    let mut unreadable = Vec::new();
+    for entry in fs::read_dir(groups_dir).map_err(read_failure)? {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(e) => {
+                unreadable.push(read_failure(e));
+                continue;
+            }
+        };
+        if path.extension().is_none_or(|ext| ext != "json")
+            || fs::metadata(&path).is_ok_and(|meta| meta.is_dir())
+        {
+            continue;
+        }
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            if is_valid_name(stem) {
+                names.push(stem.to_string());
+            }
+        }
+    }
+    names.sort();
+    Ok((names, unreadable))
+}
+
+/// Put back what `stored` records as group-provided, for a save that cannot
+/// reconcile because group membership is unknown. The reconcile is what stops
+/// a stale editor copy dropping a group's entries, so without it the stored
+/// records decide. Entries the copy added are left alone.
+pub(crate) fn keep_group_provided_entries(incoming: &mut Project, stored: &Project) {
+    incoming.group_profile_contributions = stored.group_profile_contributions.clone();
+    incoming.group_context_contributions = stored.group_context_contributions.clone();
+    for profile in stored.group_profile_contributions.values().flatten() {
+        if !incoming.profiles.contains(profile) {
+            incoming.profiles.push(profile.clone());
+        }
+    }
+    for context in stored.group_context_contributions.values().flatten() {
+        if !incoming.contexts.contains(context) {
+            incoming.contexts.push(context.clone());
+        }
+    }
 }
 
 /// Remove each of `stored_values` (a project `id`, or a legacy name) from

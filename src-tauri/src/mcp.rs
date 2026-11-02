@@ -1278,7 +1278,10 @@ impl AutomaticMcpServer {
 
         // Find every group this project belongs to. Members are stored as
         // project ids.
-        let groups = crate::core::groups_for_project(crate::core::checkout_ident(&this));
+        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&this)) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
 
         if groups.is_empty() {
             return Ok(tool_success(

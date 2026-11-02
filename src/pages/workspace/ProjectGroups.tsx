@@ -142,6 +142,11 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       setIsEditing(false);
       setError(null);
     } catch (err: any) {
+      // Stay on the group: the panel offers Delete, the one way to clear a
+      // damaged file from here.
+      setGroup(null);
+      setSelectedName(name);
+      setIsEditing(false);
       setError(`Failed to load group: ${err}`);
     }
   };
@@ -416,6 +421,29 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
           </div>
         )}
 
+        {/* Group that could not be read */}
+        {selectedName && !group && !isCreating && (
+          <div className="p-6 max-w-2xl">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <Layers size={18} className="text-text-muted shrink-0" />
+                <h2 className="text-[16px] font-semibold text-text-base">{selectedName}</h2>
+              </div>
+              <button
+                onClick={() => handleDeleteGroup(selectedName)}
+                className="flex items-center justify-center w-[26px] h-[26px] rounded-md text-text-muted hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                title="Delete group"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <p className="mt-2 text-[13px] text-text-muted">
+              This group's file could not be read. Repair the file, or delete the group.
+              Its members keep what it provides until then.
+            </p>
+          </div>
+        )}
+
         {/* Group detail */}
         {group && !isCreating && (
           <div className="p-6 space-y-6 max-w-2xl">
@@ -596,7 +624,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
         )}
 
         {/* Empty state */}
-        {!group && !isCreating && (
+        {!selectedName && !group && !isCreating && (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
             <Layers size={32} className="text-text-muted/30 mb-3" />
             <p className="text-[14px] font-medium text-text-base mb-1">No group selected</p>

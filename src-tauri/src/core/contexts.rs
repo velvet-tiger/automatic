@@ -2131,6 +2131,21 @@ mod tests {
     }
 
     #[test]
+    fn project_context_changes_refuse_while_a_group_file_is_corrupt() {
+        with_home(|| {
+            save_context(local_context("docs", vec![])).unwrap();
+            write_project("app", &project("app", &["docs"])).unwrap();
+            save_group_value(&group("team", &[], &[]));
+            std::fs::write(get_groups_dir().unwrap().join("team.json"), "{ not json").unwrap();
+
+            let target = ContextTarget::Project("app".to_string());
+            assert!(attach_context(&target, "docs").unwrap_err().contains("team"));
+            assert!(detach_context(&target, "docs").unwrap_err().contains("team"));
+            assert_eq!(read_project_parsed("app").unwrap().contexts, vec!["docs"]);
+        });
+    }
+
+    #[test]
     fn groups_listing_fails_where_groups_for_project_skips() {
         with_home(|| {
             save_group_value(&group("good", &["app"], &[]));

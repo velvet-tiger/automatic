@@ -344,11 +344,18 @@ fn save_project_with(
     //
     // An unreadable group leaves membership unknown, so the group reconciles
     // are skipped: they would release everything that group provides. The
-    // save still goes ahead, because the bad file may have nothing to do
-    // with this project and failing would block every project's autosave.
+    // stored records stand in for them. The save still goes ahead, because
+    // the bad file may have nothing to do with this project and failing
+    // would block every project's autosave.
     let member_groups = core::groups_listing(name);
     if let Err(e) = &member_groups {
         eprintln!("Skipping the group reconcile for '{}': {}", name, e);
+        if let Some(stored) = core::read_project(name)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<core::Project>(&raw).ok())
+        {
+            core::keep_group_provided_entries(&mut incoming, &stored);
+        }
     }
     if let Ok(groups) = &member_groups {
         core::reconcile_group_profiles(&mut incoming, groups);
@@ -3160,6 +3167,78 @@ fn detach_profile_from_projects_removes_provided_entries() {
 
             assert!(error.contains("team"), "{error}");
             assert_keeps_group_entries();
+        });
+    }
+
+    /// The group reconcile is what stops a stale editor copy dropping group
+    /// entries. While it cannot run, the stored records do that job.
+    #[test]
+    fn stale_save_keeps_group_entries_while_a_group_file_is_corrupt() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+            let mut stale = read_back("project-a");
+            stale.profiles.clear();
+            stale.contexts.clear();
+            stale.group_profile_contributions.clear();
+            stale.group_context_contributions.clear();
+            stale.profile_contributions.clear();
+            stale.file_rules.clear();
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            let data = serde_json::to_string(&stale).expect("json");
+            save_project_with("project-a", &data, false, NewProjectRecommendations::Skip)
+                .expect("the save goes ahead");
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// A link whose target is missing is unreadable, not a removed group.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_group_link_releases_nothing_on_save() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::os::unix::fs::symlink(group_file.with_extension("missing"), &group_file)
+                .expect("link group file");
+            save_project_a_again();
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    #[test]
+    fn attach_profile_refuses_while_a_group_file_is_corrupt() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+            save_profile_with_rule("extra", "extra-rule");
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            let error = super::super::project_profiles::attach_profile_to_project(
+                "project-a",
+                "extra",
+            )
+            .expect_err("membership is unknown");
+
+            assert!(error.contains("team"), "{error}");
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// A parse error can quote the file, so what callers see does not.
+    #[test]
+    fn group_parse_error_does_not_quote_the_file() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::write(&group_file, r#"{"name":"team","projects":"pasted text"}"#)
+                .expect("damage group file");
+            let error = core::read_group("team").expect_err("unreadable");
+
+            assert!(error.contains("team"), "{error}");
+            assert!(!error.contains("pasted text"), "{error}");
         });
     }
 
