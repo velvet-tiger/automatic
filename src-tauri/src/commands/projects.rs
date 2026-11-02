@@ -3562,7 +3562,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
         with_temp_home(|_| {
             let (_keep, _dir) = make_project("member", |_| {});
             let member = read_back("member").local_key;
-            save_context_group("team", &[member.clone()], &["private"], &[member.clone()]);
+            save_context_group("team", std::slice::from_ref(&member), &["private"], std::slice::from_ref(&member));
             assert_eq!(read_back(&member).contexts, vec!["private"]);
 
             let (_clone, clone_dir, key) = import_id_clone("member", &[], None);
@@ -3575,7 +3575,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
 
             // A group save must not write into a folder that never joined.
             let before = std::fs::read(&config_path).expect("read");
-            save_context_group("team", &[member.clone()], &["private", "more"], &[]);
+            save_context_group("team", std::slice::from_ref(&member), &["private", "more"], &[]);
             assert_eq!(std::fs::read(&config_path).expect("read"), before);
             assert!(read_back(&key).group_context_contributions.is_empty());
             assert_eq!(read_back(&member).contexts, vec!["private", "more"]);
@@ -3599,7 +3599,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
         with_temp_home(|_| {
             let (_keep, _dir) = make_project("member", |_| {});
             let member = read_back("member").local_key;
-            save_context_group("team", &[member.clone()], &["private"], &[member.clone()]);
+            save_context_group("team", std::slice::from_ref(&member), &["private"], std::slice::from_ref(&member));
 
             let forged = serde_json::json!({ "local_confirmed_groups": ["team"] });
             let (_clone, clone_dir, key) = import_id_clone("member", &[], Some(forged));
