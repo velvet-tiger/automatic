@@ -1842,11 +1842,9 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str, progress: &SweepP
         Unreadable::Report,
         "profile detach",
         |_, project| {
-            let before = project.profiles.len();
-            project.profiles.retain(|p| p != profile_name);
-            let recorded = project.profile_contributions.contains_key(profile_name);
+            let released = core::release_profile(project, profile_name);
             let group_recorded = core::strip_group_profile_contribution(project, profile_name);
-            if project.profiles.len() == before && !recorded && !group_recorded {
+            if !released && !group_recorded {
                 return false;
             }
             core::reconcile_project_profiles(project);
@@ -2790,6 +2788,91 @@ pub(crate) mod propagation_tests {
                 vec!["keep-rule"]
             );
         });
+    }
+
+    /// Run `body` as one machine: `home` is its `~/.automatic`.
+    fn on_machine<T>(home: &std::path::Path, body: impl FnOnce() -> T) -> T {
+        crate::core::with_test_home(home.to_path_buf(), body)
+    }
+
+    fn save_shared_profile(skills: &[&str]) {
+        let data = serde_json::to_string(&core::ProjectProfile {
+            name: "shared".to_string(),
+            skills: skills.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        })
+        .expect("profile json");
+        core::save_project_profile("shared", &data).expect("save profile");
+    }
+
+    /// Stand in for a git push and pull: only the committed file travels.
+    fn pull_config(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::copy(from.join(".automatic.json"), to.join(".automatic.json")).expect("pull");
+    }
+
+    /// An edit in the app: read the project and save it back unchanged.
+    fn autosave(ident: &str) {
+        let data = core::read_project(ident).expect("read");
+        save_project_with(ident, &data, false, NewProjectRecommendations::Skip).expect("save");
+    }
+
+    /// Two people each have their own `shared` profile. Neither may remove
+    /// what the other's profile added.
+    #[test]
+    fn teammates_with_different_same_name_profiles_keep_each_others_entries() {
+        let alex_home = tempfile::tempdir().expect("home");
+        let sam_home = tempfile::tempdir().expect("home");
+        let alex_repo = tempfile::tempdir().expect("repo");
+        let sam_repo = tempfile::tempdir().expect("repo");
+        let alex_dir = alex_repo.path().to_str().unwrap().to_string();
+        let sam_dir = sam_repo.path().to_str().unwrap().to_string();
+
+        let alex = on_machine(alex_home.path(), || {
+            save_shared_profile(&["react", "vitest"]);
+            let project = serde_json::json!({
+                "name": "demo",
+                "directory": alex_dir,
+                "profiles": ["shared"],
+                "agents": ["claude"],
+            });
+            let ident = save_project_with(
+                "demo",
+                &project.to_string(),
+                true,
+                NewProjectRecommendations::Skip,
+            )
+            .expect("create");
+            assert_eq!(read_back(&ident).skills, vec!["react", "vitest"]);
+            ident
+        });
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        let sam = on_machine(sam_home.path(), || {
+            save_shared_profile(&["react", "python"]);
+            let ident = core::import_existing_project(&sam_dir).expect("import").local_key;
+            autosave(&ident);
+            let skills = read_back(&ident).skills;
+            assert!(skills.contains(&"vitest".to_string()), "Sam removed vitest: {skills:?}");
+            assert!(skills.contains(&"python".to_string()), "Sam lacks python: {skills:?}");
+            ident
+        });
+
+        pull_config(sam_repo.path(), alex_repo.path());
+        let committed = std::fs::read(alex_repo.path().join(".automatic.json")).unwrap();
+        on_machine(alex_home.path(), || autosave(&alex));
+        assert_eq!(
+            std::fs::read(alex_repo.path().join(".automatic.json")).unwrap(),
+            committed,
+            "Alex's save rewrote the committed config"
+        );
+
+        pull_config(alex_repo.path(), sam_repo.path());
+        on_machine(sam_home.path(), || autosave(&sam));
+        assert_eq!(
+            std::fs::read(sam_repo.path().join(".automatic.json")).unwrap(),
+            committed,
+            "Sam's save rewrote the committed config"
+        );
     }
 
     pub(crate) fn read_back(name: &str) -> core::Project {

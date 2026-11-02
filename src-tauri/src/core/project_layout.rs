@@ -51,6 +51,11 @@ const STATE_FIELDS: &[&str] = &[
     // Same reason: without the group, the next reconcile would detach the
     // group's profiles and strip their entries from the config.
     "group_profile_contributions",
+    // Profiles live only in this machine's `~/.automatic/library/profiles/`,
+    // and two machines can hold different profiles under one name. A committed
+    // record would make each machine's reconcile remove what the other's
+    // profile added.
+    "profile_contributions",
     // Snapshots of this machine's registries. Nothing reads them yet. They
     // hold machine-specific command paths and full rule bodies, which would
     // churn a committed file on every library edit.
@@ -59,6 +64,10 @@ const STATE_FIELDS: &[&str] = &[
     "resolved_agents",
     "resolved_commands",
 ];
+
+/// State fields that older versions kept in the config file. A checkout that
+/// predates the move still has its only copy there.
+const FIELDS_MOVED_TO_STATE: &[&str] = &["profile_contributions"];
 
 /// Fields that neither file stores: runtime flags (including the computed
 /// `read_only_owner`), and `local_read_only`,
@@ -144,6 +153,9 @@ fn read_json_object(directory: &str, path: &Path) -> Result<ProjectFields, Strin
 /// the state file, so a stale legacy `project.json` cannot override a newer
 /// committed config. Without one, the state file is read whole, which is how a
 /// legacy combined file loads.
+///
+/// A field in [`FIELDS_MOVED_TO_STATE`] is the one exception, see
+/// [`fields_to_carry_over`].
 fn merge_project_fields(
     config: Option<ProjectFields>,
     state: Option<ProjectFields>,
@@ -151,6 +163,7 @@ fn merge_project_fields(
     let Some(config) = config else {
         return state.unwrap_or_default();
     };
+    let carried = fields_to_carry_over(&config, state.as_ref());
     let mut merged: ProjectFields = config
         .into_iter()
         .filter(|(key, _)| !is_state_field(key))
@@ -160,7 +173,24 @@ fn merge_project_fields(
             merged.insert(key, value);
         }
     }
+    merged.extend(carried);
     merged
+}
+
+/// Moved fields to keep from `config`, so the next write moves them into the
+/// state file instead of dropping them.
+///
+/// Only a checkout with a state file qualifies. A fresh clone has none, so a
+/// committed value there came from another machine and is ignored.
+fn fields_to_carry_over(config: &ProjectFields, state: Option<&ProjectFields>) -> ProjectFields {
+    let Some(state) = state else {
+        return Map::new();
+    };
+    FIELDS_MOVED_TO_STATE
+        .iter()
+        .filter(|key| !state.contains_key(**key))
+        .filter_map(|key| Some(((*key).to_string(), config.get(*key)?.clone())))
+        .collect()
 }
 
 /// Read the project stored in `directory`. Returns `Ok(None)` when the
@@ -377,6 +407,7 @@ pub fn remove_project_files(directory: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::ProfileContribution;
     use std::collections::BTreeMap;
 
     fn project_in(dir: &Path) -> Project {
@@ -408,6 +439,13 @@ mod tests {
                 vec!["baseline".into()],
             )]),
             profiles: vec!["baseline".into()],
+            profile_contributions: BTreeMap::from([(
+                "baseline".into(),
+                ProfileContribution {
+                    skills: vec!["a-skill".into()],
+                    ..Default::default()
+                },
+            )]),
             ..Default::default()
         }
     }
@@ -446,6 +484,7 @@ mod tests {
             "instruction_file_hashes",
             "group_context_contributions",
             "group_profile_contributions",
+            "profile_contributions",
         ] {
             assert!(state.contains_key(key), "state is missing {key}");
             assert!(!config.contains_key(key), "config must not hold {key}");
@@ -524,6 +563,7 @@ mod tests {
         assert_eq!(loaded.group_context_contributions, original.group_context_contributions);
         assert_eq!(loaded.profiles, original.profiles);
         assert_eq!(loaded.group_profile_contributions, original.group_profile_contributions);
+        assert_eq!(loaded.profile_contributions, original.profile_contributions);
     }
 
     #[test]
@@ -697,6 +737,61 @@ mod tests {
         assert_eq!(loaded.skills, vec!["new-skill".to_string()]);
         assert_eq!(loaded.directory, dir, "a directory in the config file is ignored");
         assert_eq!(loaded.instruction_file_hashes, stale.instruction_file_hashes);
+    }
+
+    /// A config from before `profile_contributions` moved to the state file,
+    /// recording `skill` for the `baseline` profile.
+    fn config_with_committed_record(skill: &str) -> String {
+        serde_json::json!({
+            "name": "demo",
+            "profiles": ["baseline"],
+            "profile_contributions": {"baseline": {"skills": [skill]}},
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn fresh_clone_ignores_a_committed_profile_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        fs::write(tmp.path().join(CONFIG_FILE_NAME), config_with_committed_record("theirs"))
+            .unwrap();
+
+        let loaded = read_project_files(dir, "fallback").unwrap().unwrap();
+
+        assert!(loaded.profile_contributions.is_empty());
+    }
+
+    #[test]
+    fn upgrade_moves_a_committed_profile_record_into_the_state_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let config_path = tmp.path().join(CONFIG_FILE_NAME);
+        fs::write(&config_path, config_with_committed_record("mine")).unwrap();
+        fs::create_dir_all(automatic_dir(dir)).unwrap();
+        fs::write(project_state_path(dir), r#"{"created_at":"2026-01-01T00:00:00Z"}"#).unwrap();
+
+        let loaded = read_project_files(dir, "fallback").unwrap().unwrap();
+        assert_eq!(loaded.profile_contributions["baseline"].skills, vec!["mine"]);
+        write_project_files(&loaded).expect("write");
+
+        assert!(!read_object(&config_path).contains_key("profile_contributions"));
+        let reread = read_project_files(dir, "fallback").unwrap().unwrap();
+        assert_eq!(reread.profile_contributions, loaded.profile_contributions);
+    }
+
+    #[test]
+    fn state_record_wins_over_a_record_pulled_into_the_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_project_files(&project_in(tmp.path())).expect("write");
+        // A teammate on an older version committed their own record.
+        fs::write(tmp.path().join(CONFIG_FILE_NAME), config_with_committed_record("theirs"))
+            .unwrap();
+
+        let loaded = read_project_files(dir, "fallback").unwrap().unwrap();
+
+        assert_eq!(loaded.profile_contributions["baseline"].skills, vec!["a-skill"]);
     }
 
     #[test]

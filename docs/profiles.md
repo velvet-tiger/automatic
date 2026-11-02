@@ -15,7 +15,7 @@ Profiles write their references into the project's own lists in `.automatic.json
 Two fields on `Project` carry the link:
 
 - `profiles`: attached profile names, in attach order.
-- `profile_contributions`: per profile, the entries that profile provides. Every entry the profile lists is recorded, whether the profile added it or the project already had it. Entries no attached profile lists stay the project's own.
+- `profile_contributions`: per profile, the entries that profile provides. Every entry the profile lists is recorded, whether the profile added it or the project already had it. Entries no attached profile lists stay the project's own. This record is machine-local, so it lives in `.automatic/project.json`, not in `.automatic.json`.
 
 `core::reconcile_project_profiles` is the one operation. It runs on every `save_project` command, on attach and detach, and in the sweep that follows a profile save, delete, or rename:
 
@@ -31,6 +31,9 @@ A profile whose file is missing is reported and otherwise ignored, so nothing di
 - A profile owns every entry it lists on an attached project, including entries the project had before the profile was attached. Detaching the profile removes all of them. Entries no attached profile lists are the project's own and are never touched.
 - Removing a profile-owned entry through a path that does not lock it (an MCP tool, a hand edit of `.automatic.json`) is undone on the next save. Edit or detach the profile instead.
 - Deleting a library asset prunes it from every profile as well as every project. Renaming an MCP server or command renames it in profiles too.
+- Profiles are local to each machine, and two people can hold different profiles under one name. The record stays local for that reason: each person's reconcile removes only entries their own record lists, never a teammate's. The committed lists settle on the union of both versions.
+- A fresh clone has no record until its first reconcile, so the editor shows no `Profile: name` badges or locks before the first save. Detaching a profile on such a checkout reconciles first (`core::release_profile`), so the profile's entries still go. An entry removed by hand before then comes back on that save.
+- A checkout created before the record moved keeps its record. If `.automatic/project.json` exists and has no record, the one in `.automatic.json` is read and moves on the next write. That write removes the key from `.automatic.json`, which shows as a one-time git diff. A fresh clone has no state file and ignores a committed record. A teammate on an older version writes the record back, so the diff can repeat until everyone upgrades.
 - Per-project disabling of a profile-provided MCP server is not available. The editor hides the toggle on inherited servers.
 
 ## Group profiles

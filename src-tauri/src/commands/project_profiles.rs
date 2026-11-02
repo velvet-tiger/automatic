@@ -129,10 +129,7 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
         ));
     }
 
-    let before = project.profiles.len();
-    project.profiles.retain(|p| p != profile_name);
-    let recorded = project.profile_contributions.contains_key(profile_name);
-    if project.profiles.len() == before && !recorded && !groups_changed {
+    if !core::release_profile(&mut project, profile_name) && !groups_changed {
         return Ok(()); // already detached, nothing to do
     }
 
