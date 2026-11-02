@@ -146,6 +146,7 @@ describe("ProjectDiscoveryDialog", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText(/including 1 hook/)).toBeInTheDocument();
+    expect(screen.getAllByText("log-session").length).toBeGreaterThan(0);
     const readOnly = screen.getByLabelText("Add stray in read-only mode");
     expect(readOnly).toBeChecked();
     await user.click(readOnly);
@@ -153,6 +154,45 @@ describe("ProjectDiscoveryDialog", () => {
     await user.click(screen.getByRole("button", { name: "Add 1 project" }));
 
     await waitFor(() => expect(sent).toEqual([{ "/Users/me/code/stray": false }]));
+  });
+
+  const scanOnly = async (project: unknown) => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    mockInvoke({
+      discover_projects: { ...report, projects: [project] },
+      add_discovered_projects: (args: InvokeArgs) => {
+        sent.push(args?.importReadOnly);
+        return [];
+      },
+    });
+    render(<ProjectDiscoveryDialog isOpen onClose={() => {}} onAdded={vi.fn()} />);
+    const folder = screen.getByLabelText("Folder to search") as HTMLInputElement;
+    await waitFor(() => expect(folder.value).toBe("/Users/me"));
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText(/Found 1 project/);
+    return { user, sent };
+  };
+
+  it("adds a folder read-only when its preview failed", async () => {
+    const stray = report.projects.find((p) => p.name === "stray");
+    const { user, sent } = await scanOnly({ ...stray, library_use: null });
+
+    expect(screen.getByText(/Could not check/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Add stray in read-only mode")).toBeChecked();
+    await user.click(screen.getByLabelText("Add stray"));
+    await user.click(screen.getByRole("button", { name: "Add 1 project" }));
+
+    await waitFor(() => expect(sent).toEqual([{ "/Users/me/code/stray": true }]));
+  });
+
+  it("does not offer a config it cannot read", async () => {
+    const stray = report.projects.find((p) => p.name === "stray");
+    await scanOnly({ ...stray, library_use: { kind: "Unreadable" } });
+
+    expect(screen.getByText(/cannot be read/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Add stray")).toBeDisabled();
+    expect(screen.queryByLabelText("Select all")).toBeNull();
   });
 
   it("shows a per-folder error and keeps the folder addable", async () => {

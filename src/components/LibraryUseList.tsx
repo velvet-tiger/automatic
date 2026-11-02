@@ -36,8 +36,8 @@ export function LibraryUseList({ groups }: LibraryUseListProps) {
 
       {flagged.length > 0 && (
         <ul className="space-y-1">
-          {flagged.map((item) => (
-            <li key={`${item.kind}:${item.name}`} className="flex items-start gap-2 text-[12px]">
+          {flagged.map((item, index) => (
+            <li key={`${index}:${item.name}`} className="flex items-start gap-2 text-[12px]">
               <AlertTriangle size={12} className="text-warning mt-0.5 shrink-0" />
               <span className="font-mono text-text-base break-all">{item.name}</span>
               <span className="text-text-muted shrink-0">
@@ -56,8 +56,8 @@ export function LibraryUseList({ groups }: LibraryUseListProps) {
               {libraryKindLabel(group.kind)} ({group.total})
             </summary>
             <ul className="mt-1 ml-3 max-h-32 overflow-y-auto space-y-0.5">
-              {group.names.map((n) => (
-                <li key={n.name} className="font-mono text-text-muted break-all">
+              {group.names.map((n, index) => (
+                <li key={`${index}:${n.name}`} className="font-mono text-text-muted break-all">
                   {n.name}
                 </li>
               ))}

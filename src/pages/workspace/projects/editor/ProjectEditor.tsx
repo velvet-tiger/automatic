@@ -81,7 +81,7 @@ import {
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { OrphanConfigDialog } from "./OrphanConfigDialog";
-import type { ProjectLibraryUse } from "../../../../lib/libraryUse";
+import { importExistingProject, type ProjectLibraryUse } from "../../../../lib/libraryUse";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
 import { AttachProfileModal } from "./AttachProfileModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
@@ -2736,10 +2736,9 @@ export function ProjectEditor({
     setOrphanError(null);
     try {
       // Opened by its key: another project may share the name.
-      const imported = await invoke<{ name: string; local_key: string; read_only: boolean }>("import_existing_project", {
-        directory: orphanDialog.directory,
-        readOnly,
-      });
+      const imported = await importExistingProject(orphanDialog.directory, readOnly);
+      // `imported.name` is the repository's raw text. This one is escaped.
+      const shownName = orphanDialog.existingName;
       const importedName = imported.name;
       const importedKey = imported.local_key || imported.name;
       setOrphanDialog(null);
@@ -2754,7 +2753,7 @@ export function ProjectEditor({
       window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName, local_key: importedKey } }));
       if (imported.read_only) {
         await message(
-          `"${importedName}" was added in read-only mode. Automatic reads its settings but will not change any of its files.\n\nYou can turn this off in Configuration > Settings.`,
+          `"${shownName}" was added in read-only mode. Automatic reads its settings but will not change any of its files.\n\nYou can turn this off in Configuration > Settings.`,
           { title: "Added as read only", kind: "info" },
         );
       }

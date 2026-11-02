@@ -5,16 +5,17 @@
 //! module reports those names before the user adds the project. The config is
 //! untrusted: names are escaped and capped here, and nothing is written.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::path::{Component, Path};
 
 use serde::Serialize;
 use serde_json::Value;
 
 use super::{
-    get_mcp_servers_dir, get_skill_path, is_valid_name, list_mcp_server_configs, profile_path,
-    read_hook, read_project_files, read_rule, read_subagent, read_user_command, Project,
-    AUTOMATIC_SKILL_NAME,
+    get_mcp_servers_dir, get_skill_path, list_mcp_server_configs, profile_path, read_hook,
+    read_project_files, read_project_profile_parsed, read_rule, read_subagent, read_user_command,
+    Project, ProjectProfile, AUTOMATIC_SERVER_NAME, AUTOMATIC_SKILL_NAME,
 };
 
 /// Most names returned for one kind. The total is always reported.
@@ -34,7 +35,6 @@ pub enum LibraryItemKind {
     SubAgent,
     Command,
     Rule,
-    Provider,
     Profile,
 }
 
@@ -43,8 +43,9 @@ pub enum LibraryItemKind {
 pub struct LibraryUseName {
     /// Escaped and shortened for display. Never use it to look anything up.
     pub name: String,
-    /// True for an item that carries more risk: a hook, or an MCP server with
-    /// stored `env` or `headers` values.
+    /// True for an item that carries more risk: a hook, an MCP server that
+    /// is remote or has stored `env` or `headers` values, or a profile that
+    /// provides one of those or cannot be read.
     pub flagged: bool,
 }
 
@@ -73,6 +74,8 @@ pub enum ProjectLibraryUse {
     /// The config cannot be read or parsed, so it cannot be imported. The
     /// cause is left out because its text can come from the repository.
     Unreadable,
+    /// The folder was not checked. A scan stops previewing past its budget.
+    NotChecked,
 }
 
 /// Report which names in `directory`'s Automatic config match this machine's
@@ -102,39 +105,62 @@ pub fn preview_project_library_use(directory: &str) -> Result<ProjectLibraryUse,
 /// the registry listing. The other kinds open a path built from the name, so
 /// the file system decides, and a case-insensitive disk matches `GitHub` to
 /// `github`. Comparing strings here would miss those.
+///
+/// A matched profile adds its own entries to the project when it reconciles,
+/// so those entries count as if the config listed them.
 fn library_use_groups(project: &Project) -> Result<Vec<LibraryUseGroup>, String> {
     let servers: BTreeSet<String> = list_mcp_server_configs()?.into_iter().collect();
-    let enabled_servers = project.enabled_mcp_servers();
-    let rules = project.file_rules.values().flatten();
+    let profiles = matched_profiles(project);
+    let contents = || profiles.values().flatten();
+
+    let server_names: Vec<String> = project
+        .enabled_mcp_servers()
+        .into_iter()
+        .chain(contents().flat_map(|p| enabled_profile_servers(project, p)))
+        .collect();
+    let hooks = project.hooks.iter().chain(contents().flat_map(|p| &p.hooks));
     let skills = project
         .skills
         .iter()
+        .chain(contents().flat_map(|p| &p.skills))
         .filter(|name| name.as_str() != AUTOMATIC_SKILL_NAME);
+    let user_agents = project
+        .user_agents
+        .iter()
+        .chain(contents().flat_map(|p| &p.user_agents));
+    let user_commands = project
+        .user_commands
+        .iter()
+        .chain(contents().flat_map(|p| &p.user_commands));
+    let rules = project
+        .file_rules
+        .values()
+        .flatten()
+        .chain(contents().flat_map(|p| &p.rules));
 
     let groups = [
         // An in-memory lookup, so a padded list cannot push a server past the cap.
-        group(LibraryItemKind::McpServer, enabled_servers.iter(), usize::MAX, |name| {
-            servers.contains(name).then(|| mcp_server_holds_values(name))
+        group(LibraryItemKind::McpServer, server_names.iter(), usize::MAX, |name| {
+            servers.contains(name).then(|| mcp_server_is_flagged(name))
         }),
-        checked_group(LibraryItemKind::Hook, project.hooks.iter(), |name| {
-            read_hook(name).ok().map(|_| true)
-        }),
+        checked_group(LibraryItemKind::Hook, hooks, hook_match),
         checked_group(LibraryItemKind::Skill, skills, |name| {
-            matches!(get_skill_path(name), Ok(Some(_))).then_some(false)
+            (is_single_path_component(name) && matches!(get_skill_path(name), Ok(Some(_))))
+                .then_some(false)
         }),
-        checked_group(LibraryItemKind::SubAgent, project.user_agents.iter(), |name| {
+        checked_group(LibraryItemKind::SubAgent, user_agents, |name| {
             read_subagent(name).ok().map(|_| false)
         }),
-        checked_group(LibraryItemKind::Command, project.user_commands.iter(), |name| {
+        checked_group(LibraryItemKind::Command, user_commands, |name| {
             read_user_command(name).ok().map(|_| false)
         }),
         checked_group(LibraryItemKind::Rule, rules, |name| {
             read_rule(name).ok().map(|_| false)
         }),
-        // Providers have no library entry, and checking for a stored key
-        // would touch the keychain, so each committed id is reported.
-        checked_group(LibraryItemKind::Provider, project.providers.iter(), |_| Some(false)),
-        checked_group(LibraryItemKind::Profile, project.profiles.iter(), profile_match),
+        checked_group(LibraryItemKind::Profile, project.profiles.iter(), |name| {
+            let profile = profiles.get(name)?;
+            Some(profile_is_flagged(project, profile.as_ref(), &servers))
+        }),
     ];
     Ok(groups
         .into_iter()
@@ -142,17 +168,70 @@ fn library_use_groups(project: &Project) -> Result<Vec<LibraryUseGroup>, String>
         .collect())
 }
 
-fn profile_match(name: &str) -> Option<bool> {
-    if !is_valid_name(name) {
-        return None;
-    }
-    profile_path(name).ok()?.is_file().then_some(false)
+fn hook_match(name: &str) -> Option<bool> {
+    read_hook(name).ok().map(|_| true)
 }
 
-/// Whether the stored config for `name` holds `env` or `headers` values. Reads
-/// the stored JSON directly: only presence matters, and decrypting would raise
-/// a keychain prompt. A config that cannot be read counts as holding values.
-fn mcp_server_holds_values(name: &str) -> bool {
+/// The profiles the config names that exist here, keyed by the config's
+/// spelling. `None` holds a profile whose file cannot be read.
+/// `read_project_profile_parsed` only parses JSON: profiles hold names, so
+/// nothing in it decrypts.
+fn matched_profiles(project: &Project) -> BTreeMap<String, Option<ProjectProfile>> {
+    let names: BTreeSet<&String> = project.profiles.iter().collect();
+    names
+        .into_iter()
+        .take(MAX_CHECKED_NAMES_PER_KIND)
+        .filter(|name| is_single_path_component(name))
+        .filter(|name| profile_path(name).is_ok_and(|path| path.is_file()))
+        .map(|name| (name.clone(), read_project_profile_parsed(name).ok()))
+        .collect()
+}
+
+/// A profile's servers that sync would use. The project's own
+/// `disabled_mcp_servers` also switches off what a profile provides.
+fn enabled_profile_servers(project: &Project, profile: &ProjectProfile) -> Vec<String> {
+    profile
+        .mcp_servers
+        .iter()
+        .filter(|name| name.as_str() != AUTOMATIC_SERVER_NAME)
+        .filter(|name| !project.disabled_mcp_servers.contains(name))
+        .cloned()
+        .collect()
+}
+
+/// A profile hides its contents behind one name, so it is flagged for what it
+/// provides. A profile that cannot be read could provide anything.
+fn profile_is_flagged(
+    project: &Project,
+    profile: Option<&ProjectProfile>,
+    servers: &BTreeSet<String>,
+) -> bool {
+    let Some(profile) = profile else {
+        return true;
+    };
+    profile.hooks.iter().any(|name| hook_match(name).is_some())
+        || enabled_profile_servers(project, profile)
+            .iter()
+            .any(|name| servers.contains(name) && mcp_server_is_flagged(name))
+}
+
+/// Whether `name` is one ordinary path component. `is_valid_name` passes
+/// `C:evil`, which on Windows joins as a drive-relative path and leaves the
+/// library folder.
+fn is_single_path_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(part)), None) if part == name
+    )
+}
+
+/// Whether a stored MCP server needs the user's attention: it is remote, so
+/// it can hold a stored sign-in, or it holds `env` or `headers` values. Reads
+/// the stored JSON directly: only presence matters, and decrypting or checking
+/// for a sign-in would raise a keychain prompt. A config that cannot be read
+/// counts as flagged.
+fn mcp_server_is_flagged(name: &str) -> bool {
     let Ok(path) = get_mcp_servers_dir().map(|dir| dir.join(format!("{name}.json"))) else {
         return true;
     };
@@ -162,16 +241,19 @@ fn mcp_server_holds_values(name: &str) -> bool {
     let Ok(config) = serde_json::from_str::<Value>(&raw) else {
         return true;
     };
-    ["env", "headers"].iter().any(|field| {
-        config
-            .get(field)
-            .and_then(Value::as_object)
-            .is_some_and(|values| {
-                values
-                    .values()
-                    .any(|v| !v.is_null() && v.as_str() != Some(""))
-            })
-    })
+    let remote = config.get("url").is_some()
+        || matches!(config.get("type").and_then(Value::as_str), Some("http" | "sse"));
+    remote
+        || ["env", "headers"].iter().any(|field| {
+            config
+                .get(field)
+                .and_then(Value::as_object)
+                .is_some_and(|values| {
+                    values
+                        .values()
+                        .any(|v| !v.is_null() && v.as_str() != Some(""))
+                })
+        })
 }
 
 fn checked_group<'a>(
@@ -216,7 +298,7 @@ fn group<'a>(
 }
 
 /// Replace characters that could hide or reorder text, and shorten the name.
-fn displayable_name(name: &str) -> String {
+pub(super) fn displayable_name(name: &str) -> String {
     let mut shown: String = name
         .chars()
         .take(MAX_SHOWN_NAME_CHARS)
@@ -228,15 +310,31 @@ fn displayable_name(name: &str) -> String {
     shown
 }
 
+/// Unicode format and default-ignorable characters, plus controls.
 fn hides_text(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
             '\u{00AD}'
+                | '\u{034F}'
+                | '\u{061C}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{115F}'..='\u{1160}'
+                | '\u{17B4}'..='\u{17B5}'
+                | '\u{180B}'..='\u{180F}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'..='\u{202E}'
-                | '\u{2060}'..='\u{2069}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FE00}'..='\u{FE0F}'
                 | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF0}'..='\u{FFFB}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0000}'..='\u{E0FFF}'
         )
 }
 
@@ -263,7 +361,7 @@ mod tests {
     fn groups(dir: &Path) -> Vec<LibraryUseGroup> {
         match preview(dir) {
             ProjectLibraryUse::Readable { groups, .. } => groups,
-            ProjectLibraryUse::Unreadable => panic!("the config should be readable"),
+            other => panic!("the config should be readable: {other:?}"),
         }
     }
 
@@ -307,7 +405,8 @@ mod tests {
             .expect("agent");
         let profiles = get_profiles_dir().expect("profiles dir");
         fs::create_dir_all(&profiles).expect("profiles dir");
-        fs::write(profiles.join("shared-profile.json"), "{}").expect("profile");
+        fs::write(profiles.join("shared-profile.json"), r#"{"name":"shared-profile"}"#)
+            .expect("profile");
     }
 
     fn full_config() -> Value {
@@ -318,7 +417,6 @@ mod tests {
             "skills": ["automatic", "shared-skill", "absent-skill"],
             "user_agents": ["shared-agent", "absent-agent"],
             "user_commands": ["shared-command", "absent-command"],
-            "providers": ["anthropic"],
             "file_rules": { "_unified": ["shared-rule"], "CLAUDE.md": ["shared-rule", "absent-rule"] },
             "profiles": ["shared-profile", "absent-profile"],
         })
@@ -365,7 +463,6 @@ mod tests {
                     (LibraryItemKind::SubAgent, 1, 0),
                     (LibraryItemKind::Command, 1, 0),
                     (LibraryItemKind::Rule, 1, 0),
-                    (LibraryItemKind::Provider, 1, 0),
                     (LibraryItemKind::Profile, 1, 0),
                 ]
             );
@@ -422,7 +519,7 @@ mod tests {
 
             let group = match &result {
                 ProjectLibraryUse::Readable { groups, .. } => &groups[0],
-                ProjectLibraryUse::Unreadable => panic!("the config should be readable"),
+                other => panic!("the config should be readable: {other:?}"),
             };
             assert_eq!((group.total, group.flagged_total), (2, 2));
             let json = serde_json::to_string(&result).expect("serialize");
@@ -496,13 +593,12 @@ mod tests {
             save_mcp_server_config("z-risky", r#"{"command":"npx","env":{"K":"v"}}"#)
                 .expect("server");
             names.push("z-risky".to_string());
-            let mut providers: Vec<String> = Vec::new();
-            for i in 0..(MAX_CHECKED_NAMES_PER_KIND + 5) {
-                providers.push(format!("p{i}"));
-            }
+            let hooks: Vec<String> = (0..MAX_CHECKED_NAMES_PER_KIND + 5)
+                .map(|i| format!("h{i}"))
+                .collect();
             write_config(
                 project.path(),
-                serde_json::json!({ "name": "x", "mcp_servers": names, "providers": providers }),
+                serde_json::json!({ "name": "x", "mcp_servers": names, "hooks": hooks }),
             );
 
             let servers = group_of(project.path(), LibraryItemKind::McpServer).expect("servers");
@@ -510,15 +606,21 @@ mod tests {
             assert_eq!(servers.names.len(), MAX_SHOWN_NAMES_PER_KIND);
             assert_eq!(servers.names[0].name, "z-risky");
             assert_eq!(servers.not_checked, 0);
-            let providers = group_of(project.path(), LibraryItemKind::Provider).expect("providers");
-            assert_eq!(providers.total, MAX_CHECKED_NAMES_PER_KIND);
-            assert_eq!(providers.not_checked, 5);
+            let hooks = group_of(project.path(), LibraryItemKind::Hook).expect("hooks");
+            assert_eq!(hooks.total, 0);
+            assert_eq!(hooks.not_checked, 5);
         });
     }
 
     #[test]
     fn odd_names_are_escaped_and_shortened() {
         let long = "n".repeat(MAX_SHOWN_NAME_CHARS + 20);
+        for hidden in [
+            '\u{034F}', '\u{061C}', '\u{115F}', '\u{180E}', '\u{1BCA0}', '\u{1BCA3}', '\u{3164}',
+            '\u{FE00}', '\u{FE0F}', '\u{FFF9}', '\u{FFFB}', '\u{E0000}', '\u{E0FFF}',
+        ] {
+            assert_eq!(displayable_name(&format!("a{hidden}b")), "a\u{FFFD}b");
+        }
         assert_eq!(displayable_name("a\u{202E}b\nc\u{200B}"), "a\u{FFFD}b\u{FFFD}c\u{FFFD}");
         assert_eq!(displayable_name("<b>plain</b>"), "<b>plain</b>");
         let shown = displayable_name(&long);
@@ -537,6 +639,115 @@ mod tests {
             write_config(project.path(), serde_json::json!({ "name": "x", "skills": "nope" }));
             assert_eq!(preview(project.path()), ProjectLibraryUse::Unreadable);
         });
+    }
+
+    fn save_profile(name: &str, profile: Value) {
+        let dir = get_profiles_dir().expect("profiles dir");
+        fs::create_dir_all(&dir).expect("profiles dir");
+        fs::write(dir.join(format!("{name}.json")), profile.to_string()).expect("profile");
+    }
+
+    #[test]
+    fn a_profile_counts_what_it_provides_and_is_flagged_for_it() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        with_test_home(home.path().to_path_buf(), || {
+            seed_library();
+            save_profile(
+                "risky",
+                serde_json::json!({
+                    "name": "risky",
+                    "hooks": ["log-session"],
+                    "mcp_servers": ["with-env", "with-headers", "automatic"],
+                    "skills": ["shared-skill"],
+                    "user_agents": ["shared-agent"],
+                    "user_commands": ["shared-command"],
+                    "rules": ["shared-rule"],
+                }),
+            );
+            write_config(
+                project.path(),
+                serde_json::json!({
+                    "name": "x",
+                    "profiles": ["risky"],
+                    "disabled_mcp_servers": ["with-headers"],
+                }),
+            );
+
+            let found = groups(project.path());
+            let summary: Vec<(LibraryItemKind, usize, usize)> = found
+                .iter()
+                .map(|g| (g.kind, g.total, g.flagged_total))
+                .collect();
+            assert_eq!(
+                summary,
+                vec![
+                    (LibraryItemKind::McpServer, 1, 1),
+                    (LibraryItemKind::Hook, 1, 1),
+                    (LibraryItemKind::Skill, 1, 0),
+                    (LibraryItemKind::SubAgent, 1, 0),
+                    (LibraryItemKind::Command, 1, 0),
+                    (LibraryItemKind::Rule, 1, 0),
+                    (LibraryItemKind::Profile, 1, 1),
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn an_empty_profile_is_not_flagged_and_an_unreadable_one_is() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        with_test_home(home.path().to_path_buf(), || {
+            save_profile("calm", serde_json::json!({ "name": "calm" }));
+            let dir = get_profiles_dir().expect("profiles dir");
+            fs::write(dir.join("broken.json"), "{ not json").expect("profile");
+            write_config(
+                project.path(),
+                serde_json::json!({ "name": "x", "profiles": ["calm", "broken", "absent"] }),
+            );
+
+            let profiles = group_of(project.path(), LibraryItemKind::Profile).expect("profiles");
+            let names: Vec<(&str, bool)> = profiles
+                .names
+                .iter()
+                .map(|n| (n.name.as_str(), n.flagged))
+                .collect();
+            assert_eq!(names, vec![("broken", true), ("calm", false)]);
+        });
+    }
+
+    #[test]
+    fn a_remote_server_is_flagged_with_no_stored_values() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("typed", r#"{"type":"sse","url":"https://x.test"}"#)
+                .expect("server");
+            save_mcp_server_config("url-only", r#"{"url":"https://x.test"}"#).expect("server");
+            save_mcp_server_config("local", r#"{"command":"npx"}"#).expect("server");
+            write_config(
+                project.path(),
+                serde_json::json!({ "name": "x", "mcp_servers": ["typed", "url-only", "local"] }),
+            );
+
+            let servers = group_of(project.path(), LibraryItemKind::McpServer).expect("servers");
+            assert_eq!((servers.total, servers.flagged_total), (3, 2));
+        });
+    }
+
+    #[test]
+    fn only_a_single_ordinary_component_is_looked_up() {
+        assert!(is_single_path_component("shared-skill"));
+        for name in ["", ".", "..", "a/b", "/abs", "a/"] {
+            assert!(!is_single_path_component(name), "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_relative_name_is_refused() {
+        assert!(!is_single_path_component("C:evil"));
     }
 
     #[test]

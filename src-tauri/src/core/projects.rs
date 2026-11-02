@@ -827,7 +827,8 @@ pub enum DirectoryStatus {
     /// `.automatic/project.json` exists on disk but no registry entry
     /// references this directory. `name` is a best-effort read from the
     /// on-disk config's `name` field (falls back to the directory basename
-    /// when the field is missing or the JSON is malformed).
+    /// when the field is missing or the JSON is malformed). It comes from
+    /// the repository, so it is escaped for display and is not an identifier.
     OrphanConfig { name: String },
 }
 
@@ -850,18 +851,24 @@ pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, Str
         return Ok(DirectoryStatus::Available);
     };
 
-    let name = read_orphan_config_name(&config_path).unwrap_or_else(|| {
+    let name = read_orphan_config_name(directory, &config_path).unwrap_or_else(|| {
         PathBuf::from(directory)
             .file_name()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string())
             .unwrap_or_default()
     });
-    Ok(DirectoryStatus::OrphanConfig { name })
+    Ok(DirectoryStatus::OrphanConfig {
+        name: super::displayable_name(&name),
+    })
 }
 
-fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
-    let raw = fs::read_to_string(config_path).ok()?;
+/// The committed name, read with the contained reader: a cloned config can be
+/// a link out of the project, a huge file or a FIFO.
+fn read_orphan_config_name(directory: &str, config_path: &std::path::Path) -> Option<String> {
+    let raw = crate::sync::read_project_text(std::path::Path::new(directory), config_path)
+        .ok()
+        .flatten()?;
     let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
     value
         .get("name")
@@ -901,7 +908,8 @@ pub fn import_existing_project(
     }
 
     let project = read_project_files(directory, "")
-        .map_err(|e| format!("The existing project config could not be read: {}", e))?
+        // The cause can quote the repository's file, so it stays out of the message.
+        .map_err(|_| "The existing project config could not be read or is not valid.".to_string())?
         .ok_or_else(|| format!("No Automatic configuration was found in {}.", directory))?;
 
     let name = project.name.trim();
@@ -911,7 +919,7 @@ pub fn import_existing_project(
     if !is_valid_name(name) {
         return Err(format!(
             "The existing project config has an invalid name ('{}') and cannot be imported.",
-            name
+            super::displayable_name(name)
         ));
     }
 
@@ -2265,10 +2273,72 @@ mod tests {
             let import = |dir: &tempfile::TempDir, choice| {
                 import_existing_project(dir.path().to_str().unwrap(), choice).expect("import")
             };
+            let state_file = |dir: &tempfile::TempDir| dir.path().join(".automatic/project.json");
 
-            assert!(!import(&hinted, Some(false)).read_only);
-            assert!(import(&plain, Some(true)).read_only);
-            assert!(import(&unchosen, None).read_only);
+            let writable = import(&hinted, Some(false));
+            assert!(!writable.read_only);
+            assert!(!crate::core::is_project_read_only(&writable.local_key).expect("state"));
+            refresh_project_files(&writable.local_key).expect("refresh");
+            assert!(state_file(&hinted).exists(), "a writable import may write its keys");
+
+            let chosen = import(&plain, Some(true));
+            assert!(chosen.read_only);
+            assert!(crate::core::is_project_read_only(&chosen.local_key).expect("state"));
+            refresh_project_files(&chosen.local_key).expect("refresh");
+            assert!(!state_file(&plain).exists(), "a read-only import writes nothing");
+
+            let hint = import(&unchosen, None);
+            assert!(hint.read_only);
+            assert!(crate::core::is_project_read_only(&hint.local_key).expect("state"));
+        });
+    }
+
+    #[test]
+    fn inspect_project_directory_escapes_the_name_and_does_not_follow_a_link() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        let outside = tempfile::tempdir().expect("outside");
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            let dir = project.path().to_str().unwrap();
+            let config = serde_json::json!({ "name": "safe\u{202E}name" });
+            fs::write(project.path().join(".automatic.json"), config.to_string()).expect("config");
+            let status = inspect_project_directory(dir).expect("inspect");
+            assert!(
+                matches!(&status, DirectoryStatus::OrphanConfig { name } if name == "safe\u{FFFD}name"),
+                "{status:?}"
+            );
+
+            #[cfg(unix)]
+            {
+                let target = outside.path().join("elsewhere.json");
+                fs::write(&target, r#"{"name":"outside-name"}"#).expect("target");
+                fs::remove_file(project.path().join(".automatic.json")).expect("remove");
+                std::os::unix::fs::symlink(&target, project.path().join(".automatic.json"))
+                    .expect("link");
+                let status = inspect_project_directory(dir).expect("inspect");
+                assert!(
+                    !matches!(&status, DirectoryStatus::OrphanConfig { name } if name == "outside-name"),
+                    "{status:?}"
+                );
+            }
+            let _ = &outside;
+        });
+    }
+
+    #[test]
+    fn import_existing_project_errors_do_not_echo_the_config() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            let dir = project.path().to_str().unwrap();
+            fs::write(project.path().join(".automatic.json"), "<<<<<<< planted\n").expect("config");
+            let err = import_existing_project(dir, None).expect_err("bad config");
+            assert!(!err.contains("planted"), "{err}");
+
+            let config = serde_json::json!({ "name": "a/\u{202E}b" });
+            fs::write(project.path().join(".automatic.json"), config.to_string()).expect("config");
+            let err = import_existing_project(dir, None).expect_err("bad name");
+            assert!(!err.contains('\u{202E}'), "{err}");
         });
     }
 

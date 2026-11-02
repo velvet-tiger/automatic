@@ -1,4 +1,6 @@
 /** Mirrors `core::LibraryItemKind`. */
+import { invoke } from "@tauri-apps/api/core";
+
 export type LibraryItemKind =
   | "mcp_server"
   | "hook"
@@ -6,7 +8,6 @@ export type LibraryItemKind =
   | "sub_agent"
   | "command"
   | "rule"
-  | "provider"
   | "profile";
 
 /** Mirrors `core::LibraryUseGroup`. */
@@ -21,7 +22,20 @@ export interface LibraryUseGroup {
 /** Mirrors `core::ProjectLibraryUse`. */
 export type ProjectLibraryUse =
   | { kind: "Readable"; read_only_hint: boolean; groups: LibraryUseGroup[] }
-  | { kind: "Unreadable" };
+  | { kind: "Unreadable" }
+  | { kind: "NotChecked" };
+
+/** Mirrors `core::ImportedProject`. */
+export interface ImportedProject {
+  name: string;
+  local_key: string;
+  read_only: boolean;
+}
+
+/** Adopt the config in `directory`, in the mode the user chose. */
+export function importExistingProject(directory: string, readOnly: boolean): Promise<ImportedProject> {
+  return invoke<ImportedProject>("import_existing_project", { directory, readOnly });
+}
 
 const KIND_LABELS: Record<LibraryItemKind, string> = {
   mcp_server: "MCP servers",
@@ -30,7 +44,6 @@ const KIND_LABELS: Record<LibraryItemKind, string> = {
   sub_agent: "Sub-agents",
   command: "Commands",
   rule: "Rules",
-  provider: "Providers",
   profile: "Profiles",
 };
 
@@ -40,7 +53,19 @@ export function libraryKindLabel(kind: LibraryItemKind): string {
 
 /** Why a flagged item of this kind carries more risk. */
 export function libraryFlagReason(kind: LibraryItemKind): string {
-  return kind === "hook" ? "runs commands" : "has stored values";
+  if (kind === "hook") return "runs commands";
+  if (kind === "profile") return "provides these items, or could not be read";
+  return "can hold a stored sign-in or stored values";
+}
+
+/**
+ * Whether read-only mode is the starting choice. Normal mode is offered first
+ * only for a config that was fully checked and does not ask for read-only. A
+ * failed check cannot read the committed hint, so it lands here as well.
+ */
+export function startsReadOnly(use: ProjectLibraryUse | null | undefined): boolean {
+  if (use?.kind !== "Readable") return true;
+  return use.read_only_hint || use.groups.some((g) => g.not_checked > 0);
 }
 
 function plural(count: number, one: string): string {
@@ -56,7 +81,7 @@ export function libraryUseSummary(groups: LibraryUseGroup[]): string | null {
   const servers = groups.find((g) => g.kind === "mcp_server")?.flagged_total ?? 0;
   const hooks = groups.find((g) => g.kind === "hook")?.flagged_total ?? 0;
   const risky = [
-    servers > 0 ? `${plural(servers, "MCP server")} with stored values` : null,
+    servers > 0 ? `${plural(servers, "MCP server")} that can hold a stored sign-in or stored values` : null,
     hooks > 0 ? plural(hooks, "hook") : null,
   ].filter((part): part is string => part !== null);
 

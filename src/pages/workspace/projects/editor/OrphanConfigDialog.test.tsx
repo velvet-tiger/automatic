@@ -42,7 +42,7 @@ describe("OrphanConfigDialog", () => {
     renderDialog(readable(false));
 
     expect(screen.getAllByText("github").length).toBeGreaterThan(0);
-    expect(screen.getByText("MCP servers: has stored values")).toBeInTheDocument();
+    expect(screen.getByText("MCP servers: can hold a stored sign-in or stored values")).toBeInTheDocument();
     expect(screen.getByText("<img src=x>")).toBeInTheDocument();
     expect(screen.getByText("and 50 more")).toBeInTheDocument();
   });
@@ -62,6 +62,34 @@ describe("OrphanConfigDialog", () => {
 
     const labels = screen.getAllByRole("button").map((b) => b.textContent);
     expect(labels.indexOf("Add in read-only mode")).toBeLessThan(labels.indexOf("Add normally"));
+  });
+
+  it("puts read-only first after a failed check or with unchecked names", () => {
+    const firstAdd = () =>
+      screen.getAllByRole("button").map((b) => b.textContent).find((t) => t?.startsWith("Add "));
+
+    const { unmount } = render(
+      <OrphanConfigDialog
+        directory="/repo"
+        existingName="cloned"
+        libraryUse={null}
+        busy={false}
+        error={null}
+        onImport={vi.fn()}
+        onStartFresh={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(firstAdd()).toBe("Add in read-only mode");
+    unmount();
+
+    renderDialog({
+      kind: "Readable",
+      read_only_hint: false,
+      groups: [{ kind: "hook", total: 0, flagged_total: 0, names: [], not_checked: 4 }],
+    });
+    expect(firstAdd()).toBe("Add in read-only mode");
+    expect(screen.getByText(/4 were not checked/)).toBeInTheDocument();
   });
 
   it("refuses to add a config it cannot read", () => {

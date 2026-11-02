@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { X, FolderInput, Eye, Trash2 } from "lucide-react";
 import { LibraryUseList } from "../../../../components/LibraryUseList";
-import type { ProjectLibraryUse } from "../../../../lib/libraryUse";
+import { startsReadOnly, type ProjectLibraryUse } from "../../../../lib/libraryUse";
 
 interface OrphanConfigDialogProps {
   directory: string;
@@ -35,9 +35,8 @@ export function OrphanConfigDialog({
 
   const displayName = existingName.trim() || "(unnamed)";
   const unreadable = libraryUse?.kind === "Unreadable";
-  // The committed hint sets the starting choice. The repository cannot go
-  // further, since the user still picks either button.
-  const readOnlyFirst = libraryUse?.kind === "Readable" && libraryUse.read_only_hint;
+  // Only a starting choice: the user still picks either button.
+  const readOnlyFirst = startsReadOnly(libraryUse);
   const primaryButton =
     "flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium rounded bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 hover:border-brand/50 transition-colors disabled:opacity-50";
   const secondaryButton =
@@ -106,7 +105,7 @@ export function OrphanConfigDialog({
             <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted pt-1">
               Project name in file
             </div>
-            <div className="text-[12px] font-mono text-text-base">
+            <div className="text-[12px] font-mono text-text-base break-all">
               {displayName}
             </div>
           </div>
@@ -118,7 +117,7 @@ export function OrphanConfigDialog({
               start fresh.
             </div>
           )}
-          {libraryUse === null && (
+          {(libraryUse === null || libraryUse.kind === "NotChecked") && (
             <div className="rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-[12px] text-warning">
               Automatic could not check what this configuration uses from your library.
             </div>

@@ -162,7 +162,8 @@ pub struct AddedDiscoveredProject {
 /// unregistered Automatic config is imported and keeps that config. One
 /// failure does not stop the rest; each folder reports its own result.
 /// `import_read_only` holds the user's mode choice for folders that are
-/// imported. A folder it omits follows its committed `read_only` hint.
+/// imported. A folder it omits is imported read only: nobody reviewed it, and
+/// its committed `read_only` hint cannot be trusted to ask for that.
 #[tauri::command]
 pub async fn add_discovered_projects(
     directories: Vec<String>,
@@ -251,7 +252,7 @@ fn add_discovered_project(
             return Err(format!("Already added as project '{}'.", name));
         }
         core::DirectoryStatus::OrphanConfig { .. } => {
-            return import_existing_project(directory, read_only);
+            return import_existing_project(directory, Some(read_only.unwrap_or(true)));
         }
     }
 
@@ -3383,7 +3384,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let added = add_discovered_project(&dir_str, None, None).expect("import");
 
             assert_eq!(added.name, "ambient");
-            assert!(!added.read_only);
+            assert!(added.read_only, "a folder with no recorded choice starts read only");
             let saved = read_back(&added.local_key);
             assert_eq!(saved.name, "ambient");
             assert_eq!(saved.id, "proj-ambient-1");
@@ -3392,6 +3393,25 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 core::inspect_project_directory(&dir_str).expect("inspect"),
                 core::DirectoryStatus::RegisteredHere { .. }
             ));
+        });
+    }
+
+    /// The choice on the folder's row decides the mode, over the committed hint.
+    #[test]
+    fn adding_a_discovered_folder_follows_the_recorded_choice() {
+        with_temp_home(|_| {
+            let parent = tempdir().expect("parent");
+            let dir = parent.path().canonicalize().expect("canonical").join("chosen");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::write(dir.join(".automatic.json"), r#"{"name":"chosen","read_only":true}"#)
+                .expect("write config");
+            let directory = dir.display().to_string();
+
+            let choices = HashMap::from([(directory.clone(), false)]);
+            let added = add_discovered_folders(vec![directory], None, &choices);
+
+            assert!(added[0].local_key.is_some(), "{:?}", added[0].error);
+            assert!(!added[0].read_only);
         });
     }
 
@@ -3436,15 +3456,6 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let good = base.join("good");
             std::fs::create_dir_all(&good).expect("mkdir");
             let missing = base.join("missing");
-
-            let imported = base.join("imported");
-            std::fs::create_dir_all(&imported).expect("imported dir");
-            std::fs::write(imported.join(".automatic.json"), r#"{"name":"imported"}"#)
-                .expect("config");
-            let directory = imported.display().to_string();
-            let choices = HashMap::from([(directory.clone(), true)]);
-            let chosen = add_discovered_folders(vec![directory], None, &choices);
-            assert!(chosen[0].read_only, "the row's choice sets the mode: {:?}", chosen[0].error);
 
             let results = add_discovered_folders(
                 vec![missing.display().to_string(), good.display().to_string()],

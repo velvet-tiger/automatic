@@ -5,7 +5,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Loader2, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
 import { useCurrentUser } from "../contexts/ProfileContext";
-import { libraryUseSummary, type ProjectLibraryUse } from "../lib/libraryUse";
+import { LibraryUseList } from "./LibraryUseList";
+import { libraryUseSummary, startsReadOnly, type ProjectLibraryUse } from "../lib/libraryUse";
 
 // Shared by the Find Projects dialog and the first-run wizard's projects step.
 
@@ -59,13 +60,13 @@ export interface AddResult {
   failedCount: number;
 }
 
-function committedReadOnlyHint(project: DiscoveredProject): boolean {
-  return project.library_use?.kind === "Readable" && project.library_use.read_only_hint;
-}
-
-/** New folders and folders with an unregistered config can both be added. */
+/**
+ * New folders and folders with an unregistered config can both be added. A
+ * config that cannot be read cannot be imported.
+ */
 function isAddable(project: DiscoveredProject): boolean {
-  return project.status?.kind === "Available" || project.status?.kind === "OrphanConfig";
+  if (project.status?.kind === "OrphanConfig") return project.library_use?.kind !== "Unreadable";
+  return project.status?.kind === "Available";
 }
 
 /**
@@ -93,6 +94,7 @@ export function useProjectDiscovery(active: boolean) {
     setReport(null);
     setSelected(new Set());
     setOutcomes(new Map());
+    setReadOnlyChoices(new Map());
     setError(null);
     homeDir()
       .then((home) => setRoot((current) => current || home))
@@ -129,6 +131,7 @@ export function useProjectDiscovery(active: boolean) {
     setError(null);
     setReport(null);
     setOutcomes(new Map());
+    setReadOnlyChoices(new Map());
     try {
       const result = await invoke<DiscoveryReport>("discover_projects", { root: folder });
       if (seq !== scanSeq.current) return;
@@ -164,7 +167,7 @@ export function useProjectDiscovery(active: boolean) {
    * error is then shown).
    */
   const importsReadOnly = (project: DiscoveredProject): boolean =>
-    readOnlyChoices.get(project.directory) ?? committedReadOnlyHint(project);
+    readOnlyChoices.get(project.directory) ?? startsReadOnly(project.library_use);
 
   const toggleReadOnly = (project: DiscoveredProject) => {
     setReadOnlyChoices((prev) => new Map(prev).set(project.directory, !importsReadOnly(project)));
@@ -428,13 +431,19 @@ interface RowLibraryUseProps {
 /** What an unregistered config would use, and the choice of how to add it. */
 function RowLibraryUse({ project, readOnly, onToggleReadOnly, disabled }: RowLibraryUseProps) {
   const use = project.library_use;
-  if (use?.kind === "Unreadable") {
-    return <p className="text-[11px] text-danger mt-0.5">Its configuration cannot be read.</p>;
-  }
-  const summary = use ? libraryUseSummary(use.groups) : "Could not check what it uses from your library.";
+  const groups = use?.kind === "Readable" ? use.groups : null;
+  const summary = groups ? libraryUseSummary(groups) : "Could not check what it uses from your library.";
   return (
     <>
       {summary && <p className="text-[11px] text-warning mt-0.5 break-words">{summary}</p>}
+      {groups && groups.length > 0 && (
+        <details className="mt-0.5">
+          <summary className="cursor-pointer text-[11px] text-text-muted">Show what it uses</summary>
+          <div className="mt-1">
+            <LibraryUseList groups={groups} />
+          </div>
+        </details>
+      )}
       <label className="flex items-center gap-1.5 text-[11px] text-text-muted mt-0.5">
         <input type="checkbox" checked={readOnly} onChange={onToggleReadOnly} disabled={disabled} />
         Add {project.name} in read-only mode
@@ -459,6 +468,13 @@ function RowStatus({ project, outcome }: { project: DiscoveredProject; outcome: 
   }
   if (project.status?.kind === "RegisteredHere") {
     return <p className="text-[11px] text-text-muted mt-0.5">Already added as {project.status.name}</p>;
+  }
+  if (project.status?.kind === "OrphanConfig" && project.library_use?.kind === "Unreadable") {
+    return (
+      <p className="text-[11px] text-danger mt-0.5">
+        Its Automatic config cannot be read, so it cannot be added.
+      </p>
+    );
   }
   if (project.status?.kind === "OrphanConfig") {
     return (
