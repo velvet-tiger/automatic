@@ -322,6 +322,12 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     // checkout's key, and `refresh_project_files` corrects it. No key is minted
     // here: minting belongs to the create paths and the startup backfill.
     let resolved = resolve_stored_keys(&ProjectKeys::of(&project), Some(&registry_keys));
+    // A state file with another key is not this checkout's: the folder was
+    // copied, or the repository committed `.automatic/project.json`. Its record
+    // must not decide what reconcile removes here.
+    if !registry_keys.local_key.is_empty() && project.local_key != registry_keys.local_key {
+        project.profile_contributions.clear();
+    }
     project.id = resolved.id;
     project.local_key = resolved.local_key;
     project.local_read_only = local_read_only;

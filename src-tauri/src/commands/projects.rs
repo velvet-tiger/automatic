@@ -2875,6 +2875,65 @@ pub(crate) mod propagation_tests {
         );
     }
 
+    /// Import a clone whose committed config attaches `shared`. It has no
+    /// state file, so this checkout has no record yet.
+    fn import_clone_with_shared_profile(repo: &std::path::Path) -> String {
+        save_shared_profile(&["react"]);
+        std::fs::write(
+            repo.join(".automatic.json"),
+            r#"{"name":"demo","profiles":["shared"],"skills":["react"]}"#,
+        )
+        .unwrap();
+        core::import_existing_project(repo.to_str().unwrap()).expect("import").local_key
+    }
+
+    #[test]
+    fn detach_command_removes_entries_on_a_checkout_with_no_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let ident = import_clone_with_shared_profile(repo.path());
+
+            crate::commands::detach_profile_from_project(&ident, "shared").expect("detach");
+
+            let project = read_back(&ident);
+            assert!(project.profiles.is_empty());
+            assert!(project.skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn profile_delete_sweep_removes_entries_on_a_checkout_with_no_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let ident = import_clone_with_shared_profile(repo.path());
+
+            detach_profile_from_projects("shared", &SweepProgress::silent());
+
+            assert!(read_back(&ident).skills.is_empty());
+        });
+    }
+
+    /// `.gitignore` does not stop a repository tracking `.automatic/`, so a
+    /// clone can arrive with a state file that claims a record.
+    #[test]
+    fn committed_state_file_cannot_supply_a_profile_record() {
+        with_temp_home(|_| {
+            let repo = tempdir().expect("repo");
+            let dir = repo.path().to_str().unwrap();
+            std::fs::write(repo.path().join(".automatic.json"), r#"{"name":"demo"}"#).unwrap();
+            std::fs::create_dir(repo.path().join(".automatic")).unwrap();
+            std::fs::write(
+                repo.path().join(".automatic").join("project.json"),
+                r#"{"profile_contributions":{"ghost":{"hooks":["secret-scan"]}}}"#,
+            )
+            .unwrap();
+
+            let ident = core::import_existing_project(dir).expect("import").local_key;
+
+            assert!(read_back(&ident).profile_contributions.is_empty());
+        });
+    }
+
     pub(crate) fn read_back(name: &str) -> core::Project {
         serde_json::from_str(&core::read_project(name).expect("read project")).expect("parse")
     }
