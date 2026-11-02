@@ -388,6 +388,29 @@ impl ProfileResourceKind {
 
 // ── Reconcile ────────────────────────────────────────────────────────────────
 
+/// Put `profile`'s record and items from `stored` back on `incoming`, for a
+/// save that cannot reconcile. A pending profile is not rebuilt, so a stale
+/// copy would otherwise drop these. Everything here was already on `stored`,
+/// so this grants nothing.
+pub(crate) fn restore_profile_items(incoming: &mut Project, stored: &Project, profile: &str) {
+    let Some(contribution) = stored.profile_contributions.get(profile) else {
+        return;
+    };
+    for kind in ProfileResourceKind::ALL {
+        let list = kind.project_list_mut(incoming);
+        for item in kind.contribution(contribution) {
+            if !kind.contains(list, item) {
+                list.push(item.clone());
+            }
+        }
+    }
+    let rules_empty = incoming.file_rules.get(PROJECT_RULES_KEY).is_some_and(Vec::is_empty);
+    if rules_empty {
+        incoming.file_rules.remove(PROJECT_RULES_KEY);
+    }
+    incoming.profile_contributions.insert(profile.to_string(), contribution.clone());
+}
+
 /// What `reconcile_project_profiles` did.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ProfileReconcileReport {

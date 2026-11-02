@@ -362,12 +362,31 @@ fn save_reconciled_project(
     // the profile reconcile then turns that into entries. Membership lives
     // in the group files, so a stale editor copy cannot drop a profile a
     // group provides.
-    let member_groups = core::groups_for_project(name);
-    core::reconcile_group_profiles(&mut incoming, &member_groups);
+    //
+    // An unreadable group leaves membership unknown, so the group reconciles
+    // are skipped: they would release everything that group provides. The
+    // stored records stand in for them. The save still goes ahead, because
+    // the bad file may have nothing to do with this project and failing
+    // would block every project's autosave.
+    let member_groups = core::groups_listing(name);
+    if let Err(e) = &member_groups {
+        eprintln!("Skipping the group reconcile for '{}': {}", name, e);
+        if let Some(stored) = core::read_project(name)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<core::Project>(&raw).ok())
+        {
+            core::keep_group_provided_entries(&mut incoming, &stored);
+        }
+    }
+    if let Ok(groups) = &member_groups {
+        core::reconcile_group_profiles(&mut incoming, groups);
+    }
     core::reconcile_project_profiles(&mut incoming);
     // Groups: same idea for contexts. Membership lives in the group files,
     // so a stale editor copy cannot drop or duplicate a group's contexts.
-    core::reconcile_group_contexts(&mut incoming, &member_groups);
+    if let Ok(groups) = &member_groups {
+        core::reconcile_group_contexts(&mut incoming, groups);
+    }
 
     let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
     let data: &str = &reconciled;
@@ -1852,7 +1871,8 @@ pub(crate) fn reconcile_projects_referencing_profile(
 /// after a group is saved or deleted, with its members from before and
 /// after the change (`core::group_member_idents`).
 ///
-/// One unreadable project does not leave the rest out of step.
+/// One unreadable project does not leave the rest out of step. A project
+/// whose group membership cannot be read is reported and left as it is.
 pub(crate) fn reconcile_group_profiles_for_projects(
     project_idents: &[String],
     progress: &SweepProgress,
@@ -1861,6 +1881,13 @@ pub(crate) fn reconcile_group_profiles_for_projects(
     let unique: Vec<String> = project_idents
         .iter()
         .filter(|ident| seen.insert(ident.as_str()))
+        .filter(|ident| match core::groups_listing(ident) {
+            Ok(_) => true,
+            Err(e) => {
+                progress.report_failure(ident, e);
+                false
+            }
+        })
         .cloned()
         .collect();
     sweep_project_changes(
@@ -1869,9 +1896,17 @@ pub(crate) fn reconcile_group_profiles_for_projects(
         Unreadable::Log,
         "group profile reconcile",
         |ident, project| {
+            // A group can go bad after the check above. Changing nothing is
+            // safe; releasing on a partial list is not.
+            let groups = match core::groups_listing(ident) {
+                Ok(groups) => groups,
+                Err(e) => {
+                    eprintln!("Skipping the group reconcile for '{}': {}", ident, e);
+                    return false;
+                }
+            };
             // Group profiles first: they decide which profiles are attached.
-            let groups_changed =
-                core::reconcile_group_profiles(project, &core::groups_for_project(ident));
+            let groups_changed = core::reconcile_group_profiles(project, &groups);
             let report = core::reconcile_project_profiles(project);
             groups_changed || report.changed
         },
@@ -3104,6 +3139,209 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(a.profiles.is_empty());
             assert!(a.profile_contributions.is_empty());
             assert_eq!(a.file_rules["_project"], vec!["own-rule"]);
+        });
+    }
+
+    /// A member of a group that provides a profile and a context. Returns
+    /// the path of the group file, and the temp dir and project directory.
+    fn project_in_group_with_entries(
+    ) -> (std::path::PathBuf, tempfile::TempDir, std::path::PathBuf) {
+        save_profile_with_rule("baseline", "profile-rule");
+        let (keep, dir) = make_project("project-a", |_| {});
+        save_group_command("team", &["project-a"], &["baseline"]);
+        let mut group = read_group_back("team");
+        group.contexts = vec!["shared".to_string()];
+        super::super::groups::save_group(
+            "team",
+            &serde_json::to_string(&group).expect("json"),
+            None,
+        )
+        .expect("save group");
+        assert_keeps_group_entries();
+        let path = core::get_groups_dir().expect("groups dir").join("team.json");
+        (path, keep, dir)
+    }
+
+    fn assert_keeps_group_entries() {
+        let project = read_back("project-a");
+        assert_eq!(project.profiles, vec!["baseline"]);
+        assert_eq!(project.group_profile_contributions["team"], vec!["baseline"]);
+        assert_eq!(project.file_rules["_project"], vec!["profile-rule"]);
+        assert_eq!(project.contexts, vec!["shared"]);
+        assert_eq!(project.group_context_contributions["team"], vec!["shared"]);
+    }
+
+    fn save_project_a_again() {
+        let data = serde_json::to_string(&read_back("project-a")).expect("json");
+        save_project_with("project-a", &data, false, NewProjectRecommendations::Skip)
+            .expect("the save goes ahead");
+    }
+
+    /// A corrupt group file leaves membership unknown. Saves and sweeps
+    /// must not read that as the project leaving the group.
+    #[test]
+    fn corrupt_group_file_releases_nothing_on_save_or_sweep() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+            let good = std::fs::read(&group_file).expect("read group file");
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            save_project_a_again();
+            assert_keeps_group_entries();
+
+            let idents = vec!["project-a".to_string()];
+            reconcile_group_profiles_for_projects(&idents, &SweepProgress::silent());
+            core::reconcile_group_contexts_for_projects(&idents).expect("sweep");
+            assert_keeps_group_entries();
+            assert_eq!(
+                std::fs::read_to_string(&group_file).expect("read group file"),
+                "{ not json",
+                "the damaged file stays for the user to repair"
+            );
+
+            std::fs::write(&group_file, &good).expect("repair group file");
+            save_project_a_again();
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// The other half of the guard: a group that is really gone still
+    /// releases what it provided.
+    #[test]
+    fn removed_group_file_still_releases_on_save() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            save_project_a_again();
+
+            let project = read_back("project-a");
+            assert!(project.profiles.is_empty());
+            assert!(project.contexts.is_empty());
+            assert!(project.group_profile_contributions.is_empty());
+            assert!(project.group_context_contributions.is_empty());
+        });
+    }
+
+    /// An explicit detach cannot tell whether the unreadable group provides
+    /// the profile, so it refuses and changes nothing.
+    #[test]
+    fn detach_profile_refuses_while_a_group_file_is_corrupt() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            let error = super::super::project_profiles::detach_profile_from_project(
+                "project-a",
+                "baseline",
+            )
+            .expect_err("membership is unknown");
+
+            assert!(error.contains("team"), "{error}");
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// The group reconcile is what stops a stale editor copy dropping group
+    /// entries. While it cannot run, the stored records do that job.
+    #[test]
+    fn stale_save_keeps_group_entries_while_a_group_file_is_corrupt() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+            let mut stale = read_back("project-a");
+            stale.profiles.clear();
+            stale.contexts.clear();
+            stale.group_profile_contributions.clear();
+            stale.group_context_contributions.clear();
+            stale.profile_contributions.clear();
+            stale.file_rules.clear();
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            let data = serde_json::to_string(&stale).expect("json");
+            save_project_with("project-a", &data, false, NewProjectRecommendations::Skip)
+                .expect("the save goes ahead");
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// Something at the group's path that is not a file is unreadable, not
+    /// a removed group.
+    #[test]
+    fn group_path_that_is_a_folder_releases_nothing_on_save() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::fs::create_dir(&group_file).expect("folder at group path");
+            save_project_a_again();
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_group_link_can_be_listed_and_deleted() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::os::unix::fs::symlink(group_file.with_extension("missing"), &group_file)
+                .expect("link group file");
+
+            assert!(core::list_groups().expect("list").contains(&"team".to_string()));
+            core::delete_group("team").expect("delete");
+            assert!(std::fs::symlink_metadata(&group_file).is_err());
+        });
+    }
+
+    /// A link whose target is missing is unreadable, not a removed group.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_group_link_releases_nothing_on_save() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::remove_file(&group_file).expect("remove group file");
+            std::os::unix::fs::symlink(group_file.with_extension("missing"), &group_file)
+                .expect("link group file");
+            save_project_a_again();
+
+            assert_keeps_group_entries();
+        });
+    }
+
+    #[test]
+    fn attach_profile_refuses_while_a_group_file_is_corrupt() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+            save_profile_with_rule("extra", "extra-rule");
+
+            std::fs::write(&group_file, "{ not json").expect("corrupt group file");
+            let error = super::super::project_profiles::attach_profile_to_project(
+                "project-a",
+                "extra",
+            )
+            .expect_err("membership is unknown");
+
+            assert!(error.contains("team"), "{error}");
+            assert_keeps_group_entries();
+        });
+    }
+
+    /// A parse error can quote the file, so what callers see does not.
+    #[test]
+    fn group_parse_error_does_not_quote_the_file() {
+        with_temp_home(|_| {
+            let (group_file, _keep, _dir) = project_in_group_with_entries();
+
+            std::fs::write(&group_file, r#"{"name":"team","projects":"pasted text"}"#)
+                .expect("damage group file");
+            let error = core::read_group("team").expect_err("unreadable");
+
+            assert!(error.contains("team"), "{error}");
+            assert!(!error.contains("pasted text"), "{error}");
         });
     }
 

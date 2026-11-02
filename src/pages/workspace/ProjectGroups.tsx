@@ -142,12 +142,18 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       setIsEditing(false);
       setError(null);
     } catch (err: any) {
+      // Stay on the group: the panel offers Delete, the one way to clear a
+      // damaged file from here.
+      setGroup(null);
+      setSelectedName(name);
+      setIsEditing(false);
       setError(`Failed to load group: ${err}`);
     }
   };
 
   const handleSelectGroup = (name: string) => {
-    if (selectedName === name && !isCreating) return;
+    // No group loaded means the last read failed, so a click retries it.
+    if (selectedName === name && group && !isCreating) return;
     setIsCreating(false);
     loadGroup(name);
   };
@@ -227,14 +233,19 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     // The list only words the warning. An unreadable group must still be
     // deletable, so fall back to the copy on screen.
     let groupProfiles: string[] = group?.name === name ? group.profiles ?? [] : [];
+    let unreadable = false;
     try {
       const raw: string = await invoke("read_group", { name });
       const latest: ProjectGroup = JSON.parse(raw);
       groupProfiles = latest.profiles ?? [];
     } catch (err) {
       console.warn(`Could not re-read group '${name}' before delete:`, err);
+      unreadable = group?.name !== name;
     }
-    const confirmed = await ask(`Delete group "${name}"? ${deleteGroupWarning(groupProfiles)}`, {
+    const warning = unreadable
+      ? `${deleteGroupWarning([])}\n\nThis group's file could not be read. Its projects will lose whatever it provides the next time they are saved.`
+      : deleteGroupWarning(groupProfiles);
+    const confirmed = await ask(`Delete group "${name}"? ${warning}`, {
       title: "Delete Group",
       kind: "warning",
     });
@@ -414,6 +425,29 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Group that could not be read */}
+        {selectedName && !group && !isCreating && (
+          <div className="p-6 max-w-2xl">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <Layers size={18} className="text-text-muted shrink-0" />
+                <h2 className="text-[16px] font-semibold text-text-base">{selectedName}</h2>
+              </div>
+              <button
+                onClick={() => handleDeleteGroup(selectedName)}
+                className="flex items-center justify-center w-[26px] h-[26px] rounded-md text-text-muted hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                title="Delete group"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <p className="mt-2 text-[13px] text-text-muted">
+              This group's file could not be read. Repair the file, or delete the group.
+              Its members keep what it provides for now.
+            </p>
           </div>
         )}
 
@@ -597,7 +631,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
         )}
 
         {/* Empty state */}
-        {!group && !isCreating && (
+        {!selectedName && !group && !isCreating && (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
             <Layers size={32} className="text-text-muted/30 mb-3" />
             <p className="text-[14px] font-medium text-text-base mb-1">No group selected</p>

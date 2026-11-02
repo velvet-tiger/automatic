@@ -197,14 +197,15 @@ pub(crate) fn keep_entry_profile_decisions(entry: Option<&RegistryEntry>, projec
 
 /// The groups `project` has joined on this machine that still list it. Group
 /// files are read only for a checkout that joined one. The checkout is found
-/// by its `local_key`, never by its name or committed `id`.
-pub(crate) fn joined_groups(project: &Project) -> Vec<ProjectGroup> {
+/// by its `local_key`, never by its name or committed `id`. An error means a
+/// group file could not be read, so what the checkout has joined is unknown.
+pub(crate) fn joined_groups(project: &Project) -> Result<Vec<ProjectGroup>, String> {
     if project.local_confirmed_groups.is_empty() || project.local_key.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let mut groups = groups_for_project(&project.local_key);
+    let mut groups = groups_listing(&project.local_key)?;
     groups.retain(|group| project.local_confirmed_groups.contains(&group.name));
-    groups
+    Ok(groups)
 }
 
 fn same_profile(a: &str, b: &str) -> bool {
@@ -242,8 +243,12 @@ pub(crate) fn unconfirmed_profiles(project: &Project) -> Vec<String> {
     if names.is_empty() {
         return names;
     }
-    let groups = joined_groups(project);
-    names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
+    // With a group file unreadable, every name stays pending. The stored group
+    // records cannot vouch for one: a repository can forge them, and pending
+    // only holds a name back, it releases nothing.
+    if let Ok(groups) = joined_groups(project) {
+        names.retain(|name| !groups.iter().any(|group| group.profiles.contains(name)));
+    }
     names
 }
 
@@ -283,7 +288,8 @@ pub(crate) fn pending_context_slugs(project: &Project) -> Vec<String> {
     if slugs.is_empty() {
         return slugs;
     }
-    let groups = joined_groups(project);
+    // Unknown groups grant nothing, so the slugs stay pending.
+    let groups = joined_groups(project).unwrap_or_default();
     slugs.retain(|slug| !groups.iter().any(|group| group.contexts.contains(slug)));
     slugs.retain(|slug| read_context(slug).is_ok());
     slugs
@@ -1118,6 +1124,32 @@ mod tests {
                 profiles: vec!["baseline".into()],
                 group_profile_contributions: BTreeMap::from([(
                     "forged".to_string(),
+                    vec!["baseline".to_string()],
+                )]),
+                ..Default::default()
+            };
+
+            let report = reconcile_project_profiles(&mut project);
+
+            assert_eq!(report.pending_profiles, vec!["baseline"]);
+            assert!(project.skills.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_forged_record_under_a_joined_group_stays_pending_while_a_group_is_unreadable() {
+        with_home(|_| {
+            save_profile("baseline", &["react"]);
+            let groups_dir = get_groups_dir().expect("groups dir");
+            fs::create_dir_all(&groups_dir).expect("groups dir");
+            fs::write(groups_dir.join("team.json"), "{ not json").expect("damage group");
+            let mut project = Project {
+                name: "demo".into(),
+                local_key: "11111111-1111-4111-8111-111111111111".into(),
+                profiles: vec!["baseline".into()],
+                local_confirmed_groups: vec!["team".into()],
+                group_profile_contributions: BTreeMap::from([(
+                    "team".to_string(),
                     vec!["baseline".to_string()],
                 )]),
                 ..Default::default()

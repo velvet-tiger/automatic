@@ -1289,7 +1289,7 @@ fn reading_scope_of(
         .into_iter()
         .map(|entry| entry.slug)
         .collect();
-    let joined = crate::core::joined_groups(&project);
+    let joined = joined_groups_or_refuse(&project)?;
     let mut peers = Vec::new();
     for group in &joined {
         for peer in joined_peers(index, group, &checkout) {
@@ -1303,6 +1303,17 @@ fn reading_scope_of(
     }
     let groups = joined.into_iter().map(|group| group.name).collect();
     Ok(ReadingScope { folder, checkout: Some(checkout), groups, peers, contexts, awaiting: None })
+}
+
+/// The groups `project` joined, with an unreadable group logged and refused
+/// in the same words as a context read, so its name stays out of the reply.
+fn joined_groups_or_refuse(
+    project: &crate::core::Project,
+) -> Result<Vec<crate::core::ProjectGroup>, String> {
+    crate::core::joined_groups(project).map_err(|e| {
+        eprintln!("[automatic] mcp-serve: {}", e);
+        GROUPS_UNREADABLE.to_string()
+    })
 }
 
 // ── MCP Server Handler ──────────────────────────────────────────────────────
@@ -1742,7 +1753,10 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         // Only groups joined on this machine: a repository chooses its `id`.
-        let groups = crate::core::joined_groups(&project);
+        let groups = match joined_groups_or_refuse(&project) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
 
         if groups.is_empty() {
             return Ok(tool_success(
@@ -2604,11 +2618,12 @@ impl AutomaticMcpServer {
                 profile_name, project_name
             )));
         }
+        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&checkout)) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
         // Group profiles first: they decide which profiles are attached.
-        crate::core::reconcile_group_profiles(
-            &mut project,
-            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
-        );
+        crate::core::reconcile_group_profiles(&mut project, &groups);
         if !project.profiles.iter().any(|p| p == profile_name) {
             project.profiles.push(profile_name.to_string());
         }
@@ -2679,10 +2694,11 @@ impl AutomaticMcpServer {
 
         // Reconcile against the groups on disk first, so a stale record
         // cannot refuse a detach the group no longer stands behind.
-        let groups_changed = crate::core::reconcile_group_profiles(
-            &mut project,
-            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
-        );
+        let groups = match crate::core::groups_listing(crate::core::checkout_ident(&checkout)) {
+            Ok(groups) => groups,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let groups_changed = crate::core::reconcile_group_profiles(&mut project, &groups);
         if let Some(group) = crate::core::group_providing_profile(&project, profile_name) {
             return Ok(tool_error(format!(
                 "Profile '{}' is provided by group '{}'. Detach it from the group instead: \

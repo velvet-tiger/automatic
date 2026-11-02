@@ -1266,7 +1266,7 @@ pub fn attach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
             // shared by another project.
             let ident = &canonical_project_ident(ident)?;
             let mut project = read_project_parsed(ident)?;
-            reconcile_group_contexts(&mut project, &groups_for_project(ident));
+            reconcile_group_contexts(&mut project, &groups_listing(ident)?);
             let changed = attach_context_to_project(&mut project, slug);
             write_project(ident, &project)?;
             Ok(changed)
@@ -1283,7 +1283,7 @@ pub fn detach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
         ContextTarget::Project(ident) => {
             let ident = &canonical_project_ident(ident)?;
             let mut project = read_project_parsed(ident)?;
-            reconcile_group_contexts(&mut project, &groups_for_project(ident));
+            reconcile_group_contexts(&mut project, &groups_listing(ident)?);
             if group_providing(&project, slug).is_none() {
                 // First, so a failure after this leaves the slug not trusted.
                 ensure_project_writable(&project)?;
@@ -1375,7 +1375,9 @@ fn group_contexts(group: &ProjectGroup) -> &[String] {
 /// change. Returns the projects that were saved.
 ///
 /// Per-project failures are logged and skipped so one unreadable project
-/// does not leave the rest out of step.
+/// does not leave the rest out of step. A project whose group membership
+/// cannot be read is skipped the same way, because a group left out would
+/// release its contexts.
 pub fn reconcile_group_contexts_for_projects(project_idents: &[String]) -> Result<Vec<String>, String> {
     let mut saved = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1390,7 +1392,13 @@ pub fn reconcile_group_contexts_for_projects(project_idents: &[String]) -> Resul
                 continue;
             }
         };
-        let groups = groups_for_project(ident);
+        let groups = match groups_listing(ident) {
+            Ok(groups) => groups,
+            Err(e) => {
+                eprintln!("contexts reconcile: skipping project '{}': {}", ident, e);
+                continue;
+            }
+        };
         if !reconcile_group_contexts(&mut project, &groups) {
             continue;
         }
@@ -1592,7 +1600,7 @@ pub struct ProjectContextEntry {
 ///
 /// An unreadable group is an error, because it might decide what is offered.
 pub fn project_context_entries(project: &Project) -> Result<Vec<ProjectContextEntry>, String> {
-    let joined: Vec<ProjectGroup> = groups_listing_strict(project_ident(project))?
+    let joined: Vec<ProjectGroup> = groups_listing(project_ident(project))?
         .into_iter()
         .filter(|group| project.local_confirmed_groups.contains(&group.name))
         .collect();
@@ -2369,6 +2377,51 @@ mod tests {
             save_context(local_context("a", vec![])).unwrap();
             save_context(local_context("b", vec![])).unwrap();
             assert!(rename_context("a", "b").unwrap_err().contains("already exists"));
+        });
+    }
+
+    #[test]
+    fn group_edit_leaves_a_corrupt_group_file_alone() {
+        with_home(|| {
+            save_context(local_context("docs", vec![])).unwrap();
+            save_group_value(&group("team", &[], &[]));
+            let path = get_groups_dir().unwrap().join("team.json");
+            std::fs::write(&path, "{ not json").unwrap();
+
+            let target = ContextTarget::Group("team".to_string());
+            let error = attach_context(&target, "docs").unwrap_err();
+
+            assert!(error.contains("team"), "{error}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        });
+    }
+
+    #[test]
+    fn project_context_changes_refuse_while_a_group_file_is_corrupt() {
+        with_home(|| {
+            save_context(local_context("docs", vec![])).unwrap();
+            write_project("app", &project("app", &["docs"])).unwrap();
+            save_group_value(&group("team", &[], &[]));
+            std::fs::write(get_groups_dir().unwrap().join("team.json"), "{ not json").unwrap();
+
+            let target = ContextTarget::Project("app".to_string());
+            assert!(attach_context(&target, "docs").unwrap_err().contains("team"));
+            assert!(detach_context(&target, "docs").unwrap_err().contains("team"));
+            assert_eq!(read_project_parsed("app").unwrap().contexts, vec!["docs"]);
+        });
+    }
+
+    #[test]
+    fn groups_listing_fails_where_groups_for_project_skips() {
+        with_home(|| {
+            save_group_value(&group("good", &["app"], &[]));
+            save_group_value(&group("bad", &["app"], &[]));
+            std::fs::write(get_groups_dir().unwrap().join("bad.json"), "{ not json").unwrap();
+
+            let error = groups_listing("app").unwrap_err();
+            assert!(error.contains("bad"), "{error}");
+            let shown: Vec<String> = groups_for_project("app").into_iter().map(|g| g.name).collect();
+            assert_eq!(shown, vec!["good"]);
         });
     }
 

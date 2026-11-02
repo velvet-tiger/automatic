@@ -1557,12 +1557,18 @@ export function ProjectEditor({
       setLoadingGroups(true);
       // Clear stale data immediately so UI doesn't show previous project's groups.
       setProjectGroupMemberships([]);
-      const [memberships, available] = await Promise.all([
+      // One damaged group file fails the membership list, and that error is
+      // how the user hears about it. The other groups still load.
+      const [memberships, available] = await Promise.allSettled([
         invoke<string[]>("groups_for_project", { projectName: projectKey }),
         invoke<string[]>("list_groups"),
       ]);
-      setProjectGroupMemberships(memberships);
-      setAllGroups(available.sort((a, b) => a.localeCompare(b)));
+      if (available.status === "fulfilled") {
+        setAllGroups(available.value.sort((a, b) => a.localeCompare(b)));
+      }
+      if (memberships.status === "rejected") throw memberships.reason;
+      if (available.status === "rejected") throw available.reason;
+      setProjectGroupMemberships(memberships.value);
     } catch (err: any) {
       console.error("Failed to load groups:", err);
       setError(`Failed to load groups: ${err}`);
