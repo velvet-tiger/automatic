@@ -412,6 +412,10 @@ pub fn delete_context(slug: &str) -> Result<ContextReferences, String> {
     if !is_valid_context_slug(slug) {
         return Err(format!("Invalid context slug '{}'", slug));
     }
+    // First, and fatal: a later context on this slug must not inherit a
+    // decision. The pending list must be read before that decision goes.
+    let pending = projects_with_pending_context(slug)?;
+    decisions_updated(forget_context_everywhere(slug))?;
     let dir = get_contexts_dir()?;
     let file = context_file(&dir, slug);
     if file.exists() {
@@ -423,7 +427,7 @@ pub fn delete_context(slug: &str) -> Result<ContextReferences, String> {
         fs::remove_dir_all(&data)
             .map_err(|e| format!("Failed to delete stored pages for '{}': {}", slug, e))?;
     }
-    rewrite_context_references(slug, None)
+    rewrite_context_references(slug, None, &pending)
 }
 
 /// Rename a context's slug, move its stored pages, and update every project
@@ -441,6 +445,9 @@ pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<ContextReference
         return Err(format!("A context named '{}' already exists", new_slug));
     }
 
+    let pending = projects_with_pending_context(old_slug)?;
+    decisions_updated(rename_context_decisions(old_slug, new_slug))?;
+
     let old_data = context_data_dir(&dir, old_slug);
     if old_data.exists() {
         fs::rename(&old_data, context_data_dir(&dir, new_slug))
@@ -450,7 +457,29 @@ pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<ContextReference
     save_context(context)?;
     fs::remove_file(context_file(&dir, old_slug))
         .map_err(|e| format!("Failed to remove old context file '{}': {}", old_slug, e))?;
-    rewrite_context_references(old_slug, Some(new_slug))
+    rewrite_context_references(old_slug, Some(new_slug), &pending)
+}
+
+/// Checkouts where `slug` is pending. They never took it, so a delete or rename
+/// leaves their committed config alone, as for a pending profile.
+fn projects_with_pending_context(slug: &str) -> Result<Vec<String>, String> {
+    let mut pending = Vec::new();
+    for ident in list_project_idents()? {
+        if read_project_parsed(&ident).is_ok_and(|p| p.pending_contexts.iter().any(|s| s == slug)) {
+            pending.push(ident);
+        }
+    }
+    Ok(pending)
+}
+
+/// Turn the failures of a decision sweep into an error.
+fn decisions_updated(failures: Vec<(String, String)>) -> Result<(), String> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let failed: Vec<String> =
+        failures.iter().map(|(project, error)| format!("'{}': {}", project, error)).collect();
+    Err(format!("Could not update the context decisions of {}", failed.join("; ")))
 }
 
 // ── Documentation pages ──────────────────────────────────────────────────────
@@ -1164,13 +1193,24 @@ pub enum ContextTarget {
 }
 
 /// [`attach_context`] for a choice the user made: a project target also
-/// confirms the slug on that checkout. Confirmed last, so a failure leaves it
-/// pending. An agent's attach does not come through here.
+/// confirms the slug on that checkout. A slug the project already lists only
+/// needs the confirmation, which writes the pointer, so this works on a
+/// read-only project. Otherwise confirmed last, so a failure leaves it pending.
+/// An agent's attach does not come through here.
 pub fn attach_context_for_user(target: &ContextTarget, slug: &str) -> Result<bool, String> {
-    let changed = attach_context(target, slug)?;
-    if let ContextTarget::Project(ident) = target {
+    let ContextTarget::Project(ident) = target else {
+        return attach_context(target, slug);
+    };
+    let ident = &canonical_project_ident(ident)?;
+    if read_project_parsed(ident)?.contexts.iter().any(|c| c == slug) {
+        if !context_exists(slug)? {
+            return Err(format!("Context '{}' does not exist", slug));
+        }
         confirm_project_context(ident, slug)?;
+        return Ok(false);
     }
+    let changed = attach_context(target, slug)?;
+    confirm_project_context(ident, slug)?;
     Ok(changed)
 }
 
@@ -1365,16 +1405,9 @@ impl ContextReferences {
 fn rewrite_context_references(
     old_slug: &str,
     new_slug: Option<&str>,
+    pending: &[String],
 ) -> Result<ContextReferences, String> {
     let mut changes = ContextReferences::default();
-
-    let failures = match new_slug {
-        Some(new_slug) => rename_context_decisions(old_slug, new_slug),
-        None => forget_context_everywhere(old_slug),
-    };
-    for (project, error) in failures {
-        eprintln!("contexts: failed to update decisions of '{}': {}", project, error);
-    }
 
     for name in list_groups()? {
         let mut group = match read_group(&name)
@@ -1400,6 +1433,9 @@ fn rewrite_context_references(
     }
 
     for ident in list_project_idents()? {
+        if pending.contains(&ident) {
+            continue;
+        }
         let mut project = match read_project_parsed(&ident) {
             Ok(p) => p,
             Err(e) => {
@@ -1501,8 +1537,9 @@ pub struct ProjectContextEntry {
 
 /// The contexts offered to this checkout's agents. `contexts` is committed, so
 /// holding a slug grants nothing. A slug is offered only if a group this
-/// checkout joined lists or records it, or this checkout confirmed it. Anything
-/// else is pending, and the committed list is left as it is.
+/// checkout joined lists it, or this checkout confirmed it. A record is not
+/// enough, because a stale one can outlive the group's listing. Anything else
+/// is pending, and the committed list is left as it is.
 ///
 /// An unreadable group is an error, because it might decide what is offered.
 pub fn project_context_entries(project: &Project) -> Result<Vec<ProjectContextEntry>, String> {
@@ -1510,15 +1547,8 @@ pub fn project_context_entries(project: &Project) -> Result<Vec<ProjectContextEn
         .into_iter()
         .filter(|group| project.local_confirmed_groups.contains(&group.name))
         .collect();
-    let group_grants = |slug: &String| {
-        joined.iter().any(|group| {
-            group.contexts.contains(slug)
-                || project
-                    .group_context_contributions
-                    .get(&group.name)
-                    .is_some_and(|recorded| recorded.contains(slug))
-        })
-    };
+    let group_grants =
+        |slug: &String| joined.iter().any(|group| group.contexts.contains(slug));
     Ok(project
         .contexts
         .iter()
@@ -1884,6 +1914,7 @@ mod tests {
             p.group_context_contributions
                 .insert("team".into(), vec!["old".into()]);
             write_project("app", &p).unwrap();
+            confirm_project_context("app", "old").unwrap();
             save_group_value(&group("team", &["app"], &["old"]));
 
             let changes = rename_context("old", "new").unwrap();

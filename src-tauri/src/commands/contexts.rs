@@ -53,6 +53,15 @@ pub fn attach_context(target: core::ContextTarget, slug: &str) -> Result<bool, S
     core::attach_context_for_user(&target, slug)
 }
 
+/// Record the user's choice for a context at the click, for an editor holding
+/// unsaved edits. The list itself arrives with the next save. Not reachable
+/// from MCP: this is what makes a slug readable.
+#[tauri::command(async)]
+pub fn decide_project_context(project_name: &str, slug: &str, confirmed: bool) -> Result<(), String> {
+    let _writes = super::project_sweeps::hold_library_writes();
+    core::decide_project_context(&core::canonical_project_ident(project_name)?, slug, confirmed)
+}
+
 /// Hide the notice for a pending context on this checkout. The slug stays in
 /// the committed config and stays pending.
 #[tauri::command(async)]

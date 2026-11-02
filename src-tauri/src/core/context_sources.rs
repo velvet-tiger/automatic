@@ -112,7 +112,10 @@ pub async fn list_source_entries(context: &Context, source_id: &str) -> Result<S
                 truncated: false,
             })
         }
-        ResolvedSource::Local(config) => list_local_entries(&config),
+        ResolvedSource::Local(config, agent_linked) => {
+            check_agent_link(&config, agent_linked)?;
+            list_local_entries(&config)
+        }
         ResolvedSource::Url(..) => Ok(SourceListing {
             entries: vec![SourceEntry {
                 path: URL_ENTRY_PATH.to_string(),
@@ -142,7 +145,10 @@ pub async fn list_source_entries(context: &Context, source_id: &str) -> Result<S
 pub async fn read_source_entry(context: &Context, source_id: &str, path: &str) -> Result<String, String> {
     match resolve_source(context, source_id).await? {
         ResolvedSource::Documentation => read_documentation_page(&context.slug, source_id, path),
-        ResolvedSource::Local(config) => read_local_entry(&config, path),
+        ResolvedSource::Local(config, agent_linked) => {
+            check_agent_link(&config, agent_linked)?;
+            read_local_entry(&config, path)
+        }
         ResolvedSource::Url(config, public_only) => {
             if path != URL_ENTRY_PATH {
                 return Err(format!(
@@ -169,7 +175,8 @@ pub fn source_kind_name(spec: &SourceSpec) -> &'static str {
 
 enum ResolvedSource {
     Documentation,
-    Local(LocalSourceConfig),
+    /// The config, and whether an agent linked it.
+    Local(LocalSourceConfig, bool),
     /// The config, and whether only public addresses may be fetched.
     Url(UrlSourceConfig, bool),
     /// A webapp source id.
@@ -187,7 +194,7 @@ async fn resolve_source(context: &Context, source_id: &str) -> Result<ResolvedSo
             })?;
             Ok(match &source.spec {
                 SourceSpec::Documentation => ResolvedSource::Documentation,
-                SourceSpec::Local(c) => ResolvedSource::Local(c.clone()),
+                SourceSpec::Local(c) => ResolvedSource::Local(c.clone(), source.added_by_agent),
                 SourceSpec::Url(c) => ResolvedSource::Url(c.clone(), source.added_by_agent),
                 SourceSpec::Cloud(c) => ResolvedSource::Cloud(c.source_id.clone()),
             })
@@ -235,6 +242,16 @@ fn matches_any(patterns: &[glob::Pattern], relative: &str) -> bool {
 fn canonical_root(config: &LocalSourceConfig) -> Result<PathBuf, String> {
     fs::canonicalize(&config.path)
         .map_err(|e| format!("Local source path '{}' is not readable: {}", config.path, e))
+}
+
+/// Refuse an agent's link whose path no longer resolves to itself. An agent's
+/// link is stored canonical and was checked once, when it was made, so a symlink
+/// swapped in later would reach whatever it points at.
+fn check_agent_link(config: &LocalSourceConfig, agent_linked: bool) -> Result<(), String> {
+    if agent_linked && canonical_root(config)? != Path::new(&config.path) {
+        return Err(format!("Local source '{}' has moved since it was linked", config.path));
+    }
+    Ok(())
 }
 
 pub fn list_local_entries(config: &LocalSourceConfig) -> Result<SourceListing, String> {
@@ -1031,6 +1048,58 @@ mod tests {
 
         let body = fetch_url_with(&format!("http://{}/start", public), true, |_| true).await.unwrap();
         assert_eq!(body, "secret");
+    }
+
+    fn linked(path: &Path, added_by_agent: bool) -> Context {
+        Context {
+            slug: "c".into(),
+            display_name: String::new(),
+            description: String::new(),
+            body: ContextBody::Local {
+                sources: vec![ContextSource {
+                    id: "link".into(),
+                    display_name: String::new(),
+                    description: String::new(),
+                    spec: SourceSpec::Local(local(path, &[])),
+                    added_by_agent,
+                }],
+            },
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_agent_link_swapped_for_a_symlink_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        write(&root.join("secret/keys.md"), "secret");
+        write(&root.join("folder/a.md"), "inside");
+        write(&root.join("file.md"), "inside");
+        let (folder, file) = (root.join("folder"), root.join("file.md"));
+        let (agent_folder, agent_file) = (linked(&folder, true), linked(&file, true));
+
+        assert_eq!(read_source_entry(&agent_folder, "link", "a.md").await.unwrap(), "inside");
+        assert_eq!(read_source_entry(&agent_file, "link", "file.md").await.unwrap(), "inside");
+
+        fs::remove_dir_all(&folder).unwrap();
+        std::os::unix::fs::symlink(root.join("secret"), &folder).unwrap();
+        fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink(root.join("secret/keys.md"), &file).unwrap();
+
+        for context in [&agent_folder, &agent_file] {
+            let err = list_source_entries(context, "link").await.unwrap_err();
+            assert!(err.contains("moved"), "{err}");
+        }
+        let err = read_source_entry(&agent_folder, "link", "keys.md").await.unwrap_err();
+        assert!(err.contains("moved"), "{err}");
+        let err = read_source_entry(&agent_file, "link", "keys.md").await.unwrap_err();
+        assert!(err.contains("moved"), "{err}");
+
+        // A user's link may be a symlink: the user chose where it points.
+        let users = linked(&folder, false);
+        assert_eq!(read_source_entry(&users, "link", "keys.md").await.unwrap(), "secret");
     }
 
     #[tokio::test]

@@ -1021,6 +1021,19 @@ fn offered_contexts(
     })
 }
 
+const LINK_REFUSED: &str = "That path cannot be linked to that context from this folder.";
+
+/// `content` without `pending_contexts`. It holds only slugs the library has,
+/// so a repository could commit guesses and learn which contexts exist.
+fn without_pending_contexts(content: &str) -> Result<String, String> {
+    let mut project: serde_json::Value =
+        serde_json::from_str(content).map_err(|e| e.to_string())?;
+    if let Some(map) = project.as_object_mut() {
+        map.remove("pending_contexts");
+    }
+    serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
+}
+
 const GROUP_REFUSED: &str = "A group can only be changed from a project that joined it.";
 
 /// Refuse to register a folder holding the server's working directory, so that
@@ -1107,18 +1120,19 @@ impl ReadingScope {
         Err(format!("Only this folder's own project '{}' can be used here.", own.name))
     }
 
-    /// Whether an agent may link `path` into a context. Only inside this
-    /// folder's own project, or a link would open any file on the machine to a
-    /// later read. Compared after canonicalising, so a symlink cannot leave.
-    fn check_linkable(&self, path: &str) -> Result<(), String> {
+    /// The canonical form of `path`, when an agent may link it into `slug`.
+    /// The folder must be inside this folder's own project, or a link would
+    /// open any file on the machine to a later read. It is compared after
+    /// canonicalising, so a symlink cannot leave. `slug` must be one this folder
+    /// could attach. Every refusal reads the same.
+    fn check_linkable(&self, slug: &str, path: &str, created: &[String]) -> Result<String, String> {
         let own = self.own_checkout()?;
-        let refused = || format!("'{}' is not inside this folder's own project.", path);
-        let target = std::fs::canonicalize(path.trim()).map_err(|_| refused())?;
-        let root = std::fs::canonicalize(&own.directory).map_err(|_| refused())?;
-        if target.starts_with(&root) {
-            return Ok(());
-        }
-        Err(refused())
+        let target = self.check_attach(slug, created).ok().and_then(|()| {
+            let target = std::fs::canonicalize(path.trim()).ok()?;
+            let root = std::fs::canonicalize(&own.directory).ok()?;
+            target.starts_with(&root).then(|| target.to_str().map(str::to_string))?
+        });
+        target.ok_or_else(|| LINK_REFUSED.to_string())
     }
 
     /// Whether `slug` is offered to this folder. The slug is compared exactly:
@@ -1476,8 +1490,7 @@ impl AutomaticMcpServer {
                        those entries are owned by the profile and are re-attached on the \
                        next save if removed directly. `contexts` lists attached context \
                        slugs and `group_context_contributions` records which of them each \
-                       project group provides. `pending_contexts` lists the slugs agents \
-                       cannot read until the user attaches them in the app. `group_profile_contributions` records which \
+                       project group provides. `group_profile_contributions` records which \
                        entries in `profiles` each project group provides; those can only be \
                        detached from the group."
     )]
@@ -1493,7 +1506,9 @@ impl AutomaticMcpServer {
             Ok(checkout) => checkout,
             Err(e) => return Ok(tool_error(e)),
         };
-        match crate::core::read_project(crate::core::checkout_ident(checkout)) {
+        match crate::core::read_project(crate::core::checkout_ident(checkout))
+            .and_then(|content| without_pending_contexts(&content))
+        {
             Ok(content) => Ok(tool_success(content)),
             Err(e) => Ok(tool_error(format!(
                 "Failed to read project '{}': {}",
@@ -2864,7 +2879,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_add_context_folder",
-        description = "Only a path inside this folder's own project can be linked. Link a local folder or file into a local context. Agents \
+        description = "Only a path inside this folder's own project, into a context this folder can read or this server created, can be linked. Link a local folder or file into a local context. Agents \
                        read its Markdown and text files where they are; \
                        nothing is copied. Only when the user asks. The user's \
                        settings decide which folders are allowed (by default, \
@@ -2878,10 +2893,15 @@ impl AutomaticMcpServer {
         params: Parameters<AddContextFolderParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = &params.0;
-        if let Err(e) = self.reading_scope().and_then(|scope| scope.check_linkable(&p.path)) {
-            return Ok(tool_error(e));
-        }
-        match crate::core::link_folder_for_agent(&p.context, &p.path, &p.name, &p.description) {
+        let created = self.live_created_contexts();
+        let canonical = match self
+            .reading_scope()
+            .and_then(|scope| scope.check_linkable(&p.context, &p.path, &created))
+        {
+            Ok(canonical) => canonical,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::core::link_folder_for_agent(&p.context, &canonical, &p.name, &p.description) {
             Ok(id) => Ok(tool_success(format!(
                 "Linked '{}' into context '{}' as source '{}'.",
                 p.path, p.context, id
@@ -4415,14 +4435,14 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let folders = save_registry_in_folders();
-            crate::core::create_local_context("Notes", "").expect("context");
             let server = server_in(&folders.site, None);
+            call(server.create_context(Parameters(CreateContextParams {
+                name: "Notes".into(),
+                description: String::new(),
+            })));
 
-            let outside = link(&server, &folders.api);
-            assert_eq!(outside.is_error, Some(true), "{}", result_text(&outside));
-            assert!(result_text(&outside).contains("not inside"), "{}", result_text(&outside));
-            let missing = link(&server, &folders.site.join("gone"));
-            assert_eq!(missing.is_error, Some(true), "{}", result_text(&missing));
+            assert_eq!(result_text(&link(&server, &folders.api)), LINK_REFUSED);
+            assert_eq!(result_text(&link(&server, &folders.site.join("gone"))), LINK_REFUSED);
 
             let unregistered = server_in(&folders.outside, None);
             let refused = link(&unregistered, &folders.outside);
@@ -4433,13 +4453,55 @@ mod tests {
             {
                 let escape = folders.site.join("escape");
                 std::os::unix::fs::symlink(&folders.api, &escape).expect("symlink");
-                let linked = link(&server, &escape);
-                assert_eq!(linked.is_error, Some(true), "{}", result_text(&linked));
-                assert!(result_text(&linked).contains("not inside"), "{}", result_text(&linked));
+                assert_eq!(result_text(&link(&server, &escape)), LINK_REFUSED);
                 std::fs::remove_file(&escape).expect("remove");
             }
 
-            assert!(server.reading_scope().unwrap().check_linkable(folders.site.to_str().unwrap()).is_ok());
+            let created = server.live_created_contexts();
+            let scope = server.reading_scope().unwrap();
+            let padded = format!("  {}  ", folders.site.display());
+            assert_eq!(
+                scope.check_linkable("notes", &padded, &created).as_deref(),
+                Ok(folders.site.to_str().unwrap()),
+                "the linker gets the canonical path"
+            );
+        });
+    }
+
+    #[test]
+    fn a_folder_is_not_linked_into_a_context_this_folder_cannot_see() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            crate::core::create_local_context("Notes", "").expect("context");
+            let server = server_in(&folders.site, None);
+            let refused = result_text(&link(&server, &folders.site));
+            assert_eq!(refused, LINK_REFUSED);
+            let missing = call(server.add_context_folder(Parameters(AddContextFolderParams {
+                context: "ghost".into(),
+                path: folders.site.display().to_string(),
+                name: "Notes".into(),
+                description: String::new(),
+            })));
+            assert_eq!(result_text(&missing), refused, "the refusal hides whether it exists");
+        });
+    }
+
+    #[test]
+    fn automatic_read_project_does_not_report_pending_contexts() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let folders = save_registry_in_folders();
+            crate::core::create_local_context("private", "").expect("context");
+            let mut project: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project(SITE_KEY).unwrap()).unwrap();
+            project.contexts = vec!["private".into()];
+            crate::core::save_project(SITE_KEY, &serde_json::to_string(&project).unwrap()).expect("save");
+            assert!(crate::core::read_project(SITE_KEY).unwrap().contains("pending_contexts"));
+
+            let result = read(&server_in(&folders.site, None), None);
+            assert_ne!(result.is_error, Some(true), "{}", result_text(&result));
+            assert!(!result_text(&result).contains("pending_contexts"), "{}", result_text(&result));
         });
     }
 

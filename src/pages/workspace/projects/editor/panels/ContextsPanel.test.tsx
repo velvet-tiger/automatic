@@ -44,7 +44,7 @@ function renderPanel(overrides: Partial<Parameters<typeof ContextsPanel>[0]> = {
 describe("ContextsPanel", () => {
   beforeEach(() => {
     resetInvokeMock();
-    mockInvoke({ list_contexts: LIBRARY });
+    mockInvoke({ list_contexts: LIBRARY, decide_project_context: null, attach_context: true });
   });
 
   it("marks group-provided contexts and only lets you remove the project's own", async () => {
@@ -81,5 +81,60 @@ describe("ContextsPanel", () => {
     renderPanel({ project: { ...project(), contexts: [], group_context_contributions: {} }, onNavigateToContexts });
     fireEvent.click(await screen.findByText("Create one in the Library"));
     expect(onNavigateToContexts).toHaveBeenCalled();
+  });
+
+  it("records the click at once while the editor holds unsaved edits", async () => {
+    const props = renderPanel({ dirty: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Own" }));
+    await waitFor(() => expect(props.setProject).toHaveBeenCalled());
+    expect(invokeMock).toHaveBeenCalledWith(
+      "decide_project_context",
+      expect.objectContaining({ projectName: "app", slug: "own", confirmed: false }),
+    );
+  });
+
+  it("records nothing in the create wizard", async () => {
+    const props = renderPanel({ isCreating: true, selectedKey: null });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Own" }));
+    await waitFor(() => expect(props.setProject).toHaveBeenCalled());
+    expect(invokeMock).not.toHaveBeenCalledWith("decide_project_context", expect.anything());
+  });
+
+  it("marks pending and ignored slugs and attaches from the row", async () => {
+    const props = renderPanel({
+      project: {
+        ...project(),
+        contexts: ["own", "extra"],
+        pending_contexts: ["own", "extra"],
+        local_ignored_contexts: ["extra"],
+        group_context_contributions: {},
+      },
+    });
+    expect(await screen.findByText("Pending")).toBeInTheDocument();
+    expect(screen.getByText("Ignored")).toBeInTheDocument();
+    const buttons = screen.getAllByRole("button", { name: "Attach" });
+    expect(buttons).toHaveLength(2);
+
+    fireEvent.click(buttons[1]);
+    await waitFor(() => expect(props.reloadProject).toHaveBeenCalledWith("app"));
+    expect(invokeMock).toHaveBeenCalledWith(
+      "attach_context",
+      expect.objectContaining({ target: { type: "project", name: "app" }, slug: "extra" }),
+    );
+  });
+
+  it("keeps unsaved edits when attaching from a row", async () => {
+    const props = renderPanel({
+      dirty: true,
+      project: { ...project(), contexts: ["own"], pending_contexts: ["own"], group_context_contributions: {} },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Attach" }));
+    await waitFor(() => expect(props.setProject).toHaveBeenCalled());
+    expect(invokeMock).toHaveBeenCalledWith(
+      "decide_project_context",
+      expect.objectContaining({ slug: "own", confirmed: true }),
+    );
+    expect(props.reloadProject).not.toHaveBeenCalled();
+    expect(vi.mocked(props.setProject).mock.calls[0][0].pending_contexts).toEqual([]);
   });
 });

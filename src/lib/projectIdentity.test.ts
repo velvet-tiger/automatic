@@ -173,6 +173,19 @@ describe("withCheckoutDecisions", () => {
       pending_profiles: [],
       local_ignored_contexts: [],
       pending_contexts: [],
+      contexts: [],
+      group_context_contributions: {},
+    });
+  });
+
+  it("takes what a group changed in the contexts", () => {
+    const held = { description: "unsaved", contexts: ["left"], group_context_contributions: { team: ["left"] } };
+    const fresh = { contexts: ["own"], group_context_contributions: {} };
+
+    expect(withCheckoutDecisions(held, fresh)).toMatchObject({
+      description: "unsaved",
+      contexts: ["own"],
+      group_context_contributions: {},
     });
   });
 });

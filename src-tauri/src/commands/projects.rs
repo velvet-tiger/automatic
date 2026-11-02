@@ -307,8 +307,8 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
     )
 }
 
-/// [`save_reconciled_project`], then record what the save changed in
-/// `contexts`, compared with the list stored before it.
+/// [`save_reconciled_project`], with what the save takes out of `contexts`
+/// forgotten first, so a failed save or sync cannot leave it trusted.
 fn save_project_with(
     name: &str,
     data: &str,
@@ -324,9 +324,8 @@ fn save_project_with(
     } else {
         core::context_edits(name, &requested)
     };
-    let saved = save_reconciled_project(name, data, creating, recommendations)?;
-    core::record_context_edits(&saved, &edits)?;
-    Ok(saved)
+    core::record_context_edits(name, &edits)?;
+    save_reconciled_project(name, data, creating, recommendations)
 }
 
 /// Body of [`save_project`]. `recommendations` decides whether a new
@@ -3719,7 +3718,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
-    fn an_editor_save_confirms_only_what_it_added() {
+    fn an_editor_save_never_confirms() {
         with_temp_home(|_| {
             let committed = save_library_context("Committed");
             let chosen = save_library_context("Chosen");
@@ -3734,10 +3733,15 @@ fn detach_profile_from_projects_removes_provided_entries() {
             assert!(saved.local_confirmed_contexts.is_empty());
             assert_eq!(saved.pending_contexts, vec![committed.clone()]);
 
-            // The panel adds a slug while the editor holds unsaved edits.
+            // A list that gained a slug is not consent.
             let mut edited = read_back(&key);
             edited.contexts.push(chosen.clone());
             save_project(&key, &serde_json::to_string(&edited).expect("json"), None).expect("save");
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+            assert!(offered_contexts(&key).is_empty());
+
+            // The panel records the click, ahead of the list's save.
+            super::super::contexts::decide_project_context(&key, &chosen, true).expect("decide");
             assert_eq!(read_back(&key).local_confirmed_contexts, vec![chosen.clone()]);
             assert_eq!(offered_contexts(&key), vec![chosen.clone()]);
 
@@ -3745,6 +3749,155 @@ fn detach_profile_from_projects_removes_provided_entries() {
             removed.contexts.retain(|slug| slug != &chosen);
             save_project(&key, &serde_json::to_string(&removed).expect("json"), None).expect("save");
             assert!(read_back(&key).local_confirmed_contexts.is_empty());
+        });
+    }
+
+    /// An agent detached the slug or a pull removed it, and the editor still
+    /// holds the old list. Sending that list back is not a decision.
+    #[test]
+    fn an_autosave_of_a_held_list_decides_nothing() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, key) = repo_naming(&slug);
+            core::ignore_project_context(&key, &slug).expect("ignore");
+            let held = serde_json::to_string(&read_back(&key)).expect("json");
+
+            let path = dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("parse");
+            config["contexts"] = serde_json::json!([]);
+            std::fs::write(&path, config.to_string()).expect("pull");
+
+            save_project(&key, &held, None).expect("save");
+            let saved = read_back(&key);
+            assert!(saved.local_confirmed_contexts.is_empty());
+            assert_eq!(saved.local_ignored_contexts, vec![slug.clone()]);
+            assert!(offered_contexts(&key).is_empty());
+
+            // The other way: a pull adds it, and the held list lacks it.
+            let empty = serde_json::to_string(&core::Project { contexts: Vec::new(), ..read_back(&key) })
+                .expect("json");
+            save_project(&key, &empty, None).expect("save");
+            assert_eq!(read_back(&key).local_ignored_contexts, vec![slug]);
+        });
+    }
+
+    #[test]
+    fn leaving_a_group_then_saving_confirms_nothing() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", std::slice::from_ref(&member), &["private"], std::slice::from_ref(&member));
+            let held = serde_json::to_string(&read_back(&member)).expect("json");
+
+            save_context_group("team", &[], &["private"], &[]);
+            save_project(&member, &held, None).expect("save");
+
+            let saved = read_back(&member);
+            assert!(saved.local_confirmed_contexts.is_empty());
+            assert!(offered_contexts(&member).is_empty());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_removal_is_forgotten_even_when_the_save_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, key) = repo_naming(&slug);
+            core::confirm_project_context(&key, &slug).expect("confirm");
+            let removed = serde_json::to_string(&core::Project { contexts: Vec::new(), ..read_back(&key) })
+                .expect("json");
+
+            let config = dir.join(".automatic.json");
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o444)).expect("lock");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).expect("lock");
+            let failed = save_project(&key, &removed, None);
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).expect("unlock");
+
+            assert!(failed.is_err());
+            assert_eq!(read_back(&key).contexts, vec![slug]);
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn attach_confirms_a_listed_slug_on_a_read_only_project() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, key) = repo_naming(&slug);
+            core::set_project_read_only(&key, true).expect("on");
+            let config = std::fs::read(dir.join(".automatic.json")).expect("read");
+
+            let target = core::ContextTarget::Project(key.clone());
+            let changed = super::super::contexts::attach_context(target, &slug).expect("attach");
+
+            assert!(!changed);
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec![slug.clone()]);
+            assert_eq!(offered_contexts(&key), vec![slug]);
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config);
+        });
+    }
+
+    /// A stale record outlives the group's listing, so it grants nothing.
+    #[test]
+    fn a_record_without_a_listing_grants_nothing() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", std::slice::from_ref(&member), &["open"], std::slice::from_ref(&member));
+            let mut project = read_back(&member);
+            project.contexts.push("forged".to_string());
+            project.group_context_contributions.get_mut("team").expect("record").push("forged".into());
+            assert_eq!(
+                core::project_context_entries(&project).expect("entries").len(),
+                1,
+                "only the listed slug"
+            );
+        });
+    }
+
+    #[test]
+    fn a_delete_or_rename_leaves_a_pending_slug_in_the_committed_config() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, dir, _key) = repo_naming(&slug);
+            let config = std::fs::read(dir.join(".automatic.json")).expect("read");
+
+            core::rename_context(&slug, "renamed").expect("rename");
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config);
+            save_library_context("Private");
+            core::delete_context(&slug).expect("delete");
+            assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_decision_sweep_stops_a_delete_and_a_rename() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            core::confirm_project_context(&key, &slug).expect("confirm");
+            let pointers = core::get_projects_dir().expect("dir");
+            let chmod = |mode| {
+                for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
+                    std::fs::set_permissions(entry.path(), std::fs::Permissions::from_mode(mode)).expect("chmod");
+                }
+                std::fs::set_permissions(&pointers, std::fs::Permissions::from_mode(mode | 0o111)).expect("chmod");
+            };
+            chmod(0o444);
+            let deleted = core::delete_context(&slug);
+            let renamed = core::rename_context(&slug, "renamed");
+            chmod(0o644);
+
+            assert!(deleted.is_err());
+            assert!(renamed.is_err());
+            assert!(core::context_exists(&slug).expect("exists"));
+            assert!(!core::context_exists("renamed").expect("exists"));
         });
     }
 
@@ -3797,9 +3950,19 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let (_member_keep, _member_dir) = make_project("member", |_| {});
             let member = read_back("member").local_key;
             save_context_group("team", std::slice::from_ref(&member), &["provided"], std::slice::from_ref(&member));
+
+            // A clone that carries a group's slug and has not joined.
+            let (_clone, clone_dir, clone) = import_id_clone("member", &[], None);
+            let clone_path = clone_dir.join(".automatic.json");
+            let mut clone_config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&clone_path).expect("read")).expect("parse");
+            clone_config["contexts"] = serde_json::json!(["provided"]);
+            std::fs::write(&clone_path, clone_config.to_string()).expect("write");
+
             let config = std::fs::read(dir.join(".automatic.json")).expect("read");
 
             core::confirm_attached_contexts_once().expect("migrate");
+            assert!(read_back(&clone).local_confirmed_contexts.is_empty(), "a listed slug is left out");
 
             assert_eq!(offered_contexts(&key), vec![slug.clone()]);
             assert_eq!(std::fs::read(dir.join(".automatic.json")).expect("read"), config);
@@ -3820,7 +3983,8 @@ fn detach_profile_from_projects_removes_provided_entries() {
         use std::os::unix::fs::PermissionsExt;
         with_temp_home(|_| {
             let slug = save_library_context("Private");
-            let (_keep, _dir, key) = repo_naming(&slug);
+            let later = save_library_context("Later");
+            let (_keep, dir, key) = repo_naming(&slug);
             let pointers = core::get_projects_dir().expect("dir");
             let chmod = |mode| {
                 for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
@@ -3833,8 +3997,17 @@ fn detach_profile_from_projects_removes_provided_entries() {
             chmod(0o644);
 
             assert!(failed.is_err());
+
+            // A slug committed after the decision is not swept up by the retry.
+            let path = dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("parse");
+            config["contexts"] = serde_json::json!([slug, later]);
+            std::fs::write(&path, config.to_string()).expect("pull");
+
             core::confirm_attached_contexts_once().expect("retry");
             assert_eq!(offered_contexts(&key), vec![slug]);
+            assert_eq!(read_back(&key).pending_contexts, vec![later]);
         });
     }
 

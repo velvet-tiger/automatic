@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use super::project_registry::RegistryEntry;
 use super::remote_sources::fold_name;
@@ -254,7 +257,7 @@ pub(crate) fn pending_profile_names(project: &Project) -> Vec<String> {
 }
 
 /// Slugs in `project.contexts` that this checkout has not confirmed and that
-/// no group it joined lists or records. Like [`unconfirmed_profiles`], this
+/// no group it joined lists. Like [`unconfirmed_profiles`], this
 /// reads the groups leniently, for a notice. What agents are offered comes
 /// from `project_context_entries`, which fails closed.
 pub(crate) fn pending_context_slugs(project: &Project) -> Vec<String> {
@@ -268,15 +271,7 @@ pub(crate) fn pending_context_slugs(project: &Project) -> Vec<String> {
         return slugs;
     }
     let groups = joined_groups(project);
-    slugs.retain(|slug| {
-        !groups.iter().any(|group| {
-            group.contexts.contains(slug)
-                || project
-                    .group_context_contributions
-                    .get(&group.name)
-                    .is_some_and(|recorded| recorded.contains(slug))
-        })
-    });
+    slugs.retain(|slug| !groups.iter().any(|group| group.contexts.contains(slug)));
     slugs.retain(|slug| read_context(slug).is_ok());
     slugs
 }
@@ -394,48 +389,54 @@ fn forget_context(decisions: &mut ProfileDecisions, slug: &str) {
     decisions.ignored_contexts.retain(|name| name != slug);
 }
 
-/// What an editor save changed in `contexts`, against the stored list. Only a
-/// difference counts: a save carries the whole list, so a slug the committed
-/// config already holds is not confirmed by being sent back.
+/// Slugs an editor save takes out of `contexts`. Consent never comes from this
+/// comparison: a save carries a whole list, which can be stale, so nothing in
+/// it confirms a slug. Adding goes through [`decide_project_context`] at the
+/// click.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ContextEdits {
-    added: Vec<String>,
     removed: Vec<String>,
 }
 
 /// Compare `requested` with the list stored for `ident`. A project with nothing
-/// stored has no edits: the create path confirms what its creator chose.
+/// stored, or that a save would refuse, has no edits.
 pub fn context_edits(ident: &str, requested: &[String]) -> ContextEdits {
     let Some(stored) = read_project(ident)
         .ok()
         .and_then(|raw| serde_json::from_str::<Project>(&raw).ok())
+        .filter(|project| ensure_project_writable(project).is_ok())
     else {
         return ContextEdits::default();
     };
     ContextEdits {
-        added: requested.iter().filter(|s| !stored.contexts.contains(s)).cloned().collect(),
-        removed: stored.contexts.iter().filter(|s| !requested.contains(s)).cloned().collect(),
+        removed: stored.contexts.into_iter().filter(|s| !requested.contains(s)).collect(),
     }
 }
 
-/// Record `edits` once the save is done, so a failed save decides nothing. A
-/// slug a group provides is left out: leaving the group must remove it.
+/// Drop the confirmation of slugs a save removes. Call before the save, so a
+/// later failure leaves them not trusted. An Ignore stays: a held list can lack
+/// a slug only because it is stale.
 pub fn record_context_edits(ident: &str, edits: &ContextEdits) -> Result<(), String> {
-    if edits == &ContextEdits::default() {
+    if edits.removed.is_empty() {
         return Ok(());
     }
-    let raw = read_project(ident)?;
-    let project: Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project '{}': {}", ident, e))?;
     edit_decisions(ident, |decisions| {
-        for slug in edits.added.iter().filter(|s| group_providing(&project, s).is_none()) {
-            add_name(&mut decisions.confirmed_contexts, slug);
-            decisions.ignored_contexts.retain(|name| name != slug);
-        }
-        for slug in &edits.removed {
-            forget_context(decisions, slug);
-        }
+        decisions.confirmed_contexts.retain(|slug| !edits.removed.contains(slug));
     })
+}
+
+/// Record what the user chose for `slug` on this checkout, at the click. The
+/// pointer can hold a slug `contexts` does not list yet: the list follows with
+/// the editor's next save.
+pub fn decide_project_context(ident: &str, slug: &str, confirmed: bool) -> Result<(), String> {
+    if !is_valid_context_slug(slug) {
+        return Err(format!("Invalid context slug '{}'", slug));
+    }
+    if confirmed {
+        confirm_project_context(ident, slug)
+    } else {
+        forget_project_context(ident, slug)
+    }
 }
 
 /// Record that this checkout joined `group` on this machine.
@@ -669,59 +670,123 @@ pub fn confirm_attached_profiles_once() -> Result<(), String> {
     }
 }
 
-/// The slugs `entry` attached itself. A slug a group recorded is left out: a
-/// joined group already provides it, and confirming it would outlive the join.
+/// The slugs `entry` attached itself. A slug a group recorded or lists is left
+/// out, joined or not: a joined group already provides it, and a confirmation
+/// would outlive the join.
 fn attached_context_slugs(entry: &RegistryEntry) -> Result<Vec<String>, String> {
+    let ident = entry.local_key().unwrap_or(&entry.name);
+    let listed: Vec<String> =
+        groups_for_project(ident).into_iter().flat_map(|group| group.contexts).collect();
     let Some(directory) = entry.directory()? else {
-        return Ok(entry
+        let slugs = entry
             .contents
             .as_ref()
             .map(|value| pointer_names(value, "contexts"))
-            .unwrap_or_default());
+            .unwrap_or_default();
+        return Ok(slugs.into_iter().filter(|slug| !listed.contains(slug)).collect());
     };
     let Some(project) = read_project_files(&directory, &entry.name)? else {
         return Ok(Vec::new());
     };
-    let provided = |slug: &String| {
+    let recorded = |slug: &String| {
         project.group_context_contributions.values().any(|slugs| slugs.contains(slug))
     };
-    Ok(project.contexts.iter().filter(|slug| !provided(slug)).cloned().collect())
+    Ok(project
+        .contexts
+        .iter()
+        .filter(|slug| !recorded(slug) && !listed.contains(slug))
+        .cloned()
+        .collect())
 }
 
-/// Confirm every slug attached to every registered checkout, once. Without
-/// this, projects from before confirmation existed would lose their contexts.
-/// Writes only pointers, so read-only projects are covered. A project whose
-/// folder cannot be read is skipped, and its slugs show as pending. A pointer
-/// that cannot be written is an error and leaves the marker unset.
-pub fn confirm_attached_contexts_once() -> Result<(), String> {
-    let marker = get_automatic_dir()?.join(CONTEXT_MIGRATION_MARKER);
-    if marker.exists() {
+/// What the context migration left to do: the slugs it decided on for each
+/// project whose pointer it could not write. Kept in the marker, so a retry
+/// repeats that decision and reads no repository again.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ContextMigrationMarker {
+    #[serde(default)]
+    retry: BTreeMap<String, Vec<String>>,
+}
+
+fn write_context_marker(
+    path: &Path,
+    retry: BTreeMap<String, Vec<String>>,
+) -> Result<(), String> {
+    let raw = serde_json::to_string_pretty(&ContextMigrationMarker { retry })
+        .map_err(|e| e.to_string())?;
+    fs::write(path, raw).map_err(|e| format!("Could not write {}: {}", path.display(), e))
+}
+
+/// Apply the decided `slugs` to one pointer.
+fn confirm_context_slugs(entry: &RegistryEntry, slugs: &[String]) -> Result<(), String> {
+    edit_pointer_file(&entry.path, &entry.name, |decisions| {
+        for slug in slugs {
+            add_name(&mut decisions.confirmed_contexts, slug);
+        }
+    })
+}
+
+/// Try the pointers a first run could not write. A project no longer
+/// registered is dropped.
+fn retry_context_confirmations(marker: &Path) -> Result<(), String> {
+    let raw = fs::read_to_string(marker).unwrap_or_default();
+    let Ok(stored) = serde_json::from_str::<ContextMigrationMarker>(&raw) else {
+        return Ok(());
+    };
+    if stored.retry.is_empty() {
         return Ok(());
     }
     let _writes = super::hold_library_writes();
+    let mut still_failing = BTreeMap::new();
+    let mut failed = Vec::new();
+    for (key, slugs) in stored.retry {
+        let Ok(Some(entry)) = resolve_registry_entry(&key) else {
+            continue;
+        };
+        if let Err(e) = confirm_context_slugs(&entry, &slugs) {
+            failed.push(format!("'{}': {}", entry.name, e));
+            still_failing.insert(key, slugs);
+        }
+    }
+    write_context_marker(marker, still_failing)?;
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(format!("Could not confirm the contexts of {}", failed.join("; ")))
+}
+
+/// Confirm every slug attached to every registered checkout, as one decision.
+/// Without this, projects from before confirmation existed would lose their
+/// contexts. Writes only pointers, so read-only projects are covered. A project
+/// whose folder cannot be read is skipped, and its slugs show as pending. A
+/// pointer that cannot be written is retried with the same slugs: the marker
+/// records them, so a later start never reads the repositories again.
+pub fn confirm_attached_contexts_once() -> Result<(), String> {
+    let marker = get_automatic_dir()?.join(CONTEXT_MIGRATION_MARKER);
+    if marker.exists() {
+        return retry_context_confirmations(&marker);
+    }
+    let _writes = super::hold_library_writes();
+    let mut retry = BTreeMap::new();
     let mut failed = Vec::new();
     for entry in scan_registry()? {
         let slugs = attached_context_slugs(&entry).unwrap_or_else(|e| {
             eprintln!("Could not read the contexts of '{}': {}", entry.name, e);
             Vec::new()
         });
-        let confirmed = edit_pointer_file(&entry.path, &entry.name, |decisions| {
-            for slug in &slugs {
-                add_name(&mut decisions.confirmed_contexts, slug);
-            }
-        });
-        if let Err(e) = confirmed {
+        if slugs.is_empty() {
+            continue;
+        }
+        if let Err(e) = confirm_context_slugs(&entry, &slugs) {
             failed.push(format!("'{}': {}", entry.name, e));
+            retry.insert(entry.local_key().unwrap_or(&entry.name).to_string(), slugs);
         }
     }
-    if !failed.is_empty() {
-        return Err(format!("Could not confirm the contexts of {}", failed.join("; ")));
+    write_context_marker(&marker, retry)?;
+    if failed.is_empty() {
+        return Ok(());
     }
-    match fs::OpenOptions::new().write(true).create_new(true).open(&marker) {
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(format!("Could not write {}: {}", marker.display(), e)),
-    }
+    Err(format!("Could not confirm the contexts of {}", failed.join("; ")))
 }
 
 /// A project's registry pointer as stored.
@@ -738,7 +803,6 @@ pub(crate) fn resolve_project_pointer_for_test(ident: &str) -> serde_json::Value
 mod tests {
     use super::*;
     use crate::core::paths::with_test_home;
-    use std::collections::BTreeMap;
 
     fn with_home(test: impl FnOnce(&Path)) {
         let home = tempfile::tempdir().expect("home");

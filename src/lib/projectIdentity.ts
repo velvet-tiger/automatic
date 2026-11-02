@@ -83,6 +83,8 @@ interface CheckoutDecisions {
   pending_profiles?: string[];
   local_ignored_contexts?: string[];
   pending_contexts?: string[];
+  contexts?: string[];
+  group_context_contributions?: Record<string, string[]>;
 }
 
 /**
@@ -97,6 +99,8 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(held: T, fres
     pending_profiles: fresh.pending_profiles ?? [],
     local_ignored_contexts: fresh.local_ignored_contexts ?? [],
     pending_contexts: fresh.pending_contexts ?? [],
+    contexts: fresh.contexts ?? [],
+    group_context_contributions: fresh.group_context_contributions ?? {},
   };
 }
 

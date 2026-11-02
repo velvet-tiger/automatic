@@ -1,6 +1,6 @@
 [
   {
-    "description": "Only a path inside this folder's own project can be linked. Link a local folder or file into a local context. Agents read its Markdown and text files where they are; nothing is copied. Only when the user asks. The user's settings decide which folders are allowed (by default, only folders inside registered projects); hidden, credential and system folders are always refused. The user sees it marked as added by an agent. Returns the source id.",
+    "description": "Only a path inside this folder's own project, into a context this folder can read or this server created, can be linked. Link a local folder or file into a local context. Agents read its Markdown and text files where they are; nothing is copied. Only when the user asks. The user's settings decide which folders are allowed (by default, only folders inside registered projects); hidden, credential and system folders are always refused. The user sees it marked as added by an agent. Returns the source id.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -1072,7 +1072,7 @@
     "name": "automatic_read_profile"
   },
   {
-    "description": "Read the full configuration for a project (skills, MCP servers, agents, directory, description). Omit `name` to read this folder's project. Only that project and the projects in the groups it joined can be read. `disabled_mcp_servers` lists the attached MCP servers that are switched off and left out of the agent config files; the field is absent when none are. `profiles` lists the attached profiles and `profile_contributions` records which entries each profile provides, including entries the project had before the profile was attached; those entries are owned by the profile and are re-attached on the next save if removed directly. `contexts` lists attached context slugs and `group_context_contributions` records which of them each project group provides. `pending_contexts` lists the slugs agents cannot read until the user attaches them in the app. `group_profile_contributions` records which entries in `profiles` each project group provides; those can only be detached from the group.",
+    "description": "Read the full configuration for a project (skills, MCP servers, agents, directory, description). Omit `name` to read this folder's project. Only that project and the projects in the groups it joined can be read. `disabled_mcp_servers` lists the attached MCP servers that are switched off and left out of the agent config files; the field is absent when none are. `profiles` lists the attached profiles and `profile_contributions` records which entries each profile provides, including entries the project had before the profile was attached; those entries are owned by the profile and are re-attached on the next save if removed directly. `contexts` lists attached context slugs and `group_context_contributions` records which of them each project group provides. `group_profile_contributions` records which entries in `profiles` each project group provides; those can only be detached from the group.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

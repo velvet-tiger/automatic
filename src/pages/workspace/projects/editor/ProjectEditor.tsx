@@ -1648,6 +1648,8 @@ export function ProjectEditor({
       g.updated_at = new Date().toISOString();
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
       setProjectGroupMemberships((prev) => prev.filter((n) => n !== groupName));
+      // The group's contexts left this project, and a held copy would save them back.
+      await refreshCheckoutDecisions(projectKey);
       // Every member is a local_key, including the checkouts just removed.
       const toSync = [...before, projectKey];
       for (const name of toSync) {
@@ -4418,12 +4420,12 @@ export function ProjectEditor({
             {/* ── Project File tab (full-bleed layout) ──────────── */}
             {!isCreating && !readOnly && selectedKey && (project.pending_profiles ?? []).some((name) => !(project.local_ignored_profiles ?? []).includes(name)) && (
               <div className="px-6 pt-3 flex-shrink-0">
-                <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
+                <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={refreshCheckoutDecisions} />
               </div>
             )}
-            {!isCreating && !readOnly && selectedKey && (project.pending_contexts ?? []).some((slug) => !(project.local_ignored_contexts ?? []).includes(slug)) && (
+            {!isCreating && selectedKey && (project.pending_contexts ?? []).some((slug) => !(project.local_ignored_contexts ?? []).includes(slug)) && (
               <div className="px-6 pt-3 flex-shrink-0">
-                <PendingContextsNotice project={project} selectedKey={selectedKey} reloadProject={reloadProject} />
+                <PendingContextsNotice project={project} selectedKey={selectedKey} reloadProject={refreshCheckoutDecisions} />
               </div>
             )}
             {projectTab === "project_file" && project && (

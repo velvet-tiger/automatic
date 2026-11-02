@@ -70,9 +70,43 @@ export function ContextsPanel({
   // reload cannot throw those edits away; the next save persists it.
   const direct = !isCreating && !!selectedKey && !dirty;
 
+  const pending = project.pending_contexts ?? [];
+  const ignored = project.local_ignored_contexts ?? [];
+
+  /** The user's choice, recorded at the click: a save carries a whole list and proves nothing. */
+  const decide = async (slug: string, confirmed: boolean) => {
+    if (isCreating || !selectedKey) return;
+    await invoke("decide_project_context", { projectName: selectedKey, slug, confirmed });
+  };
+
+  /** Accept a slug the committed config already lists. */
+  const accept = async (slug: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      if (direct) {
+        const target: ContextTarget = { type: "project", name: selectedKey! };
+        await invoke("attach_context", { target, slug });
+        await reloadProject(selectedKey!);
+        return;
+      }
+      await decide(slug, true);
+      setProject({
+        ...project,
+        pending_contexts: pending.filter((c) => c !== slug),
+        local_ignored_contexts: ignored.filter((c) => c !== slug),
+      });
+    } catch (err) {
+      setError(`Couldn't attach "${bySlug.get(slug)?.display_name || slug}": ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const change = async (slug: string, command: "attach_context" | "detach_context") => {
     setError(null);
     if (!direct) {
+      await decide(slug, command === "attach_context");
       const next = command === "attach_context" ? [...attached, slug] : attached.filter((c) => c !== slug);
       setProject({ ...project, contexts: next });
       setDirty(true);
@@ -102,7 +136,8 @@ export function ContextsPanel({
         <div>
           <h3 className="text-[14px] font-medium text-text-base">Contexts</h3>
           <p className="text-[12px] text-text-muted mt-0.5">
-            Reference material this project's agents can read when they need it. Nothing is copied into the project.
+            Reference material for this project. Agents can read a context once you attach it here or a group this
+            project joined provides it. Nothing is copied into the project.
           </p>
         </div>
         <button onClick={() => setPicking(true)} disabled={busy} className={`${PRIMARY_BUTTON_CLASS} flex-shrink-0`}>
@@ -142,6 +177,8 @@ export function ContextsPanel({
             const context = bySlug.get(slug);
             const group = providingGroup(contributions, slug);
             const missing = library.length > 0 && !context;
+            const isPending = pending.includes(slug);
+            const isIgnored = isPending && ignored.includes(slug);
             return (
               <li key={slug} className="flex items-center gap-3 px-3 py-2.5">
                 <ContextIcon context={context} />
@@ -153,6 +190,23 @@ export function ContextsPanel({
                       : [context?.description, context ? summariseContext(context) : ""].filter(Boolean).join(" · ")}
                   </div>
                 </div>
+                {isPending && (
+                  <>
+                    <span
+                      className="text-[11px] text-warning bg-warning/10 border border-warning/30 rounded px-1.5 py-0.5 flex-shrink-0"
+                      title="The repository names this context. Agents cannot read it until you attach it."
+                    >
+                      {isIgnored ? "Ignored" : "Pending"}
+                    </span>
+                    <button
+                      onClick={() => void accept(slug)}
+                      disabled={busy}
+                      className="px-2 py-0.5 text-[11px] font-medium text-brand hover:text-brand-hover hover:bg-brand/10 rounded transition-colors flex-shrink-0 disabled:opacity-50"
+                    >
+                      Attach
+                    </button>
+                  </>
+                )}
                 {group ? (
                   <button
                     onClick={() => onNavigateToGroup?.(group)}
