@@ -382,7 +382,9 @@ pub struct Project {
     /// profile added it or adopted an entry the project already had; entries
     /// no attached profile lists stay the project's own. Drives the
     /// "Profile: X" badge and lock in the editor, and lets a later reconcile
-    /// remove exactly what a profile no longer provides.
+    /// remove exactly what a profile no longer provides. Local to each
+    /// checkout: profiles are machine-local, so a fresh clone starts with no
+    /// record and the first reconcile builds it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profile_contributions: BTreeMap<String, ProfileContribution>,
     /// Context slugs attached to this project. Each references

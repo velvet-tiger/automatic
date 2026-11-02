@@ -5,6 +5,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Loader2, AlertTriangle, CheckCircle2, FileText } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
 import { useCurrentUser } from "../contexts/ProfileContext";
+import { LibraryUseList } from "./LibraryUseList";
+import { libraryUseSummary, startsReadOnly, type ProjectLibraryUse } from "../lib/libraryUse";
 
 // Shared by the Find Projects dialog and the first-run wizard's projects step.
 
@@ -24,6 +26,8 @@ interface DiscoveredProject {
   /** Null when the folder could not be checked; `check_error` says why. */
   status: DirectoryStatus | null;
   check_error: string | null;
+  /** Set for a folder with an unregistered config. Null there if the check failed. */
+  library_use?: ProjectLibraryUse | null;
 }
 
 /** Mirrors `core::project_discovery::DiscoveryReport`. */
@@ -56,9 +60,13 @@ export interface AddResult {
   failedCount: number;
 }
 
-/** New folders and folders with an unregistered config can both be added. */
+/**
+ * New folders and folders with an unregistered config can both be added. A
+ * config that cannot be read cannot be imported.
+ */
 function isAddable(project: DiscoveredProject): boolean {
-  return project.status?.kind === "Available" || project.status?.kind === "OrphanConfig";
+  if (project.status?.kind === "OrphanConfig") return project.library_use?.kind !== "Unreadable";
+  return project.status?.kind === "Available";
 }
 
 /**
@@ -75,6 +83,7 @@ export function useProjectDiscovery(active: boolean) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const [outcomes, setOutcomes] = useState<Map<string, AddedDiscoveredProject>>(new Map());
+  const [readOnlyChoices, setReadOnlyChoices] = useState<Map<string, boolean>>(new Map());
   const [error, setError] = useState<string | null>(null);
   // Bumped on every scan and on cancel, so a scan that finishes late cannot
   // overwrite newer state.
@@ -85,6 +94,7 @@ export function useProjectDiscovery(active: boolean) {
     setReport(null);
     setSelected(new Set());
     setOutcomes(new Map());
+    setReadOnlyChoices(new Map());
     setError(null);
     homeDir()
       .then((home) => setRoot((current) => current || home))
@@ -121,6 +131,7 @@ export function useProjectDiscovery(active: boolean) {
     setError(null);
     setReport(null);
     setOutcomes(new Map());
+    setReadOnlyChoices(new Map());
     try {
       const result = await invoke<DiscoveryReport>("discover_projects", { root: folder });
       if (seq !== scanSeq.current) return;
@@ -155,6 +166,13 @@ export function useProjectDiscovery(active: boolean) {
    * Returns null when nothing was ticked or the add call itself failed (the
    * error is then shown).
    */
+  const importsReadOnly = (project: DiscoveredProject): boolean =>
+    readOnlyChoices.get(project.directory) ?? startsReadOnly(project.library_use);
+
+  const toggleReadOnly = (project: DiscoveredProject) => {
+    setReadOnlyChoices((prev) => new Map(prev).set(project.directory, !importsReadOnly(project)));
+  };
+
   const addSelected = async (
     afterAdd?: (added: AddedProject[]) => Promise<string | null | void> | string | null | void,
   ): Promise<AddResult | null> => {
@@ -165,6 +183,11 @@ export function useProjectDiscovery(active: boolean) {
       const results = await invoke<AddedDiscoveredProject[]>("add_discovered_projects", {
         directories: selectedAddable.map((p) => p.directory),
         createdBy: userId ?? null,
+        importReadOnly: Object.fromEntries(
+          selectedAddable
+            .filter((p) => p.status?.kind === "OrphanConfig")
+            .map((p) => [p.directory, importsReadOnly(p)]),
+        ),
       });
       setOutcomes((prev) => {
         const next = new Map(prev);
@@ -196,6 +219,8 @@ export function useProjectDiscovery(active: boolean) {
   };
 
   return {
+    importsReadOnly,
+    toggleReadOnly,
     root,
     setRoot,
     scanning,
@@ -298,6 +323,8 @@ export function ProjectDiscoveryPanel({ state, scrollList = false }: { state: Pr
                 onToggle={() => state.toggle(p.directory)}
                 disabled={busy}
                 outcome={outcomes.get(p.directory)}
+                readOnly={state.importsReadOnly(p)}
+                onToggleReadOnly={() => state.toggleReadOnly(p)}
               />
             ))}
           </ul>
@@ -336,9 +363,19 @@ interface DiscoveredRowProps {
   onToggle: () => void;
   disabled: boolean;
   outcome: AddedDiscoveredProject | undefined;
+  readOnly: boolean;
+  onToggleReadOnly: () => void;
 }
 
-function DiscoveredRow({ project, checked, onToggle, disabled, outcome }: DiscoveredRowProps) {
+function DiscoveredRow({
+  project,
+  checked,
+  onToggle,
+  disabled,
+  outcome,
+  readOnly,
+  onToggleReadOnly,
+}: DiscoveredRowProps) {
   const added = Boolean(outcome?.local_key);
   const available = isAddable(project) && !added;
   return (
@@ -371,8 +408,47 @@ function DiscoveredRow({ project, checked, onToggle, disabled, outcome }: Discov
           {project.relative_path || project.directory}
         </p>
         <RowStatus project={project} outcome={outcome} />
+        {project.status?.kind === "OrphanConfig" && available && (
+          <RowLibraryUse
+            project={project}
+            readOnly={readOnly}
+            onToggleReadOnly={onToggleReadOnly}
+            disabled={disabled}
+          />
+        )}
       </div>
     </li>
+  );
+}
+
+interface RowLibraryUseProps {
+  project: DiscoveredProject;
+  readOnly: boolean;
+  onToggleReadOnly: () => void;
+  disabled: boolean;
+}
+
+/** What an unregistered config would use, and the choice of how to add it. */
+function RowLibraryUse({ project, readOnly, onToggleReadOnly, disabled }: RowLibraryUseProps) {
+  const use = project.library_use;
+  const groups = use?.kind === "Readable" ? use.groups : null;
+  const summary = groups ? libraryUseSummary(groups) : "Could not check what it uses from your library.";
+  return (
+    <>
+      {summary && <p className="text-[11px] text-warning mt-0.5 break-words">{summary}</p>}
+      {groups && groups.length > 0 && (
+        <details className="mt-0.5">
+          <summary className="cursor-pointer text-[11px] text-text-muted">Show what it uses</summary>
+          <div className="mt-1">
+            <LibraryUseList groups={groups} />
+          </div>
+        </details>
+      )}
+      <label className="flex items-center gap-1.5 text-[11px] text-text-muted mt-0.5">
+        <input type="checkbox" checked={readOnly} onChange={onToggleReadOnly} disabled={disabled} />
+        Add {project.name} in read-only mode
+      </label>
+    </>
   );
 }
 
@@ -392,6 +468,13 @@ function RowStatus({ project, outcome }: { project: DiscoveredProject; outcome: 
   }
   if (project.status?.kind === "RegisteredHere") {
     return <p className="text-[11px] text-text-muted mt-0.5">Already added as {project.status.name}</p>;
+  }
+  if (project.status?.kind === "OrphanConfig" && project.library_use?.kind === "Unreadable") {
+    return (
+      <p className="text-[11px] text-danger mt-0.5">
+        Its Automatic config cannot be read, so it cannot be added.
+      </p>
+    );
   }
   if (project.status?.kind === "OrphanConfig") {
     return (

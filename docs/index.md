@@ -14,6 +14,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 - [Remote Sources](./remote-sources.md) — loading resources from git repositories via `automatic.json` manifests.
 - [Agent Plugin Packages](./agent-packages.md) — importing Agent Plugins 1.0.0 packages: what is read, how MCP servers are mapped, and the limits.
 - [Profiles](./profiles.md) — live bundles of library references that keep attached projects in step; storage, reconcile rules, and how the editor marks inherited entries.
+- [Project Import](./project-import.md) — what the import review shows for a cloned project, and what it does not cover.
 - **Sub-Agents Feature** — Automatic's sub-agent model and storage. Reference lives in the sibling `automatic-meta` repo at `general/sub-agents/sub-agents.md`.
 - [Session Tracking](./session-tracking.md) — design for tracking agent sessions across projects.
 - **Cloud Library Sync** — bidirectional sync of `~/.automatic/` to `tryautomatic.app`. Design docs (webapp contract, client state, multi-library plan, and the archived v1 plan) live in the sibling `automatic-meta` repo under `general/plans/cloud-sync/` and `general/archive/cloud-sync/`.

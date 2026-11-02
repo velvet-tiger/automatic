@@ -32,7 +32,7 @@ pub fn reinstall_defaults() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn erase_app_data() -> Result<(), String> {
+pub fn erase_app_data() -> Result<core::ClearedCustomGateway, String> {
     core::erase_app_data()
 }
 

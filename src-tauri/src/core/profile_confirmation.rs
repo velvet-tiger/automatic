@@ -561,7 +561,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("mkdir");
         fs::write(dir.join(".automatic.json"), config.to_string()).expect("write config");
         let imported =
-            import_existing_project(dir.to_str().expect("utf-8")).expect("import");
+            import_existing_project(dir.to_str().expect("utf-8"), None).expect("import");
         (dir, imported.local_key)
     }
 
@@ -944,45 +944,6 @@ mod tests {
 
             load_profile_decisions("unknown", &mut project, true).expect("load");
             assert_eq!(project.local_confirmed_profiles, vec!["baseline"]);
-        });
-    }
-
-    #[test]
-    fn inspecting_a_folder_lists_the_library_profiles_it_asks_for() {
-        with_home(|home| {
-            save_profile("baseline", &["react"]);
-            let dir = home.join("stray");
-            fs::create_dir_all(&dir).expect("mkdir");
-            fs::write(
-                dir.join(".automatic.json"),
-                r#"{"name":"stray","profiles":["baseline","ghost"]}"#,
-            )
-            .expect("write");
-
-            let status = inspect_project_directory(dir.to_str().unwrap()).expect("inspect");
-            let DirectoryStatus::OrphanConfig { profiles, .. } = status else {
-                panic!("expected an orphan config");
-            };
-            assert_eq!(profiles, vec!["baseline"]);
-        });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn inspecting_a_folder_does_not_follow_a_linked_config() {
-        with_home(|home| {
-            save_profile("baseline", &["react"]);
-            let outside = home.join("outside.json");
-            fs::write(&outside, r#"{"name":"stray","profiles":["baseline"]}"#).expect("write");
-            let dir = home.join("stray");
-            fs::create_dir_all(&dir).expect("mkdir");
-            std::os::unix::fs::symlink(&outside, dir.join(".automatic.json")).expect("link");
-
-            let status = inspect_project_directory(dir.to_str().unwrap()).expect("inspect");
-            let DirectoryStatus::OrphanConfig { profiles, .. } = status else {
-                panic!("expected an orphan config");
-            };
-            assert!(profiles.is_empty());
         });
     }
 

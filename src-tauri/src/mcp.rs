@@ -2222,10 +2222,7 @@ impl AutomaticMcpServer {
             return Ok(tool_error(e));
         }
 
-        let before = project.profiles.len();
-        project.profiles.retain(|p| p != profile_name);
-        let recorded = project.profile_contributions.contains_key(profile_name);
-        if project.profiles.len() == before && !recorded && !groups_changed {
+        if !crate::core::release_profile(&mut project, profile_name) && !groups_changed {
             return Ok(tool_success(format!(
                 "Profile '{}' was not attached to project '{}'.",
                 profile_name, project_name

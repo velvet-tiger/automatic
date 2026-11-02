@@ -136,13 +136,11 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
     }
 
     // First, so a failure after this leaves the name pending and not trusted.
+    // `project` keeps its copy, which the release below needs.
     ensure_writable(project_name)?;
     core::forget_project_profile(project_name, profile_name)?;
 
-    let before = project.profiles.len();
-    project.profiles.retain(|p| p != profile_name);
-    let recorded = project.profile_contributions.contains_key(profile_name);
-    if project.profiles.len() == before && !recorded && !groups_changed {
+    if !core::release_profile(&mut project, profile_name) && !groups_changed {
         return Ok(()); // already detached, nothing to do
     }
 

@@ -1,14 +1,16 @@
 import { useEffect } from "react";
-import { X, FolderInput, Trash2 } from "lucide-react";
+import { X, FolderInput, Eye, Trash2 } from "lucide-react";
+import { LibraryUseList } from "../../../../components/LibraryUseList";
+import { startsReadOnly, type ProjectLibraryUse } from "../../../../lib/libraryUse";
 
 interface OrphanConfigDialogProps {
   directory: string;
   existingName: string;
-  /** Library profiles the config names. Each needs a decision after import. */
-  profiles: string[];
+  /** Null when the check itself failed. */
+  libraryUse: ProjectLibraryUse | null;
   busy: boolean;
   error: string | null;
-  onImport: () => void;
+  onImport: (readOnly: boolean) => void;
   onStartFresh: () => void;
   onCancel: () => void;
 }
@@ -16,7 +18,7 @@ interface OrphanConfigDialogProps {
 export function OrphanConfigDialog({
   directory,
   existingName,
-  profiles,
+  libraryUse,
   busy,
   error,
   onImport,
@@ -32,6 +34,33 @@ export function OrphanConfigDialog({
   }, [busy, onCancel]);
 
   const displayName = existingName.trim() || "(unnamed)";
+  const unreadable = libraryUse?.kind === "Unreadable";
+  // Only a starting choice: the user still picks either button.
+  const readOnlyFirst = startsReadOnly(libraryUse);
+  const primaryButton =
+    "flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium rounded bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 hover:border-brand/50 transition-colors disabled:opacity-50";
+  const secondaryButton =
+    "flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium rounded text-text-base border border-border-strong/40 hover:bg-bg-sidebar transition-colors disabled:opacity-50";
+  const addNormally = (
+    <button
+      onClick={() => onImport(false)}
+      disabled={busy || unreadable}
+      className={readOnlyFirst ? secondaryButton : primaryButton}
+    >
+      <FolderInput size={13} />
+      {busy ? "Working…" : "Add normally"}
+    </button>
+  );
+  const addReadOnly = (
+    <button
+      onClick={() => onImport(true)}
+      disabled={busy || unreadable}
+      className={readOnlyFirst ? primaryButton : secondaryButton}
+    >
+      <Eye size={13} />
+      {busy ? "Working…" : "Add in read-only mode"}
+    </button>
+  );
 
   return (
     <div
@@ -76,26 +105,32 @@ export function OrphanConfigDialog({
             <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted pt-1">
               Project name in file
             </div>
-            <div className="text-[12px] font-mono text-text-base">
+            <div className="text-[12px] font-mono text-text-base break-all">
               {displayName}
             </div>
-            {profiles.length > 0 && (
-              <>
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-text-muted pt-1">
-                  Profiles it asks for
-                </div>
-                <div className="text-[12px] font-mono text-text-base break-all">
-                  {profiles.join(", ")}
-                </div>
-                <p className="text-[12px] text-text-muted leading-relaxed pt-1">
-                  These do not apply until you attach them in the project.
-                </p>
-              </>
-            )}
           </div>
 
+          {libraryUse?.kind === "Readable" && <LibraryUseList groups={libraryUse.groups} />}
+          {libraryUse?.kind === "Readable" && libraryUse.groups.some((g) => g.kind === "profile" && g.total > 0) && (
+            <p className="text-[12px] text-text-muted leading-relaxed">
+              Profiles do not apply until you attach them in the project.
+            </p>
+          )}
+          {unreadable && (
+            <div className="rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-[12px] text-danger">
+              This configuration cannot be read, so it cannot be added. Fix the file, or remove it and
+              start fresh.
+            </div>
+          )}
+          {(libraryUse === null || libraryUse.kind === "NotChecked") && (
+            <div className="rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-[12px] text-warning">
+              Automatic could not check what this configuration uses from your library.
+            </div>
+          )}
+
           <p className="text-[13px] text-text-base leading-relaxed">
-            What do you want to do?
+            In read-only mode, Automatic reads this project's settings but does not change its files.
+            No library items are written into the folder.
           </p>
 
           {error && (
@@ -106,14 +141,8 @@ export function OrphanConfigDialog({
         </div>
 
         <div className="flex flex-col gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0 bg-bg-input">
-          <button
-            onClick={onImport}
-            disabled={busy}
-            className="flex items-center justify-center gap-2 px-3 py-2 text-[12px] font-medium rounded bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 hover:border-brand/50 transition-colors disabled:opacity-50"
-          >
-            <FolderInput size={13} />
-            {busy ? "Working…" : `Import '${displayName}' as-is`}
-          </button>
+          {readOnlyFirst ? addReadOnly : addNormally}
+          {readOnlyFirst ? addNormally : addReadOnly}
           <button
             onClick={onStartFresh}
             disabled={busy}

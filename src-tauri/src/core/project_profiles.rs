@@ -20,6 +20,10 @@ use super::*;
 // profile provides, whether the profile added it or adopted an entry the
 // project already had, so a later reconcile can remove exactly that. Entries
 // no attached profile lists are the project's own and are never touched.
+//
+// The lists are committed but the record is not. Teammates can hold different
+// profiles under one name, and each one's record covers only their own
+// version, so the committed lists settle on the union of those versions.
 
 /// The canonical `file_rules` key. Profile rules are attached here, the same
 /// key the Rules tab and `apply_templates_to_project` use.
@@ -149,7 +153,7 @@ pub fn get_profiles_dir() -> Result<PathBuf, String> {
     Ok(super::paths::get_library_dir()?.join("profiles"))
 }
 
-fn profile_path(name: &str) -> Result<PathBuf, String> {
+pub(super) fn profile_path(name: &str) -> Result<PathBuf, String> {
     Ok(get_profiles_dir()?.join(format!("{}.json", name)))
 }
 
@@ -517,6 +521,25 @@ pub fn reconcile_project_profiles(project: &mut Project) -> ProfileReconcileRepo
     report
 }
 
+/// Take `name` out of `project.profiles`, ready for the reconcile that removes
+/// its entries. Returns `false` when the project neither attaches nor records
+/// the profile.
+///
+/// The record is local to each checkout, so a fresh clone has none until its
+/// first reconcile. Reconciling first records what the profile provides, or
+/// the detach would leave those entries behind.
+pub fn release_profile(project: &mut Project, name: &str) -> bool {
+    let attached = project.profiles.iter().any(|p| p == name);
+    if !attached && !project.profile_contributions.contains_key(name) {
+        return false;
+    }
+    if attached {
+        reconcile_project_profiles(project);
+    }
+    project.profiles.retain(|p| p != name);
+    true
+}
+
 /// Drop `item` from the project because `from` no longer provides it. When
 /// another attached profile still lists the item it stays, and the record
 /// moves to that profile.
@@ -731,6 +754,8 @@ mod tests {
 
     #[test]
     fn erasing_app_data_restores_the_default_profile() {
+        // Erasing clears the gateway token, an account gateway tests fault.
+        let _store = crate::core::custom_gateway::test_support::gateway_store_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             seed_default_profile().expect("seed");
@@ -1010,6 +1035,42 @@ mod tests {
             assert!(!project.file_rules.contains_key(PROJECT_RULES_KEY));
             assert!(project.profile_contributions.is_empty());
         });
+    }
+
+    #[test]
+    fn detach_on_a_fresh_clone_removes_what_the_profile_provides() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let mut p = profile("baseline");
+            p.skills = vec!["react".into()];
+            write_profile(&p);
+
+            // Committed lists, and no record on this checkout. `vitest` came
+            // from a teammate's version of the profile.
+            let mut project = empty_project();
+            project.skills = vec!["react".into(), "vitest".into()];
+            project.profiles = vec!["baseline".into()];
+            project.local_confirmed_profiles = vec!["baseline".into()];
+
+            assert!(release_profile(&mut project, "baseline"));
+            reconcile_project_profiles(&mut project);
+
+            assert_eq!(project.skills, vec!["vitest"]);
+            assert!(project.profiles.is_empty());
+            assert!(project.profile_contributions.is_empty());
+        });
+    }
+
+    #[test]
+    fn release_reports_a_profile_the_project_does_not_use() {
+        let mut project = empty_project();
+        assert!(!release_profile(&mut project, "baseline"));
+
+        // A record with no attachment still has entries to remove.
+        project
+            .profile_contributions
+            .insert("baseline".into(), ProfileContribution::default());
+        assert!(release_profile(&mut project, "baseline"));
     }
 
     #[test]
