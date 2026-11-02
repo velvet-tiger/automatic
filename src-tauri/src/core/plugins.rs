@@ -300,6 +300,12 @@ pub fn ensure_plugin_marketplace() -> Result<PathBuf, String> {
 /// Code installs itself.  This function tries the well-known install locations
 /// before falling back to a plain `claude` on PATH.
 fn find_claude_binary() -> Option<std::path::PathBuf> {
+    // The real CLI would create `~/.claude` and make a bare profile look like
+    // a Claude Code user.
+    if super::is_fresh_run() {
+        return None;
+    }
+
     // 1. Try bare `claude` first (works in terminal / CI).
     if std::process::Command::new("claude")
         .arg("--version")
