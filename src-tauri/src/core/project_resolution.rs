@@ -293,8 +293,10 @@ fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
 }
 
 /// The checkout a tool may read for, given the client's `roots`. The working
-/// directory always wins. Only when it resolves to nothing do the roots count,
-/// each by the same rule. A root that resolves nowhere is ignored. Roots that
+/// directory always wins. Only when it is inside no registered folder do the
+/// roots count, each by the same rule. A cwd stopped by a repository boundary
+/// is refused, so a root cannot lift a nested repository into its parent. A
+/// root that resolves nowhere is ignored. Roots that
 /// resolve to more than one checkout give none: nothing here can pick.
 pub fn choose_reading_checkout<F>(
     folder: Option<&Path>,
@@ -305,8 +307,8 @@ pub fn choose_reading_checkout<F>(
 where
     F: Fn(&str) -> PathBuf,
 {
-    if let Some(found) = resolve_reading_checkout(folder, summaries, &canonical) {
-        return Some(found);
+    if folder.is_some_and(|cwd| deepest_containing(cwd, summaries.iter(), &canonical).is_some()) {
+        return resolve_reading_checkout(folder, summaries, &canonical);
     }
     let mut chosen: Option<ProjectSummary> = None;
     for root in roots {
@@ -664,6 +666,20 @@ mod tests {
         let elsewhere = Path::new("/elsewhere");
         let chosen = choose_reading_checkout(Some(elsewhere), &[cloned], &registered, identity);
         assert_eq!(chosen, None);
+    }
+
+    #[test]
+    fn a_nested_working_directory_refuses_and_no_root_lifts_it() {
+        let (_tmp, root, _worktree) = repository_with_worktree();
+        let cloned = root.join("vendor/clone");
+        std::fs::create_dir_all(cloned.join(".git")).expect("mkdir");
+        let registered = [summary("app", ID_A, KEY_A1, root.to_str().unwrap())];
+
+        let chosen = choose_reading_checkout(Some(&cloned), std::slice::from_ref(&root), &registered, identity);
+        assert_eq!(chosen, None);
+
+        let elsewhere = Path::new("/elsewhere");
+        assert!(choose_reading_checkout(Some(elsewhere), &[root], &registered, identity).is_some());
     }
 
     #[test]
