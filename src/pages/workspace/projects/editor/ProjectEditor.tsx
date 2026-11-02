@@ -1606,6 +1606,8 @@ export function ProjectEditor({
     try {
       if (await addProjectToGroup(groupName, projectKey)) {
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
+        // The join is on the project, and the Groups tab reads it from there.
+        await reloadProject(projectKey);
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
