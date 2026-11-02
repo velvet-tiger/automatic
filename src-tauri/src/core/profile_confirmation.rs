@@ -381,7 +381,15 @@ pub fn ignore_project_context(ident: &str, slug: &str) -> Result<(), String> {
 
 /// Drop this checkout's decisions about the context `slug`.
 pub fn forget_project_context(ident: &str, slug: &str) -> Result<(), String> {
-    edit_decisions(ident, |decisions| forget_context(decisions, slug))
+    edit_decisions(ident, |decisions| forget_context(decisions, slug))?;
+    let key = resolve_registry_entry(ident)?
+        .and_then(|entry| entry.local_key().map(str::to_string))
+        .unwrap_or_else(|| ident.to_string());
+    edit_context_retries(|retry| {
+        if let Some(slugs) = retry.get_mut(&key) {
+            slugs.retain(|name| name != slug);
+        }
+    })
 }
 
 fn forget_context(decisions: &mut ProfileDecisions, slug: &str) {
@@ -433,6 +441,9 @@ pub fn decide_project_context(ident: &str, slug: &str, confirmed: bool) -> Resul
         return Err(format!("Invalid context slug '{}'", slug));
     }
     if confirmed {
+        if !context_exists(slug)? {
+            return Err(format!("Context '{}' does not exist", slug));
+        }
         confirm_project_context(ident, slug)
     } else {
         forget_project_context(ident, slug)
@@ -577,11 +588,50 @@ pub fn forget_profile_everywhere(profile: &str) -> Vec<(String, String)> {
 /// Drop every project's decisions about a deleted context, so a later context
 /// with the same slug is not trusted.
 pub fn forget_context_everywhere(slug: &str) -> Vec<(String, String)> {
+    drop_context_retries(slug);
     edit_all_decisions(|decisions| forget_context(decisions, slug))
+}
+
+/// Take `slug` out of the migration's retries on every project.
+fn drop_context_retries(slug: &str) {
+    let dropped = edit_context_retries(|retry| {
+        for slugs in retry.values_mut() {
+            slugs.retain(|name| name != slug);
+        }
+    });
+    if let Err(e) = dropped {
+        eprintln!("Could not update the context migration marker: {}", e);
+    }
 }
 
 /// Carry every project's decisions over to a renamed context.
 pub fn rename_context_decisions(old: &str, new: &str) -> Vec<(String, String)> {
+    drop_context_retries(old);
+    move_context_decisions(old, new)
+}
+
+/// Undo [`rename_context_decisions`] after a later step failed. A failure here
+/// leaves that pointer naming a slug no list holds, which grants nothing.
+pub fn restore_context_decisions(old: &str, new: &str) {
+    for (project, error) in move_context_decisions(new, old) {
+        eprintln!("contexts: could not restore the decisions of '{}': {}", project, error);
+    }
+}
+
+/// Move one project's decision back, for a checkout whose list could not take
+/// the new slug. A decision must stay on the slug its list holds.
+pub fn keep_context_decision(ident: &str, old: &str, new: &str) -> Result<(), String> {
+    edit_decisions(ident, |decisions| {
+        for names in [&mut decisions.confirmed_contexts, &mut decisions.ignored_contexts] {
+            if names.iter().any(|name| name == new) {
+                names.retain(|name| name != new);
+                add_name(names, old);
+            }
+        }
+    })
+}
+
+fn move_context_decisions(old: &str, new: &str) -> Vec<(String, String)> {
     let rename = |names: &mut Vec<String>| {
         if names.iter().any(|name| name == old) {
             names.retain(|name| name != old);
@@ -699,56 +749,81 @@ fn attached_context_slugs(entry: &RegistryEntry) -> Result<Vec<String>, String> 
         .collect())
 }
 
-/// What the context migration left to do: the slugs it decided on for each
-/// project whose pointer it could not write. Kept in the marker, so a retry
-/// repeats that decision and reads no repository again.
+/// What the context migration still has to do: the slugs it decided on, by
+/// `local_key`. Written before the first pointer edit and cleared entry by
+/// entry, so an interrupted run repeats that decision and reads no other
+/// repository. A pointer with no `local_key` has nothing stable to retry under.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ContextMigrationMarker {
     #[serde(default)]
     retry: BTreeMap<String, Vec<String>>,
 }
 
+fn context_marker_path() -> Result<PathBuf, String> {
+    Ok(get_automatic_dir()?.join(CONTEXT_MIGRATION_MARKER))
+}
+
 fn write_context_marker(
     path: &Path,
-    retry: BTreeMap<String, Vec<String>>,
+    retry: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), String> {
-    let raw = serde_json::to_string_pretty(&ContextMigrationMarker { retry })
+    let raw = serde_json::to_string_pretty(&ContextMigrationMarker { retry: retry.clone() })
         .map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| format!("Could not write {}: {}", path.display(), e))
 }
 
-/// Apply the decided `slugs` to one pointer.
-fn confirm_context_slugs(entry: &RegistryEntry, slugs: &[String]) -> Result<(), String> {
+/// Change what the migration still has to confirm, so a later retry cannot
+/// bring back a slug the user removed. No marker, or an unreadable one, has no
+/// retries to change.
+fn edit_context_retries(edit: impl Fn(&mut BTreeMap<String, Vec<String>>)) -> Result<(), String> {
+    let path = context_marker_path()?;
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let Ok(ContextMigrationMarker { mut retry }) = serde_json::from_str(&raw) else {
+        return Ok(());
+    };
+    if retry.is_empty() {
+        return Ok(());
+    }
+    edit(&mut retry);
+    retry.retain(|_, slugs| !slugs.is_empty());
+    write_context_marker(&path, &retry)
+}
+
+/// Apply the decided `slugs` to one pointer, for those still listed and still
+/// in the library.
+fn confirm_context_slugs(entry: &RegistryEntry, key: &str, slugs: &[String]) -> Result<(), String> {
+    let listed = read_project(key)
+        .and_then(|raw| serde_json::from_str::<Project>(&raw).map_err(|e| e.to_string()))?
+        .contexts;
+    let current: Vec<&String> =
+        slugs.iter().filter(|slug| listed.contains(slug) && read_context(slug).is_ok()).collect();
     edit_pointer_file(&entry.path, &entry.name, |decisions| {
-        for slug in slugs {
+        for slug in &current {
             add_name(&mut decisions.confirmed_contexts, slug);
         }
     })
 }
 
-/// Try the pointers a first run could not write. A project no longer
-/// registered is dropped.
-fn retry_context_confirmations(marker: &Path) -> Result<(), String> {
-    let raw = fs::read_to_string(marker).unwrap_or_default();
-    let Ok(stored) = serde_json::from_str::<ContextMigrationMarker>(&raw) else {
-        return Ok(());
-    };
-    if stored.retry.is_empty() {
-        return Ok(());
-    }
-    let _writes = super::hold_library_writes();
-    let mut still_failing = BTreeMap::new();
+/// Work through the marker at `path`, clearing each entry that succeeds. A
+/// project no longer registered is dropped.
+fn run_context_retries(path: &Path, mut retry: BTreeMap<String, Vec<String>>) -> Result<(), String> {
     let mut failed = Vec::new();
-    for (key, slugs) in stored.retry {
-        let Ok(Some(entry)) = resolve_registry_entry(&key) else {
-            continue;
+    for (key, slugs) in retry.clone() {
+        let applied = match resolve_registry_entry(&key) {
+            Ok(Some(entry)) => confirm_context_slugs(&entry, &key, &slugs),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
         };
-        if let Err(e) = confirm_context_slugs(&entry, &slugs) {
-            failed.push(format!("'{}': {}", entry.name, e));
-            still_failing.insert(key, slugs);
+        match applied {
+            Ok(()) => {
+                retry.remove(&key);
+                write_context_marker(path, &retry)?;
+            }
+            Err(e) => failed.push(format!("'{}': {}", key, e)),
         }
     }
-    write_context_marker(marker, still_failing)?;
     if failed.is_empty() {
         return Ok(());
     }
@@ -759,16 +834,20 @@ fn retry_context_confirmations(marker: &Path) -> Result<(), String> {
 /// Without this, projects from before confirmation existed would lose their
 /// contexts. Writes only pointers, so read-only projects are covered. A project
 /// whose folder cannot be read is skipped, and its slugs show as pending. A
-/// pointer that cannot be written is retried with the same slugs: the marker
-/// records them, so a later start never reads the repositories again.
+/// pointer that cannot be written is retried with the same slugs: a later start
+/// reads no repository it does not have to.
 pub fn confirm_attached_contexts_once() -> Result<(), String> {
-    let marker = get_automatic_dir()?.join(CONTEXT_MIGRATION_MARKER);
-    if marker.exists() {
-        return retry_context_confirmations(&marker);
-    }
+    let marker = context_marker_path()?;
     let _writes = super::hold_library_writes();
+    if marker.exists() {
+        let raw = fs::read_to_string(&marker).unwrap_or_default();
+        let Ok(stored) = serde_json::from_str::<ContextMigrationMarker>(&raw) else {
+            return Ok(());
+        };
+        return run_context_retries(&marker, stored.retry);
+    }
     let mut retry = BTreeMap::new();
-    let mut failed = Vec::new();
+    let mut keyless = Vec::new();
     for entry in scan_registry()? {
         let slugs = attached_context_slugs(&entry).unwrap_or_else(|e| {
             eprintln!("Could not read the contexts of '{}': {}", entry.name, e);
@@ -777,16 +856,20 @@ pub fn confirm_attached_contexts_once() -> Result<(), String> {
         if slugs.is_empty() {
             continue;
         }
-        if let Err(e) = confirm_context_slugs(&entry, &slugs) {
-            failed.push(format!("'{}': {}", entry.name, e));
-            retry.insert(entry.local_key().unwrap_or(&entry.name).to_string(), slugs);
+        match entry.local_key() {
+            Some(key) => {
+                retry.insert(key.to_string(), slugs);
+            }
+            None => keyless.push((entry, slugs)),
         }
     }
-    write_context_marker(&marker, retry)?;
-    if failed.is_empty() {
-        return Ok(());
+    write_context_marker(&marker, &retry)?;
+    for (entry, slugs) in keyless {
+        if let Err(e) = confirm_context_slugs(&entry, &entry.name, &slugs) {
+            eprintln!("Could not confirm the contexts of '{}': {}", entry.name, e);
+        }
     }
-    Err(format!("Could not confirm the contexts of {}", failed.join("; ")))
+    run_context_retries(&marker, retry)
 }
 
 /// A project's registry pointer as stored.

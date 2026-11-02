@@ -20,6 +20,8 @@ interface ContextsPanelProps {
   /** local_key of the open project; null while creating. */
   selectedKey: string | null;
   reloadProject: (projectKey: string) => Promise<void>;
+  /** A click confirmed this slug and the list holding it is not saved yet. */
+  onUnsavedAttach?: (slug: string) => void;
   onNavigateToGroup?: (groupName: string) => void;
   /** Opens Library → Contexts, where contexts are created. */
   onNavigateToContexts?: () => void;
@@ -38,7 +40,7 @@ function ContextIcon({ context, size = 15 }: { context: Context | undefined; siz
  * provides show which group, and are removed from the group, not here.
  */
 export function ContextsPanel({
-  project, setProject, dirty, setDirty, isCreating, selectedKey, reloadProject, onNavigateToGroup, onNavigateToContexts,
+  project, setProject, dirty, setDirty, isCreating, selectedKey, reloadProject, onUnsavedAttach, onNavigateToGroup, onNavigateToContexts,
 }: ContextsPanelProps) {
   const [library, setLibrary] = useState<Context[]>([]);
   const [picking, setPicking] = useState(false);
@@ -107,6 +109,7 @@ export function ContextsPanel({
     setError(null);
     if (!direct) {
       await decide(slug, command === "attach_context");
+      if (command === "attach_context") onUnsavedAttach?.(slug);
       const next = command === "attach_context" ? [...attached, slug] : attached.filter((c) => c !== slug);
       setProject({ ...project, contexts: next });
       setDirty(true);

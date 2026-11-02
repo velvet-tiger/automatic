@@ -446,18 +446,45 @@ pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<ContextReference
     }
 
     let pending = projects_with_pending_context(old_slug)?;
-    decisions_updated(rename_context_decisions(old_slug, new_slug))?;
+    rename_decisions_first(old_slug, new_slug, rename_context_decisions)?;
 
-    let old_data = context_data_dir(&dir, old_slug);
+    context.slug = new_slug.to_string();
+    if let Err(e) = move_context_files(&dir, old_slug, new_slug, context) {
+        restore_context_decisions(old_slug, new_slug);
+        return Err(e);
+    }
+    rewrite_context_references(old_slug, Some(new_slug), &pending)
+}
+
+/// Run the decision sweep of a rename. A partial failure undoes the pointers
+/// that did change, so no project holds a decision for a context that never
+/// took the new slug.
+fn rename_decisions_first(
+    old_slug: &str,
+    new_slug: &str,
+    sweep: impl Fn(&str, &str) -> Vec<(String, String)>,
+) -> Result<(), String> {
+    let failures = sweep(old_slug, new_slug);
+    if !failures.is_empty() {
+        restore_context_decisions(old_slug, new_slug);
+    }
+    decisions_updated(failures)
+}
+
+fn move_context_files(
+    dir: &Path,
+    old_slug: &str,
+    new_slug: &str,
+    context: Context,
+) -> Result<(), String> {
+    let old_data = context_data_dir(dir, old_slug);
     if old_data.exists() {
-        fs::rename(&old_data, context_data_dir(&dir, new_slug))
+        fs::rename(&old_data, context_data_dir(dir, new_slug))
             .map_err(|e| format!("Failed to move stored pages for '{}': {}", old_slug, e))?;
     }
-    context.slug = new_slug.to_string();
     save_context(context)?;
-    fs::remove_file(context_file(&dir, old_slug))
-        .map_err(|e| format!("Failed to remove old context file '{}': {}", old_slug, e))?;
-    rewrite_context_references(old_slug, Some(new_slug), &pending)
+    fs::remove_file(context_file(dir, old_slug))
+        .map_err(|e| format!("Failed to remove old context file '{}': {}", old_slug, e))
 }
 
 /// Checkouts where `slug` is pending. They never took it, so a delete or rename
@@ -1455,7 +1482,17 @@ fn rewrite_context_references(
         }
         match write_project(&ident, &project) {
             Ok(()) => changes.push_project(&project),
-            Err(e) => eprintln!("contexts: failed to save project '{}': {}", ident, e),
+            Err(e) => {
+                eprintln!("contexts: failed to save project '{}': {}", ident, e);
+                // A read-only project keeps the old slug in its list, so the
+                // decision stays with it. Agents then see a slug that no longer
+                // exists reported, not a context that quietly went away.
+                if let Some(new_slug) = new_slug {
+                    if let Err(e) = keep_context_decision(&ident, old_slug, new_slug) {
+                        eprintln!("contexts: failed to keep the decision of '{}': {}", ident, e);
+                    }
+                }
+            }
         }
     }
 
@@ -1902,6 +1939,41 @@ mod tests {
 
     fn save_group_value(g: &ProjectGroup) {
         save_group(&g.name, &serde_json::to_string(g).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_partly_failed_decision_sweep_is_undone() {
+        with_home(|| {
+            save_context(local_context("old", vec![])).unwrap();
+            write_project("app", &project("app", &["old"])).unwrap();
+            confirm_project_context("app", "old").unwrap();
+            let partial = |old: &str, new: &str| {
+                rename_context_decisions(old, new);
+                vec![("other".to_string(), "refused".to_string())]
+            };
+
+            assert!(rename_decisions_first("old", "new", partial).is_err());
+            assert_eq!(read_project_parsed("app").unwrap().local_confirmed_contexts, vec!["old"]);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rename_that_fails_after_the_sweep_restores_the_decision() {
+        use std::os::unix::fs::PermissionsExt;
+        with_home(|| {
+            save_context(local_context("old", vec![])).unwrap();
+            write_project("app", &project("app", &["old"])).unwrap();
+            confirm_project_context("app", "old").unwrap();
+            let dir = get_contexts_dir().unwrap();
+
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+            let renamed = rename_context("old", "new");
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+            assert!(renamed.is_err());
+            assert_eq!(read_project_parsed("app").unwrap().local_confirmed_contexts, vec!["old"]);
+        });
     }
 
     #[test]

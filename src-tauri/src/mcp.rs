@@ -1023,13 +1023,25 @@ fn offered_contexts(
 
 const LINK_REFUSED: &str = "That path cannot be linked to that context from this folder.";
 
-/// `content` without `pending_contexts`. It holds only slugs the library has,
-/// so a repository could commit guesses and learn which contexts exist.
-fn without_pending_contexts(content: &str) -> Result<String, String> {
+/// Fields `automatic_read_project` leaves out. The pending lists hold only names
+/// the library has, so a repository could commit guesses and learn what exists.
+/// The decisions show what the user chose about names a repository asked for.
+const CHECKOUT_DECISION_FIELDS: &[&str] = &[
+    "pending_contexts",
+    "pending_profiles",
+    "local_confirmed_contexts",
+    "local_ignored_contexts",
+    "local_ignored_profiles",
+];
+
+/// `content` without [`CHECKOUT_DECISION_FIELDS`].
+fn without_checkout_decisions(content: &str) -> Result<String, String> {
     let mut project: serde_json::Value =
         serde_json::from_str(content).map_err(|e| e.to_string())?;
     if let Some(map) = project.as_object_mut() {
-        map.remove("pending_contexts");
+        for field in CHECKOUT_DECISION_FIELDS {
+            map.remove(*field);
+        }
     }
     serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
 }
@@ -1507,7 +1519,7 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::core::read_project(crate::core::checkout_ident(checkout))
-            .and_then(|content| without_pending_contexts(&content))
+            .and_then(|content| without_checkout_decisions(&content))
         {
             Ok(content) => Ok(tool_success(content)),
             Err(e) => Ok(tool_error(format!(
@@ -4488,7 +4500,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_read_project_does_not_report_pending_contexts() {
+    fn automatic_read_project_leaves_out_checkout_decisions() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let folders = save_registry_in_folders();
@@ -4496,12 +4508,22 @@ mod tests {
             let mut project: crate::core::Project =
                 serde_json::from_str(&crate::core::read_project(SITE_KEY).unwrap()).unwrap();
             project.contexts = vec!["private".into()];
+            project.profiles = vec!["base".into()];
+            let profile = serde_json::json!({"name": "base"});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
             crate::core::save_project(SITE_KEY, &serde_json::to_string(&project).unwrap()).expect("save");
-            assert!(crate::core::read_project(SITE_KEY).unwrap().contains("pending_contexts"));
+            crate::core::ignore_project_context(SITE_KEY, "other").expect("ignore");
+            crate::core::ignore_project_profile(SITE_KEY, "base").expect("ignore");
+            let stored = crate::core::read_project(SITE_KEY).unwrap();
+            for field in CHECKOUT_DECISION_FIELDS.iter().filter(|f| **f != "local_confirmed_contexts") {
+                assert!(stored.contains(field), "{field}: {stored}");
+            }
 
             let result = read(&server_in(&folders.site, None), None);
             assert_ne!(result.is_error, Some(true), "{}", result_text(&result));
-            assert!(!result_text(&result).contains("pending_contexts"), "{}", result_text(&result));
+            for field in CHECKOUT_DECISION_FIELDS {
+                assert!(!result_text(&result).contains(field), "{field}: {}", result_text(&result));
+            }
         });
     }
 

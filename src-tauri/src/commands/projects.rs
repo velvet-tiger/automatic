@@ -3902,6 +3902,115 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
+    fn a_read_only_project_keeps_its_decision_through_a_rename() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let (_keep, _dir, key) = repo_naming(&slug);
+            core::confirm_project_context(&key, &slug).expect("confirm");
+            core::set_project_read_only(&key, true).expect("on");
+
+            core::rename_context(&slug, "renamed").expect("rename");
+
+            let project = read_back(&key);
+            assert_eq!(project.contexts, vec![slug.clone()]);
+            assert_eq!(project.local_confirmed_contexts, vec![slug.clone()]);
+            assert_eq!(offered_contexts(&key), vec![slug], "reported, not silently gone");
+        });
+    }
+
+    #[test]
+    fn a_wizard_pick_is_confirmed_by_the_create_save() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let keep = tempdir().expect("dir");
+            let project = core::Project {
+                name: "fresh".into(),
+                directory: keep.path().display().to_string(),
+                contexts: vec![slug.clone()],
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&project).expect("json");
+            let key = save_project("fresh", &json, Some(true)).expect("save");
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec![slug.clone()]);
+            assert_eq!(offered_contexts(&key), vec![slug]);
+        });
+    }
+
+    #[test]
+    fn a_decision_needs_a_context_that_exists() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let key = read_back("member").local_key;
+            assert!(core::decide_project_context(&key, "ghost", true).is_err());
+            assert!(read_back(&key).local_confirmed_contexts.is_empty());
+            core::decide_project_context(&key, "ghost", false).expect("forget is safe");
+        });
+    }
+
+    /// Fail every pointer while the migration's first run writes them, leaving
+    /// the slugs in the marker.
+    #[cfg(unix)]
+    fn migrate_with_locked_pointers() {
+        use std::os::unix::fs::PermissionsExt;
+        let pointers = core::get_projects_dir().expect("dir");
+        let chmod = |mode| {
+            for entry in std::fs::read_dir(&pointers).expect("read").flatten() {
+                std::fs::set_permissions(entry.path(), std::fs::Permissions::from_mode(mode)).expect("chmod");
+            }
+            std::fs::set_permissions(&pointers, std::fs::Permissions::from_mode(mode | 0o111)).expect("chmod");
+        };
+        chmod(0o444);
+        let failed = core::confirm_attached_contexts_once();
+        chmod(0o644);
+        assert!(failed.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retry_skips_slugs_that_were_detached_deleted_or_renamed() {
+        with_temp_home(|_| {
+            let kept = save_library_context("Kept");
+            let detached = save_library_context("Detached");
+            let deleted = save_library_context("Deleted");
+            let keep = tempdir().expect("repo");
+            let dir = keep.path().to_path_buf();
+            let config = serde_json::json!({
+                "name": "repo",
+                "id": uuid::Uuid::new_v4().to_string(),
+                "contexts": [kept, detached, deleted],
+            });
+            std::fs::write(dir.join(".automatic.json"), config.to_string()).expect("config");
+            let key = core::import_existing_project(dir.to_str().unwrap(), None).expect("import").local_key;
+
+            migrate_with_locked_pointers();
+
+            core::detach_context(&core::ContextTarget::Project(key.clone()), &detached).expect("detach");
+            core::delete_context(&deleted).expect("delete");
+            save_library_context("Deleted");
+            core::confirm_attached_contexts_once().expect("retry");
+
+            assert_eq!(read_back(&key).local_confirmed_contexts, vec![kept]);
+        });
+    }
+
+    #[test]
+    fn a_keyless_pointer_is_confirmed_and_not_kept_for_retry() {
+        with_temp_home(|_| {
+            let slug = save_library_context("Private");
+            let project = core::Project { name: "local".into(), contexts: vec![slug.clone()], ..Default::default() };
+            core::save_project("local", &serde_json::to_string(&project).expect("json")).expect("save");
+
+            core::confirm_attached_contexts_once().expect("migrate");
+
+            assert_eq!(read_back("local").local_confirmed_contexts, vec![slug]);
+            let marker = core::get_automatic_dir().expect("dir").join("contexts_confirmed_migrated");
+            let stored: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(marker).expect("marker")).expect("json");
+            assert_eq!(stored["retry"], serde_json::json!({}));
+        });
+    }
+
+    #[test]
     fn a_joined_group_needs_no_confirmation() {
         with_temp_home(|_| {
             let (_keep, _dir) = make_project("member", |_| {});

@@ -88,10 +88,26 @@ interface CheckoutDecisions {
 }
 
 /**
- * `held` with the per-checkout decisions of `fresh`. For an editor holding
- * unsaved edits, which a full reload would discard.
+ * `held`'s list with what changed in storage since `base`, the stored list at
+ * the last read. An unsaved attach or detach survives. A slug that left storage
+ * goes, unless the editor added it. A slug a group brought in arrives.
  */
-export function withCheckoutDecisions<T extends CheckoutDecisions>(held: T, fresh: CheckoutDecisions): T {
+export function mergeContexts(held: string[], fresh: string[], base: string[]): string[] {
+  const kept = held.filter((slug) => fresh.includes(slug) || !base.includes(slug));
+  const arrived = fresh.filter((slug) => !base.includes(slug) && !kept.includes(slug));
+  return [...kept, ...arrived];
+}
+
+/**
+ * `held` with the per-checkout decisions of `fresh`. For an editor holding
+ * unsaved edits, which a full reload would discard. `base` is the stored
+ * `contexts` at the last read.
+ */
+export function withCheckoutDecisions<T extends CheckoutDecisions>(
+  held: T,
+  fresh: CheckoutDecisions,
+  base: string[] = held.contexts ?? [],
+): T {
   return {
     ...held,
     local_confirmed_groups: fresh.local_confirmed_groups ?? [],
@@ -99,7 +115,7 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(held: T, fres
     pending_profiles: fresh.pending_profiles ?? [],
     local_ignored_contexts: fresh.local_ignored_contexts ?? [],
     pending_contexts: fresh.pending_contexts ?? [],
-    contexts: fresh.contexts ?? [],
+    contexts: mergeContexts(held.contexts ?? [], fresh.contexts ?? [], base),
     group_context_contributions: fresh.group_context_contributions ?? {},
   };
 }

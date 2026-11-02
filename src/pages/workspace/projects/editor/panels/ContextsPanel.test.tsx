@@ -137,4 +137,13 @@ describe("ContextsPanel", () => {
     expect(props.reloadProject).not.toHaveBeenCalled();
     expect(vi.mocked(props.setProject).mock.calls[0][0].pending_contexts).toEqual([]);
   });
+
+  it("reports an unsaved attach, so a discard can take the confirmation back", async () => {
+    const onUnsavedAttach = vi.fn();
+    renderPanel({ dirty: true, onUnsavedAttach });
+    fireEvent.click(await screen.findByRole("button", { name: /Attach a context/ }));
+    fireEvent.click(await screen.findByText("Extra"));
+    fireEvent.click(await screen.findByRole("button", { name: /^Attach$/ }));
+    await waitFor(() => expect(onUnsavedAttach).toHaveBeenCalledWith("extra"));
+  });
 });

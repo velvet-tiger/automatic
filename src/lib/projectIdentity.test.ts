@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ProjectSummary } from "../pages/workspace/projects/types";
 import {
   membersWithoutProject,
+  mergeContexts,
   withCheckoutDecisions,
   projectKeyOf,
   projectLabelFor,
@@ -161,6 +162,32 @@ describe("shared names in the Add Project wizard", () => {
   });
 });
 
+describe("mergeContexts", () => {
+  it("keeps an unsaved attach", () => {
+    expect(mergeContexts(["own", "new"], ["own"], ["own"])).toEqual(["own", "new"]);
+  });
+
+  it("keeps an unsaved detach", () => {
+    expect(mergeContexts(["own"], ["own", "gone"], ["own", "gone"])).toEqual(["own"]);
+  });
+
+  it("drops a slug that left storage", () => {
+    expect(mergeContexts(["own", "team"], ["own"], ["own", "team"])).toEqual(["own"]);
+  });
+
+  it("keeps a slug the editor added even when storage never held it", () => {
+    expect(mergeContexts(["added"], [], [])).toEqual(["added"]);
+  });
+
+  it("adds a slug a group brought in", () => {
+    expect(mergeContexts(["own"], ["own", "team"], ["own"])).toEqual(["own", "team"]);
+  });
+
+  it("does not repeat a slug both sides added", () => {
+    expect(mergeContexts(["both"], ["both"], [])).toEqual(["both"]);
+  });
+});
+
 describe("withCheckoutDecisions", () => {
   it("takes the decisions and keeps the held edits", () => {
     const held = { description: "unsaved", pending_profiles: ["old"], local_confirmed_groups: [] };
@@ -179,12 +206,12 @@ describe("withCheckoutDecisions", () => {
   });
 
   it("takes what a group changed in the contexts", () => {
-    const held = { description: "unsaved", contexts: ["left"], group_context_contributions: { team: ["left"] } };
+    const held = { description: "unsaved", contexts: ["left", "added"], group_context_contributions: { team: ["left"] } };
     const fresh = { contexts: ["own"], group_context_contributions: {} };
 
-    expect(withCheckoutDecisions(held, fresh)).toMatchObject({
+    expect(withCheckoutDecisions(held, fresh, ["left"])).toMatchObject({
       description: "unsaved",
-      contexts: ["own"],
+      contexts: ["added", "own"],
       group_context_contributions: {},
     });
   });

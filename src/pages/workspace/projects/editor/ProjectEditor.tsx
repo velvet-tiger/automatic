@@ -281,6 +281,10 @@ export function ProjectEditor({
   // Wizard state (used while isCreating === true)
   // 1 Directory, 2 Agents, 3 Group, 4 Profile, 5 Templates, 6 Tools, 7 Settings.
   const [wizardStep, setWizardStep] = useState<WizardStepNumber>(1);
+  /** The stored `contexts` at the last read or save, the base of a merge. */
+  const storedContexts = useRef<string[]>([]);
+  /** Attaches confirmed at the click and not yet saved. */
+  const unsavedAttaches = useRef<{ key: string; slugs: string[] } | null>(null);
   // Groups and profiles need a saved project, so the wizard only records the
   // choices here and applies them after the final save.
   const [wizardGroups, setWizardGroups] = useState<string[]>([]);
@@ -1612,7 +1616,53 @@ export function ProjectEditor({
     }
     const raw: string = await invoke("read_project", { name: projectKey });
     const fresh = JSON.parse(raw) as Partial<Project>;
-    setProject((held) => (held ? withCheckoutDecisions(held, fresh) : held));
+    const base = storedContexts.current;
+    storedContexts.current = fresh.contexts ?? [];
+    setProject((held) => (held ? withCheckoutDecisions(held, fresh, base) : held));
+  };
+
+  /** A group change must not read as a failure because its refresh failed. */
+  const refreshAfterGroupChange = async (projectKey: string) => {
+    try {
+      await refreshCheckoutDecisions(projectKey);
+    } catch (err) {
+      console.warn(`Could not refresh '${projectKey}' after a group change:`, err);
+    }
+  };
+
+  /** A save took the list, so the attaches it holds are saved. A later one is not. */
+  const noteContextsSaved = (contexts: string[] | undefined) => {
+    const saved = contexts ?? [];
+    storedContexts.current = saved;
+    const attaches = unsavedAttaches.current;
+    if (attaches) {
+      unsavedAttaches.current = { ...attaches, slugs: attaches.slugs.filter((slug) => !saved.includes(slug)) };
+    }
+  };
+
+  /**
+   * `contexts` is what storage holds for `projectKey`. Replacing held edits
+   * with it discards unsaved attaches, and their click-time confirmation must
+   * not stay behind with no list entry.
+   */
+  const noteContextsLoaded = (projectKey: string, contexts: string[]) => {
+    const attaches = unsavedAttaches.current;
+    unsavedAttaches.current = null;
+    storedContexts.current = contexts;
+    if (!attaches) return;
+    const lost = attaches.key === projectKey ? attaches.slugs.filter((slug) => !contexts.includes(slug)) : attaches.slugs;
+    for (const slug of lost) {
+      invoke("decide_project_context", { projectName: attaches.key, slug, confirmed: false }).catch((e: unknown) => {
+        console.warn(`Could not forget the discarded context '${slug}':`, e);
+      });
+    }
+  };
+
+  const noteUnsavedAttach = (slug: string) => {
+    if (!selectedKey) return;
+    const held = unsavedAttaches.current;
+    const slugs = held?.key === selectedKey ? held.slugs : [];
+    unsavedAttaches.current = { key: selectedKey, slugs: [...slugs, slug] };
   };
 
   const handleAddToGroup = async (groupName: string, projectKey: string) => {
@@ -1649,7 +1699,7 @@ export function ProjectEditor({
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
       setProjectGroupMemberships((prev) => prev.filter((n) => n !== groupName));
       // The group's contexts left this project, and a held copy would save them back.
-      await refreshCheckoutDecisions(projectKey);
+      await refreshAfterGroupChange(projectKey);
       // Every member is a local_key, including the checkouts just removed.
       const toSync = [...before, projectKey];
       for (const name of toSync) {
@@ -1689,6 +1739,7 @@ export function ProjectEditor({
       }
     }
     setProjectGroupMemberships([]);
+    await refreshAfterGroupChange(projectKey);
     // Sync all affected projects
     for (const name of toSync) {
       invoke("sync_project", { name }).catch((e: unknown) => {
@@ -2057,6 +2108,7 @@ export function ProjectEditor({
       // This also handles the case where rules were toggled on a not-yet-existing file.
       const toSave = { ...project, updated_at: new Date().toISOString() };
       await saveProject(selectedKey, JSON.stringify(toSave, null, 2));
+      noteContextsSaved(toSave.contexts);
       setDirty(false);
 
       await invoke("save_project_file", {
@@ -2234,6 +2286,7 @@ export function ProjectEditor({
         directory_missing: stored.directory_missing === true,
       };
 
+      noteContextsLoaded(projectKey, data.contexts ?? []);
       setSelectedKey(projectKey);
       writeSelectedProject(projectKey);
       setProject(data);
@@ -2346,6 +2399,7 @@ export function ProjectEditor({
       setSelectedKey(projectKey);
       setIsCreating(false);
       setProject(data);
+      noteContextsLoaded(projectKey, data.contexts ?? []);
       // Keep the overview card in sync whenever a project is reloaded from disk.
       setProjectDetailsMap((prev) => new Map(prev).set(projectKey, data));
       setDirty(false);
@@ -2919,6 +2973,7 @@ export function ProjectEditor({
         reread = true;
       } catch { /* fall back to pre-save snapshot */ }
       setProjectDetailsMap((prev) => new Map(prev).set(name, saved));
+      if (name === selectedKey) noteContextsSaved(saved.contexts);
       // The user may have moved to another project, or edited this one again,
       // while the save ran. Either way the editor state is newer than `saved`.
       const stillOpen = isCreating || selectedKeyRef.current === name;
@@ -4754,6 +4809,7 @@ export function ProjectEditor({
                     isCreating={isCreating}
                     selectedKey={selectedKey}
                     reloadProject={reloadProject}
+                    onUnsavedAttach={noteUnsavedAttach}
                     onNavigateToGroup={onNavigateToGroup}
                     onNavigateToContexts={onNavigateToContexts}
                   />

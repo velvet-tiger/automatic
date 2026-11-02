@@ -328,7 +328,7 @@ ttl_secs?: number     — web page: seconds a downloaded copy is reused (default
 source: string        — remove: the source id from automatic_read_context
 ```
 
-**When to use:** Only when the user asks. The user's settings decide which folders you may link: by default only folders inside registered projects, and possibly none. Hidden, credential and system folders are always refused, and only Markdown and text files are shared. Web pages you add may only reach public addresses until the user keeps them in the app. Everything you link is marked as added by an agent. Cloud sources can only be added by the user in the Automatic app.
+**When to use:** Only when the user asks. You can link only inside the folder of the project this server runs in, and the user's settings can narrow that further, possibly to none. Hidden, credential and system folders are always refused, and only Markdown and text files are shared. Web pages you add may only reach public addresses until the user keeps them in the app. Everything you link is marked as added by an agent. Cloud sources can only be added by the user in the Automatic app.
 
 ---
 
