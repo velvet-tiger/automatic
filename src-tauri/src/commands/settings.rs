@@ -10,7 +10,7 @@ pub fn read_settings() -> Result<core::Settings, String> {
 
 #[tauri::command]
 pub fn write_settings(settings: core::Settings) -> Result<(), String> {
-    core::write_settings(&settings)
+    core::write_settings_from_frontend(settings)
 }
 
 #[tauri::command]

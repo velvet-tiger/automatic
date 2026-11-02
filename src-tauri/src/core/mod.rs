@@ -20,6 +20,8 @@ mod context_sources;
 mod contexts;
 mod credentials;
 mod custom_assets;
+pub(crate) mod custom_gateway;
+mod claude_code_env;
 mod discover;
 mod deletion_guards;
 mod discover_data;
@@ -79,6 +81,10 @@ pub use context_sources::*;
 pub use contexts::*;
 pub use credentials::*;
 pub use custom_assets::*;
+pub use custom_gateway::{
+    clear_custom_gateway, custom_gateway_status, save_custom_gateway, ClearedCustomGateway,
+    CustomGateway, CustomGatewayStatus,
+};
 pub use deletion_guards::{ensure_deletable, protection_of, LibraryAssetKind, Protection};
 pub use discover::*;
 pub use discover_data::init_discover_files;

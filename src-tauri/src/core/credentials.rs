@@ -61,10 +61,15 @@ fn any_api_key_stored<'a>(
     }
 }
 
+/// Whether settings hold a custom gateway. This needs no keychain read.
+fn custom_gateway_saved() -> bool {
+    read_settings().is_ok_and(|settings| settings.custom_gateway.is_some())
+}
+
 /// Best-effort write of `agent_features_enabled`. Errors reading or writing
 /// settings are swallowed — failing to update the toggle should never block
 /// the keychain operation that triggered it.
-fn set_agent_features_enabled(value: bool) {
+pub(super) fn set_agent_features_enabled(value: bool) {
     if let Ok(mut settings) = read_settings() {
         if settings.agent_features_enabled != Some(value) {
             settings.agent_features_enabled = Some(value);
@@ -74,14 +79,19 @@ fn set_agent_features_enabled(value: bool) {
 }
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let had_keys_before = any_known_api_key_stored(StoreRead::Now);
+    // A saved custom gateway already counts as a credential.
+    let had_credentials_before = if custom_gateway_saved() {
+        Ok(true)
+    } else {
+        any_known_api_key_stored(StoreRead::Now)
+    };
     secret_store::store_secret(provider, key)?;
     set_cached_presence(provider, true);
 
     // Auto-enable agent features the first time a key is added. When the
     // store could not say whether a key was there before, the setting is the
     // user's own choice as far as anyone knows, so it is left alone.
-    if had_keys_before == Ok(false) && known_agents().iter().any(|id| id.as_str() == provider) {
+    if had_credentials_before == Ok(false) && known_agents().iter().any(|id| id.as_str() == provider) {
         set_agent_features_enabled(true);
     }
     Ok(())
@@ -142,6 +152,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     // Auto-disable agent features once no recognised keys remain. A store
     // that cannot be read may still hold a key, so the setting then stays.
     if known_agents().iter().any(|id| id.as_str() == provider)
+        && !custom_gateway_saved()
         && any_known_api_key_stored(StoreRead::Now) == Ok(false)
     {
         set_agent_features_enabled(false);

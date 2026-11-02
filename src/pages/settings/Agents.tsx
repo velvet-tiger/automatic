@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Key, Trash2 } from "lucide-react";
 import { AgentIcon } from "../../components/AgentIcon";
+import { CustomGatewaySection, type CustomGatewayStatus } from "./CustomGatewaySection";
 
 /**
  * An LLM agent that Automatic can use for in-app features
@@ -93,6 +94,11 @@ const AGENTS: AgentDefinition[] = [
   },
 ];
 
+/** The custom gateway only applies to the Anthropic provider. */
+const CUSTOM_GATEWAY_PROVIDER = "anthropic";
+
+const NO_CUSTOM_GATEWAY: CustomGatewayStatus = { configured: false, base_url: null, credential_kind: null };
+
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 interface KeyState {
@@ -132,11 +138,25 @@ export default function SettingsAgents() {
   const [savedGateways, setSavedGateways] = useState<Record<string, GatewayConfig>>({});
   /** Per-provider gateway form state (only relevant for supportsGateway agents). */
   const [gatewayStates, setGatewayStates] = useState<Record<string, GatewayFormState>>({});
+  const [customGateway, setCustomGateway] = useState<CustomGatewayStatus>(NO_CUSTOM_GATEWAY);
+  const [customGatewayError, setCustomGatewayError] = useState<string | null>(null);
 
   useEffect(() => {
     loadKeyStatus();
     loadSettings();
+    loadCustomGateway();
   }, []);
+
+  const loadCustomGateway = async () => {
+    try {
+      const status = await invoke<CustomGatewayStatus | undefined>("get_custom_gateway_status");
+      setCustomGateway(status ?? NO_CUSTOM_GATEWAY);
+      setCustomGatewayError(null);
+      if (status?.configured) loadModelsForProvider(CUSTOM_GATEWAY_PROVIDER);
+    } catch (e) {
+      setCustomGatewayError(String(e));
+    }
+  };
 
   const loadKeyStatus = async () => {
     const results = await Promise.all(
@@ -298,7 +318,12 @@ export default function SettingsAgents() {
     }
   };
 
-  const anyKeyStored = AGENTS.some((a) => keyStates[a.provider]?.stored);
+  /** A key, or for Claude a saved custom gateway, lets this agent make requests. */
+  const hasCredential = (provider: string) =>
+    (keyStates[provider]?.stored ?? false) ||
+    (provider === CUSTOM_GATEWAY_PROVIDER && customGateway.configured);
+
+  const anyKeyStored = AGENTS.some((a) => hasCredential(a.provider));
   // The backend keeps agent features on when the keychain could not say
   // whether a key is stored, so that using one shows the keychain's error.
   // The toggle follows the same rule, or it would say off while the rest of
@@ -411,7 +436,8 @@ export default function SettingsAgents() {
           <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden divide-y divide-border-strong/20">
             {AGENTS.map((agent) => {
               const isActive = effectiveActiveAgent === agent.provider;
-              const hasKey = keyStates[agent.provider]?.stored ?? false;
+              const hasKey = hasCredential(agent.provider);
+              const usesCustomGateway = agent.provider === CUSTOM_GATEWAY_PROVIDER && customGateway.configured;
               return (
                 <button
                   key={agent.id}
@@ -425,7 +451,9 @@ export default function SettingsAgents() {
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium text-text-base">{agent.label}</div>
                     <div className="text-[11px] text-text-muted">
-                      {hasKey
+                      {usesCustomGateway
+                        ? "Custom gateway"
+                        : hasKey
                         ? agent.providerLabel
                         : keyStates[agent.provider]?.readError
                           ? "Key status unknown"
@@ -450,6 +478,8 @@ export default function SettingsAgents() {
       <div className="space-y-4">
         {AGENTS.map((agent) => {
           const state = keyStates[agent.provider] ?? defaultKeyState();
+          const isCustomGatewayCard = agent.provider === CUSTOM_GATEWAY_PROVIDER;
+          const usesCustomGateway = isCustomGatewayCard && customGateway.configured;
           return (
             <section key={agent.id}>
               <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
@@ -475,7 +505,7 @@ export default function SettingsAgents() {
                   )}
                   {!state.stored && !state.editing && (
                     <span className="text-[11px] text-text-muted">
-                      {state.readError ? "Unknown" : "Not configured"}
+                      {state.readError ? "Unknown" : usesCustomGateway ? "Not needed" : "Not configured"}
                     </span>
                   )}
 
@@ -503,7 +533,7 @@ export default function SettingsAgents() {
                   )}
                 </div>
 
-                {state.stored && !state.editing && agentModels[agent.provider]?.length > 0 && (
+                {hasCredential(agent.provider) && !state.editing && agentModels[agent.provider]?.length > 0 && (
                   <div className="border-t border-border-strong/20 px-3 py-2.5 flex items-center gap-2">
                     <span className="text-[11px] text-text-muted flex-shrink-0">Model</span>
                     <div className="relative flex-1">
@@ -522,7 +552,7 @@ export default function SettingsAgents() {
                   </div>
                 )}
 
-                {agent.supportsGateway && state.stored && !state.editing && (() => {
+                {agent.supportsGateway && state.stored && !state.editing && !usesCustomGateway && (() => {
                   const gs = gatewayStates[agent.provider] ?? defaultGatewayState();
                   const saved = savedGateways[agent.provider];
                   return (
@@ -599,6 +629,25 @@ export default function SettingsAgents() {
                     </div>
                   );
                 })()}
+
+                {isCustomGatewayCard && (
+                  <CustomGatewaySection
+                    status={customGateway}
+                    overridesCloudflare={!!savedGateways[agent.provider]}
+                    onChanged={async () => {
+                      await loadCustomGateway();
+                      // The backend may have changed the agent features toggle.
+                      await loadSettings();
+                    }}
+                  />
+                )}
+                {isCustomGatewayCard && customGatewayError && (
+                  <div className="px-3 pb-3">
+                    <span className="text-[11px] text-danger">
+                      Could not read the custom gateway. {customGatewayError}
+                    </span>
+                  </div>
+                )}
 
                 {state.readError && !state.editing && (
                   <div className="px-3 pb-3">
@@ -691,6 +740,7 @@ export default function SettingsAgents() {
                     </div>
                     <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
                       Your credentials are stored in the OS keychain and never written to disk.
+                      {isCustomGatewayCard && " This covers this key only. The custom gateway token is handled differently."}
                     </p>
                   </div>
                 )}

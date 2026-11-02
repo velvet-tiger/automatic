@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use super::agents::GatewayConfig;
+use super::custom_gateway::CustomGateway;
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
 
@@ -95,6 +96,12 @@ pub struct Settings {
     /// (e.g. `"anthropic"`). Agents absent from this map have no gateway.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_gateways: HashMap<String, GatewayConfig>,
+    /// The user's custom LLM gateway for Claude. It drives Automatic's Anthropic
+    /// client and Claude Code. The token is only in the secret store. Written
+    /// by `save_custom_gateway` and `clear_custom_gateway`, never by the
+    /// `write_settings` command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_gateway: Option<CustomGateway>,
     /// User-selected model for each agent, keyed by agent ID. When absent for
     /// an agent, the hardcoded default from `agents::default_model` is used.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -146,6 +153,7 @@ impl Default for Settings {
             agent_features_enabled: None,
             active_agent: None,
             agent_gateways: HashMap::new(),
+            custom_gateway: None,
             agent_models: HashMap::new(),
             nvm_enabled: false,
             agent_folder_links: AgentFolderLinks::default(),
@@ -173,8 +181,23 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
+/// Write settings that came from the frontend. The custom gateway is left as
+/// it is on disk, because the frontend writes the whole `Settings` back and
+/// the gateway must only change together with the file it controls.
+pub fn write_settings_from_frontend(mut settings: Settings) -> Result<(), String> {
+    settings.custom_gateway = read_settings()?.custom_gateway;
+    write_settings(&settings)
+}
+
+/// Return settings to their defaults. The custom gateway stays: dropping it
+/// would lose the record of what Automatic wrote to Claude Code, and the user
+/// could no longer clear those values here.
 pub fn reset_settings() -> Result<(), String> {
-    write_settings(&Settings::default())
+    let custom_gateway = read_settings()?.custom_gateway;
+    write_settings(&Settings {
+        custom_gateway,
+        ..Settings::default()
+    })
 }
 
 /// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
@@ -195,6 +218,9 @@ pub fn reinstall_defaults() -> Result<(), String> {
 }
 
 pub fn erase_app_data() -> Result<(), String> {
+    // The erase goes ahead if this fails, so the user is told what is left.
+    let gateway_cleared = super::custom_gateway::clear_custom_gateway();
+
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {
         fs::remove_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
@@ -210,7 +236,12 @@ pub fn erase_app_data() -> Result<(), String> {
     super::install_default_skills()?;
     super::install_default_subagents()?;
 
-    Ok(())
+    gateway_cleared.map(|_| ()).map_err(|e| {
+        format!(
+            "App data was erased, but the custom gateway could not be cleared: {}",
+            e
+        )
+    })
 }
 
 pub fn dismiss_welcome() -> Result<(), String> {

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::store_reads::StoreRead;
 use super::agents::{
     message::{neutral_to_anthropic, ContentBlock, NeutralContent, NeutralMessage, ToolDef},
-    AgentClientDyn, GatewayConfig,
+    AgentClientDyn, CustomGatewayRoute, GatewayConfig,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -53,11 +53,13 @@ fn active_agent_id() -> String {
 /// * `None`        → never set explicitly; derives from key presence so
 ///   upgrading users keep their previous behaviour
 pub fn agent_features_enabled() -> bool {
-    let explicit = super::settings::read_settings()
-        .ok()
-        .and_then(|s| s.agent_features_enabled);
+    let settings = super::settings::read_settings().ok();
+    let explicit = settings.as_ref().and_then(|s| s.agent_features_enabled);
+    let gateway_saved = settings.is_some_and(|s| s.custom_gateway.is_some());
     match explicit {
         Some(value) => value,
+        // A saved gateway is enough. Using it reports a missing token.
+        None if gateway_saved => true,
         // The answer only decides what a page shows, so it is a background
         // read and a plain bool. When the keychain could not say, the
         // features stay on. Using one then reports the keychain's own error
@@ -68,23 +70,33 @@ pub fn agent_features_enabled() -> bool {
     }
 }
 
-/// Resolve the API key to use for a request.
+/// Where a request goes and which credential it carries.
+#[derive(Debug)]
+enum AgentRoute {
+    /// The active agent's own endpoint, using `key`.
+    Provider { agent_id: String, key: String },
+    /// The user's custom gateway. It takes the place of the Anthropic key, so
+    /// that key is not read and cannot reach the gateway.
+    CustomGateway(CustomGatewayRoute),
+}
+
+/// Resolve the route to use for a request.
 ///
 /// Priority order:
 ///   1. Master toggle: if `agent_features_enabled` is `Some(false)`, fail
 ///      regardless of stored keys.
-///   2. Key stored in the OS keychain for the active agent.
-///   3. The `api_key` argument (explicitly supplied by the caller).
+///   2. The custom gateway, when one is saved and the active agent is
+///      Anthropic. The caller's key is ignored, because it is meant for
+///      Anthropic and not for the gateway.
+///   3. Key stored in the OS keychain for the active agent.
+///   4. The `api_key` argument (explicitly supplied by the caller).
 ///
-/// Returns an error if features are disabled, no key is found, or the
+/// Returns an error if features are disabled, no credential is found, or the
 /// keychain could not be read and the caller supplied no key.
-pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
-    if let Ok(settings) = super::settings::read_settings() {
-        if settings.agent_features_enabled == Some(false) {
-            return Err(
-                "Agent features are disabled. Enable them in Settings > Agents.".to_string(),
-            );
-        }
+fn resolve_route(explicit_key: Option<&str>) -> Result<AgentRoute, String> {
+    let settings = super::settings::read_settings().ok();
+    if settings.as_ref().and_then(|s| s.agent_features_enabled) == Some(false) {
+        return Err("Agent features are disabled. Enable them in Settings > Agents.".to_string());
     }
 
     // `active_agent` names the secret store entry to read, and settings can be
@@ -92,10 +104,24 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
     let agent_id = active_agent_id();
     super::agents::check_credential_provider(&agent_id)
         .map_err(|e| format!("The active agent in settings is not supported. {}", e))?;
-    api_key_from(
+
+    let custom_gateway = settings
+        .and_then(|s| s.custom_gateway)
+        .filter(|_| agent_id == "anthropic");
+    if let Some(gateway) = custom_gateway {
+        return super::custom_gateway::gateway_route(&gateway).map(AgentRoute::CustomGateway);
+    }
+
+    let key = api_key_from(
         super::credentials::get_api_key_if_present(&agent_id),
         explicit_key,
-    )
+    )?;
+    Ok(AgentRoute::Provider { agent_id, key })
+}
+
+/// Fail unless a request can be sent, so a long job stops before it starts.
+pub fn ensure_agent_credential() -> Result<(), String> {
+    resolve_route(None).map(|_| ())
 }
 
 /// Choose between the key read from the keychain and the caller's own.
@@ -134,11 +160,20 @@ fn api_key_from(
 
 // ── Active client factory ─────────────────────────────────────────────────────
 
-/// Build the active agent client, applying any configured gateway routing.
-fn active_client(api_key: &str) -> Box<dyn AgentClientDyn> {
-    let agent_id = active_agent_id();
-    let gateway = load_active_gateway(&agent_id);
-    super::agents::active_client_with_key(&agent_id, api_key, gateway)
+/// Build the client for a resolved route, applying any Cloudflare gateway.
+fn client_for(route: AgentRoute) -> Box<dyn AgentClientDyn> {
+    match route {
+        AgentRoute::Provider { agent_id, key } => {
+            let gateway = load_active_gateway(&agent_id);
+            super::agents::active_client_with_key(&agent_id, key, gateway)
+        }
+        AgentRoute::CustomGateway(route) => super::agents::custom_gateway_client(route),
+    }
+}
+
+/// Build the active agent client from the caller's key, if any.
+fn active_client(explicit_key: Option<&str>) -> Result<Box<dyn AgentClientDyn>, String> {
+    resolve_route(explicit_key).map(client_for)
 }
 
 /// Read the AI Gateway config for the given agent from settings, if any.
@@ -152,8 +187,7 @@ fn load_active_gateway(agent_id: &str) -> Option<GatewayConfig> {
 
 /// Fetch the list of available model IDs from the active provider's API.
 pub async fn list_models() -> Result<Vec<String>, String> {
-    let key = resolve_api_key(None)?;
-    active_client(&key).list_models_dyn().await
+    active_client(None)?.list_models_dyn().await
 }
 
 /// Send a list of messages to the active provider and return the assistant's
@@ -170,11 +204,11 @@ pub async fn chat(
     system: Option<String>,
     max_tokens: Option<u32>,
 ) -> Result<String, String> {
-    let key = resolve_api_key(api_key.as_deref())?;
+    let client = active_client(api_key.as_deref())?;
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)
+    client
         .chat_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens)
         .await
 }
@@ -192,11 +226,11 @@ pub async fn chat_structured(
     max_tokens: Option<u32>,
     schema: Value,
 ) -> Result<String, String> {
-    let key = resolve_api_key(api_key.as_deref())?;
+    let client = active_client(api_key.as_deref())?;
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)
+    client
         .chat_structured_dyn(
             &neutral,
             Some(&model_str),
@@ -278,8 +312,7 @@ async fn chat_with_tools_inner(
     max_turns_override: Option<usize>,
 ) -> Result<(String, Vec<Value>), String> {
     let work_path = validate_working_dir(&working_dir)?;
-    let key = resolve_api_key(api_key.as_deref())?;
-    let client = active_client(&key);
+    let client = active_client(api_key.as_deref())?;
 
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
@@ -1033,10 +1066,10 @@ mod tests {
             settings.active_agent = Some(account.to_string());
             super::super::settings::write_settings(&settings).expect("write settings");
 
-            let err = resolve_api_key(None).expect_err("refused");
+            let err = resolve_route(None).expect_err("refused");
             assert!(!err.contains("must-not-leak"), "{err}");
             assert!(err.contains("Accepted provider ids"), "{err}");
-            assert!(resolve_api_key(Some("explicit")).is_err(), "refused with a caller key too");
+            assert!(resolve_route(Some("explicit")).is_err(), "refused with a caller key too");
 
             crate::core::secret_store::delete_secret(account).expect("clean up");
         });
@@ -1054,6 +1087,95 @@ mod tests {
         assert_eq!(api_key_from(unreadable(), Some("explicit")), Ok("explicit".to_string()));
         assert!(api_key_from(unreadable(), Some("")).is_err());
     }
+
+    // ── Choosing the route ───────────────────────────────────────────────────
+
+    use crate::core::custom_gateway::test_support::{gateway_store_lock, save_test_gateway};
+
+    fn set_active_agent(agent: Option<&str>) {
+        let mut settings = super::super::settings::read_settings().expect("read settings");
+        settings.agent_features_enabled = Some(true);
+        settings.active_agent = agent.map(str::to_string);
+        super::super::settings::write_settings(&settings).expect("write settings");
+    }
+
+    #[test]
+    fn a_saved_gateway_replaces_the_anthropic_key_and_the_callers_key() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
+
+        let route = resolve_route(Some("explicit")).expect("route");
+
+        crate::core::secret_store::delete_secret("anthropic").expect("clean up");
+        match route {
+            AgentRoute::CustomGateway(route) => assert_eq!(route.token, "gateway-token"),
+            other => panic!("expected the gateway, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_saved_gateway_works_with_no_anthropic_key() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+
+        assert_eq!(ensure_agent_credential(), Ok(()));
+    }
+
+    #[test]
+    fn a_saved_gateway_does_not_touch_another_active_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+
+        let route = resolve_route(None).expect("route");
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        match route {
+            AgentRoute::Provider { agent_id, key } => {
+                assert_eq!(agent_id, "openai");
+                assert_eq!(key, "openai-key");
+            }
+            other => panic!("expected the provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_saved_gateway_counts_for_agent_features_unless_turned_off() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+
+        let mut settings = super::super::settings::read_settings().expect("read settings");
+        settings.agent_features_enabled = None;
+        super::super::settings::write_settings(&settings).expect("write settings");
+        assert!(agent_features_enabled());
+
+        settings.agent_features_enabled = Some(false);
+        super::super::settings::write_settings(&settings).expect("write settings");
+        assert!(!agent_features_enabled());
+    }
+
+    #[test]
+    fn a_gateway_with_no_token_is_a_clear_error_on_use() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::delete_secret(crate::core::custom_gateway::TOKEN_ACCOUNT)
+            .expect("remove the token");
+
+        let err = resolve_route(None).expect_err("no token");
+
+        assert!(err.contains("gateway token"), "{err}");
+    }
+
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;

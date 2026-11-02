@@ -568,7 +568,7 @@ fn save_project_with(
 /// once-per-day throttle unless `force` is true (used for new projects).
 async fn run_ai_recommendations_bg(project: &str, force: bool) -> Result<(), String> {
     // Verify a key exists before attempting the (potentially slow) AI call.
-    crate::core::ai::resolve_api_key(None)?;
+    crate::core::ai::ensure_agent_credential()?;
 
     // Honour the throttle for existing projects; always run for new ones.
     // The throttle timestamp is stored under the checkout's `local_key`.
