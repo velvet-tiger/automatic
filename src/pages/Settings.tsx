@@ -18,6 +18,7 @@ import { MarkdownPreview } from "../components/MarkdownPreview";
 import { flag } from "../lib/flags";
 import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut, Terminal, Scale } from "lucide-react";
 import SettingsAgents from "./settings/Agents";
+import { leftInPlaceNotice } from "./settings/CustomGatewaySection";
 import SettingsCommandLine from "./settings/CommandLine";
 import OpenSourceLicences from "./settings/OpenSourceLicences";
 
@@ -167,6 +168,8 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showLicencesModal, setShowLicencesModal] = useState(false);
   const [eraseInput, setEraseInput] = useState("");
+  const [eraseError, setEraseError] = useState<string | null>(null);
+  const [eraseNotice, setEraseNotice] = useState<string | null>(null);
   const [erasingData, setErasingData] = useState(false);
   const eraseConfirmationMatches = eraseInput.trim().toLowerCase() === "erase";
   const [reinstallStatus, setReinstallStatus] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -435,8 +438,9 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     }
 
     setErasingData(true);
+    setEraseError(null);
     try {
-      await invoke("erase_app_data");
+      const erased = await invoke<{ left_in_claude_code: string[] } | undefined>("erase_app_data");
       const defaults: AppSettings = {
         sync_mode: "symlink",
         analytics_enabled: true,
@@ -448,11 +452,17 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       setAnalyticsEnabled(true);
       setCurrentTheme("system");
       setStoredTheme("system");
-      setShowEraseDataModal(false);
       setEraseInput("");
+      const leftInPlace = erased?.left_in_claude_code ?? [];
+      if (leftInPlace.length > 0) {
+        // The modal stays open so this is seen.
+        setEraseNotice(`App data was erased. ${leftInPlaceNotice(leftInPlace)}`);
+      } else {
+        setShowEraseDataModal(false);
+      }
     } catch (e) {
       console.error("Failed to erase app data", e);
-      await message(`Automatic could not erase your data. ${String(e)}`, { title: "Erase Failed", kind: "error" });
+      setEraseError(String(e));
     } finally {
       setErasingData(false);
     }
@@ -1190,6 +1200,8 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   <button
                     onClick={() => {
                       setEraseInput("");
+                      setEraseError(null);
+                      setEraseNotice(null);
                       setShowEraseDataModal(true);
                     }}
                     className="px-4 py-2 rounded-lg border border-danger bg-danger/20 text-[13px] text-danger hover:bg-danger/30 transition-all"
@@ -1247,6 +1259,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
               autoCorrect="off"
               spellCheck={false}
             />
+
+            {eraseError && (
+              <p role="alert" className="text-[12px] text-danger leading-relaxed mt-3">{eraseError}</p>
+            )}
+            {eraseNotice && (
+              <p className="text-[12px] text-text-muted leading-relaxed mt-3">{eraseNotice}</p>
+            )}
 
             <div className="flex items-center justify-end gap-2 mt-4">
               <button

@@ -53,7 +53,6 @@ describe("Settings reset and erase failures", () => {
     const [, confirm] = screen.getAllByRole("button", { name: "Erase Data" });
     fireEvent.click(confirm);
 
-    await waitFor(() => expect(message).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(message).mock.calls[0][0]).toContain("the keychain refused");
+    expect(await screen.findByRole("alert")).toHaveTextContent("the keychain refused");
   });
 });

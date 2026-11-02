@@ -187,7 +187,7 @@ fn any_api_key_stored<'a>(
 /// Best-effort write of `agent_features_enabled`. Errors reading or writing
 /// settings are swallowed — failing to update the toggle should never block
 /// the keychain operation that triggered it.
-fn set_agent_features_enabled(value: bool) {
+pub(super) fn set_agent_features_enabled(value: bool) {
     if let Ok(mut settings) = read_settings() {
         if settings.agent_features_enabled != Some(value) {
             settings.agent_features_enabled = Some(value);
@@ -197,14 +197,19 @@ fn set_agent_features_enabled(value: bool) {
 }
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let had_keys_before = any_known_api_key_stored(StoreRead::Now);
+    // A saved custom gateway already counts as a credential.
+    let had_credentials_before = if super::custom_gateway::custom_gateway_saved() {
+        Ok(true)
+    } else {
+        any_known_api_key_stored(StoreRead::Now)
+    };
     secret_store::store_secret(provider, key)?;
     set_cached_presence(provider, true);
 
     // Auto-enable agent features the first time a key is added. When the
     // store could not say whether a key was there before, the setting is the
     // user's own choice as far as anyone knows, so it is left alone.
-    if had_keys_before == Ok(false) && known_agents().iter().any(|id| id.as_str() == provider) {
+    if had_credentials_before == Ok(false) && known_agents().iter().any(|id| id.as_str() == provider) {
         set_agent_features_enabled(true);
     }
     Ok(())
@@ -238,7 +243,7 @@ pub fn has_api_key(provider: &str) -> Result<bool, String> {
 /// [`has_api_key`] for a caller that says who is asking. A background check
 /// reports a recent failed read again without asking the store, as
 /// [`StoreRead`] explains.
-fn api_key_presence(provider: &str, read: StoreRead) -> Result<bool, String> {
+pub(super) fn api_key_presence(provider: &str, read: StoreRead) -> Result<bool, String> {
     if let Ok(cache) = presence_cache().lock() {
         if let Some(present) = cache.get(provider) {
             return Ok(*present);
@@ -265,6 +270,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     // Auto-disable agent features once no recognised keys remain. A store
     // that cannot be read may still hold a key, so the setting then stays.
     if known_agents().iter().any(|id| id.as_str() == provider)
+        && !super::custom_gateway::custom_gateway_saved()
         && any_known_api_key_stored(StoreRead::Now) == Ok(false)
     {
         set_agent_features_enabled(false);
@@ -275,6 +281,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::custom_gateway::test_support::{gateway_store_lock, save_test_gateway};
     use crate::core::secret_store::{set_test_fault, TestFault};
 
     // Not one of `known_agents()`, so saving it never changes the
@@ -551,6 +558,51 @@ mod tests {
         assert_eq!(has_api_key(PROVIDER), Ok(false));
         assert!(get_api_key(PROVIDER).is_err());
         assert_eq!(get_api_key_if_present(PROVIDER), Ok(None));
+    }
+
+    fn set_features(value: Option<bool>) {
+        let mut settings = read_settings().expect("read settings");
+        settings.agent_features_enabled = value;
+        write_settings(&settings).expect("write settings");
+    }
+
+    #[test]
+    fn a_first_key_leaves_the_toggle_alone_when_a_gateway_is_saved() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_features(Some(false));
+
+        save_api_key("anthropic", "key").expect("save");
+        let enabled = read_settings().expect("read").agent_features_enabled;
+        delete_api_key("anthropic").expect("clean up");
+
+        assert_eq!(enabled, Some(false));
+    }
+
+    #[test]
+    fn removing_the_last_key_keeps_features_on_while_a_gateway_is_saved() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        save_api_key("anthropic", "key").expect("save");
+        set_features(Some(true));
+
+        delete_api_key("anthropic").expect("delete");
+
+        assert_eq!(read_settings().expect("read").agent_features_enabled, Some(true));
+    }
+
+    #[test]
+    fn removing_the_last_key_turns_features_off_with_no_gateway() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_api_key("anthropic", "key").expect("save");
+        set_features(Some(true));
+
+        delete_api_key("anthropic").expect("delete");
+
+        assert_eq!(read_settings().expect("read").agent_features_enabled, Some(false));
     }
 
     // The store and the presence cache are shared by the whole test process,

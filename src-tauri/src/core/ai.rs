@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+use super::custom_gateway::CustomGateway;
 use super::store_reads::StoreRead;
 use super::agents::{
     message::{neutral_to_anthropic, ContentBlock, NeutralContent, NeutralMessage, ToolDef},
-    AgentClientDyn, GatewayConfig,
+    AgentClientDyn, CustomGatewayRoute, GatewayConfig,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -58,6 +59,8 @@ pub fn agent_features_enabled() -> bool {
         .and_then(|s| s.agent_features_enabled);
     match explicit {
         Some(value) => value,
+        // A saved gateway is enough. Using it reports a missing token.
+        None if super::custom_gateway::custom_gateway_saved() => true,
         // The answer only decides what a page shows, so it is a background
         // read and a plain bool. When the keychain could not say, the
         // features stay on. Using one then reports the keychain's own error
@@ -68,34 +71,99 @@ pub fn agent_features_enabled() -> bool {
     }
 }
 
-/// Resolve the API key to use for a request.
-///
-/// Priority order:
-///   1. Master toggle: if `agent_features_enabled` is `Some(false)`, fail
-///      regardless of stored keys.
-///   2. Key stored in the OS keychain for the active agent.
-///   3. The `api_key` argument (explicitly supplied by the caller).
-///
-/// Returns an error if features are disabled, no key is found, or the
-/// keychain could not be read and the caller supplied no key.
-pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
-    if let Ok(settings) = super::settings::read_settings() {
-        if settings.agent_features_enabled == Some(false) {
-            return Err(
-                "Agent features are disabled. Enable them in Settings > Agents.".to_string(),
-            );
+/// Where a request goes and which credential it carries.
+enum AgentRoute {
+    /// The active agent's own endpoint, using `key`.
+    Provider { agent_id: String, key: String },
+    /// The user's custom gateway. It takes the place of the Anthropic key, so
+    /// that key is not read and cannot reach the gateway.
+    CustomGateway(CustomGatewayRoute),
+}
+
+impl std::fmt::Debug for AgentRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentRoute::Provider { agent_id, .. } => f
+                .debug_struct("Provider")
+                .field("agent_id", agent_id)
+                .field("key", &"[redacted]")
+                .finish(),
+            AgentRoute::CustomGateway(route) => {
+                f.debug_tuple("CustomGateway").field(route).finish()
+            }
         }
+    }
+}
+
+/// The active agent, or an error when requests must not be sent. The saved
+/// gateway is returned when it applies to that agent.
+///
+/// General settings are read leniently, because they heal. The gateway file is
+/// read strictly, and only for Anthropic. A damaged one may hide a gateway, and
+/// falling back would send the user's prompts straight to Anthropic.
+fn request_target() -> Result<(String, Option<CustomGateway>), String> {
+    let settings = super::settings::read_settings().unwrap_or_default();
+    if settings.agent_features_enabled == Some(false) {
+        return Err("Agent features are disabled. Enable them in Settings > Agents.".to_string());
     }
 
     // `active_agent` names the secret store entry to read, and settings can be
     // written by any caller, so it must be an LLM provider id.
-    let agent_id = active_agent_id();
+    let agent_id = settings.active_agent.unwrap_or_else(|| "anthropic".to_string());
     super::agents::check_credential_provider(&agent_id)
         .map_err(|e| format!("The active agent in settings is not supported. {}", e))?;
-    api_key_from(
+
+    let gateway = if agent_id == "anthropic" {
+        super::custom_gateway::read_gateway()?
+    } else {
+        None
+    };
+    Ok((agent_id, gateway))
+}
+
+/// Resolve the route to use for a request.
+///
+/// Priority order:
+///   1. Master toggle: if `agent_features_enabled` is `Some(false)`, fail
+///      regardless of stored keys.
+///   2. The custom gateway, when one is saved and the active agent is
+///      Anthropic. The caller's key is ignored, because it is meant for
+///      Anthropic and not for the gateway.
+///   3. Key stored in the OS keychain for the active agent.
+///   4. The `api_key` argument (explicitly supplied by the caller).
+///
+/// Returns an error if features are disabled, no credential is found, or the
+/// keychain could not be read and the caller supplied no key.
+fn resolve_route(explicit_key: Option<&str>) -> Result<AgentRoute, String> {
+    let (agent_id, gateway) = request_target()?;
+    if let Some(gateway) = gateway {
+        return super::custom_gateway::gateway_route(&gateway).map(AgentRoute::CustomGateway);
+    }
+    if agent_id == "anthropic" {
+        super::custom_gateway::refuse_if_token_is_orphaned()?;
+    }
+
+    let key = api_key_from(
         super::credentials::get_api_key_if_present(&agent_id),
         explicit_key,
-    )
+    )?;
+    Ok(AgentRoute::Provider { agent_id, key })
+}
+
+/// Fail unless a request looks possible, so a long job stops before it starts.
+///
+/// This reads no secret. A saved gateway is checked from settings, and a
+/// provider through the key presence cache. A missing gateway token is
+/// reported by the request itself.
+pub(crate) fn ensure_agent_credential(read: StoreRead) -> Result<(), String> {
+    let (agent_id, gateway) = request_target()?;
+    if let Some(gateway) = gateway {
+        return super::custom_gateway::parse_gateway_url(&gateway.base_url).map(|_| ());
+    }
+    if super::credentials::api_key_presence(&agent_id, read)? {
+        return Ok(());
+    }
+    Err("No API key found for the active agent. Add a key via Settings > Agents.".to_string())
 }
 
 /// Choose between the key read from the keychain and the caller's own.
@@ -134,11 +202,20 @@ fn api_key_from(
 
 // ── Active client factory ─────────────────────────────────────────────────────
 
-/// Build the active agent client, applying any configured gateway routing.
-fn active_client(api_key: &str) -> Result<Box<dyn AgentClientDyn>, String> {
-    let agent_id = active_agent_id();
-    let gateway = load_active_gateway(&agent_id)?;
-    Ok(super::agents::active_client_with_key(&agent_id, api_key, gateway))
+/// Build the client for a resolved route, applying any Cloudflare gateway.
+fn client_for(route: AgentRoute) -> Result<Box<dyn AgentClientDyn>, String> {
+    match route {
+        AgentRoute::Provider { agent_id, key } => {
+            let gateway = load_active_gateway(&agent_id)?;
+            Ok(super::agents::active_client_with_key(&agent_id, key, gateway))
+        }
+        AgentRoute::CustomGateway(route) => Ok(super::agents::custom_gateway_client(route)),
+    }
+}
+
+/// Build the active agent client from the caller's key, if any.
+fn active_client(explicit_key: Option<&str>) -> Result<Box<dyn AgentClientDyn>, String> {
+    resolve_route(explicit_key).and_then(client_for)
 }
 
 /// Read the AI Gateway config for the given agent from settings, if any, with
@@ -155,8 +232,7 @@ fn load_active_gateway(agent_id: &str) -> Result<Option<GatewayConfig>, String> 
 
 /// Fetch the list of available model IDs from the active provider's API.
 pub async fn list_models() -> Result<Vec<String>, String> {
-    let key = resolve_api_key(None)?;
-    active_client(&key)?.list_models_dyn().await
+    active_client(None)?.list_models_dyn().await
 }
 
 /// Send a list of messages to the active provider and return the assistant's
@@ -173,11 +249,11 @@ pub async fn chat(
     system: Option<String>,
     max_tokens: Option<u32>,
 ) -> Result<String, String> {
-    let key = resolve_api_key(api_key.as_deref())?;
+    let client = active_client(api_key.as_deref())?;
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)?
+    client
         .chat_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens)
         .await
 }
@@ -195,11 +271,11 @@ pub async fn chat_structured(
     max_tokens: Option<u32>,
     schema: Value,
 ) -> Result<String, String> {
-    let key = resolve_api_key(api_key.as_deref())?;
+    let client = active_client(api_key.as_deref())?;
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
-    active_client(&key)?
+    client
         .chat_structured_dyn(
             &neutral,
             Some(&model_str),
@@ -281,8 +357,7 @@ async fn chat_with_tools_inner(
     max_turns_override: Option<usize>,
 ) -> Result<(String, Vec<Value>), String> {
     let work_path = validate_working_dir(&working_dir)?;
-    let key = resolve_api_key(api_key.as_deref())?;
-    let client = active_client(&key)?;
+    let client = active_client(api_key.as_deref())?;
 
     let agent_id = active_agent_id();
     let model_str = resolve_model(&agent_id, model.as_deref());
@@ -1036,10 +1111,10 @@ mod tests {
             settings.active_agent = Some(account.to_string());
             super::super::settings::write_settings(&settings).expect("write settings");
 
-            let err = resolve_api_key(None).expect_err("refused");
+            let err = resolve_route(None).expect_err("refused");
             assert!(!err.contains("must-not-leak"), "{err}");
             assert!(err.contains("Accepted provider ids"), "{err}");
-            assert!(resolve_api_key(Some("explicit")).is_err(), "refused with a caller key too");
+            assert!(resolve_route(Some("explicit")).is_err(), "refused with a caller key too");
 
             crate::core::secret_store::delete_secret(account).expect("clean up");
         });
@@ -1057,6 +1132,252 @@ mod tests {
         assert_eq!(api_key_from(unreadable(), Some("explicit")), Ok("explicit".to_string()));
         assert!(api_key_from(unreadable(), Some("")).is_err());
     }
+
+    // ── Choosing the route ───────────────────────────────────────────────────
+
+    use crate::core::Settings;
+    use crate::core::custom_gateway::test_support::{
+        gateway_store_lock, save_test_gateway, set_saved_gateway_url,
+    };
+
+    fn set_active_agent(agent: Option<&str>) {
+        let mut settings = super::super::settings::read_settings().expect("read settings");
+        settings.agent_features_enabled = Some(true);
+        settings.active_agent = agent.map(str::to_string);
+        super::super::settings::write_settings(&settings).expect("write settings");
+    }
+
+    #[test]
+    fn a_saved_gateway_replaces_the_anthropic_key_and_the_callers_key() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
+
+        let route = resolve_route(Some("explicit")).expect("route");
+
+        crate::core::secret_store::delete_secret("anthropic").expect("clean up");
+        match route {
+            AgentRoute::CustomGateway(route) => assert_eq!(route.token, "gateway-token"),
+            other => panic!("expected the gateway, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_saved_gateway_works_with_no_anthropic_key() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+
+        assert_eq!(ensure_agent_credential(StoreRead::Now), Ok(()));
+    }
+
+    #[test]
+    fn the_credential_check_reads_no_gateway_token() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        let account = crate::core::custom_gateway::TOKEN_ACCOUNT;
+
+        crate::core::secret_store::set_test_fault(
+            account,
+            Some(crate::core::secret_store::TestFault::Unreadable),
+        );
+        let checked = ensure_agent_credential(StoreRead::Background);
+        crate::core::secret_store::set_test_fault(account, None);
+
+        assert_eq!(checked, Ok(()));
+    }
+
+    #[test]
+    fn the_credential_check_refuses_a_hand_edited_gateway_url() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        set_saved_gateway_url("http://gateway.example.com");
+
+        assert!(ensure_agent_credential(StoreRead::Now).is_err());
+        assert!(resolve_route(None).is_err());
+    }
+
+    #[test]
+    fn the_credential_check_follows_key_presence_with_no_gateway() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        set_active_agent(None);
+
+        crate::core::save_api_key("anthropic", "stored-key").expect("save");
+        let with_key = ensure_agent_credential(StoreRead::Now);
+        crate::core::delete_api_key("anthropic").expect("clean up");
+        set_active_agent(None);
+
+        assert_eq!(with_key, Ok(()));
+        let err = ensure_agent_credential(StoreRead::Now).expect_err("no key");
+        assert!(err.contains("No API key found"), "{err}");
+    }
+
+    #[test]
+    fn a_damaged_gateway_file_fails_closed_with_no_direct_fallback() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
+        let file = crate::core::custom_gateway::gateway_file_path().expect("path");
+        fs::write(&file, "{not json").expect("damage the file");
+
+        let route = resolve_route(None);
+
+        crate::core::secret_store::delete_secret("anthropic").expect("clean up");
+        assert!(route.expect_err("no fallback").contains("custom-gateway.json"));
+        assert!(ensure_agent_credential(StoreRead::Now).is_err());
+    }
+
+    #[test]
+    fn a_lost_gateway_record_refuses_requests_with_no_direct_fallback() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::store_secret("anthropic", "stored-key").expect("store");
+        crate::core::custom_gateway::test_support::lose_gateway_record();
+
+        let route = resolve_route(Some("explicit"));
+
+        crate::core::secret_store::delete_secret("anthropic").expect("clean up");
+        assert!(route.expect_err("no fallback").contains("clear it"));
+    }
+
+    #[test]
+    fn a_lost_gateway_record_does_not_stop_another_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+        crate::core::custom_gateway::test_support::lose_gateway_record();
+
+        let route = resolve_route(None);
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        assert!(matches!(route, Ok(AgentRoute::Provider { .. })));
+    }
+
+    #[test]
+    fn the_credential_check_does_not_read_the_token_with_a_lost_record() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        set_active_agent(None);
+        crate::core::save_api_key("anthropic", "stored-key").expect("save");
+        let account = crate::core::custom_gateway::TOKEN_ACCOUNT;
+
+        crate::core::secret_store::set_test_fault(
+            account,
+            Some(crate::core::secret_store::TestFault::Unreadable),
+        );
+        let checked = ensure_agent_credential(StoreRead::Now);
+        let requested = resolve_route(None);
+        crate::core::secret_store::set_test_fault(account, None);
+        crate::core::delete_api_key("anthropic").expect("clean up");
+
+        assert_eq!(checked, Ok(()));
+        assert!(requested.is_err(), "the request itself fails closed");
+    }
+
+    #[test]
+    fn a_damaged_gateway_file_does_not_stop_another_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+        let file = crate::core::custom_gateway::gateway_file_path().expect("path");
+        fs::write(&file, "{not json").expect("damage the file");
+
+        let route = resolve_route(None);
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        assert!(matches!(route, Ok(AgentRoute::Provider { .. })));
+    }
+
+    #[test]
+    fn a_damaged_settings_file_leaves_a_saved_gateway_active() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        let settings_file = crate::core::get_automatic_dir().expect("dir").join("settings.json");
+        fs::write(&settings_file, "{not json").expect("damage the file");
+
+        assert!(matches!(resolve_route(None), Ok(AgentRoute::CustomGateway(_))));
+
+        super::super::settings::write_settings(&Settings::default()).expect("heal");
+        assert!(settings_file.with_extension("json.damaged").exists());
+        assert!(matches!(resolve_route(None), Ok(AgentRoute::CustomGateway(_))));
+    }
+
+    #[test]
+    fn the_debug_form_of_a_route_does_not_show_the_key() {
+        let route = AgentRoute::Provider {
+            agent_id: "anthropic".to_string(),
+            key: "stored-key".to_string(),
+        };
+
+        assert!(!format!("{route:?}").contains("stored-key"));
+    }
+
+    #[test]
+    fn a_saved_gateway_does_not_touch_another_active_agent() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(Some("openai"));
+        crate::core::secret_store::store_secret("openai", "openai-key").expect("store");
+
+        let route = resolve_route(None).expect("route");
+
+        crate::core::secret_store::delete_secret("openai").expect("clean up");
+        match route {
+            AgentRoute::Provider { agent_id, key } => {
+                assert_eq!(agent_id, "openai");
+                assert_eq!(key, "openai-key");
+            }
+            other => panic!("expected the provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_saved_gateway_counts_for_agent_features_unless_turned_off() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+
+        let mut settings = super::super::settings::read_settings().expect("read settings");
+        settings.agent_features_enabled = None;
+        super::super::settings::write_settings(&settings).expect("write settings");
+        assert!(agent_features_enabled());
+
+        settings.agent_features_enabled = Some(false);
+        super::super::settings::write_settings(&settings).expect("write settings");
+        assert!(!agent_features_enabled());
+    }
+
+    #[test]
+    fn a_gateway_with_no_token_is_a_clear_error_on_use() {
+        let _store = gateway_store_lock();
+        let _home = crate::core::temp_test_home();
+        save_test_gateway("gateway-token");
+        set_active_agent(None);
+        crate::core::secret_store::delete_secret(crate::core::custom_gateway::TOKEN_ACCOUNT)
+            .expect("remove the token");
+
+        let err = resolve_route(None).expect_err("no token");
+
+        assert!(err.contains("gateway token"), "{err}");
+    }
+
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;

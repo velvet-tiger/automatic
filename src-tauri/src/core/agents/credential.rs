@@ -95,6 +95,40 @@ impl GatewayConfig {
     }
 }
 
+// ── Custom gateway route ──────────────────────────────────────────────────────
+
+/// Which header carries the custom gateway token.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayCredentialKind {
+    /// `Authorization: Bearer <token>`.
+    Bearer,
+    /// `x-api-key: <token>`.
+    ApiKey,
+}
+
+/// Where Anthropic requests go when the user has set a custom LLM gateway.
+///
+/// The token is the only credential this route holds, so a stored Anthropic
+/// key cannot reach the gateway.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CustomGatewayRoute {
+    /// Validated base URL, with no trailing slash and no `/v1`.
+    pub base_url: String,
+    pub kind: GatewayCredentialKind,
+    pub token: String,
+}
+
+impl std::fmt::Debug for CustomGatewayRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomGatewayRoute")
+            .field("base_url", &self.base_url)
+            .field("kind", &self.kind)
+            .field("token", &"[redacted]")
+            .finish()
+    }
+}
+
 // ── Agent credential ──────────────────────────────────────────────────────────
 
 /// Credential shape for a provider.

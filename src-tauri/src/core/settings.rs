@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use super::agents::credential::delete_gateway_token;
 use super::agents::GatewayConfig;
+use super::custom_gateway::{ClearedCustomGateway, GatewayErase};
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
 
@@ -165,10 +168,9 @@ pub fn read_settings() -> Result<Settings, String> {
 
 /// [`read_settings`] for a caller that writes the result back.
 ///
-/// An unparsable file is an error here, not defaults. The file is replaced by
-/// truncating it, so another process's save can look empty for a moment, and
-/// writing defaults back would lose every setting. The error gives the
-/// position only: the parser's own message can quote a value from the file.
+/// An unparsable file is an error here, not defaults, because writing defaults
+/// back would lose every setting. The error gives the position only: the
+/// parser's own message can quote a value from the file.
 pub fn read_settings_to_update() -> Result<Settings, String> {
     let path = get_automatic_dir()?.join("settings.json");
     if !path.exists() {
@@ -185,15 +187,71 @@ pub fn read_settings_to_update() -> Result<Settings, String> {
     })
 }
 
+/// Write settings. A file that cannot be parsed is replaced, so it heals, and a
+/// copy stays beside it as `settings.json.damaged` for anyone who wants what
+/// was in it.
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
     let path = get_automatic_dir()?.join("settings.json");
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-    }
+    keep_damaged_copy(&path)?;
     let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| e.to_string())
+    write_atomically(&path, &raw)
+}
+
+/// Copy a settings file that cannot be parsed, replacing any earlier copy.
+///
+/// The copy can hold anything the file held, so it is owner-only. It goes
+/// through a temporary file, because a rename replaces a link at the copy's
+/// path instead of writing through it.
+fn keep_damaged_copy(path: &Path) -> Result<(), String> {
+    let Ok(raw) = fs::read(path) else {
+        return Ok(());
+    };
+    if serde_json::from_slice::<Settings>(&raw).is_ok() {
+        return Ok(());
+    }
+    let failed = |e: &dyn std::fmt::Display| {
+        format!("Could not keep a copy of the damaged settings file: {}", e)
+    };
+    let mut copy = path.as_os_str().to_owned();
+    copy.push(".damaged");
+    let parent = path.parent().ok_or_else(|| failed(&"it has no parent folder"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| failed(&e))?;
+    temp.write_all(&raw).map_err(|e| failed(&e))?;
+    temp.as_file().sync_all().map_err(|e| failed(&e))?;
+    temp.persist(&copy).map_err(|e| failed(&e.error))?;
+    Ok(())
+}
+
+/// The file a write really changes. A symlink resolves to its target, so that
+/// the link survives the rename, and a link to a file not yet created still
+/// creates it, as a plain write would.
+fn followed_link(path: &Path) -> Result<PathBuf, String> {
+    let is_link = fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    if let Ok(target) = path.canonicalize() {
+        return Ok(target);
+    }
+    let link = fs::read_link(path).map_err(|e| e.to_string())?;
+    Ok(path.parent().map_or(link.clone(), |parent| parent.join(&link)))
+}
+
+/// Replace a file in one step, so a crash cannot leave half of it. An existing
+/// file keeps its permissions. A new file is readable only by its owner.
+pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
+    let target = followed_link(path)?;
+    let parent = target.parent().ok_or("The file has no parent folder")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temp.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    if let Ok(existing) = fs::metadata(&target) {
+        fs::set_permissions(temp.path(), existing.permissions()).map_err(|e| e.to_string())?;
+    }
+    temp.persist(&target).map_err(|e| e.error.to_string())?;
+    Ok(())
 }
 
 pub fn reset_settings() -> Result<(), String> {
@@ -242,8 +300,18 @@ pub fn reinstall_defaults() -> Result<(), String> {
     Ok(())
 }
 
-pub fn erase_app_data() -> Result<(), String> {
+/// Erase Automatic's data. Returns what stayed in Claude Code's settings.
+///
+/// The gateway comes first, because its record is in the folder being erased.
+/// When Claude Code's file cannot be cleared the erase stops, or the token
+/// would stay in that file with nothing left that knows about it.
+pub fn erase_app_data() -> Result<ClearedCustomGateway, String> {
+    let gateway = super::custom_gateway::clear_gateway_for_erase();
+    if let GatewayErase::FileNotCleared(error) = gateway {
+        return Err(error);
+    }
     delete_all_gateway_tokens()?;
+
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {
         fs::remove_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
@@ -264,7 +332,15 @@ pub fn erase_app_data() -> Result<(), String> {
         eprintln!("[automatic] default profile error: {}", e);
     }
 
-    Ok(())
+    match gateway {
+        GatewayErase::Cleared(cleared) => Ok(cleared),
+        GatewayErase::TokenNotDeleted(error) => Err(format!(
+            "App data was erased, but the custom gateway token could not be removed from the \
+             keychain: {}",
+            error
+        )),
+        GatewayErase::FileNotCleared(error) => Err(error),
+    }
 }
 
 pub fn dismiss_welcome() -> Result<(), String> {
@@ -282,6 +358,120 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
+
+    // ── Healing and atomic writes ─────────────────────────────────────────────
+
+    fn real_settings_path() -> std::path::PathBuf {
+        get_automatic_dir().expect("dir").join("settings.json")
+    }
+
+    fn damaged_copy_path() -> std::path::PathBuf {
+        get_automatic_dir().expect("dir").join("settings.json.damaged")
+    }
+
+    fn damage_settings(text: &str) {
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        fs::write(real_settings_path(), text).expect("damage");
+    }
+
+    #[test]
+    fn a_write_heals_a_damaged_file_and_keeps_a_copy() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("{\"sync_mode\": \"co");
+
+        let settings = Settings {
+            wizard_completed: true,
+            ..Settings::default()
+        };
+        write_settings(&settings).expect("heal");
+
+        assert!(read_settings().expect("read").wizard_completed);
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "{\"sync_mode\": \"co");
+    }
+
+    #[test]
+    fn a_later_damage_replaces_the_earlier_copy() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("first damage");
+        write_settings(&Settings::default()).expect("heal");
+        damage_settings("second damage");
+        write_settings(&Settings::default()).expect("heal");
+
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "second damage");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_damaged_copy_is_owner_only_and_does_not_follow_a_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = crate::core::temp_test_home();
+        damage_settings("private damage");
+        let elsewhere = tmp();
+        let outside = elsewhere.path().join("outside.txt");
+        fs::write(&outside, "untouched").expect("outside");
+        std::os::unix::fs::symlink(&outside, damaged_copy_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("heal");
+
+        assert_eq!(fs::read_to_string(&outside).expect("read"), "untouched");
+        let copy = fs::symlink_metadata(damaged_copy_path()).expect("meta");
+        assert!(copy.file_type().is_file());
+        assert_eq!(copy.permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_healthy_write_leaves_no_copy() {
+        let _home = crate::core::temp_test_home();
+        write_settings(&Settings::default()).expect("write");
+        write_settings(&Settings::default()).expect("write");
+
+        assert!(!damaged_copy_path().exists());
+    }
+
+    #[test]
+    fn reset_works_on_a_damaged_file() {
+        let _home = crate::core::temp_test_home();
+        damage_settings("{not json");
+
+        reset_settings().expect("reset");
+
+        assert_eq!(fs::read_to_string(damaged_copy_path()).expect("copy"), "{not json");
+        assert!(serde_json::from_str::<Settings>(
+            &fs::read_to_string(real_settings_path()).expect("read")
+        )
+        .is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_follows_a_symlinked_file() {
+        let _home = crate::core::temp_test_home();
+        let elsewhere = tmp();
+        let target = elsewhere.path().join("settings.json");
+        fs::write(&target, "{\"sync_mode\":\"copy\"}").expect("target");
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        std::os::unix::fs::symlink(&target, real_settings_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("write");
+
+        let link = fs::symlink_metadata(real_settings_path()).expect("meta");
+        assert!(link.file_type().is_symlink());
+        assert!(fs::read_to_string(&target).expect("read").contains("\"symlink\""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_through_a_dangling_link_creates_the_target() {
+        let _home = crate::core::temp_test_home();
+        let elsewhere = tmp();
+        let target = elsewhere.path().join("settings.json");
+        fs::create_dir_all(get_automatic_dir().expect("dir")).expect("mkdir");
+        std::os::unix::fs::symlink(&target, real_settings_path()).expect("symlink");
+
+        write_settings(&Settings::default()).expect("write");
+
+        assert!(target.exists());
+    }
 
     // ── Path-injectable helpers ───────────────────────────────────────────────
 

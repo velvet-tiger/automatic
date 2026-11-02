@@ -54,11 +54,19 @@ const SKIPPED_HOME_DIR_NAMES: &[&str] = &[
     "AppData",
 ];
 
+/// Most unregistered configs previewed in one scan. Each preview can look up
+/// about 1,000 names per kind on disk, and the scan blocks the dialog until it
+/// finishes, so a tree of cloned repositories must not multiply that without
+/// end. 200 is far more unregistered configs than one search normally finds,
+/// and a folder past it starts in read-only mode.
+const DEFAULT_MAX_LIBRARY_PREVIEWS: usize = 200;
+
 /// Limits for one scan.
 #[derive(Debug, Clone, Copy)]
 pub struct DiscoveryLimits {
     pub max_depth: usize,
     pub max_visited: usize,
+    pub max_library_previews: usize,
 }
 
 impl Default for DiscoveryLimits {
@@ -66,6 +74,7 @@ impl Default for DiscoveryLimits {
         Self {
             max_depth: DEFAULT_MAX_DEPTH,
             max_visited: DEFAULT_MAX_VISITED,
+            max_library_previews: DEFAULT_MAX_LIBRARY_PREVIEWS,
         }
     }
 }
@@ -113,6 +122,10 @@ pub struct DiscoveredProject {
     /// `check_error` then says why, and the folder cannot be added.
     pub status: Option<DirectoryStatus>,
     pub check_error: Option<String>,
+    /// What the folder's config would use from this machine's library. Only
+    /// set for a folder with an unregistered config. `None` there means the
+    /// library could not be read.
+    pub library_use: Option<super::ProjectLibraryUse>,
 }
 
 /// The result of `discover_projects`.
@@ -308,6 +321,7 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
     let walk = walk_for_projects(&root_path, home.as_deref(), &agents, limits);
 
     let mut projects = Vec::with_capacity(walk.candidates.len());
+    let mut previews_left = limits.max_library_previews;
     for candidate in walk.candidates {
         let Some(directory) = candidate.directory.to_str().map(str::to_string) else {
             // A non-UTF-8 path cannot be stored in a project; skip it.
@@ -317,6 +331,16 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
         let (status, check_error) = match super::inspect_project_directory(&directory) {
             Ok(status) => (Some(status), None),
             Err(e) => (None, Some(e)),
+        };
+        let library_use = match &status {
+            Some(DirectoryStatus::OrphanConfig { .. }) if previews_left == 0 => {
+                Some(super::ProjectLibraryUse::NotChecked)
+            }
+            Some(DirectoryStatus::OrphanConfig { .. }) => {
+                previews_left -= 1;
+                super::preview_project_library_use(&directory).ok()
+            }
+            _ => None,
         };
         let name = candidate
             .directory
@@ -339,6 +363,7 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
             has_agents_md: candidate.has_agents_md,
             status,
             check_error,
+            library_use,
         });
     }
 
@@ -623,6 +648,49 @@ mod tests {
                 Some(DirectoryStatus::OrphanConfig { .. })
             ));
             assert_eq!(by_name("fresh").relative_path, "fresh");
+        });
+    }
+
+    #[test]
+    fn discover_previews_library_use_for_unregistered_configs_within_the_budget() {
+        use crate::core::paths::with_test_home;
+        use crate::core::ProjectLibraryUse;
+
+        let home = tempdir().expect("home");
+        with_test_home(home.path().to_path_buf(), || {
+            let root = tempdir().expect("root");
+            touch(&root.path().join("fresh/CLAUDE.md"));
+            for name in ["one", "two"] {
+                touch(&root.path().join(name).join("CLAUDE.md"));
+                std::fs::write(
+                    root.path().join(name).join(".automatic.json"),
+                    r#"{"name":"cloned","read_only":true}"#,
+                )
+                .expect("config");
+            }
+
+            let limits = DiscoveryLimits {
+                max_library_previews: 1,
+                ..DiscoveryLimits::default()
+            };
+            let report = discover_projects(root.path().to_str().unwrap(), limits).expect("discover");
+
+            let uses: Vec<_> = report
+                .projects
+                .iter()
+                .filter(|p| p.name != "fresh")
+                .map(|p| p.library_use.clone())
+                .collect();
+            assert_eq!(uses.len(), 2);
+            let readable = ProjectLibraryUse::Readable {
+                read_only_hint: true,
+                has_unreadable_profile: false,
+                groups: Vec::new(),
+            };
+            assert!(uses.contains(&Some(readable)), "{uses:?}");
+            assert!(uses.contains(&Some(ProjectLibraryUse::NotChecked)), "{uses:?}");
+            let fresh = report.projects.iter().find(|p| p.name == "fresh").expect("fresh");
+            assert_eq!(fresh.library_use, None);
         });
     }
 
