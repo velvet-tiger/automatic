@@ -525,10 +525,10 @@ pub(crate) fn clear_gateway_for_erase() -> GatewayErase {
     let _changing = change_lock();
 
     let gateway = read_gateway();
+    let orphan_check = matches!(gateway, Ok(None)).then(token_entry_present);
     let file = match &gateway {
         Ok(Some(gateway)) => clear_claude_code(gateway),
-        // A keychain that cannot be read is reported by the delete below.
-        Ok(None) if token_entry_present().unwrap_or(false) => clear_orphaned_values(),
+        Ok(None) if matches!(orphan_check, Some(Ok(true))) => clear_orphaned_values(),
         _ => Ok(Vec::new()),
     };
     let token = delete_stored_token();
@@ -552,6 +552,14 @@ pub(crate) fn clear_gateway_for_erase() -> GatewayErase {
              {}. Fix that file and try again. {} {}",
             claude_settings, e, token_note
         )),
+        // With an unreadable keychain the file could not be matched either,
+        // so a token may still be there.
+        (Ok(_), Err(e)) if matches!(orphan_check, Some(Err(_))) => {
+            GatewayErase::TokenNotDeleted(format!(
+                "{} The gateway token may also remain in plain text in {}.",
+                e, claude_settings
+            ))
+        }
         (Ok(_), Err(e)) => GatewayErase::TokenNotDeleted(e),
         (Ok(left_in_claude_code), Ok(())) => {
             GatewayErase::Cleared(ClearedCustomGateway { left_in_claude_code })
@@ -1125,6 +1133,22 @@ mod tests {
         write_claude_settings(&good);
         assert!(clear_custom_gateway().is_ok());
         assert!(!claude_settings_text().contains("ANTHROPIC"));
+    }
+
+    #[test]
+    fn an_erase_with_an_unreadable_keychain_names_claude_codes_file() {
+        let _store = gateway_store_lock();
+        let _home = temp_test_home();
+        set_test_fault(TOKEN_ACCOUNT, Some(TestFault::Unreadable));
+
+        let result = clear_gateway_for_erase();
+
+        set_test_fault(TOKEN_ACCOUNT, None);
+        let GatewayErase::TokenNotDeleted(err) = result else {
+            panic!("expected TokenNotDeleted, got {result:?}");
+        };
+        assert!(err.contains("may also remain"), "{err}");
+        assert!(err.contains(".claude/settings.json"), "{err}");
     }
 
     #[test]
