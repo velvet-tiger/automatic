@@ -2,6 +2,29 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.38.0] - 2026-11-03
+
+### Added
+
+- Project updates run on a background queue. The task log shows their progress, and an interrupted update is repaired on the next start. ([9edbf7e](https://github.com/velvet-tiger/automatic/commit/9edbf7e), [4aae75f](https://github.com/velvet-tiger/automatic/commit/4aae75f), [f7b6a47](https://github.com/velvet-tiger/automatic/commit/f7b6a47))
+- Automatic creates an Automatic Defaults profile on install and update. ([6f5924b](https://github.com/velvet-tiger/automatic/commit/6f5924b))
+- Claude Code can use a custom gateway. The Cloudflare AI Gateway token is kept in the secret store. ([786f427](https://github.com/velvet-tiger/automatic/commit/786f427), [d8983a1](https://github.com/velvet-tiger/automatic/commit/d8983a1))
+- Profiles and group contexts now need to be confirmed on each checkout. The editor and the import dialog ask about pending profiles, and a listed checkout has a Join group action. ([168ec7c](https://github.com/velvet-tiger/automatic/commit/168ec7c), [452e0cd](https://github.com/velvet-tiger/automatic/commit/452e0cd), [62f5895](https://github.com/velvet-tiger/automatic/commit/62f5895), [757da3b](https://github.com/velvet-tiger/automatic/commit/757da3b))
+- Importing a project shows which library entries it uses and offers read-only mode. ([7a75454](https://github.com/velvet-tiger/automatic/commit/7a75454))
+- The MCP server limits context and project reads to the folder it serves. It falls back to client roots when needed. A project an agent registers is held until you keep it. ([8c89683](https://github.com/velvet-tiger/automatic/commit/8c89683), [d577967](https://github.com/velvet-tiger/automatic/commit/d577967), [9fce608](https://github.com/velvet-tiger/automatic/commit/9fce608))
+- agentgateway is a featured MCP server. ([0b99925](https://github.com/velvet-tiger/automatic/commit/0b99925))
+
+### Fixed
+
+- Sync and drift detection refuse to write or read through links that leave the project. They also refuse unsafe project file names and custom asset names. ([af34748](https://github.com/velvet-tiger/automatic/commit/af34748), [124b282](https://github.com/velvet-tiger/automatic/commit/124b282), [3d9c45e](https://github.com/velvet-tiger/automatic/commit/3d9c45e))
+- Codex agent files escape every value they write. Adopting an agent file refuses lossy merges and keeps other files in step. ([ba0c40a](https://github.com/velvet-tiger/automatic/commit/ba0c40a), [cbf0722](https://github.com/velvet-tiger/automatic/commit/cbf0722), [a72097d](https://github.com/velvet-tiger/automatic/commit/a72097d))
+- Copilot agent and command files use their own `.agent.md` and `.prompt.md` names when adopted or rebuilt. Rebuild never deletes a file it cannot read. ([1eefaa3](https://github.com/velvet-tiger/automatic/commit/1eefaa3), [c0d648e](https://github.com/velvet-tiger/automatic/commit/c0d648e), [02a048f](https://github.com/velvet-tiger/automatic/commit/02a048f))
+- An unreadable group file no longer releases member entries or drops joined group profiles. A damaged group can be deleted. ([f6615f9](https://github.com/velvet-tiger/automatic/commit/f6615f9), [65a93da](https://github.com/velvet-tiger/automatic/commit/65a93da), [0111dd9](https://github.com/velvet-tiger/automatic/commit/0111dd9))
+- Skill registry snapshots and the profile contribution record stay out of the committed project config. ([23e809d](https://github.com/velvet-tiger/automatic/commit/23e809d), [9859162](https://github.com/velvet-tiger/automatic/commit/9859162))
+- A source clone that fails or is left off its pin is discarded. A lost clone is repaired on update, and errors name the clone path. ([0230704](https://github.com/velvet-tiger/automatic/commit/0230704), [0958c3d](https://github.com/velvet-tiger/automatic/commit/0958c3d), [1b54906](https://github.com/velvet-tiger/automatic/commit/1b54906))
+- Project saves from the wizard and the editor keep their order. ([6190723](https://github.com/velvet-tiger/automatic/commit/6190723), [4c75420](https://github.com/velvet-tiger/automatic/commit/4c75420))
+- Drift detection reports the managed `.gitignore` block. ([9eb7cb7](https://github.com/velvet-tiger/automatic/commit/9eb7cb7))
+
 ## [1.37.0] - 2026-10-27
 
 ### Added
