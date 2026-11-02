@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -68,6 +68,9 @@ pub enum ProjectLibraryUse {
     Readable {
         /// The committed `read_only` hint.
         read_only_hint: bool,
+        /// A profile the config names exists here but cannot be read, so what
+        /// it would add is unknown. `flagged` alone does not say this.
+        has_unreadable_profile: bool,
         /// Only kinds with a match or an unchecked name.
         groups: Vec<LibraryUseGroup>,
     },
@@ -89,12 +92,17 @@ pub fn preview_project_library_use(directory: &str) -> Result<ProjectLibraryUse,
         return Err("A project directory is required.".into());
     }
     match read_project_files(directory, "") {
-        Ok(Some(project)) => Ok(ProjectLibraryUse::Readable {
-            read_only_hint: project.read_only,
-            groups: library_use_groups(&project)?,
-        }),
+        Ok(Some(project)) => {
+            let profiles = matched_profiles(&project);
+            Ok(ProjectLibraryUse::Readable {
+                read_only_hint: project.read_only,
+                has_unreadable_profile: profiles.values().any(|p| p.contents.is_none()),
+                groups: library_use_groups(&project, &profiles)?,
+            })
+        }
         Ok(None) => Ok(ProjectLibraryUse::Readable {
             read_only_hint: false,
+            has_unreadable_profile: false,
             groups: Vec::new(),
         }),
         Err(_) => Ok(ProjectLibraryUse::Unreadable),
@@ -108,10 +116,13 @@ pub fn preview_project_library_use(directory: &str) -> Result<ProjectLibraryUse,
 ///
 /// A matched profile adds its own entries to the project when it reconciles,
 /// so those entries count as if the config listed them.
-fn library_use_groups(project: &Project) -> Result<Vec<LibraryUseGroup>, String> {
+fn library_use_groups(
+    project: &Project,
+    profiles: &BTreeMap<String, MatchedProfile>,
+) -> Result<Vec<LibraryUseGroup>, String> {
     let servers: BTreeSet<String> = list_mcp_server_configs()?.into_iter().collect();
-    let profiles = matched_profiles(project);
-    let contents = || profiles.values().flatten();
+    let profile_flags = profile_flags(project, profiles, &servers);
+    let contents = || profiles.values().filter_map(|p| p.contents.as_ref());
 
     let server_names: Vec<String> = project
         .enabled_mcp_servers()
@@ -158,8 +169,7 @@ fn library_use_groups(project: &Project) -> Result<Vec<LibraryUseGroup>, String>
             read_rule(name).ok().map(|_| false)
         }),
         checked_group(LibraryItemKind::Profile, project.profiles.iter(), |name| {
-            let profile = profiles.get(name)?;
-            Some(profile_is_flagged(project, profile.as_ref(), &servers))
+            profile_flags.get(&profiles.get(name)?.file).copied()
         }),
     ];
     Ok(groups
@@ -172,19 +182,49 @@ fn hook_match(name: &str) -> Option<bool> {
     read_hook(name).ok().map(|_| true)
 }
 
+/// A profile file the config's name resolves to.
+struct MatchedProfile {
+    /// The real path, so spellings of one name share an entry on a
+    /// case-insensitive disk.
+    file: PathBuf,
+    /// `None` when the file cannot be read or parsed.
+    contents: Option<ProjectProfile>,
+}
+
 /// The profiles the config names that exist here, keyed by the config's
-/// spelling. `None` holds a profile whose file cannot be read.
-/// `read_project_profile_parsed` only parses JSON: profiles hold names, so
-/// nothing in it decrypts.
-fn matched_profiles(project: &Project) -> BTreeMap<String, Option<ProjectProfile>> {
+/// spelling. `read_project_profile_parsed` only parses JSON: profiles hold
+/// names, so nothing in it decrypts.
+fn matched_profiles(project: &Project) -> BTreeMap<String, MatchedProfile> {
     let names: BTreeSet<&String> = project.profiles.iter().collect();
     names
         .into_iter()
         .take(MAX_CHECKED_NAMES_PER_KIND)
         .filter(|name| is_single_path_component(name))
-        .filter(|name| profile_path(name).is_ok_and(|path| path.is_file()))
-        .map(|name| (name.clone(), read_project_profile_parsed(name).ok()))
+        .filter_map(|name| {
+            let path = profile_path(name).ok().filter(|path| path.is_file())?;
+            let matched = MatchedProfile {
+                file: fs::canonicalize(&path).unwrap_or(path),
+                contents: read_project_profile_parsed(name).ok(),
+            };
+            Some((name.clone(), matched))
+        })
         .collect()
+}
+
+/// Each profile file's flag, worked out once. The lookups behind a flag are
+/// outside the per-kind cap, so spellings of one name must not repeat them.
+fn profile_flags(
+    project: &Project,
+    profiles: &BTreeMap<String, MatchedProfile>,
+    servers: &BTreeSet<String>,
+) -> BTreeMap<PathBuf, bool> {
+    let mut flags = BTreeMap::new();
+    for profile in profiles.values() {
+        flags
+            .entry(profile.file.clone())
+            .or_insert_with(|| profile_is_flagged(project, profile.contents.as_ref(), servers));
+    }
+    flags
 }
 
 /// A profile's servers that sync would use. The project's own
@@ -310,7 +350,8 @@ pub(super) fn displayable_name(name: &str) -> String {
     shown
 }
 
-/// Unicode format and default-ignorable characters, plus controls.
+/// Controls, every Unicode format (Cf) character, and the default-ignorable
+/// characters that draw nothing.
 fn hides_text(c: char) -> bool {
     c.is_control()
         || matches!(
@@ -321,6 +362,8 @@ fn hides_text(c: char) -> bool {
                 | '\u{0600}'..='\u{0605}'
                 | '\u{06DD}'
                 | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
                 | '\u{115F}'..='\u{1160}'
                 | '\u{17B4}'..='\u{17B5}'
                 | '\u{180B}'..='\u{180F}'
@@ -332,6 +375,9 @@ fn hides_text(c: char) -> bool {
                 | '\u{FEFF}'
                 | '\u{FFA0}'
                 | '\u{FFF0}'..='\u{FFFB}'
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
                 | '\u{1BCA0}'..='\u{1BCA3}'
                 | '\u{1D173}'..='\u{1D17A}'
                 | '\u{E0000}'..='\u{E0FFF}'
@@ -617,7 +663,8 @@ mod tests {
         let long = "n".repeat(MAX_SHOWN_NAME_CHARS + 20);
         for hidden in [
             '\u{034F}', '\u{061C}', '\u{115F}', '\u{180E}', '\u{1BCA0}', '\u{1BCA3}', '\u{3164}',
-            '\u{FE00}', '\u{FE0F}', '\u{FFF9}', '\u{FFFB}', '\u{E0000}', '\u{E0FFF}',
+            '\u{FE00}', '\u{FE0F}', '\u{FFF9}', '\u{FFFB}', '\u{E0000}', '\u{E0FFF}', '\u{0890}', '\u{0891}', '\u{08E2}',
+            '\u{110BD}', '\u{110CD}', '\u{13430}', '\u{1343F}',
         ] {
             assert_eq!(displayable_name(&format!("a{hidden}b")), "a\u{FFFD}b");
         }
@@ -695,6 +742,42 @@ mod tests {
     }
 
     #[test]
+    fn a_flagged_readable_profile_is_not_reported_as_unreadable() {
+        let home = tempfile::tempdir().expect("home");
+        let project = tempfile::tempdir().expect("project");
+        with_test_home(home.path().to_path_buf(), || {
+            seed_library();
+            save_profile("risky", serde_json::json!({ "name": "risky", "hooks": ["log-session"] }));
+            write_config(project.path(), serde_json::json!({ "name": "x", "profiles": ["risky"] }));
+
+            assert!(matches!(
+                preview(project.path()),
+                ProjectLibraryUse::Readable { has_unreadable_profile: false, .. }
+            ));
+        });
+    }
+
+    #[test]
+    fn spellings_of_one_profile_file_share_one_flag() {
+        let home = tempfile::tempdir().expect("home");
+        with_test_home(home.path().to_path_buf(), || {
+            save_profile("calm", serde_json::json!({ "name": "calm" }));
+            let project = Project {
+                profiles: vec!["CALM".into(), "Calm".into(), "calm".into()],
+                ..Default::default()
+            };
+
+            let profiles = matched_profiles(&project);
+            let flags = profile_flags(&project, &profiles, &BTreeSet::new());
+
+            // A case-sensitive disk matches one spelling, a folding disk all
+            // three. Either way there is one file and one flag.
+            assert!(!profiles.is_empty());
+            assert_eq!(flags.len(), 1);
+        });
+    }
+
+    #[test]
     fn an_empty_profile_is_not_flagged_and_an_unreadable_one_is() {
         let home = tempfile::tempdir().expect("home");
         let project = tempfile::tempdir().expect("project");
@@ -714,6 +797,10 @@ mod tests {
                 .map(|n| (n.name.as_str(), n.flagged))
                 .collect();
             assert_eq!(names, vec![("broken", true), ("calm", false)]);
+            assert!(matches!(
+                preview(project.path()),
+                ProjectLibraryUse::Readable { has_unreadable_profile: true, .. }
+            ));
         });
     }
 
@@ -761,6 +848,7 @@ mod tests {
                 preview(project.path()),
                 ProjectLibraryUse::Readable {
                     read_only_hint: true,
+                    has_unreadable_profile: false,
                     groups: Vec::new(),
                 }
             );

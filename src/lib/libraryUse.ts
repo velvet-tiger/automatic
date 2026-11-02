@@ -21,7 +21,12 @@ export interface LibraryUseGroup {
 
 /** Mirrors `core::ProjectLibraryUse`. */
 export type ProjectLibraryUse =
-  | { kind: "Readable"; read_only_hint: boolean; groups: LibraryUseGroup[] }
+  | {
+      kind: "Readable";
+      read_only_hint: boolean;
+      has_unreadable_profile: boolean;
+      groups: LibraryUseGroup[];
+    }
   | { kind: "Unreadable" }
   | { kind: "NotChecked" };
 
@@ -61,11 +66,16 @@ export function libraryFlagReason(kind: LibraryItemKind): string {
 /**
  * Whether read-only mode is the starting choice. Normal mode is offered first
  * only for a config that was fully checked and does not ask for read-only. A
- * failed check cannot read the committed hint, so it lands here as well.
+ * failed check cannot read the committed hint, so it lands here as well. An
+ * unreadable profile is a failed check of that profile's contents.
  */
 export function startsReadOnly(use: ProjectLibraryUse | null | undefined): boolean {
   if (use?.kind !== "Readable") return true;
-  return use.read_only_hint || use.groups.some((g) => g.not_checked > 0);
+  return (
+    use.read_only_hint ||
+    use.has_unreadable_profile ||
+    use.groups.some((g) => g.not_checked > 0)
+  );
 }
 
 function plural(count: number, one: string): string {
@@ -80,9 +90,11 @@ export function libraryUseSummary(groups: LibraryUseGroup[]): string | null {
 
   const servers = groups.find((g) => g.kind === "mcp_server")?.flagged_total ?? 0;
   const hooks = groups.find((g) => g.kind === "hook")?.flagged_total ?? 0;
+  const profiles = groups.find((g) => g.kind === "profile")?.flagged_total ?? 0;
   const risky = [
     servers > 0 ? `${plural(servers, "MCP server")} that can hold a stored sign-in or stored values` : null,
     hooks > 0 ? plural(hooks, "hook") : null,
+    profiles > 0 ? `${plural(profiles, "profile")} that provides these or could not be read` : null,
   ].filter((part): part is string => part !== null);
 
   let line = `Uses ${plural(total, "item")} from your library`;

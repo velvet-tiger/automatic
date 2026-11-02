@@ -23,6 +23,7 @@ const renderDialog = (libraryUse: ProjectLibraryUse | null, onImport = vi.fn()) 
 const readable = (read_only_hint: boolean): ProjectLibraryUse => ({
   kind: "Readable",
   read_only_hint,
+  has_unreadable_profile: false,
   groups: [
     {
       kind: "mcp_server",
@@ -86,6 +87,7 @@ describe("OrphanConfigDialog", () => {
     renderDialog({
       kind: "Readable",
       read_only_hint: false,
+      has_unreadable_profile: false,
       groups: [{ kind: "hook", total: 0, flagged_total: 0, names: [], not_checked: 4 }],
     });
     expect(firstAdd()).toBe("Add in read-only mode");

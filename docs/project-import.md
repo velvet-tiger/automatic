@@ -6,7 +6,7 @@ A cloned repository can hold a committed `.automatic.json`. Most of its lists ar
 
 Add Project and Find Projects show which names match this machine's library, before the project is added. The user then adds it normally or in read-only mode. A read-only project is not synced, so nothing from the library is written into its folder.
 
-Read-only is the starting choice when the config sets the committed `read_only` hint, when the check failed or was skipped, or when names were left unchecked. It is the primary button in Add Project and starts ticked in Find Projects. A failed check cannot read the hint, so it starts read-only for that reason too. Only the user can then pick normal mode. A folder that reaches Find Projects' add step with no recorded choice is added read-only. A direct import with no choice follows the hint.
+Read-only is the starting choice when the config sets the committed `read_only` hint, when the check failed or was skipped, when names were left unchecked, or when a named profile cannot be read. It is the primary button in Add Project and starts ticked in Find Projects. A failed check cannot read the hint, so it starts read-only for that reason too. Only the user can then pick normal mode. A folder that reaches Find Projects' add step with no recorded choice is added read-only. A direct import with no choice follows the hint.
 
 `core::preview_project_library_use` builds the list. It writes nothing and decrypts nothing.
 

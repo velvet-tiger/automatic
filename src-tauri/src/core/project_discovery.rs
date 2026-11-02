@@ -684,6 +684,7 @@ mod tests {
             assert_eq!(uses.len(), 2);
             let readable = ProjectLibraryUse::Readable {
                 read_only_hint: true,
+                has_unreadable_profile: false,
                 groups: Vec::new(),
             };
             assert!(uses.contains(&Some(readable)), "{uses:?}");

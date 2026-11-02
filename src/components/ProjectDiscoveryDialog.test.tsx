@@ -121,6 +121,7 @@ describe("ProjectDiscoveryDialog", () => {
             library_use: {
               kind: "Readable",
               read_only_hint: true,
+              has_unreadable_profile: false,
               groups: [
                 {
                   kind: "hook",
