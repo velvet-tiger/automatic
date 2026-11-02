@@ -70,6 +70,10 @@ pub struct Settings {
     /// installed version is left alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library_version: Option<String>,
+    /// True once startup has created the "Automatic Defaults" profile. It
+    /// stays true so a profile the user deleted is not created again.
+    #[serde(default)]
+    pub default_profile_seeded: bool,
     /// The release version the user last viewed in the "What's New" section.
     /// Used to determine whether a badge/indicator should be shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +146,7 @@ impl Default for Settings {
             default_agent_options: HashMap::new(),
             bundled_skills_version: None,
             library_version: None,
+            default_profile_seeded: false,
             whats_new_seen_version: None,
             agent_features_enabled: None,
             active_agent: None,
@@ -173,8 +178,13 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
+/// Keeps `default_profile_seeded`, so a reset does not bring back a default
+/// profile the user deleted.
 pub fn reset_settings() -> Result<(), String> {
-    write_settings(&Settings::default())
+    write_settings(&Settings {
+        default_profile_seeded: read_settings()?.default_profile_seeded,
+        ..Settings::default()
+    })
 }
 
 /// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
