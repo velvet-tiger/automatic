@@ -149,7 +149,7 @@ pub fn get_profiles_dir() -> Result<PathBuf, String> {
     Ok(super::paths::get_library_dir()?.join("profiles"))
 }
 
-fn profile_path(name: &str) -> Result<PathBuf, String> {
+pub(super) fn profile_path(name: &str) -> Result<PathBuf, String> {
     Ok(get_profiles_dir()?.join(format!("{}.json", name)))
 }
 

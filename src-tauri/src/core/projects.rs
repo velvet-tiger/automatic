@@ -877,8 +877,7 @@ pub struct ImportedProject {
     /// The new checkout's key. Address the project by it: the name may be
     /// shared with another project.
     pub local_key: String,
-    /// Whether the project was added in read-only mode, because its
-    /// committed config sets the `read_only` hint.
+    /// Whether the project was added in read-only mode.
     pub read_only: bool,
 }
 
@@ -890,7 +889,13 @@ pub struct ImportedProject {
 /// uses is allowed (stage 6). The caller has checked that no project owns
 /// the directory (see [`inspect_project_directory`]). The on-disk config is
 /// left untouched here; [`refresh_project_files`] writes the keys into it.
-pub fn import_existing_project(directory: &str) -> Result<ImportedProject, String> {
+///
+/// `read_only` is the user's choice of mode for this checkout. `None` means no
+/// choice was made, and the committed `read_only` hint decides.
+pub fn import_existing_project(
+    directory: &str,
+    read_only: Option<bool>,
+) -> Result<ImportedProject, String> {
     if directory.is_empty() {
         return Err("A project directory is required to import.".into());
     }
@@ -925,11 +930,10 @@ pub fn import_existing_project(directory: &str) -> Result<ImportedProject, Strin
     // committed `id` means the repo already has an identity, which is kept.
     let name = name.to_string();
     let committed_id = Some(project.id.clone());
-    // The committed `read_only` hint decides this checkout's starting mode.
     let mut pointer = Project {
         name: name.clone(),
         directory: directory.to_string(),
-        local_read_only: project.read_only,
+        local_read_only: read_only.unwrap_or(project.read_only),
         ..Default::default()
     };
     assign_new_project_keys(&mut pointer, committed_id);
@@ -2228,7 +2232,7 @@ mod tests {
             )
             .expect("write config");
 
-            let imported = import_existing_project(&dir).expect("import");
+            let imported = import_existing_project(&dir, None).expect("import");
             assert_eq!(imported.name, "adopted");
 
             // The registry pointer must now exist, be named by its
@@ -2244,6 +2248,27 @@ mod tests {
             );
             assert_eq!(value["name"].as_str(), Some("adopted"));
             assert_eq!(value["directory"].as_str(), Some(dir.as_str()));
+        });
+    }
+
+    #[test]
+    fn import_existing_project_follows_the_choice_over_the_hint() {
+        let home = tempfile::tempdir().expect("home");
+        let hinted = tempfile::tempdir().expect("hinted");
+        let plain = tempfile::tempdir().expect("plain");
+        let unchosen = tempfile::tempdir().expect("unchosen");
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            for (dir, read_only) in [(&hinted, true), (&plain, false), (&unchosen, true)] {
+                let config = serde_json::json!({ "name": "choice", "read_only": read_only });
+                fs::write(dir.path().join(".automatic.json"), config.to_string()).expect("config");
+            }
+            let import = |dir: &tempfile::TempDir, choice| {
+                import_existing_project(dir.path().to_str().unwrap(), choice).expect("import")
+            };
+
+            assert!(!import(&hinted, Some(false)).read_only);
+            assert!(import(&plain, Some(true)).read_only);
+            assert!(import(&unchosen, None).read_only);
         });
     }
 
@@ -2269,13 +2294,13 @@ mod tests {
             .expect("write");
 
             let dir = project_dir.to_str().unwrap().to_string();
-            let imported = import_existing_project(&dir).expect("a shared name imports");
+            let imported = import_existing_project(&dir, None).expect("a shared name imports");
             assert_eq!(imported.name, "clash");
             assert_ne!(imported.local_key, existing.local_key);
             assert_eq!(load(&imported.local_key).directory, dir);
             assert_eq!(load(&existing.local_key).directory, existing.directory);
 
-            let err = import_existing_project(&dir).expect_err("the directory is taken now");
+            let err = import_existing_project(&dir, None).expect_err("the directory is taken now");
             assert!(err.contains("already registered"), "unexpected error: {err}");
         });
     }
@@ -2664,7 +2689,7 @@ mod tests {
             )
             .expect("write state");
 
-            let name = import_existing_project(dir.to_str().unwrap()).expect("import").local_key;
+            let name = import_existing_project(dir.to_str().unwrap(), None).expect("import").local_key;
             let pointer = read_json(&registry_file(&name));
             assert_eq!(pointer["id"], "committed-id");
             let local_key = pointer["local_key"].as_str().expect("local_key").to_string();
@@ -2707,7 +2732,7 @@ mod tests {
                 "the copy starts with the source checkout's local_key"
             );
 
-            let name = import_existing_project(copy_dir.to_str().unwrap()).expect("import").local_key;
+            let name = import_existing_project(copy_dir.to_str().unwrap(), None).expect("import").local_key;
             let pointer = read_json(&registry_file(&name));
             let pointer_key = pointer["local_key"].as_str().expect("local_key").to_string();
             assert_ne!(pointer_key, source.local_key);
@@ -2792,7 +2817,7 @@ mod tests {
             fs::create_dir_all(&dir).expect("mkdir");
             fs::write(dir.join(CONFIG_FILE_NAME), r#"{"name":"old-repo"}"#).expect("write");
 
-            import_existing_project(dir.to_str().unwrap()).expect("import");
+            import_existing_project(dir.to_str().unwrap(), None).expect("import");
             let pointer = read_json(&registry_file("old-repo"));
             assert!(uuid::Uuid::parse_str(pointer["id"].as_str().unwrap()).is_ok());
         });

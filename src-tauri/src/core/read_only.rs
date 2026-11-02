@@ -417,7 +417,7 @@ mod tests {
             let config = r#"{"id":"committed-id","name":"cloned","read_only":true}"#;
             fs::write(&config_path, config).expect("write config");
 
-            let imported = import_existing_project(dir.to_str().unwrap()).expect("import");
+            let imported = import_existing_project(dir.to_str().unwrap(), None).expect("import");
             assert!(imported.read_only);
             assert!(is_project_read_only(&imported.local_key).unwrap());
 
@@ -443,7 +443,7 @@ mod tests {
             )
             .expect("write config");
 
-            let imported = import_existing_project(dir.to_str().unwrap()).expect("import");
+            let imported = import_existing_project(dir.to_str().unwrap(), None).expect("import");
             assert!(!imported.read_only);
             assert!(!is_project_read_only(&imported.local_key).unwrap());
         });

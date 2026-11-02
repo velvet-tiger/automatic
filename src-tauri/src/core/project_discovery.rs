@@ -113,6 +113,10 @@ pub struct DiscoveredProject {
     /// `check_error` then says why, and the folder cannot be added.
     pub status: Option<DirectoryStatus>,
     pub check_error: Option<String>,
+    /// What the folder's config would use from this machine's library. Only
+    /// set for a folder with an unregistered config. `None` there means the
+    /// library could not be read.
+    pub library_use: Option<super::ProjectLibraryUse>,
 }
 
 /// The result of `discover_projects`.
@@ -318,6 +322,12 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
             Ok(status) => (Some(status), None),
             Err(e) => (None, Some(e)),
         };
+        let library_use = match &status {
+            Some(DirectoryStatus::OrphanConfig { .. }) => {
+                super::preview_project_library_use(&directory).ok()
+            }
+            _ => None,
+        };
         let name = candidate
             .directory
             .file_name()
@@ -339,6 +349,7 @@ pub fn discover_projects(root: &str, limits: DiscoveryLimits) -> Result<Discover
             has_agents_md: candidate.has_agents_md,
             status,
             check_error,
+            library_use,
         });
     }
 
