@@ -36,21 +36,24 @@ pub fn save_gateway_token(agent_id: &str, token: &str) -> Result<(), String> {
 /// Remove the Cloudflare AI Gateway token for `agent_id`, from the secret
 /// store and from `settings.json`.
 pub fn delete_gateway_token(agent_id: &str) -> Result<(), String> {
-    let mut settings = read_settings_to_update()?;
-    let gateway = settings.agent_gateways.get_mut(agent_id);
+    let recorded = read_settings_to_update()?
+        .agent_gateways
+        .get(agent_id)
+        .is_some_and(|gateway| gateway.cf_token_stored);
 
     // A failed move or save can leave a token the flag does not record, so
     // the store is always tried. Only a recorded token makes a failure stop
     // this: a locked keychain must not keep a user from clearing a gateway
     // that has no token.
-    let recorded = gateway.as_ref().is_some_and(|g| g.cf_token_stored);
     match remove_stored_gateway_token(agent_id) {
         Err(e) if recorded => return Err(e),
         Err(e) => eprintln!("[automatic] could not check for a gateway token: {}", e),
         Ok(()) => {}
     }
 
-    let Some(gateway) = gateway else {
+    // Read again: a keychain prompt can hold the store call for a while.
+    let mut settings = read_settings_to_update()?;
+    let Some(gateway) = settings.agent_gateways.get_mut(agent_id) else {
         return Ok(());
     };
     gateway.cf_token = None;
@@ -476,6 +479,19 @@ mod tests {
             crate::core::settings::reset_settings().expect("reset");
 
             assert_eq!(load_gateway_token(agent), Ok(None));
+        });
+    }
+
+    #[test]
+    fn a_locked_store_does_not_stop_a_reset_with_no_recorded_token() {
+        let agent = "gateway-reset-locked";
+        with_gateway(agent, None, |_| {
+            set_test_fault(&fault_on(agent), Some(TestFault::Unreadable));
+            let reset = crate::core::settings::reset_settings();
+            set_test_fault(&fault_on(agent), None);
+
+            assert_eq!(reset, Ok(()));
+            assert!(read_settings().unwrap().agent_gateways.is_empty());
         });
     }
 

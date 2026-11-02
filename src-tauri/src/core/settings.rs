@@ -202,12 +202,25 @@ pub fn reset_settings() -> Result<(), String> {
 }
 
 /// Remove the secret store token of every configured gateway. Runs before a
-/// reset or an erase removes the record of them, so a failure stops the wipe
-/// and the user can try again.
+/// reset or an erase removes the record of them.
+///
+/// A recorded token that cannot be removed stops the wipe, and the user can
+/// try again. A gateway with no recorded token never does: reset and erase
+/// are how a user recovers a broken setup, which can include a store that
+/// does not work. The lenient read is deliberate for the same reason. A
+/// corrupt file must not block a reset, though its tokens then stay behind.
 fn delete_all_gateway_tokens() -> Result<(), String> {
-    for agent_id in read_settings()?.agent_gateways.keys() {
-        delete_gateway_token(agent_id)
-            .map_err(|e| format!("could not remove the gateway token for '{}': {}", agent_id, e))?;
+    for (agent_id, gateway) in read_settings()?.agent_gateways {
+        match delete_gateway_token(&agent_id) {
+            Err(e) if gateway.cf_token_stored => {
+                return Err(format!(
+                    "could not remove the gateway token for '{}': {}",
+                    agent_id, e
+                ));
+            }
+            Err(e) => eprintln!("[automatic] could not check for a gateway token: {}", e),
+            Ok(()) => {}
+        }
     }
     Ok(())
 }

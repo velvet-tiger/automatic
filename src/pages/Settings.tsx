@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { THEMES, getStoredTheme, onThemeChanged, setStoredTheme, Theme } from "../lib/theme";
 import {
   useProjectNavLayout,
@@ -386,6 +386,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       setStoredTheme("system");
     } catch (e) {
       console.error("Failed to reset settings", e);
+      await message(`Automatic could not reset your settings. ${String(e)}`, { title: "Reset Failed", kind: "error" });
     }
   }
 
@@ -451,6 +452,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       setEraseInput("");
     } catch (e) {
       console.error("Failed to erase app data", e);
+      await message(`Automatic could not erase your data. ${String(e)}`, { title: "Erase Failed", kind: "error" });
     } finally {
       setErasingData(false);
     }
