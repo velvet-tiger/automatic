@@ -1276,9 +1276,12 @@ impl AutomaticMcpServer {
         let this = target.representative().clone();
         let this_dir = this.directory.as_str();
 
-        // Find every group this project belongs to. Members are stored as
-        // project ids.
-        let groups = crate::core::groups_for_project(crate::core::checkout_ident(&this));
+        let project = match load_project(&this) {
+            Ok(project) => project,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        // Only groups joined on this machine: a repository chooses its `id`.
+        let groups = crate::core::joined_groups(&project);
 
         if groups.is_empty() {
             return Ok(tool_success(
@@ -3615,6 +3618,8 @@ mod tests {
             }
             let group = serde_json::json!({"name": "team", "projects": ["site", "api"]});
             crate::core::save_group("team", &group.to_string()).expect("save group");
+            crate::core::confirm_project_group("5b1f0c7e-0000-4000-8000-0000000000d1", "team")
+                .expect("join");
 
             let server = AutomaticMcpServer::new();
             let result = tauri::async_runtime::block_on(server.get_related_projects(Parameters(
@@ -3624,6 +3629,33 @@ mod tests {
             let text = format!("{:?}", result.content);
             assert!(text.contains("**api**"), "{text}");
             assert!(!text.contains("0000000000c2"), "no id leaks: {text}");
+        });
+    }
+
+    #[test]
+    fn a_checkout_sees_no_peers_until_it_joins() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            save_registry();
+            let group = serde_json::json!({"name": "team", "projects": [SITE_ID, API_ID]});
+            crate::core::save_group("team", &group.to_string()).expect("save group");
+            crate::core::confirm_project_group(SITE_KEY, "team").expect("join");
+
+            let related = |key: &str| {
+                let params = GetRelatedProjectsParams { project: Some(key.into()) };
+                let result = tauri::async_runtime::block_on(
+                    AutomaticMcpServer::new().get_related_projects(Parameters(params)),
+                )
+                .expect("tool call");
+                format!("{:?}", result.content)
+            };
+            assert!(related(SITE_KEY).contains("**api**"));
+            let copy = related(SITE_WT_KEY);
+            assert!(!copy.contains("**api**"), "{copy}");
+            assert!(!copy.contains("team"), "{copy}");
+
+            crate::core::confirm_project_group(SITE_WT_KEY, "team").expect("join");
+            assert!(related(SITE_WT_KEY).contains("**api**"));
         });
     }
 

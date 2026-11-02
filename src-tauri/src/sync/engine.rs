@@ -778,7 +778,7 @@ fn sync_agent_configs_step(
     selected_servers: &serde_json::Map<String, serde_json::Value>,
     written_files: &mut Vec<String>,
 ) -> Result<Vec<InstructionTarget>, String> {
-    let project_groups = crate::core::groups_for_project(crate::core::project_ident(project));
+    let project_groups = crate::core::joined_groups(project);
     let mut cleaned_project_files = HashSet::new();
     let mut instruction_targets = Vec::new();
 
@@ -1127,7 +1127,7 @@ fn sync_instruction_target_file(
         .collect();
     let custom_rule_structs = project.custom_rules.clone();
     let file_path = dir.join(filename).display().to_string();
-    let project_groups = crate::core::groups_for_project(crate::core::project_ident(project));
+    let project_groups = crate::core::joined_groups(project);
     // Does this agent route library rules to its own rules directory
     // (.claude/rules/ or .cursor/rules/) instead of inline injection?
     let uses_agent_rules_dir = match agent_id {

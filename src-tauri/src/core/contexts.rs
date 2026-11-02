@@ -1250,12 +1250,22 @@ pub fn delete_group_reconciling_contexts(name: &str) -> Result<Vec<String>, Stri
 ///   A released context that another member group still lists is kept, and
 ///   its record moves to that group.
 ///
+/// A group this checkout has not joined provides nothing: `member_groups`
+/// matches by project `id`, which a repository chooses. A record under such a
+/// group is released like a departed group's. The worst a forged record can do
+/// is remove a slug from that project's own list.
+///
 /// Only touches the in-memory project. Returns `true` when anything changed.
 pub fn reconcile_group_contexts(project: &mut Project, member_groups: &[ProjectGroup]) -> bool {
+    let joined: Vec<ProjectGroup> = member_groups
+        .iter()
+        .filter(|group| project.local_confirmed_groups.contains(&group.name))
+        .cloned()
+        .collect();
     reconcile_group_provided(
         &mut project.contexts,
         &mut project.group_context_contributions,
-        member_groups,
+        &joined,
         group_contexts,
     )
 }
@@ -1466,13 +1476,32 @@ pub struct ProjectContextEntry {
 }
 
 pub fn project_context_entries(project: &Project) -> Vec<ProjectContextEntry> {
+    let withheld = unjoined_group_contexts(project);
     project
         .contexts
         .iter()
+        .filter(|slug| !withheld.contains(*slug))
         .map(|slug| ProjectContextEntry {
             slug: slug.clone(),
             group: group_providing(project, slug),
         })
+        .collect()
+}
+
+/// Slugs provided by a group that lists this checkout but that it has not
+/// joined, unless a joined group provides them too. A clone of a member carries
+/// them in its committed `contexts`, with no group record, so the reconcile
+/// cannot remove them. They stay in the file and are not offered.
+fn unjoined_group_contexts(project: &Project) -> Vec<String> {
+    let listing = groups_for_project(project_ident(project));
+    let (joined, unjoined): (Vec<_>, Vec<_>) = listing
+        .iter()
+        .partition(|group| project.local_confirmed_groups.contains(&group.name));
+    unjoined
+        .iter()
+        .flat_map(|group| group.contexts.iter())
+        .filter(|slug| !joined.iter().any(|group| group.contexts.contains(*slug)))
+        .cloned()
         .collect()
 }
 
@@ -1516,6 +1545,7 @@ mod tests {
         Project {
             name: name.to_string(),
             contexts: contexts.iter().map(|c| c.to_string()).collect(),
+            local_confirmed_groups: vec!["team".into(), "a".into(), "b".into()],
             ..Default::default()
         }
     }
@@ -1761,6 +1791,26 @@ mod tests {
     }
 
     #[test]
+    fn a_group_this_checkout_has_not_joined_provides_nothing() {
+        let mut p = project("app", &["own"]);
+        p.local_confirmed_groups.clear();
+        let groups = vec![group("team", &["app"], &["shared"])];
+        assert!(!reconcile_group_contexts(&mut p, &groups));
+        assert_eq!(p.contexts, vec!["own"]);
+        assert!(p.group_context_contributions.is_empty());
+    }
+
+    #[test]
+    fn a_record_under_an_unjoined_group_is_released() {
+        let mut p = project("app", &["shared"]);
+        p.local_confirmed_groups.clear();
+        p.group_context_contributions.insert("team".into(), vec!["shared".into()]);
+        assert!(reconcile_group_contexts(&mut p, &[group("team", &["app"], &["shared"])]));
+        assert!(p.contexts.is_empty());
+        assert!(p.group_context_contributions.is_empty());
+    }
+
+    #[test]
     fn reconcile_hands_shared_context_to_remaining_group() {
         let mut p = project("app", &[]);
         let both = vec![
@@ -1840,6 +1890,7 @@ mod tests {
         with_home(|| {
             save_context(local_context("shared", vec![])).unwrap();
             write_project("app", &project("app", &[])).unwrap();
+            confirm_project_group("app", "team").unwrap();
             save_group_value(&group("team", &["app"], &[]));
             let team = ContextTarget::Group("team".into());
 
@@ -1866,6 +1917,8 @@ mod tests {
         with_home(|| {
             write_project("a", &project("a", &[])).unwrap();
             write_project("b", &project("b", &[])).unwrap();
+            confirm_project_group("a", "team").unwrap();
+            confirm_project_group("b", "team").unwrap();
             let json = |g: &ProjectGroup| serde_json::to_string(g).unwrap();
 
             save_group_reconciling_contexts("team", &json(&group("team", &["a"], &["x"]))).unwrap();
@@ -2110,6 +2163,7 @@ mod tests {
     fn reconcile_for_projects_reads_groups_from_disk() {
         with_home(|| {
             write_project("app", &project("app", &[])).unwrap();
+            confirm_project_group("app", "team").unwrap();
             save_group_value(&group("team", &["app"], &["shared"]));
             let saved = reconcile_group_contexts_for_projects(&["app".into()]).unwrap();
             assert_eq!(saved, vec!["app"]);

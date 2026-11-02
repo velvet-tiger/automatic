@@ -72,12 +72,13 @@ pub fn delete_group(name: &str) -> Result<(), String> {
 }
 
 /// Join a group that already lists this checkout through a shared `id`, so
-/// its profiles apply here.
+/// its contexts and profiles apply here.
 #[tauri::command(async)]
 pub fn join_group(group_name: &str, project_name: &str) -> Result<(), String> {
     let writes = hold_library_writes();
     let ident = core::canonical_project_ident(project_name)?;
     core::join_listed_group(&ident, group_name)?;
+    core::reconcile_group_contexts_for_projects(std::slice::from_ref(&ident))?;
     drop(writes);
     queue_group_reconcile(group_name, vec![ident]);
     Ok(())

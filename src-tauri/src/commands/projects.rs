@@ -3540,6 +3540,80 @@ fn detach_profile_from_projects_removes_provided_entries() {
         });
     }
 
+    fn save_context_group(name: &str, projects: &[String], contexts: &[&str], joining: &[String]) {
+        let group = core::ProjectGroup {
+            name: name.to_string(),
+            projects: projects.to_vec(),
+            contexts: contexts.iter().map(|c| c.to_string()).collect(),
+            ..Default::default()
+        };
+        let data = serde_json::to_string(&group).expect("group json");
+        super::super::groups::save_group(name, &data, Some(joining.to_vec())).expect("save group");
+    }
+
+    fn offered_contexts(key: &str) -> Vec<String> {
+        core::project_context_entries(&read_back(key)).into_iter().map(|e| e.slug).collect()
+    }
+
+    /// A clone of a member carries the member's `id` and its committed
+    /// `contexts`. Neither makes it a member here.
+    #[test]
+    fn a_clone_gets_no_group_contexts_until_it_joins() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", &[member.clone()], &["private"], &[member.clone()]);
+            assert_eq!(read_back(&member).contexts, vec!["private"]);
+
+            let (_clone, clone_dir, key) = import_id_clone("member", &[], None);
+            let config_path = clone_dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&config_path).expect("config")).expect("parse");
+            config["contexts"] = serde_json::json!(["private"]);
+            std::fs::write(&config_path, config.to_string()).expect("write");
+            assert_eq!(offered_contexts(&key), Vec::<String>::new(), "a copied slug is not offered");
+
+            // A group save must not write into a folder that never joined.
+            let before = std::fs::read(&config_path).expect("read");
+            save_context_group("team", &[member.clone()], &["private", "more"], &[]);
+            assert_eq!(std::fs::read(&config_path).expect("read"), before);
+            assert!(read_back(&key).group_context_contributions.is_empty());
+            assert_eq!(read_back(&member).contexts, vec!["private", "more"]);
+
+            super::super::groups::join_group("team", &key).expect("join");
+            let joined = read_back(&key);
+            assert_eq!(joined.group_context_contributions["team"], vec!["private", "more"]);
+            assert_eq!(offered_contexts(&key), vec!["private", "more"]);
+
+            // Leaving: the group stops listing every checkout of the project.
+            save_context_group("team", &[], &["private", "more"], &[]);
+            let left = read_back(&key);
+            assert!(left.contexts.is_empty());
+            assert!(left.group_context_contributions.is_empty());
+            assert!(read_back(&member).contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_join_committed_by_the_repository_grants_no_contexts() {
+        with_temp_home(|_| {
+            let (_keep, _dir) = make_project("member", |_| {});
+            let member = read_back("member").local_key;
+            save_context_group("team", &[member.clone()], &["private"], &[member.clone()]);
+
+            let forged = serde_json::json!({ "local_confirmed_groups": ["team"] });
+            let (_clone, clone_dir, key) = import_id_clone("member", &[], Some(forged));
+            let config_path = clone_dir.join(".automatic.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&config_path).expect("read")).expect("parse");
+            config["local_confirmed_groups"] = serde_json::json!(["team"]);
+            std::fs::write(&config_path, config.to_string()).expect("write");
+            assert!(read_back(&key).local_confirmed_groups.is_empty());
+            save_context_group("team", &[member], &["private", "more"], &[]);
+            assert!(read_back(&key).contexts.is_empty());
+        });
+    }
+
     #[test]
     fn join_is_refused_for_a_group_that_does_not_list_the_checkout() {
         with_temp_home(|_| {

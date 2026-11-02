@@ -87,7 +87,7 @@ export function GroupsPanel({
                   <div className="text-[13px] text-text-base">{groupName}</div>
                   {!joinedGroups.includes(groupName) && (
                     <div className="text-[11px] text-text-muted">
-                      This group lists another copy of this repository. This copy has not joined, so the group's profiles do not apply here.
+                      This group lists another copy of this repository. This copy has not joined, so the group's contexts, profiles and related projects do not apply here.
                     </div>
                   )}
                 </div>
