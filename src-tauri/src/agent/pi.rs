@@ -1,4 +1,6 @@
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,21 +8,24 @@ use super::{discover_mcp_servers_from_json, Agent};
 
 /// Pi agent — pi.dev's minimal agent harness.
 ///
-/// Pi itself is configuration-light, but MCP servers and sub-agents are
-/// supported through community extension packages installed via `pi install`:
-///
-/// - **MCP** — provided by `pi-mcp-adapter` (and `pi-mcp-extension`).  Reads
-///   `.pi/mcp.json` (Pi project override) and `.mcp.json` (project shared).
-///   Same JSON shape as Claude Code: `{ "mcpServers": { ... } }`.  Automatic
-///   writes to the Pi-specific location (`.pi/mcp.json`) so it doesn't stomp
-///   on Claude Code's `.mcp.json` if both agents are selected for the
-///   project.
+/// - **MCP** — built into Pi.  It reads `.pi/mcp.json` once the project is
+///   trusted, and `mcp.json` in its agent directory.  Same JSON shape as Claude
+///   Code: `{ "mcpServers": { ... } }`, except that the legacy SSE transport
+///   is rejected.  `pi-mcp-adapter` is an optional replacement that reads the
+///   same project file.
 /// - **Sub-agents** — provided by `pi-subagents` and forks.  Stored as
-///   Markdown files with YAML frontmatter under `.pi/agents/`, same shape as
-///   Claude Code sub-agents.
+///   Markdown files with YAML frontmatter under `.pi/agents/`.  The parser
+///   reads one line per key, so [`Agent::convert_agent_content`] flattens the
+///   frontmatter.
+/// - **Commands** — prompt templates, as Markdown files directly in
+///   `.pi/prompts/`.
 ///
 /// Project instructions live in `AGENTS.md` at the project root.  Skills are
 /// written to `.pi/skills/<name>/SKILL.md`.
+///
+/// `.pi/` also holds the user's `settings.json`, `extensions/` and
+/// `SYSTEM.md`, and ThinkRail runs on the same files, so neither agent owns
+/// the directory: each claims only the paths Automatic writes.
 pub struct Pi;
 
 impl Agent for Pi {
@@ -35,22 +40,21 @@ impl Agent for Pi {
     }
 
     fn config_description(&self) -> &'static str {
-        ".pi/mcp.json (via pi-mcp-adapter)"
+        ".pi/mcp.json"
     }
 
     fn project_file_name(&self) -> &'static str {
         "AGENTS.md"
     }
 
-    /// Approval is enforced by `pi-mcp-adapter`, not by Automatic: a synced
-    /// server stays blocked until the user approves it inside Pi.
+    /// Trust is enforced by Pi, not by Automatic: a synced server stays
+    /// inactive until the user trusts the project.
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "With pi-mcp-adapter, Pi asks you to approve each project MCP server in a trusted \
-             project before it first connects, and again when its definition changes. \
-             Headless runs skip unapproved servers unless settings.projectServers is \
-             \"allow\" in ~/.pi/agent/mcp-adapter.json. Automatic does not write Pi's \
-             user-level MCP config.",
+            "Pi loads .pi/mcp.json only after you trust the project. Automatic leaves out \
+             legacy SSE servers because Pi rejects them. If you replace Pi's MCP support with \
+             pi-mcp-adapter, headless runs skip unapproved servers unless \
+             settings.projectServers is \"allow\" in ~/.pi/agent/mcp-adapter.json.",
         )
     }
 
@@ -74,50 +78,33 @@ impl Agent for Pi {
         vec![dir.join(".pi").join("skills")]
     }
 
-    /// `.pi/` is Pi's alone: MCP config, skills and sub-agents.
-    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".pi")]
+    fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
+        match pi_agent_dir() {
+            Some(agent_dir) => vec![agent_dir.join("skills")],
+            None => vec![],
+        }
     }
 
-    fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
-        match super::home_dir() {
-            Some(home) => vec![home.join(".pi").join("agent").join("skills")],
-            None => vec![],
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            commands: true,
+            global_mcp_servers: true,
+            ..Default::default()
         }
     }
 
     // ── Config writing ──────────────────────────────────────────────────
 
     /// Write MCP servers in Claude-compatible JSON format to `.pi/mcp.json`.
-    /// `pi-mcp-adapter` reads this file as the Pi-specific override layer.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let pi_dir = dir.join(".pi");
         if !pi_dir.exists() {
             fs::create_dir_all(&pi_dir).map_err(|e| format!("Failed to create .pi/: {}", e))?;
         }
 
-        // Pi's MCP shape matches Claude Code's: strip the "type" field from
-        // stdio entries (the adapter infers transport from `command` vs `url`)
-        // and drop Automatic-internal fields the adapter doesn't expect.
-        let mut pi_servers = Map::new();
-        for (name, config) in servers {
-            let transport = config
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
-
-            let mut server = config.clone();
-            if let Some(obj) = server.as_object_mut() {
-                if transport == "stdio" {
-                    obj.remove("type");
-                    obj.remove("enabled");
-                    obj.remove("timeout");
-                }
-            }
-            pi_servers.insert(name.clone(), server);
-        }
-
-        let output = json!({ "mcpServers": Value::Object(pi_servers) });
+        let output = json!({ "mcpServers": Value::Object(render_pi_servers(servers)) });
         let path = pi_dir.join("mcp.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
@@ -126,12 +113,53 @@ impl Agent for Pi {
         Ok(path.display().to_string())
     }
 
+    fn mcp_unsupported_reason(&self, server: &Value) -> Option<String> {
+        is_sse(server).then(|| {
+            "Pi rejects the legacy SSE transport. Use the server's streamable HTTP URL."
+                .to_string()
+        })
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        Some(super::GlobalMcpTarget {
+            path: pi_agent_dir()?.join("mcp.json"),
+            reload_note: Some("Pi picks up the change in new sessions."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let target = self
+            .global_mcp_target()
+            .ok_or_else(|| "Home directory not available for Pi global MCP write".to_string())?;
+        let rendered = render_pi_servers(desired);
+        super::merge_global_mcp_entries_json(
+            &target.path,
+            "mcpServers",
+            &rendered,
+            previously_managed,
+        )
+    }
+
     // ── Sub-agents ──────────────────────────────────────────────────────
 
     /// Sub-agents are stored as Markdown + YAML frontmatter under `.pi/agents/`,
     /// matching the format consumed by `pi-subagents` and its forks.
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".pi").join("agents"))
+    }
+
+    fn convert_agent_content(&self, content: &str, _name: &str) -> String {
+        super::render_markdown_command(&pi_agent_markdown(content))
+    }
+
+    // ── Commands ────────────────────────────────────────────────────────
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".pi").join("prompts"))
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
@@ -146,17 +174,13 @@ impl Agent for Pi {
     }
 
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
-        let Some(home) = super::home_dir() else {
+        let Some(agent_dir) = pi_agent_dir() else {
             return Map::new();
         };
-        // Pi's user-level override location.  The shared
-        // `~/.config/mcp/mcp.json` is intentionally not read here — it is the
-        // cross-tool shared config and another agent may already own it.
-        discover_mcp_servers_from_json(
-            &home.join(".pi").join("agent").join("mcp.json"),
-            "mcpServers",
-            |v| v,
-        )
+        // Pi's user-level location.  The shared `~/.config/mcp/mcp.json` is
+        // intentionally not read here — it is the cross-tool shared config
+        // and another agent may already own it.
+        discover_mcp_servers_from_json(&agent_dir.join("mcp.json"), "mcpServers", |v| v)
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -167,6 +191,194 @@ impl Agent for Pi {
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".pi").join("mcp.json")]
     }
+}
+
+/// Pi's user-level directory: `$PI_CODING_AGENT_DIR` when set, otherwise
+/// `~/.pi/agent`.
+fn pi_agent_dir() -> Option<PathBuf> {
+    resolve_pi_agent_dir(std::env::var_os("PI_CODING_AGENT_DIR"), super::home_dir())
+}
+
+fn resolve_pi_agent_dir(configured: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    let configured = configured.filter(|value| !value.is_empty());
+    let Some(configured) = configured else {
+        return home.map(|home| home.join(".pi").join("agent"));
+    };
+    // Pi expands a leading `~` itself, so the shell may not have.
+    let path = PathBuf::from(&configured);
+    match path.strip_prefix("~") {
+        Ok(rest) => home.map(|home| home.join(rest)),
+        Err(_) => Some(path),
+    }
+}
+
+fn is_sse(server: &Value) -> bool {
+    server.get("type").and_then(|v| v.as_str()) == Some("sse")
+}
+
+/// Render servers into Pi's dialect: leave out legacy SSE entries, drop
+/// Automatic's own `enabled` and `timeout` fields, and strip `type` from stdio
+/// entries (Pi infers the transport from `command` vs `url`).
+///
+/// `timeout` means seconds to Pi, and nothing says Automatic's value does.
+fn render_pi_servers(servers: &Map<String, Value>) -> Map<String, Value> {
+    let mut pi_servers = Map::new();
+    for (name, config) in servers {
+        if is_sse(config) {
+            continue;
+        }
+        let transport = config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio");
+
+        let mut server = config.clone();
+        if let Some(obj) = server.as_object_mut() {
+            obj.remove("enabled");
+            obj.remove("timeout");
+            if transport == "stdio" {
+                obj.remove("type");
+            }
+        }
+        pi_servers.insert(name.clone(), server);
+    }
+    pi_servers
+}
+
+/// Rewrite a Claude-style sub-agent for `pi-subagents`.
+///
+/// Its parser reads one `key: value` per line, so a multi-line value would be
+/// misread.  A `model` it cannot resolve fails the spawn with no fallback, so
+/// only a `provider/id` pin is kept.  `tools` must hold Pi's names, so the
+/// list goes when any entry has no equivalent, and the sub-agent keeps Pi's
+/// default tools.
+fn pi_agent_markdown(content: &str) -> String {
+    let Some(yaml) = super::frontmatter_block(content) else {
+        return content.to_string();
+    };
+    let span = super::frontmatter_span(content).expect("frontmatter_block found a block");
+    let line_break = &content[3..span.start];
+    let mut lines: Vec<String> = Vec::new();
+    for (key, value, original) in frontmatter_entries(yaml) {
+        match key.as_str() {
+            "model" => {
+                if unquoted(&value).contains('/') {
+                    lines.push(original);
+                }
+            }
+            "tools" => {
+                if let Some(tools) = pi_tool_names(&value) {
+                    lines.push(format!("tools: {tools}"));
+                }
+            }
+            _ => lines.push(original),
+        }
+    }
+    let mut out = format!("---{line_break}");
+    for line in lines {
+        out.push_str(&line);
+        out.push_str(line_break);
+    }
+    out.push_str("---");
+    out.push_str(&content[span.body_start..]);
+    out
+}
+
+/// One `(key, value, line)` per top-level key of `yaml`, with each value on a
+/// single line.  `line` is the source line when the key already fits on one.
+fn frontmatter_entries(yaml: &str) -> Vec<(String, String, String)> {
+    let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
+    for line in yaml.lines().filter(|line| !line.starts_with('#')) {
+        let top_level = !line.starts_with([' ', '\t', '-']);
+        match line.split_once(':').filter(|_| top_level) {
+            Some((key, value)) => {
+                groups.push((key.trim().to_string(), value.trim().to_string(), Vec::new()));
+            }
+            None => {
+                if let Some((_, _, continuation)) = groups.last_mut() {
+                    continuation.push(line.trim().to_string());
+                }
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(key, head, continuation)| {
+            if continuation.iter().all(|line| line.is_empty()) && !is_block_scalar(&head) {
+                let line = format!("{key}: {head}");
+                return (key, head, line.trim_end().to_string());
+            }
+            let value = joined_value(&head, &continuation);
+            let rendered = super::render_frontmatter_value(&value).unwrap_or_else(|| {
+                // A value holding both quote styles cannot be quoted safely.
+                // Pi's parser reads it plain, so drop the quotes instead.
+                value.replace(['\'', '"'], "")
+            });
+            let line = format!("{key}: {rendered}");
+            (key, value, line)
+        })
+        .collect()
+}
+
+fn is_block_scalar(head: &str) -> bool {
+    head.starts_with(['|', '>'])
+}
+
+fn joined_value(head: &str, continuation: &[String]) -> String {
+    let lines = continuation.iter().filter(|line| !line.is_empty());
+    let parts: Vec<&str> = if is_block_scalar(head) {
+        lines.map(String::as_str).collect()
+    } else if continuation.iter().any(|line| line.starts_with("- ")) {
+        let items = lines.map(|line| line.strip_prefix("- ").unwrap_or(line));
+        return std::iter::once(head)
+            .filter(|h| !h.is_empty())
+            .chain(items)
+            .collect::<Vec<_>>()
+            .join(", ");
+    } else {
+        std::iter::once(head)
+            .filter(|h| !h.is_empty())
+            .chain(lines.map(String::as_str))
+            .collect()
+    };
+    parts.join(" ")
+}
+
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    let quoted = value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')));
+    if quoted {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+/// Map a Claude tool list to Pi's tool names, or `None` when any entry has no
+/// Pi equivalent or the list is empty.
+fn pi_tool_names(value: &str) -> Option<String> {
+    let inner = value.trim().trim_start_matches('[').trim_end_matches(']');
+    let mut seen = HashSet::new();
+    let mut names = Vec::new();
+    for tool in inner.split(',').map(unquoted).filter(|t| !t.is_empty()) {
+        let mapped = match tool {
+            "Read" | "read" => "read",
+            "Grep" | "grep" => "grep",
+            "Glob" | "find" => "find",
+            "LS" | "ls" => "ls",
+            "Bash" | "bash" => "bash",
+            "Edit" | "edit" => "edit",
+            "Write" | "write" => "write",
+            _ => return None,
+        };
+        if seen.insert(mapped) {
+            names.push(mapped);
+        }
+    }
+    (!names.is_empty()).then(|| names.join(", "))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -306,16 +518,31 @@ mod tests {
     }
 
     #[test]
+    fn test_removal_keeps_the_users_pi_files() {
+        let dir = tempdir().unwrap();
+        let pi_dir = dir.path().join(".pi");
+        fs::create_dir_all(pi_dir.join("extensions")).unwrap();
+        fs::write(pi_dir.join("mcp.json"), "{}").unwrap();
+        fs::write(pi_dir.join("settings.json"), "{}").unwrap();
+        fs::write(pi_dir.join("extensions").join("mine.ts"), "").unwrap();
+
+        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &[], &[]).unwrap();
+        super::super::apply_removal_plan(&Pi, dir.path(), &plan).unwrap();
+
+        assert!(!pi_dir.join("mcp.json").exists());
+        assert!(pi_dir.join("settings.json").exists());
+        assert!(pi_dir.join("extensions").join("mine.ts").exists());
+    }
+
+    #[test]
     fn test_capabilities_enables_mcp_and_subagents() {
         let caps = Pi.capabilities();
-        assert!(caps.mcp_servers, "Pi supports MCP via pi-mcp-adapter");
+        assert!(caps.mcp_servers, "Pi has built-in MCP");
         assert!(caps.agents, "Pi supports sub-agents via pi-subagents");
         assert!(caps.skills);
         assert!(caps.instructions);
-        assert!(
-            !caps.commands,
-            "Pi commands (prompt templates) not synced yet"
-        );
+        assert!(caps.commands, "Pi prompt templates sync to .pi/prompts");
+        assert!(caps.global_mcp_servers, "Pi reads a user-level mcp.json");
         assert!(!caps.hooks, "Pi has no hook concept");
     }
 
@@ -344,5 +571,143 @@ mod tests {
 
         let content = fs::read_to_string(dir.path().join(".pi/skills/my-skill/SKILL.md")).unwrap();
         assert_eq!(content, "# My Skill\n");
+    }
+
+    #[test]
+    fn test_write_mcp_config_leaves_out_sse_and_keeps_the_rest() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "legacy".to_string(),
+            json!({ "type": "sse", "url": "https://example.com/sse" }),
+        );
+        servers.insert(
+            "remote".to_string(),
+            json!({
+                "type": "http",
+                "url": "https://example.com/mcp",
+                "enabled": true,
+                "timeout": 30
+            }),
+        );
+
+        Pi.write_mcp_config(dir.path(), &servers).unwrap();
+        let written = fs::read_to_string(dir.path().join(".pi").join("mcp.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&written).unwrap();
+
+        assert!(parsed["mcpServers"].get("legacy").is_none());
+        let remote = &parsed["mcpServers"]["remote"];
+        assert_eq!(remote["type"], "http");
+        assert!(remote.get("enabled").is_none());
+        assert!(remote.get("timeout").is_none());
+    }
+
+    #[test]
+    fn test_only_sse_is_unsupported() {
+        let sse = json!({ "type": "sse", "url": "https://example.com/sse" });
+        let http = json!({ "type": "http", "url": "https://example.com/mcp" });
+        assert!(Pi.mcp_unsupported_reason(&sse).is_some());
+        assert!(Pi.mcp_unsupported_reason(&http).is_none());
+    }
+
+    #[test]
+    fn test_agent_dir_defaults_under_home() {
+        let home = PathBuf::from("/home/me");
+        assert_eq!(
+            resolve_pi_agent_dir(None, Some(home.clone())),
+            Some(home.join(".pi").join("agent"))
+        );
+        assert_eq!(
+            resolve_pi_agent_dir(Some(OsString::new()), Some(home.clone())),
+            Some(home.join(".pi").join("agent"))
+        );
+    }
+
+    #[test]
+    fn test_agent_dir_honours_the_environment() {
+        let home = PathBuf::from("/home/me");
+        assert_eq!(
+            resolve_pi_agent_dir(Some("/work/pi".into()), Some(home.clone())),
+            Some(PathBuf::from("/work/pi"))
+        );
+        assert_eq!(
+            resolve_pi_agent_dir(Some("~/work/pi".into()), Some(home.clone())),
+            Some(home.join("work").join("pi"))
+        );
+        assert_eq!(resolve_pi_agent_dir(Some("~/x".into()), None), None);
+    }
+
+    #[test]
+    fn test_commands_sync_to_pi_prompts() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            Pi.commands_dir(dir.path()),
+            Some(dir.path().join(".pi").join("prompts"))
+        );
+    }
+
+    #[test]
+    fn test_convert_agent_flattens_multi_line_values() {
+        let content = "---\nname: planner\ndescription: >\n  Plans the work\n  in stages\ntools:\n  - Read\n  - Grep\n---\nPlan.\n";
+        let rendered = Pi.convert_agent_content(content, "planner");
+        assert!(rendered.contains("\ndescription: Plans the work in stages\n"), "{rendered}");
+        assert!(rendered.contains("\ntools: read, grep\n"), "{rendered}");
+        assert!(rendered.contains("\nautomatic-managed: true\n"));
+        assert!(rendered.ends_with("---\nPlan.\n"), "{rendered}");
+    }
+
+    #[test]
+    fn test_convert_agent_keeps_a_colon_in_a_flattened_value_readable() {
+        let content = "---\nname: planner\ndescription: |\n  Note: plans\n---\nPlan.\n";
+        let rendered = Pi.convert_agent_content(content, "planner");
+        assert!(rendered.contains("\ndescription: 'Note: plans'\n"), "{rendered}");
+    }
+
+    #[test]
+    fn test_convert_agent_drops_model_aliases_and_keeps_pins() {
+        for alias in ["sonnet", "opus", "haiku", "inherit"] {
+            let content = format!("---\nname: a\ndescription: b\nmodel: {alias}\n---\nBody\n");
+            let rendered = Pi.convert_agent_content(&content, "a");
+            assert!(!rendered.contains("model:"), "{rendered}");
+        }
+        let content = "---\nname: a\ndescription: b\nmodel: anthropic/claude-x\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(content, "a");
+        assert!(rendered.contains("\nmodel: anthropic/claude-x\n"), "{rendered}");
+    }
+
+    #[test]
+    fn test_convert_agent_maps_tools_or_drops_the_list() {
+        let mapped = "---\nname: a\ndescription: b\ntools: Read, Glob, LS, Bash, Edit, Write\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(mapped, "a");
+        assert!(
+            rendered.contains("\ntools: read, find, ls, bash, edit, write\n"),
+            "{rendered}"
+        );
+
+        let unknown = "---\nname: a\ndescription: b\ntools: Read, WebFetch\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(unknown, "a");
+        assert!(!rendered.contains("tools:"), "{rendered}");
+    }
+
+    #[test]
+    fn test_convert_agent_ignores_comment_lines() {
+        let content = "---\nname: a\n# a note\ndescription: b\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(content, "a");
+        assert!(rendered.starts_with("---\nname: a\ndescription: b\n"), "{rendered}");
+    }
+
+    #[test]
+    fn test_convert_agent_keeps_crlf_and_is_stable() {
+        let content = "---\r\nname: a\r\ndescription: b\r\n---\r\nBody\r\n";
+        let once = Pi.convert_agent_content(content, "a");
+        assert!(once.starts_with("---\r\nname: a\r\n"), "{once:?}");
+        assert_eq!(Pi.convert_agent_content(&once, "a"), once);
+    }
+
+    #[test]
+    fn test_converted_agent_has_no_differences_from_itself() {
+        let content = "---\nname: a\ndescription: >\n  long\nmodel: sonnet\ntools: Read\n---\nBody\n";
+        let expected = Pi.convert_agent_content(content, "a");
+        assert!(Pi.agent_file_differences(&expected, &expected).is_empty());
     }
 }

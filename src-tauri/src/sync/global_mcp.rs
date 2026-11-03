@@ -97,6 +97,8 @@ pub fn apply_global_mcp(
     selection: Vec<String>,
 ) -> Result<GlobalMcpApplyReport, String> {
     let _writes = crate::core::hold_library_writes();
+    let agent_id = state_id(agent_id);
+    let agent_id = agent_id.as_str();
     let mut state = load_global_mcp_state()?;
     let entry = state.agents.entry(agent_id.to_string()).or_default();
     entry.selected = dedupe_preserving_order(selection);
@@ -125,7 +127,7 @@ pub fn preview_global_mcp(
     let state = load_global_mcp_state()?;
     let previously_managed = state
         .agents
-        .get(agent_id)
+        .get(&state_id(agent_id))
         .map(|a| a.managed.clone())
         .unwrap_or_default();
 
@@ -322,7 +324,7 @@ pub fn global_mcp_status(agent_id: &str) -> Result<GlobalMcpStatus, String> {
     let state = load_global_mcp_state()?;
     let selection = state
         .agents
-        .get(agent_id)
+        .get(&state_id(agent_id))
         .map(|a| a.selected.clone())
         .unwrap_or_default();
 
@@ -345,6 +347,13 @@ pub fn global_mcp_status(agent_id: &str) -> Result<GlobalMcpStatus, String> {
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────
+
+/// The key of `agent_id`'s record in the global MCP state.
+fn state_id(agent_id: &str) -> String {
+    agent::from_id(agent_id)
+        .map_or(agent_id, |agent| agent.global_mcp_state_id())
+        .to_string()
+}
 
 /// Run the write pipeline for `selection` without touching persisted state.
 fn run_apply(
@@ -420,7 +429,19 @@ fn build_prepared_desired(
     }
 
     let raw = build_global_selected_servers(&effective_names, mcp_config)?;
-    let prepared = agent::prepare_global_mcp_servers(agent, &raw);
+    let mut prepared = agent::prepare_global_mcp_servers(agent, &raw);
+    // Checked after the render: a remote OAuth server may have become a stdio
+    // stub, which the agent can load whatever the registry entry's transport.
+    prepared.retain(|name, server| match agent.mcp_unsupported_reason(server) {
+        Some(reason) => {
+            rejected.push(RejectedServer {
+                name: name.clone(),
+                reason,
+            });
+            false
+        }
+        None => true,
+    });
     Ok((prepared, rejected))
 }
 
@@ -468,7 +489,7 @@ fn dedupe_preserving_order(input: Vec<String>) -> Vec<String> {
 pub fn managed_entries_for(agent_id: &str) -> Vec<String> {
     load_global_mcp_state()
         .ok()
-        .and_then(|s| s.agents.get(agent_id).map(|a| a.managed.clone()))
+        .and_then(|s| s.agents.get(&state_id(agent_id)).map(|a| a.managed.clone()))
         .unwrap_or_default()
 }
 

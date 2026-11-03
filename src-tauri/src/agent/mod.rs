@@ -95,7 +95,7 @@ pub struct AgentCapabilities {
     /// Automatic can write user-level (home-directory) MCP server config for
     /// this agent, so servers are available in every session/chat regardless of
     /// project.  Deliberately decoupled from [`mcp_servers`] — Cline, Warp and
-    /// Antigravity all have global-yes / project-no, and Pi has the opposite.
+    /// Antigravity all have global-yes / project-no.
     ///
     /// Defaults to `false`; each agent opts in with an actual writer.
     pub global_mcp_servers: bool,
@@ -254,6 +254,24 @@ pub trait Agent: Send + Sync {
             "{} does not support global MCP server writes",
             self.label()
         ))
+    }
+
+    /// Why this agent cannot load `server`, a prepared entry, or `None` when
+    /// it can.  The writers leave such an entry out, and the reason tells the
+    /// user why it is missing.
+    ///
+    /// Default: every entry can be written.
+    fn mcp_unsupported_reason(&self, _server: &Value) -> Option<String> {
+        None
+    }
+
+    /// The agent whose saved global MCP selection this agent uses.  Two
+    /// agents that write one user-level file must share a record, or each
+    /// would treat the other's entries as the user's own.
+    ///
+    /// Default: this agent's own record.
+    fn global_mcp_state_id(&self) -> &'static str {
+        self.id()
     }
 
     /// Rewrite the "inherit from the environment" markers of one server entry.
