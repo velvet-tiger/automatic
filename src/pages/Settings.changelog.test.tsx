@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 }));
 
 const LATEST_RELEASE_URL = "https://github.com/velvet-tiger/automatic/releases/latest";
+const NEW_ISSUE_URL = "https://github.com/velvet-tiger/automatic/issues/new";
 
 describe("Settings > App > App Updates", () => {
   beforeEach(() => {
@@ -38,6 +39,24 @@ describe("Settings > App > App Updates", () => {
     fireEvent.click(link);
     await waitFor(() => {
       expect(openUrl).toHaveBeenCalledWith(LATEST_RELEASE_URL);
+    });
+  });
+
+  it("opens the new issue form in the system browser", async () => {
+    render(
+      <TaskLogProvider>
+        <UpdateProvider>
+          <Settings initialPage="app" />
+        </UpdateProvider>
+      </TaskLogProvider>,
+    );
+
+    const link = await screen.findByRole("link", { name: "Report an issue" });
+    expect(link).toHaveAttribute("href", NEW_ISSUE_URL);
+
+    fireEvent.click(link);
+    await waitFor(() => {
+      expect(openUrl).toHaveBeenCalledWith(NEW_ISSUE_URL);
     });
   });
 });

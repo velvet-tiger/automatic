@@ -27,6 +27,7 @@ type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" |
 
 // The release workflow publishes each version's CHANGELOG section as the release body.
 const LATEST_RELEASE_URL = "https://github.com/velvet-tiger/automatic/releases/latest";
+const NEW_ISSUE_URL = "https://github.com/velvet-tiger/automatic/issues/new";
 
 interface AccountProfile {
   user_id: string;
@@ -1105,6 +1106,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                     className="text-[12px] text-brand hover:underline"
                   >
                     View changelog
+                  </a>
+                  <a
+                    href={NEW_ISSUE_URL}
+                    onClick={handleExternalLinkClick(NEW_ISSUE_URL)}
+                    className="text-[12px] text-brand hover:underline"
+                  >
+                    Report an issue
                   </a>
                 </div>
 
