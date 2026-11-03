@@ -16,6 +16,7 @@ import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
 import { MarkdownPreview } from "../components/MarkdownPreview";
 import { flag } from "../lib/flags";
+import { handleExternalLinkClick } from "../lib/externalLinks";
 import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut, Terminal, Scale } from "lucide-react";
 import SettingsAgents from "./settings/Agents";
 import { leftInPlaceNotice } from "./settings/CustomGatewaySection";
@@ -23,6 +24,9 @@ import SettingsCommandLine from "./settings/CommandLine";
 import OpenSourceLicences from "./settings/OpenSourceLicences";
 
 type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "cli" | "support";
+
+// The release workflow publishes each version's CHANGELOG section as the release body.
+const LATEST_RELEASE_URL = "https://github.com/velvet-tiger/automatic/releases/latest";
 
 interface AccountProfile {
   user_id: string;
@@ -1095,6 +1099,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   {updateStatus === "up-to-date" && (
                     <span className="text-[12px] text-success">Up to date</span>
                   )}
+                  <a
+                    href={LATEST_RELEASE_URL}
+                    onClick={handleExternalLinkClick(LATEST_RELEASE_URL)}
+                    className="text-[12px] text-brand hover:underline"
+                  >
+                    View changelog
+                  </a>
                 </div>
 
                 {/* Downloading in background */}
