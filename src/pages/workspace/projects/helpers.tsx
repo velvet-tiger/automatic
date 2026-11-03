@@ -11,6 +11,8 @@ import {
   FolderOpen,
   RefreshCw,
   History,
+  Flag,
+  Brain,
 } from "lucide-react";
 import type { Project, ProjectDriftState, ProjectProfile, ProjectToolEntry, ProfileLockMap } from "./types";
 import { PROFILE_RESOURCE_KINDS } from "./types";
@@ -103,6 +105,7 @@ export function agentIdToLabel(id: string): string {
 export function relativeTime(iso: string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
   const diffMs = now - then;
   if (diffMs < 0) return "just now";
   const diffSec = Math.floor(diffMs / 1000);
@@ -141,6 +144,17 @@ export function activityMeta(event: string): { icon: React.ReactNode; dot: strin
       return { icon: <FolderOpen size={12} className="text-brand" />, dot: "bg-brand" };
     case "project_updated":
       return { icon: <RefreshCw size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "feature_created":
+    case "feature_updated":
+    case "feature_state_changed":
+      return { icon: <Flag size={12} className="text-brand" />, dot: "bg-brand" };
+    case "feature_deleted":
+      return { icon: <Flag size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "memory_stored":
+      return { icon: <Brain size={12} className="text-brand" />, dot: "bg-brand" };
+    case "memory_deleted":
+    case "memory_cleared":
+      return { icon: <Brain size={12} className="text-text-muted" />, dot: "bg-text-muted" };
     default:
       return { icon: <History size={12} className="text-text-muted" />, dot: "bg-text-muted" };
   }

@@ -1,49 +1,56 @@
-// Extracted verbatim from Projects.tsx (behavior-preserving refactor).
-
-import { History } from "lucide-react";
 import { activityMeta, relativeTime } from "../helpers";
 import type { ActivityEntry } from "../types";
+import { SummaryCard } from "./SummaryCharts";
+import { groupActivity, visibleActivityDetail, type ActivityGroup } from "./summaryStats";
+
+const MAX_ROWS = 5;
 
 interface ActivityFeedProps {
   entries: ActivityEntry[];
   loading: boolean;
+  failed: boolean;
 }
 
-export function ActivityFeed({ entries, loading }: ActivityFeedProps) {
+function repeatText(count: number): string {
+  if (count <= 1) return "";
+  return count === 2 ? "twice" : `${count} times`;
+}
+
+function ActivityRow({ group, last }: { group: ActivityGroup; last: boolean }) {
+  const { entry, count } = group;
+  const { icon } = activityMeta(entry.event);
+  const detail = [repeatText(count), visibleActivityDetail(entry)].filter(Boolean).join(", ");
   return (
-    <section>
-      <div className="flex items-center gap-2 mb-3">
-        <History size={13} className="text-text-muted" />
-        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recent Activity</span>
+    <div className={`flex items-center gap-3 py-2 ${last ? "" : "border-b border-border-strong/10"}`}>
+      <div className="flex-shrink-0 text-text-muted opacity-70">{icon}</div>
+      <div className="min-w-0 flex-1 truncate" title={entry.label}>
+        <span className="text-[12px] text-text-base">{entry.label}</span>
+        {detail && <span className="ml-1.5 text-[12px] text-text-muted">{detail}</span>}
       </div>
-      <div className="rounded-lg bg-bg-input/60 px-3">
-        {loading ? (
-          <div className="py-3 text-[12px] text-text-muted">Loading activity…</div>
-        ) : entries.length === 0 ? (
-          <div className="py-3 text-[12px] text-text-muted italic">
-            No activity yet. Save or sync the project to start recording events.
-          </div>
-        ) : (
-          entries.map((item, i) => {
-            const { icon } = activityMeta(item.event);
-            return (
-              <div
-                key={item.id}
-                className={`flex items-center gap-3 py-2 ${i < entries.length - 1 ? "border-b border-border-strong/10" : ""}`}
-              >
-                <div className="flex-shrink-0 text-text-muted opacity-70">{icon}</div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[12px] text-text-base">{item.label}</span>
-                  {item.detail && (
-                    <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
-                  )}
-                </div>
-                <span className="text-[11px] text-text-muted flex-shrink-0">{relativeTime(item.timestamp)}</span>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </section>
+      <span className="flex-shrink-0 text-[11px] text-text-muted">{relativeTime(entry.timestamp)}</span>
+    </div>
+  );
+}
+
+export function ActivityFeed({ entries, loading, failed }: ActivityFeedProps) {
+  const groups = groupActivity(entries, MAX_ROWS);
+  return (
+    <SummaryCard title="Recent activity">
+      {loading ? (
+        <div className="py-1 text-[12px] text-text-muted">Loading activity…</div>
+      ) : failed ? (
+        <div className="py-1 text-[12px] text-text-muted">Could not load activity.</div>
+      ) : groups.length === 0 ? (
+        <div className="py-1 text-[12px] italic text-text-muted">
+          No activity yet. Save or sync the project to start recording events.
+        </div>
+      ) : (
+        <div className="-my-2">
+          {groups.map((group, index) => (
+            <ActivityRow key={group.entry.id} group={group} last={index === groups.length - 1} />
+          ))}
+        </div>
+      )}
+    </SummaryCard>
   );
 }

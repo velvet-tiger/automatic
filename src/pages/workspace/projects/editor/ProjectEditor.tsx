@@ -104,6 +104,7 @@ import { DocsFilesPanel } from "./panels/DocsFilesPanel";
 import { DocsLinksPanel } from "./panels/DocsLinksPanel";
 import { DocsNotesPanel } from "./panels/DocsNotesPanel";
 import { SummaryPanel } from "./panels/SummaryPanel";
+import { useProjectActivity } from "./useProjectActivity";
 import { AgentsPanel } from "./panels/AgentsPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { McpServersPanel } from "./panels/McpServersPanel";
@@ -788,7 +789,7 @@ export function ProjectEditor({
     }
   }
 
-  const { selectedMemories, loadingMemories, loadMemories } = useProjectMemories(selectedKey, setError);
+  const { selectedMemories, loadingMemories, memoriesLoadFailed, loadMemories } = useProjectMemories(selectedKey, setError);
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -826,8 +827,7 @@ export function ProjectEditor({
   const [aiMcpSuggestions, setAiMcpSuggestions] = useState<ProjectRecommendation[]>([]);
 
   // Activity state
-  const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
-  const [loadingActivity, setLoadingActivity] = useState(false);
+  const { activityEntries, loadingActivity, activityLoadFailed, loadActivity } = useProjectActivity(selectedKey);
   // Activity tab pagination (50 per page, 0-based page index)
   const [activityPage, setActivityPage] = useState(0);
   const [activityTotalCount, setActivityTotalCount] = useState(0);
@@ -1150,6 +1150,7 @@ export function ProjectEditor({
     setProblemsCheckError(null);
     const name = selectedKey;
     if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
+      setDriftReport(null);
       return;
     }
 
@@ -2029,19 +2030,8 @@ export function ProjectEditor({
   useEffect(() => {
     if (projectVersion === 0 || !selectedKey) return;
     loadRecommendations(selectedKey);
+    loadActivity(selectedKey);
   }, [projectVersion]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const loadActivity = async (projectKey: string) => {
-    try {
-      setLoadingActivity(true);
-      const raw: string = await invoke("get_project_activity", { project: projectKey, limit: 5 });
-      setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
-    } catch (err: any) {
-      console.error("Failed to load activity:", err);
-    } finally {
-      setLoadingActivity(false);
-    }
-  };
 
   const loadActivityPage = async (projectKey: string, page: number) => {
     try {
@@ -4681,16 +4671,20 @@ export function ProjectEditor({
                   <SummaryPanel
                     project={project}
                     isCreating={isCreating}
-                    memories={selectedMemories ?? {}}
+                    memories={selectedMemories}
                     projectFiles={projectFiles}
                     linkDocEntries={linkDocEntries}
                     recsDisplayCount={recsDisplayCount}
                     activityEntries={activityEntries}
                     loadingActivity={loadingActivity}
+                    activityLoadFailed={activityLoadFailed}
                     loadingMemories={loadingMemories}
+                    memoriesLoadFailed={memoriesLoadFailed}
+                    driftReport={driftReport}
+                    driftCheckFailed={driftCheckError !== null}
+                    availableAgents={availableAgents}
                     selectTab={selectTab}
                     updateField={updateField}
-                    handleExternalLinkClick={handleExternalLinkClick}
                   />
                 )}
 
@@ -4843,7 +4837,10 @@ export function ProjectEditor({
                     project={project}
                     memories={selectedMemories}
                     loadingMemories={loadingMemories}
-                    reloadMemories={loadMemories}
+                    reloadMemories={async (projectKey) => {
+                      await loadMemories(projectKey);
+                      await loadActivity(projectKey);
+                    }}
                     onError={setError}
                   />
                 )}

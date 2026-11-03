@@ -6,6 +6,7 @@ import {
   isCheckFailed,
   isDrifted,
   isInSync,
+  relativeTime,
 } from "./helpers";
 
 describe("drift check state", () => {
@@ -50,5 +51,16 @@ describe("checkFailureNotices", () => {
     expect(checkFailureNotices(null, "b")).toEqual([
       { title: "Could not check this project for problems.", error: "b" },
     ]);
+  });
+});
+
+describe("relativeTime", () => {
+  it("returns an empty string for an invalid date", () => {
+    expect(relativeTime("not a date")).toBe("");
+    expect(relativeTime("")).toBe("");
+  });
+
+  it("still formats a valid date", () => {
+    expect(relativeTime(new Date().toISOString())).toBe("just now");
   });
 });

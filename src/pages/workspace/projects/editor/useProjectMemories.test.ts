@@ -71,12 +71,16 @@ describe("useProjectMemories", () => {
 
   it("keeps the loading flag on until the latest load finishes", async () => {
     const pending = deferInvokes();
-    const { result } = renderHook(() => useProjectMemories("beta", vi.fn()));
+    const { result, rerender } = renderHook(
+      ({ selected }: { selected: string }) => useProjectMemories(selected, vi.fn()),
+      { initialProps: { selected: "alpha" } },
+    );
 
     let loadA: Promise<void> = Promise.resolve();
     act(() => {
       loadA = result.current.loadMemories("alpha");
     });
+    rerender({ selected: "beta" });
     act(() => {
       void result.current.loadMemories("beta");
     });
@@ -91,13 +95,17 @@ describe("useProjectMemories", () => {
   it("drops a stale load's error", async () => {
     const pending = deferInvokes();
     const onError = vi.fn();
-    const { result } = renderHook(() => useProjectMemories("beta", onError));
+    const { result, rerender } = renderHook(
+      ({ selected }: { selected: string }) => useProjectMemories(selected, onError),
+      { initialProps: { selected: "alpha" } },
+    );
 
     let loadA: Promise<void> = Promise.resolve();
     let loadB: Promise<void> = Promise.resolve();
     act(() => {
       loadA = result.current.loadMemories("alpha");
     });
+    rerender({ selected: "beta" });
     act(() => {
       loadB = result.current.loadMemories("beta");
     });
@@ -110,6 +118,44 @@ describe("useProjectMemories", () => {
 
     expect(onError).not.toHaveBeenCalled();
     expect(result.current.selectedMemories).toEqual({ b: entry("beta value") });
+  });
+
+  it("ignores a late load for a project that is no longer selected", async () => {
+    const pending = deferInvokes();
+    const onError = vi.fn();
+    const { result } = renderHook(() => useProjectMemories("beta", onError));
+
+    let loadB: Promise<void> = Promise.resolve();
+    act(() => {
+      loadB = result.current.loadMemories("beta");
+    });
+    await act(() => result.current.loadMemories("alpha"));
+
+    expect(pending.has("alpha")).toBe(false);
+    expect(result.current.loadingMemories).toBe(true);
+    await act(async () => {
+      settle(pending, "beta").resolve({ b: entry("beta value") });
+      await loadB;
+    });
+    expect(result.current.selectedMemories).toEqual({ b: entry("beta value") });
+    expect(result.current.memoriesLoadFailed).toBe(false);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed load only for the project it belongs to", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("locked"));
+    invokeMock.mockResolvedValueOnce({});
+    const { result, rerender } = renderHook(({ key }) => useProjectMemories(key, vi.fn()), {
+      initialProps: { key: "alpha" },
+    });
+    expect(result.current.memoriesLoadFailed).toBe(false);
+    await act(() => result.current.loadMemories("alpha"));
+    expect(result.current.memoriesLoadFailed).toBe(true);
+    rerender({ key: "beta" });
+    expect(result.current.memoriesLoadFailed).toBe(false);
+    rerender({ key: "alpha" });
+    await act(() => result.current.loadMemories("alpha"));
+    expect(result.current.memoriesLoadFailed).toBe(false);
   });
 
   it("clears the selected project's memories when its load fails", async () => {
