@@ -302,6 +302,8 @@ export interface ProjectProblem {
 export interface ProjectProblemsReport {
   has_problems: boolean;
   problems: ProjectProblem[];
+  /** What sync narrowed or left out on purpose. Nothing needs fixing. */
+  notes?: string[];
 }
 
 export interface ProjectFileInfo {

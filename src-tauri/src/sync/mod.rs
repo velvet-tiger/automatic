@@ -12,7 +12,7 @@ pub use autodetect::autodetect_project_dependencies;
 pub use cleanup::{get_agent_cleanup_preview, remove_agent_from_project};
 pub use drift::{
     check_project_drift, check_project_problems, collect_instruction_conflicts_pub,
-    mcp_config_sync_notes, project_sync_warnings, AgentDrift,
+    mcp_config_sync_notes, project_sync_warnings, AgentDrift, ProjectSyncWarnings,
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };

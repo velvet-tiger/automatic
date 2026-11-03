@@ -70,6 +70,10 @@ pub struct ProjectProblemsReport {
     pub has_problems: bool,
     /// The list of detected problems (may be empty).
     pub problems: Vec<ProjectProblem>,
+    /// Things sync narrowed or left out on purpose, such as a dropped
+    /// sub-agent tool.  Not problems: nothing needs fixing.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Check for known configuration problems in a project.
@@ -84,6 +88,7 @@ pub struct ProjectProblemsReport {
 /// This is a read-only operation — nothing is written.
 pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport, String> {
     let mut problems: Vec<ProjectProblem> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
 
     if !project.directory.is_empty() && !project.agents.is_empty() {
         let dir = PathBuf::from(&project.directory);
@@ -93,13 +98,21 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
                 problems.extend(silent_stale_root_mcp_problem(project, &dir));
             }
             problems.extend(mcp_config_problems(&mcp_config_sync_notes(project)?));
-            problems.extend(agent_sync_limits_problem(project));
+            match project_sync_warnings(project) {
+                Ok(warnings) => {
+                    problems.extend(agent_sync_limits_problem(warnings.problems));
+                    notes = warnings.notes;
+                }
+                // `mcp_config_sync_notes` has already reported an unreadable server.
+                Err(e) => eprintln!("[automatic] could not check agent sync limits: {e}"),
+            }
         }
     }
 
     Ok(ProjectProblemsReport {
         has_problems: !problems.is_empty(),
         problems,
+        notes,
     })
 }
 
@@ -112,9 +125,23 @@ pub fn mcp_config_sync_notes(project: &Project) -> Result<McpConfigSyncNotes, St
 }
 
 /// What sync left out or changed for each agent on `project`, one line each.
-/// Derived from the project, so the problems list shows it whenever it is
-/// true, not only straight after a sync.
-pub fn project_sync_warnings(project: &Project) -> Result<Vec<String>, String> {
+#[derive(Debug, Default)]
+pub struct ProjectSyncWarnings {
+    /// Refused sub-agents, and refused copies sync could not remove.
+    pub problems: Vec<String>,
+    /// Dropped tools, missing fields and left-out SSE servers.
+    pub notes: Vec<String>,
+}
+
+impl ProjectSyncWarnings {
+    pub fn all(&self) -> Vec<String> {
+        self.problems.iter().chain(&self.notes).cloned().collect()
+    }
+}
+
+/// Derived from the project and the disk, so the problems list shows these
+/// whenever they are true, not only straight after a sync.
+pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, String> {
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
     let selected_servers = build_selected_servers(
@@ -140,7 +167,7 @@ pub fn project_sync_warnings(project: &Project) -> Result<Vec<String>, String> {
         }
     }
 
-    let mut warnings = Vec::new();
+    let mut warnings = ProjectSyncWarnings::default();
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
             continue;
@@ -148,37 +175,43 @@ pub fn project_sync_warnings(project: &Project) -> Result<Vec<String>, String> {
         let prepared = agent::prepare_mcp_servers(agent_instance, &selected_servers, &dir);
         for (name, server) in &prepared {
             if let Some(reason) = agent_instance.mcp_unsupported_reason(server) {
-                warnings.push(format!(
+                warnings.notes.push(format!(
                     "{} MCP server `{name}` was left out: {reason}",
                     agent_instance.label()
                 ));
             }
         }
-        if agent_instance.agents_dir(&dir).is_some() {
-            for (machine_name, content) in &sub_agents {
-                warnings.extend(agent_content_notes(agent_instance, machine_name, content));
+        let Some(agents_dir) = agent_instance.agents_dir(&dir) else {
+            continue;
+        };
+        for (machine_name, content) in &sub_agents {
+            let (notes, refusal) = agent_content_notes(agent_instance, machine_name, content);
+            warnings.notes.extend(notes);
+            let Some(refusal) = refusal else {
+                continue;
+            };
+            warnings.problems.push(refusal);
+            let copy = agents_dir.join(agent_instance.agent_file_name(machine_name));
+            if crate::agent::is_managed_agent_file(&copy) {
+                let relative = copy.strip_prefix(&dir).unwrap_or(&copy);
+                warnings.problems.push(format!(
+                    "An earlier copy of `{machine_name}` at `{}` could not be removed. Delete it by hand.",
+                    relative.display()
+                ));
             }
         }
     }
     Ok(warnings)
 }
 
-fn agent_sync_limits_problem(project: &Project) -> Option<ProjectProblem> {
-    let warnings = match project_sync_warnings(project) {
-        Ok(warnings) => warnings,
-        Err(e) => {
-            // `mcp_config_sync_notes` has already reported an unreadable server.
-            eprintln!("[automatic] could not check agent sync limits: {e}");
-            return None;
-        }
-    };
+fn agent_sync_limits_problem(warnings: Vec<String>) -> Option<ProjectProblem> {
     if warnings.is_empty() {
         return None;
     }
     Some(ProjectProblem {
         kind: ProjectProblemKind::AgentSyncLimits,
-        title: "Some settings could not reach an agent".to_string(),
-        description: "Automatic left these out or narrowed them, because the agent cannot hold them as written.".to_string(),
+        title: "Sub-agents not written".to_string(),
+        description: "The agent cannot restrict these sub-agents as written, so Automatic did not write them. Change the definition, or remove the agent from the project.".to_string(),
         solution: warnings,
         reference_url: None,
         agents: Vec::new(),
@@ -2464,9 +2497,10 @@ mod tests {
         );
         project.mcp_servers = vec!["legacy".to_string()];
 
-        let warnings = project_sync_warnings(&project).expect("warnings");
-        assert!(warnings.iter().any(|w| w.contains("`legacy`")), "{warnings:?}");
-        assert!(warnings.iter().any(|w| w.contains("WebFetch")), "{warnings:?}");
+        let report = check_project_problems(&project).expect("problems");
+        assert!(report.notes.iter().any(|w| w.contains("`legacy`")), "{:?}", report.notes);
+        assert!(report.notes.iter().any(|w| w.contains("WebFetch")), "{:?}", report.notes);
+        assert!(!report.has_problems, "notes are not problems: {:?}", report.problems);
 
         project.custom_agents.as_mut().unwrap()[0].content = REFUSED.to_string();
         let report = check_project_problems(&project).expect("problems");
@@ -2476,6 +2510,34 @@ mod tests {
             .find(|p| matches!(p.kind, ProjectProblemKind::AgentSyncLimits))
             .expect("agent sync limits problem");
         assert!(problem.solution.iter().any(|s| s.contains("was not written")), "{problem:?}");
+    }
+
+    #[test]
+    fn a_refused_copy_sync_cannot_remove_is_reported_and_sync_goes_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = crate::core::temp_test_home();
+        let dir = tempdir().unwrap();
+        let mut project = pi_family_project("pi", dir.path(), REFUSED);
+        let agents_dir = dir.path().join(".pi/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let copy = agents_dir.join("planner.md");
+        fs::write(&copy, "---\nname: planner\nautomatic-managed: true\n---\nOld.\n").unwrap();
+        fs::set_permissions(&agents_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let synced = crate::sync::sync_to_directory(&mut project);
+        let report = check_project_problems(&project);
+        fs::set_permissions(&agents_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        synced.expect("a copy that cannot go must not stop the sync");
+        assert!(copy.exists());
+        let report = report.expect("problems");
+        let problem = report
+            .problems
+            .iter()
+            .find(|p| matches!(p.kind, ProjectProblemKind::AgentSyncLimits))
+            .expect("problem");
+        assert!(problem.solution.iter().any(|s| s.contains("could not be removed")), "{problem:?}");
+        assert_eq!(agent_drift_paths(&project).len(), 1);
     }
 
     /// After `write_mcp_config` writes the MCP config, `collect_mcp_drift` must

@@ -76,12 +76,24 @@ pub struct AgentGlobalMcp {
 }
 
 impl AgentGlobalMcp {
-    /// The names this record owns in `target_path`.
-    pub fn managed_in(&self, target_path: &str) -> Vec<String> {
-        match &self.target_path {
-            Some(recorded) if recorded != target_path => Vec::new(),
-            _ => self.managed.clone(),
+    /// The names this record owns in `target_path`.  A record from before
+    /// targets were stored owns names only in `legacy_path`.
+    pub fn managed_in(&self, target_path: &str, legacy_path: Option<&str>) -> Vec<String> {
+        let owner = self.target_path.as_deref().or(legacy_path);
+        if owner == Some(target_path) {
+            self.managed.clone()
+        } else {
+            Vec::new()
         }
+    }
+
+    /// The names this record owns in `agent`'s current global target.
+    pub fn managed_for(&self, agent: &dyn crate::agent::Agent) -> Vec<String> {
+        let Some(target) = agent.global_mcp_target() else {
+            return Vec::new();
+        };
+        let legacy = agent.legacy_global_mcp_path().map(|p| p.display().to_string());
+        self.managed_in(&target.path.display().to_string(), legacy.as_deref())
     }
 }
 
@@ -132,6 +144,23 @@ mod tests {
     use super::*;
     use crate::core::paths::with_test_home;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_legacy_record_owns_names_only_in_its_default_file() {
+        let legacy = AgentGlobalMcp {
+            managed: vec!["alpha".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(legacy.managed_in("/home/me/.pi/agent/mcp.json", Some("/home/me/.pi/agent/mcp.json")), vec!["alpha"]);
+        assert!(legacy.managed_in("/work/pi/mcp.json", Some("/home/me/.pi/agent/mcp.json")).is_empty());
+        assert!(legacy.managed_in("/work/pi/mcp.json", None).is_empty());
+
+        let current = AgentGlobalMcp {
+            target_path: Some("/work/pi/mcp.json".to_string()),
+            ..legacy
+        };
+        assert_eq!(current.managed_in("/work/pi/mcp.json", Some("/home/me/.pi/agent/mcp.json")), vec!["alpha"]);
+    }
 
     #[test]
     fn load_returns_default_when_file_absent() {

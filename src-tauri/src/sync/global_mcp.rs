@@ -100,12 +100,14 @@ pub fn apply_global_mcp(
 ) -> Result<GlobalMcpApplyReport, String> {
     let _writes = crate::core::hold_library_writes();
     let target_path = target_path_of(agent_id)?;
+    let agent_instance = agent::from_id(agent_id)
+        .ok_or_else(|| format!("Unknown agent id: {}", agent_id))?;
     let key = global_mcp_state_key(agent_id);
     let mut state = load_global_mcp_state()?;
     let entry = state.agents.entry(key.clone()).or_default();
     entry.selected = dedupe_preserving_order(selection);
     let selection = entry.selected.clone();
-    entry.managed = entry.managed_in(&target_path);
+    entry.managed = entry.managed_for(agent_instance);
     entry.target_path = Some(target_path);
     let previously_managed = entry.managed.clone();
     // Drop the borrow before the apply pass takes another mut borrow.
@@ -129,10 +131,9 @@ pub fn preview_global_mcp(
         .ok_or_else(|| format!("{} does not support global MCP writes", agent.label()))?;
 
     let state = load_global_mcp_state()?;
-    let target_path = target.path.display().to_string();
     let previously_managed = state
         .record(agent_id)
-        .map(|a| a.managed_in(&target_path))
+        .map(|a| a.managed_for(agent))
         .unwrap_or_default();
 
     // Snapshot raw entry names on disk.  Uses
@@ -492,12 +493,12 @@ fn dedupe_preserving_order(input: Vec<String>) -> Vec<String> {
 /// `sync/drift.rs`: which entry names does Automatic currently manage for
 /// `agent_id`?  Always returns an empty vec if no state exists.
 pub fn managed_entries_for(agent_id: &str) -> Vec<String> {
-    let Ok(target_path) = target_path_of(agent_id) else {
+    let Some(agent_instance) = agent::from_id(agent_id) else {
         return Vec::new();
     };
     load_global_mcp_state()
         .ok()
-        .and_then(|s| s.record(agent_id).map(|a| a.managed_in(&target_path)))
+        .and_then(|s| s.record(agent_id).map(|a| a.managed_for(agent_instance)))
         .unwrap_or_default()
 }
 

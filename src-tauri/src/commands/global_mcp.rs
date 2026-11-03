@@ -40,10 +40,7 @@ pub fn get_global_mcp_state() -> Result<String, String> {
         let target = agent.global_mcp_target();
         let view = AgentGlobalMcpView {
             selected: record.selected.clone(),
-            managed: target
-                .as_ref()
-                .map(|t| record.managed_in(&t.path.display().to_string()))
-                .unwrap_or_default(),
+            managed: record.managed_for(agent),
             skipped: record.skipped.clone(),
             rejected: record.rejected.clone(),
             last_applied: record.last_applied.clone(),

@@ -90,6 +90,10 @@ impl Agent for ThinkRail {
         Pi.global_mcp_target()
     }
 
+    fn legacy_global_mcp_path(&self) -> Option<PathBuf> {
+        Pi.legacy_global_mcp_path()
+    }
+
     fn write_global_mcp_config(
         &self,
         desired: &Map<String, Value>,

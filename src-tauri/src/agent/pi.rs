@@ -128,6 +128,10 @@ impl Agent for Pi {
         })
     }
 
+    fn legacy_global_mcp_path(&self) -> Option<PathBuf> {
+        super::home_dir().map(|home| home.join(".pi").join("agent").join("mcp.json"))
+    }
+
     fn write_global_mcp_config(
         &self,
         desired: &Map<String, Value>,
@@ -307,6 +311,7 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
     let mut allow_lists: Vec<Vec<String>> = Vec::new();
     let mut denied: Vec<String> = Vec::new();
     let mut plan_mode = false;
+    let mut extensions = false;
     let mut has_name = false;
     let mut has_description = false;
     for entry in entries {
@@ -343,6 +348,12 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
                 "default" | "acceptEdits" | "bypassPermissions" => {}
                 other => problems.push(format!("Pi cannot express permission mode '{other}'")),
             },
+            (None, "extensions") => {
+                // Pi enables them only for `true`, but any other spelling may
+                // be meant the same way, so only `false` counts as off.
+                extensions = !matches!(value, "" | "false");
+                lines.push(entry.line);
+            }
             (None, _) if normal.contains("tool") => {
                 problems.push(format!("Pi would ignore the tool setting '{}'", entry.key));
             }
@@ -368,6 +379,14 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
     if allowed.is_none() && !denied.is_empty() {
         problems.push(format!(
             "it denies {} and Pi has no deny list, so these tools would be granted",
+            denied.join(", ")
+        ));
+    }
+    if extensions && !denied.is_empty() {
+        // An extension can register a tool of any name, Task and mcp__*
+        // included, and Pi cannot deny it.
+        problems.push(format!(
+            "it enables extensions and denies {}, which an extension could provide",
             denied.join(", ")
         ));
     }
@@ -1310,6 +1329,18 @@ mod tests {
     fn test_denied_names_match_in_any_case() {
         assert_eq!(
             tools_line("tools: Read, Bash\ndisallowedTools: BASH\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_extensions_with_a_deny_list_refuse() {
+        refused(
+            "tools: Read\nextensions: true\ndisallowedTools: mcp__github__create_issue, WebFetch, Task\n",
+        );
+        refused("tools: Read, Bash\nextensions: yes\ndisallowedTools: Bash\n");
+        assert_eq!(
+            tools_line("tools: Read\nextensions: false\ndisallowedTools: WebFetch\n").as_deref(),
             Some("tools: read")
         );
     }

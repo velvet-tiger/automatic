@@ -267,6 +267,14 @@ pub trait Agent: Send + Sync {
         None
     }
 
+    /// The file a global record from before records stored their target
+    /// described.  Such a record owns names only there.
+    ///
+    /// Default: the current target, which for most agents never moves.
+    fn legacy_global_mcp_path(&self) -> Option<PathBuf> {
+        self.global_mcp_target().map(|target| target.path)
+    }
+
     /// The agent whose saved global MCP selection this agent uses.  Two
     /// agents that write one user-level file must share a record, or each
     /// would treat the other's entries as the user's own.

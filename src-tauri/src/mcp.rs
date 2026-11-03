@@ -3282,6 +3282,7 @@ impl AutomaticMcpServer {
                     );
                 }
                 if let Ok(warnings) = crate::sync::project_sync_warnings(&project) {
+                    let warnings = warnings.all();
                     if !warnings.is_empty() {
                         response["agent_sync_warnings"] = serde_json::json!(warnings);
                     }
