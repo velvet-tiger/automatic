@@ -158,7 +158,7 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 
 This project is managed by Automatic, a desktop hub that provides skills, rules, hooks, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
 
-The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`.
+The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`. Contexts and project details can be read only for the registered project containing the folder the server runs in, or, if it is inside none, the one project every client root resolves to, and for the projects in the groups it joined.
 
 ## Session Start
 
@@ -173,9 +173,9 @@ The server knows which project you are working in. Omit the `project` argument (
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
 - **Enabling and Disabling MCP Servers** — Call `automatic_set_mcp_server_enabled` with `server` and `enabled` to switch one of a project's attached MCP servers off or on. A disabled server stays attached and `automatic_read_project` lists it under `disabled_mcp_servers`. The call does not sync to disk on its own. Call `automatic_sync_project` afterwards to remove the server from the agent config files, or to write it back. The call is refused for a server that is not attached, for the `automatic` server, and for a server an attached profile provides.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
-- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
-- **Other Projects** — Call `automatic_list_projects` to see every project registered in Automatic. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
-- **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
+- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this checkout joined. This is the authoritative source — related projects are intentionally not written into the instruction file.
+- **Other Projects** — Call `automatic_list_projects` to see this project and the projects in the groups it joined. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
+- **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. Agents cannot read its contexts or project details until the user keeps it in the Automatic app. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
 
 ## Rules
 
@@ -204,20 +204,20 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 - `automatic_list_profiles` — list every profile in the library (name, description).
 - `automatic_read_profile` — read a profile's full contents by name.
 - `automatic_attach_profile` / `automatic_detach_profile` — attach or detach a profile. Detaching removes every entry the profile provides, including entries the project had before it was attached. Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
-- Pass `group` instead of `project` to attach or detach a profile for a whole project group. Every member project receives the profile, and those calls sync the members themselves. A profile a group provides cannot be detached from a member project. Detach it from the group.
+- Pass `group` instead of `project` to attach or detach a profile for a whole project group this project joined. Every member project receives the profile, and those calls sync the members themselves. A profile a group provides cannot be detached from a member project. Detach it from the group.
 - `automatic_read_project` reports `profiles`, `profile_contributions` and `group_profile_contributions` (which profiles each group provides). An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
 
 ## Contexts
 
 Contexts hold what the user wants agents to know about this project. Before you decide on conventions, architecture, product behaviour, or wording, check whether an attached context covers it. The context wins over your assumptions and over general best practice.
 
-- `automatic_list_contexts` — lists the contexts attached to this project. Pass `all: true` to list every context in the library. Each attached context carries `group` when a project group provides it.
-- Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs.
+- `automatic_list_contexts` — lists the contexts attached to this project. The library cannot be listed. Each attached context carries `group` when a project group provides it.
+- Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs. Only contexts this project confirmed, or that a group it joined lists, can be read. A slug the committed `contexts` names waits for the user to attach it in the Automatic app.
 - If a context and the code disagree, say so to the user. Don't silently pick one.
 - If a read fails (for example, a cloud context when the user is signed out), tell the user and carry on without it.
-- `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. A context a group provides must be detached from the group.
+- `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. These act on this project, or on a group it joined. You can attach a context this project can already read, or one this server process created. The user attaches any other context in the Automatic app. A context a group provides must be detached from the group.
 - Writing: `automatic_create_context` creates a local context. `automatic_write_context_page` creates or replaces a page by `title` and optional `folder`, or replaces one by `path`. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages. Write only when the user asks, or to record something durable the user has agreed, such as a decision. Search the existing pages first and update one rather than adding a near-duplicate.
-- Linking: `automatic_add_context_folder` links a local folder or file, and `automatic_add_context_web_page` links a web page. `automatic_remove_context_source` removes a linked source. Link or remove only when the user asks. The user's settings decide which folders you may link. By default that is folders inside registered projects. Hidden, credential and system folders are always refused. Web pages you add may only reach public addresses until the user keeps them. Only the user can add cloud sources, in the Automatic app.
+- Linking: `automatic_add_context_folder` links a folder or file inside this project's own folder into a context this project can read or this server process created, and `automatic_add_context_web_page` links a web page. `automatic_remove_context_source` removes a linked source. Link or remove only when the user asks. You can link only inside this project's own folder, and the user's settings can narrow that further. Hidden, credential and system folders are always refused. Web pages you add may only reach public addresses until the user keeps them. Only the user can add cloud sources, in the Automatic app.
 
 ## Memory
 
@@ -744,6 +744,57 @@ as security surface.
   recommendation, or the ticket for an unrelated item.
 - Anything verified by inspection only.
 
+# Working Protocols
+
+## Before your first change in a repository, find the Working Protocols block.
+
+Look for a `## Working Protocols` section in the instruction file you read
+(AGENTS.md, CLAUDE.md, or similar). If it exists, follow it. It takes
+precedence over general defaults on operating mode, branching, and review.
+
+If it does not exist, ask the user each question below, then write the block.
+Do not guess answers from the repository. If nobody can answer, use Plan and
+Review, make no commits, and report that the block is missing.
+
+## Writing the block
+
+Write it outside any `automatic:rules` markers. Write identical text to every
+instruction file in the project. Do not write it in a read-only project.
+Change it only when the user asks.
+
+## Questions
+
+1. Operating mode
+   - Plan and Review: present a plan, wait for approval, work until done.
+   - Unsupervised: formulate a plan, work until done without waiting.
+   - Something else the user describes.
+2. Branch and commit strategy
+   - Use branches? Which model (for example gitflow)?
+   - Use worktrees?
+   - Create PRs?
+   - Always merge back to a given branch (for example main or dev)?
+3. Verification and review
+   - Do diffs or PRs need a human review or merge?
+   - At what point does the agent hand off to a human?
+
+## Block format
+
+## Working Protocols
+
+- **Operating mode:** Plan and Review
+- **Branches:** feature branches, gitflow naming
+- **Worktrees:** yes
+- **Pull requests:** yes
+- **Merge target:** main
+- **Human review:** required before merge
+- **Handoff:** after verification, with the PR link
+
+## Stops that apply in every mode
+
+No mode removes a stop for destructive actions, secrets, a user's explicit
+gate, or a failed check. Unsupervised removes the wait for plan approval.
+It does not remove verification, reviews, or reporting.
+
 # Worktrees and testing
 
 ## Before you ask the user to test, run, or check anything, stop.
@@ -774,6 +825,148 @@ The first message of the task names the worktree path and branch. Mention it aga
 
 Keeping a running list of issues at the end of every section so the user can keep track of what happened and whats remaining.
 State your current branch and worktree and commit status.
+
+# Reporting
+
+## Before you end a task or stage, write the report in this order.
+
+**Report on the whole task the user asked for, not on your last action.** A
+merge, commit, or push is a delivery step. It never fills State, Problem, or
+Solution. It goes in the Git state table. This applies however small the last
+step was, and when the last step was the only thing done this turn.
+
+**State:** one of Not started, Plan, In progress, Blocked, Complete, Failed,
+or Abandoned. Use Complete only when all the work the task requires is done.
+Required follow-on work, such as a port, means In progress. Use Blocked when
+the work cannot continue without the user, and say what you need. For Failed
+or Abandoned, give the reason.
+
+**Problem:** restate the problem and its cause in one or two sentences.
+Example: "The sync dropped remote servers because the proxy stub overwrote
+the registry entry."
+
+**Solution:** state what changed in the product and how that resolves the
+cause. If you found more than one issue, use a table with one row per defect
+in the task, not one row per delivery step. Say so plainly if an issue is not
+resolved.
+
+| Issue | Resolution | Status |
+|---|---|---|
+| Proxy stub overwrote the registry entry | Filter stubs during discovery | Fixed |
+| Sync could downgrade a remote server | Add a downgrade guard | Fixed |
+| No test for the stub round-trip | Needs an owner decision | Open |
+
+**Git state:** use this table every time, so the fields stay in the same order.
+Write "None" or "No" rather than leaving a row out. If the work is not
+committed, say why in the Commit row.
+
+| Commit | Branch | Worktree | Merged to default |
+|---|---|---|---|
+| `fbdafcd` | `claude/example` | `.claude/worktrees/example` or None | Yes/No |
+
+Then link to the PR, if there is one.
+
+Other rules may require more in the report, such as assumptions or review
+findings. Put that after these four items.
+
+During work, a progress update needs only the State line and what is
+happening now.
+
+**Red flag:** you are about to end a turn on finished work, and the reader
+cannot find the state or the git position without reading the whole message.
+
+**Red flag:** your Solution section describes a git merge as the solution. This is almost always wrong. You should be refering to the original problem you were working on.
+
+# Open Items and handing off tasks to other agents
+
+If you discover new issues, or your tasks looks like it splits into multiple issues, and these issues cant be solved in the current session or you think they should be new sessions, propose this to the user. Suggest new tasks if you support it, or offer to create tickets. Never leave a list of "open items" without giving the user a path to resolve them.
+
+If you hand off a task to another agent, via a related task or some other mechanism, if your work is finished and your chat can be archived, tell the user.
+
+# Long-running work
+
+The user cannot see what an agent or background job is doing. Silence looks the same as a hang. Keep the user informed, and keep work in proportion to the task.
+
+## Before you start anything likely to take more than 10 minutes, stop and tell the user.
+
+This covers a brute-force test matrix, a mutation sweep, a large review, another fix round, a long build, and any subagent you expect to run that long. Say what it is, why it is worth the time, and roughly how long it will take. Then wait for an answer. Approval of a plan does not cover a slow method the plan did not mention.
+
+**Red flag:** you are about to start or brief a job, and the user has not heard its cost.
+
+## Before you brief a subagent, set its limits.
+
+Every brief states a time limit and a size limit. The default is 10 minutes. A reviewer reads the diff and writes a few targeted tests. It does not write throwaway brute-force matrices, and it does not run tests in the background and wait on them. If a job is slow or stuck, the subagent stops and reports what it has. A broad test that is worth having belongs in the repository, where it runs once and keeps paying off.
+
+**Red flag:** your brief says "try to break it" or "across every combination" and names no limit.
+
+## When work passes its estimate, tell the user.
+
+Say what it is doing now, how long it has run, and offer to stop it. "Still running" is not a status. If you do not know what a job is doing, check before you reply, and say so if you cannot find out.
+
+**Red flag:** you have written "still running" or "waiting on" twice for the same job.
+
+## When work grows past the ticket, stop and say so.
+
+Compare what you are about to do with what the user asked for. If the next step is a new design, a new subsystem, or a third round of the same work, stop. State what is done, what is left, and what it will cost. Offer to merge what is finished first and move the rest to its own ticket. The rule to fix defects found by review does not override this. It decides what is in scope, not how long the user waits without hearing from you.
+
+**Red flag:** the diff is many times larger than the ticket suggested, and the original fix is still unmerged.
+
+# Ethical decisions
+
+These rules apply to every task. A deadline, a target or an instruction does
+not suspend them. Only the person responsible for the work can waive one, and
+the waiver must be explicit.
+
+## 1. Before you take an action that could harm someone, stop.
+
+Name who could be affected, including people outside the conversation. If the
+action could injure someone, or affect their health, safety, livelihood or
+legal rights, do not proceed on assumptions. State the risk and ask a person
+to decide.
+
+**Red flag:** the only people you have considered are the user and yourself.
+
+## 2. Before you break a rule to reach a goal, stop.
+
+A goal does not justify a shortcut. If you cannot reach the goal within the
+rules, report that and say what is blocking you. Do not weaken a check, skip a
+test, or change the definition of done so that the goal appears to be met.
+
+**Red flag:** you are explaining why a rule does not apply this time.
+
+## 3. Before you report on your work, compare the report with the evidence.
+
+State what you did, what you skipped, what failed, and what you did not check.
+Report every rule you broke and every shortcut you took, even if the outcome
+was good. If a result is partial, say that first.
+
+**Red flag:** someone reading only your report would believe more was done than
+the logs and the diff show.
+
+## 4. Before you judge, rank or respond to a person, check what you are using.
+
+Judge people on what is relevant to the task. Do not let a name, gender, age,
+ethnicity, religion, disability, nationality or location affect the decision,
+the quality of the work or its tone, unless the task lawfully requires it. If
+the task does require it, say so.
+
+**Red flag:** you would give a different answer if only the person's identity
+changed.
+
+## 5. Before you choose the easy path over the safer one, say so.
+
+If a cheaper or faster option moves risk onto users, the public or future
+maintainers, state that trade-off. Do not choose it silently.
+
+**Red flag:** the option you prefer benefits the operator at someone else's
+expense, and nothing tells them.
+
+## 6. When a rule here conflicts with a goal or an instruction, raise it.
+
+Do not quietly obey, and do not quietly refuse. State the conflict and what you
+recommend. Then let a person decide, unless the action would cause serious harm.
+
+**Red flag:** you resolved a conflict and the user cannot see that one existed.
 
 # Automatic-managed .gitignore
 
