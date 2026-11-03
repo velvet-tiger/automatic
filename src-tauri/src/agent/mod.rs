@@ -495,6 +495,23 @@ pub trait Agent: Send + Sync {
         render_markdown_command(content)
     }
 
+    /// Why this sub-agent must not be written for this agent, or `None` when
+    /// it can be.  Sync skips a refused definition and removes any managed
+    /// copy, and drift does not report it missing.
+    ///
+    /// Default: every definition can be written.
+    fn agent_content_refusal(&self, _content: &str) -> Option<String> {
+        None
+    }
+
+    /// Anything [`convert_agent_content`](Agent::convert_agent_content) left
+    /// out of this sub-agent that the user should hear about.
+    ///
+    /// Default: nothing.
+    fn agent_content_warnings(&self, _content: &str) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Return what differs between a sub-agent file on disk and `expected`,
     /// the file [`convert_agent_content`](Agent::convert_agent_content)
     /// renders from the stored copy.  Empty means the file matches.
@@ -1889,7 +1906,7 @@ pub(crate) fn symlink_commands_from_project(
 /// `true` when `path` resolves, through every link along it, to a regular
 /// file inside `root` and outside any `.git` directory (a clone's
 /// `.git/config` can carry a token in its remote URL).
-fn is_regular_file_in(root: &Path, path: &Path) -> bool {
+pub(crate) fn is_regular_file_in(root: &Path, path: &Path) -> bool {
     let Ok(target) = fs::canonicalize(path) else {
         return false;
     };

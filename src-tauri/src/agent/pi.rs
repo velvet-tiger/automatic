@@ -1,5 +1,4 @@
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -153,7 +152,19 @@ impl Agent for Pi {
     }
 
     fn convert_agent_content(&self, content: &str, _name: &str) -> String {
-        super::render_markdown_command(&pi_agent_markdown(content))
+        super::render_markdown_command(&convert_pi_agent(content).markdown)
+    }
+
+    fn agent_content_refusal(&self, content: &str) -> Option<String> {
+        convert_pi_agent(content).refusal
+    }
+
+    fn agent_content_warnings(&self, content: &str) -> Vec<String> {
+        convert_pi_agent(content)
+            .dropped_tools
+            .into_iter()
+            .map(|tool| format!("dropped {tool}, which has no Pi equivalent"))
+            .collect()
     }
 
     // ── Commands ────────────────────────────────────────────────────────
@@ -245,51 +256,158 @@ fn render_pi_servers(servers: &Map<String, Value>) -> Map<String, Value> {
     pi_servers
 }
 
+/// One sub-agent rewritten for `pi-subagents`.
+struct PiAgentConversion {
+    markdown: String,
+    /// Tool entries with no Pi equivalent, left out of the allow list.
+    dropped_tools: Vec<String>,
+    /// Why this definition must not be written at all.
+    refusal: Option<String>,
+}
+
 /// Rewrite a Claude-style sub-agent for `pi-subagents`.
 ///
 /// Its parser reads one `key: value` per line, so a multi-line value would be
 /// misread.  A `model` it cannot resolve fails the spawn with no fallback, so
-/// only a `provider/id` pin is kept.  `tools` must hold Pi's names, so the
-/// list goes when any entry has no equivalent, and the sub-agent keeps Pi's
-/// default tools.
-fn pi_agent_markdown(content: &str) -> String {
-    let Some(yaml) = super::frontmatter_block(content) else {
-        return content.to_string();
+/// only a `provider/id` pin is kept.
+///
+/// `tools` must fail closed.  With no `tools` key the sub-agent gets Pi's
+/// defaults (`read`, `bash`, `edit`, `write`) and extension tools, so dropping
+/// the key from a restricted definition would widen it.  An empty list is an
+/// allow list that grants nothing, and `parseNameList` accepts `tools: []`.
+/// Pi has no deny list either, so a denied tool leaves the allow list.  With
+/// no allow list to remove it from the definition is refused, and the output
+/// still carries `tools: []` so that no write path can widen it.
+fn convert_pi_agent(content: &str) -> PiAgentConversion {
+    let unchanged = |markdown: String| PiAgentConversion {
+        markdown,
+        dropped_tools: Vec::new(),
+        refusal: None,
     };
-    let span = super::frontmatter_span(content).expect("frontmatter_block found a block");
+    let (Some(yaml), Some(span)) = (super::frontmatter_block(content), super::frontmatter_span(content))
+    else {
+        return unchanged(content.to_string());
+    };
     let line_break = &content[3..span.start];
+
     let mut lines: Vec<String> = Vec::new();
-    for (key, value, original) in frontmatter_entries(yaml) {
-        match key.as_str() {
-            "model" => {
-                if unquoted(&value).contains('/') {
-                    lines.push(original);
+    let mut tools_at: Option<usize> = None;
+    let mut allow_lists: Vec<Vec<String>> = Vec::new();
+    let mut denied: Vec<String> = Vec::new();
+    for entry in frontmatter_entries(yaml) {
+        match tool_key(&entry.key) {
+            Some(ToolKey::Allow) => {
+                tools_at.get_or_insert(lines.len());
+                allow_lists.push(tool_items(&entry.head, &entry.continuation));
+            }
+            Some(ToolKey::Deny) => {
+                tools_at.get_or_insert(lines.len());
+                denied.extend(tool_items(&entry.head, &entry.continuation));
+            }
+            None if entry.key == "model" => {
+                if unquoted(&entry.value).contains('/') {
+                    lines.push(entry.line);
                 }
             }
-            "tools" => {
-                if let Some(tools) = pi_tool_names(&value) {
-                    lines.push(format!("tools: {tools}"));
-                }
-            }
-            _ => lines.push(original),
+            None => lines.push(entry.line),
         }
     }
-    let mut out = format!("---{line_break}");
-    for line in lines {
-        out.push_str(&line);
-        out.push_str(line_break);
+
+    let mut dropped_tools = Vec::new();
+    let mut allowed: Option<Vec<&'static str>> = None;
+    for list in &allow_lists {
+        let mut names: Vec<&'static str> = Vec::new();
+        for item in list {
+            match pi_tool_name(item) {
+                Some(name) if !names.contains(&name) => names.push(name),
+                Some(_) => {}
+                None => dropped_tools.push(item.clone()),
+            }
+        }
+        // A file that declares two lists gets only what both grant.
+        allowed = Some(match allowed {
+            Some(previous) => previous.into_iter().filter(|n| names.contains(n)).collect(),
+            None => names,
+        });
     }
-    out.push_str("---");
-    out.push_str(&content[span.body_start..]);
-    out
+
+    let refusal = (allowed.is_none() && !denied.is_empty()).then(|| {
+        format!(
+            "it denies {} and Pi has no deny list, so these tools would be granted",
+            denied.join(", ")
+        )
+    });
+    if allowed.is_some() || refusal.is_some() {
+        let denied_names: Vec<&str> = denied
+            .iter()
+            .filter_map(|item| pi_tool_name(item.split('(').next().unwrap_or(item)))
+            .collect();
+        let names: Vec<&str> = allowed
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| !denied_names.contains(name))
+            .collect();
+        let line = if names.is_empty() {
+            "tools: []".to_string()
+        } else {
+            format!("tools: {}", names.join(", "))
+        };
+        lines.insert(tools_at.unwrap_or(lines.len()), line);
+    }
+
+    let mut markdown = format!("---{line_break}");
+    for line in lines {
+        markdown.push_str(&line);
+        markdown.push_str(line_break);
+    }
+    markdown.push_str("---");
+    markdown.push_str(&content[span.body_start..]);
+    PiAgentConversion {
+        markdown,
+        dropped_tools,
+        refusal,
+    }
 }
 
-/// One `(key, value, line)` per top-level key of `yaml`, with each value on a
-/// single line.  `line` is the source line when the key already fits on one.
-fn frontmatter_entries(yaml: &str) -> Vec<(String, String, String)> {
+enum ToolKey {
+    Allow,
+    Deny,
+}
+
+/// Classify a frontmatter key, in any of the spellings agent formats use.  Pi
+/// reads only `tools`, so any other spelling would be ignored there.
+fn tool_key(key: &str) -> Option<ToolKey> {
+    let normal: String = unquoted(key)
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_'))
+        .collect::<String>()
+        .to_lowercase();
+    match normal.as_str() {
+        "tools" | "allowedtools" => Some(ToolKey::Allow),
+        "disallowedtools" | "deniedtools" | "denytools" | "excludetools" | "excludedtools" => {
+            Some(ToolKey::Deny)
+        }
+        _ => None,
+    }
+}
+
+struct FrontmatterEntry {
+    key: String,
+    head: String,
+    continuation: Vec<String>,
+    /// The value on one line.
+    value: String,
+    /// The `key: value` line to write.
+    line: String,
+}
+
+/// One entry per top-level key of `yaml`, with its value on a single line.
+/// `line` is the source line when the key already fits on one.
+fn frontmatter_entries(yaml: &str) -> Vec<FrontmatterEntry> {
     let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
     for line in yaml.lines().filter(|line| !line.starts_with('#')) {
-        let top_level = !line.starts_with([' ', '\t', '-']);
+        let top_level = !line.starts_with([' ', '\t', '-'])
+            && !groups.last().is_some_and(|(_, head, rest)| in_flow_list(head, rest));
         match line.split_once(':').filter(|_| top_level) {
             Some((key, value)) => {
                 groups.push((key.trim().to_string(), value.trim().to_string(), Vec::new()));
@@ -306,8 +424,9 @@ fn frontmatter_entries(yaml: &str) -> Vec<(String, String, String)> {
         .into_iter()
         .map(|(key, head, continuation)| {
             if continuation.iter().all(|line| line.is_empty()) && !is_block_scalar(&head) {
-                let line = format!("{key}: {head}");
-                return (key, head, line.trim_end().to_string());
+                let line = format!("{key}: {head}").trim_end().to_string();
+                let value = head.clone();
+                return FrontmatterEntry { key, head, continuation, value, line };
             }
             let value = joined_value(&head, &continuation);
             let rendered = super::render_frontmatter_value(&value).unwrap_or_else(|| {
@@ -316,9 +435,15 @@ fn frontmatter_entries(yaml: &str) -> Vec<(String, String, String)> {
                 value.replace(['\'', '"'], "")
             });
             let line = format!("{key}: {rendered}");
-            (key, value, line)
+            FrontmatterEntry { key, head, continuation, value, line }
         })
         .collect()
+}
+
+fn in_flow_list(head: &str, continuation: &[String]) -> bool {
+    head.starts_with('[')
+        && !head.contains(']')
+        && !continuation.iter().any(|line| line.contains(']'))
 }
 
 fn is_block_scalar(head: &str) -> bool {
@@ -357,28 +482,87 @@ fn unquoted(value: &str) -> &str {
     }
 }
 
-/// Map a Claude tool list to Pi's tool names, or `None` when any entry has no
-/// Pi equivalent or the list is empty.
-fn pi_tool_names(value: &str) -> Option<String> {
-    let inner = value.trim().trim_start_matches('[').trim_end_matches(']');
-    let mut seen = HashSet::new();
-    let mut names = Vec::new();
-    for tool in inner.split(',').map(unquoted).filter(|t| !t.is_empty()) {
-        let mapped = match tool {
-            "Read" | "read" => "read",
-            "Grep" | "grep" => "grep",
-            "Glob" | "find" => "find",
-            "LS" | "ls" => "ls",
-            "Bash" | "bash" => "bash",
-            "Edit" | "edit" => "edit",
-            "Write" | "write" => "write",
-            _ => return None,
-        };
-        if seen.insert(mapped) {
-            names.push(mapped);
-        }
+/// The entries of a tool list in any YAML form: comma-separated, flow, block,
+/// quoted, or spread over several lines.
+fn tool_items(head: &str, continuation: &[String]) -> Vec<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    if !is_block_scalar(head) {
+        parts.push(without_yaml_comment(head));
     }
-    (!names.is_empty()).then(|| names.join(", "))
+    for line in continuation {
+        let line = without_yaml_comment(line).trim();
+        parts.push(if line == "-" {
+            ""
+        } else {
+            line.strip_prefix("- ").unwrap_or(line)
+        });
+    }
+    let text = parts.join(",");
+    let text = text.trim().trim_matches(',').trim();
+    let text = text.strip_prefix('[').unwrap_or(text);
+    let text = text.trim_end().trim_end_matches(',').trim_end();
+    let text = text.strip_suffix(']').unwrap_or(text);
+    split_outside_quotes(text)
+        .iter()
+        .map(|item| unquoted(item).to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+/// Split on commas that sit outside quotes and parentheses, so that
+/// `Bash(git add, git commit)` stays one entry.
+fn split_outside_quotes(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    for c in text.chars() {
+        match (quote, c) {
+            (Some(open), _) if c == open => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => depth = depth.saturating_sub(1),
+            (None, ',') if depth == 0 => {
+                items.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    items.push(current);
+    items
+}
+
+fn without_yaml_comment(line: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut previous = ' ';
+    for (index, c) in line.char_indices() {
+        match (quote, c) {
+            (Some(open), _) if c == open => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') if previous.is_whitespace() => return &line[..index],
+            _ => {}
+        }
+        previous = c;
+    }
+    line
+}
+
+/// Pi's name for a tool entry, or `None` when it has no equivalent.  A scoped
+/// entry such as `Bash(git:*)` has none: Pi cannot scope a tool, and `bash`
+/// would grant more than was declared.
+fn pi_tool_name(tool: &str) -> Option<&'static str> {
+    match tool {
+        "Read" | "read" => Some("read"),
+        "Grep" | "grep" => Some("grep"),
+        "Glob" | "find" => Some("find"),
+        "LS" | "ls" => Some("ls"),
+        "Bash" | "bash" => Some("bash"),
+        "Edit" | "edit" => Some("edit"),
+        "Write" | "write" => Some("write"),
+        _ => None,
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -675,18 +859,147 @@ mod tests {
         assert!(rendered.contains("\nmodel: anthropic/claude-x\n"), "{rendered}");
     }
 
-    #[test]
-    fn test_convert_agent_maps_tools_or_drops_the_list() {
-        let mapped = "---\nname: a\ndescription: b\ntools: Read, Glob, LS, Bash, Edit, Write\n---\nBody\n";
-        let rendered = Pi.convert_agent_content(mapped, "a");
-        assert!(
-            rendered.contains("\ntools: read, find, ls, bash, edit, write\n"),
-            "{rendered}"
-        );
+    fn converted(frontmatter: &str) -> String {
+        Pi.convert_agent_content(&format!("---\nname: a\ndescription: b\n{frontmatter}---\nBody\n"), "a")
+    }
 
-        let unknown = "---\nname: a\ndescription: b\ntools: Read, WebFetch\n---\nBody\n";
-        let rendered = Pi.convert_agent_content(unknown, "a");
-        assert!(!rendered.contains("tools:"), "{rendered}");
+    fn tools_line(frontmatter: &str) -> Option<String> {
+        converted(frontmatter)
+            .lines()
+            .find(|line| line.starts_with("tools:"))
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn test_convert_agent_maps_every_known_tool() {
+        assert_eq!(
+            tools_line("tools: Read, Glob, LS, Bash, Edit, Write\n").as_deref(),
+            Some("tools: read, find, ls, bash, edit, write")
+        );
+    }
+
+    #[test]
+    fn test_tools_keep_the_mappable_subset() {
+        let frontmatter = "tools: Read, WebFetch, mcp__x__y\n";
+        assert_eq!(tools_line(frontmatter).as_deref(), Some("tools: read"));
+        let content = format!("---\nname: a\ndescription: b\n{frontmatter}---\nBody\n");
+        assert_eq!(Pi.agent_content_warnings(&content).len(), 2);
+        assert!(Pi.agent_content_refusal(&content).is_none());
+    }
+
+    #[test]
+    fn test_scoped_bash_never_becomes_bash() {
+        assert_eq!(
+            tools_line("tools: Read, Bash(git add, git commit), Bash(ls:*)\n").as_deref(),
+            Some("tools: read")
+        );
+        assert_eq!(tools_line("tools: Bash(git:*)\n").as_deref(), Some("tools: []"));
+        assert_eq!(tools_line("tools: Read(src/**)\n").as_deref(), Some("tools: []"));
+    }
+
+    #[test]
+    fn test_empty_list_stays_an_explicit_empty_list() {
+        assert_eq!(tools_line("tools: []\n").as_deref(), Some("tools: []"));
+        assert_eq!(tools_line("tools:\n").as_deref(), Some("tools: []"));
+    }
+
+    #[test]
+    fn test_nothing_mapping_grants_nothing() {
+        assert_eq!(tools_line("tools: WebFetch, Task\n").as_deref(), Some("tools: []"));
+        assert_eq!(tools_line("tools: '*'\n").as_deref(), Some("tools: []"));
+    }
+
+    #[test]
+    fn test_no_tools_key_stays_without_one() {
+        assert_eq!(tools_line(""), None);
+    }
+
+    #[test]
+    fn test_deny_list_removes_names_from_the_allow_list() {
+        let rendered = converted("tools: Read, Bash, Write\ndisallowedTools: Bash, Write\n");
+        assert!(rendered.contains("\ntools: read\n"), "{rendered}");
+        assert!(!rendered.contains("disallowedTools"), "{rendered}");
+        // A scoped denial still denies part of the tool, so all of it goes.
+        assert_eq!(
+            tools_line("tools: Read, Bash\ndisallowed-tools: Bash(rm:*)\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_deny_list_without_an_allow_list_is_refused() {
+        let content = "---\nname: a\ndescription: b\ndisallowedTools: Bash\n---\nBody\n";
+        assert!(Pi.agent_content_refusal(content).is_some_and(|r| r.contains("Bash")));
+        // No write path can widen it, even one that ignores the refusal.
+        assert!(Pi.convert_agent_content(content, "a").contains("\ntools: []\n"));
+    }
+
+    #[test]
+    fn test_empty_deny_list_restricts_nothing() {
+        let content = "---\nname: a\ndescription: b\ndisallowedTools: []\n---\nBody\n";
+        assert!(Pi.agent_content_refusal(content).is_none());
+        assert_eq!(tools_line("disallowedTools: []\n"), None);
+    }
+
+    #[test]
+    fn test_tool_lists_parse_in_every_yaml_form() {
+        for frontmatter in [
+            "tools: \"Read\", 'Grep'\n",
+            "tools: [\"Read\", 'Grep']\n",
+            "tools: [Read, Grep] # note\n",
+            "tools:\n  - Read\n  - \"Grep\"\n",
+            "tools:\n- Read # first\n- Grep\n",
+            "tools: [\n  Read,\n  Grep\n]\n",
+            "tools: [\nRead,\nGrep,\n]\n",
+            "tools: |\n  Read\n  Grep\n",
+            "\"tools\": Read, Grep\n",
+            "Tools: Read, Grep\n",
+            "allowed-tools: Read, Grep\n",
+        ] {
+            assert_eq!(
+                tools_line(frontmatter).as_deref(),
+                Some("tools: read, grep"),
+                "{frontmatter}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_quoted_scoped_entries_stay_whole() {
+        assert_eq!(
+            tools_line("tools: [\"Bash(a, b)\", Read]\n").as_deref(),
+            Some("tools: read")
+        );
+        assert_eq!(
+            tools_line("tools:\n  - 'Bash(git:*)'\n  - Read\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_two_allow_lists_grant_only_what_both_grant() {
+        assert_eq!(
+            tools_line("tools: Read, Bash\nallowedTools: Read, Write\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_converted_tools_compare_clean_and_stay_stable() {
+        for frontmatter in [
+            "tools: Read, Bash(git:*), WebFetch\n",
+            "tools: WebFetch\n",
+            "tools: []\n",
+            "tools: Read, Bash\ndisallowedTools: Bash\n",
+            "tools:\n  - Read\n",
+        ] {
+            let expected = converted(frontmatter);
+            assert!(
+                Pi.agent_file_differences(&expected, &expected).is_empty(),
+                "{frontmatter}"
+            );
+            assert_eq!(Pi.convert_agent_content(&expected, "a"), expected, "{frontmatter}");
+        }
     }
 
     #[test]

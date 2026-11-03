@@ -111,6 +111,14 @@ impl Agent for ThinkRail {
         Pi.convert_agent_content(content, name)
     }
 
+    fn agent_content_refusal(&self, content: &str) -> Option<String> {
+        Pi.agent_content_refusal(content)
+    }
+
+    fn agent_content_warnings(&self, content: &str) -> Vec<String> {
+        Pi.agent_content_warnings(content)
+    }
+
     // ── Commands ────────────────────────────────────────────────────────
 
     fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
@@ -185,6 +193,17 @@ mod tests {
             ThinkRail.convert_agent_content(content, "a"),
             Pi.convert_agent_content(content, "a")
         );
+    }
+
+    #[test]
+    fn test_refuses_and_warns_like_pi() {
+        let denied = "---\nname: a\ndescription: b\ndisallowedTools: Bash\n---\nBody\n";
+        assert_eq!(
+            ThinkRail.agent_content_refusal(denied),
+            Pi.agent_content_refusal(denied)
+        );
+        let partial = "---\nname: a\ndescription: b\ntools: Read, Task\n---\nBody\n";
+        assert_eq!(ThinkRail.agent_content_warnings(partial).len(), 1);
     }
 
     #[test]

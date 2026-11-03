@@ -1586,6 +1586,9 @@ fn collect_agents_drift(
         let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
             continue;
         };
+        if agent_instance.agent_content_refusal(&agent.content).is_some() {
+            continue;
+        }
         expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
     }
 
@@ -1598,6 +1601,9 @@ fn collect_agents_drift(
                 else {
                     continue;
                 };
+                if agent_instance.agent_content_refusal(&agent.content).is_some() {
+                    continue;
+                }
                 expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
             }
         }
@@ -1612,6 +1618,9 @@ fn collect_agents_drift(
         let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
             continue;
         };
+        if agent_instance.agent_content_refusal(&agent.content).is_some() {
+            continue;
+        }
         let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
         let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
 
@@ -1637,6 +1646,9 @@ fn collect_agents_drift(
                 else {
                     continue;
                 };
+                if agent_instance.agent_content_refusal(&agent.content).is_some() {
+                    continue;
+                }
                 let converted_content =
                     agent_instance.convert_agent_content(&agent.content, &machine_name);
                 let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
