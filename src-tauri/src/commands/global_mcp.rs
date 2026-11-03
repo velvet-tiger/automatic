@@ -36,11 +36,14 @@ pub fn get_global_mcp_state() -> Result<String, String> {
 
     for agent in agent::all() {
         let empty = AgentGlobalMcp::default();
-        let record = state.agents.get(agent.id()).unwrap_or(&empty);
+        let record = state.record(agent.id()).unwrap_or(&empty);
         let target = agent.global_mcp_target();
         let view = AgentGlobalMcpView {
             selected: record.selected.clone(),
-            managed: record.managed.clone(),
+            managed: target
+                .as_ref()
+                .map(|t| record.managed_in(&t.path.display().to_string()))
+                .unwrap_or_default(),
             skipped: record.skipped.clone(),
             rejected: record.rejected.clone(),
             last_applied: record.last_applied.clone(),
@@ -113,8 +116,7 @@ pub fn reapply_global_mcp(agent_id: String) -> Result<GlobalMcpApplyReport, Stri
     let _writes = crate::core::hold_library_writes();
     let state = load_global_mcp_state()?;
     let selection = state
-        .agents
-        .get(&agent_id)
+        .record(&agent_id)
         .map(|a| a.selected.clone())
         .unwrap_or_default();
     orchestrator::apply_global_mcp(&agent_id, selection)
@@ -124,4 +126,53 @@ pub fn reapply_global_mcp(agent_id: String) -> Result<GlobalMcpApplyReport, Stri
 #[tauri::command]
 pub fn get_global_mcp_status(agent_id: String) -> Result<GlobalMcpStatus, String> {
     orchestrator::global_mcp_status(&agent_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::with_test_home;
+    use tempfile::TempDir;
+
+    fn seed_registry(name: &str) {
+        let raw = json!({ "type": "stdio", "command": "echo", "args": [name] }).to_string();
+        crate::core::save_mcp_server_config(name, &raw).unwrap();
+    }
+
+    fn selected_in_view(agent_id: &str) -> Vec<String> {
+        let raw = get_global_mcp_state().expect("state");
+        let view: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        let agents = view.get("agents").unwrap_or(&view);
+        serde_json::from_value(agents[agent_id]["selected"].clone()).expect("selected")
+    }
+
+    #[test]
+    fn thinkrail_tab_shows_the_selection_pi_saved() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("alpha");
+            seed_registry("beta");
+            orchestrator::apply_global_mcp("pi", vec!["alpha".into(), "beta".into()])
+                .expect("apply");
+
+            assert_eq!(selected_in_view("thinkrail"), vec!["alpha", "beta"]);
+        });
+    }
+
+    #[test]
+    fn reapply_from_the_thinkrail_tab_keeps_pis_servers() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("alpha");
+            seed_registry("beta");
+            orchestrator::apply_global_mcp("pi", vec!["alpha".into(), "beta".into()])
+                .expect("apply");
+
+            reapply_global_mcp("thinkrail".to_string()).expect("reapply");
+
+            let written = std::fs::read_to_string(tmp.path().join(".pi/agent/mcp.json"))
+                .expect("mcp.json");
+            assert!(written.contains("alpha") && written.contains("beta"), "{written}");
+        });
+    }
 }

@@ -86,6 +86,9 @@ pub(crate) fn adopted_agent_markdown(
     let machine_name =
         custom_agent_machine_name(stored).map_err(AdoptRefusal::InvalidStoredName)?;
     let markdown = match adopting.agents_file_ext() {
+        "md" if adopting.agent_markdown_is_lossy() => {
+            merge_body_into_stored(adopting, stored, disk, &machine_name)?
+        }
         "md" => whole_markdown_file(disk, stored, &machine_name)?,
         "toml" => merge_edit_into_stored(
             adopting,
@@ -104,6 +107,36 @@ pub(crate) fn adopted_agent_markdown(
     } else {
         Err(AdoptRefusal::CannotKeep(lost))
     }
+}
+
+/// Take only the body of a file whose frontmatter is a lossy rendering of the
+/// stored copy.  Adopting it whole would write that rendering over the stored
+/// definition, losing what other agents read.  A frontmatter edit cannot be
+/// mapped back, so it is refused.
+pub(crate) fn merge_body_into_stored(
+    adopting: &dyn Agent,
+    stored: &CustomAgent,
+    disk: &str,
+    machine_name: &str,
+) -> Result<String, AdoptRefusal> {
+    let disk = disk.strip_prefix('\u{feff}').unwrap_or(disk);
+    let rendered = adopting.convert_agent_content(&stored.content, machine_name);
+    if frontmatter_fields(disk) != frontmatter_fields(&rendered) {
+        return Err(AdoptRefusal::CannotKeep(vec!["frontmatter".to_string()]));
+    }
+    Ok(agent::replace_markdown_body(
+        &stored.content,
+        agent::parse_frontmatter(disk).1.trim(),
+    ))
+}
+
+/// The frontmatter lines, without the marker that sync adds.
+fn frontmatter_fields(content: &str) -> Vec<&str> {
+    agent::frontmatter_block(content)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.trim() != "automatic-managed: true")
+        .collect()
 }
 
 /// A Markdown file to adopt whole, without any byte order mark.  Its name
@@ -415,6 +448,32 @@ mod tests {
 
     fn cannot_keep(setting: &str) -> AdoptRefusal {
         AdoptRefusal::CannotKeep(vec![setting.to_string()])
+    }
+
+    const PI_STORED: &str = "---\nname: planner\ndescription: d\ntools: Read, Bash(git:*)\nmodel: sonnet\n---\nPlan.\n";
+
+    #[test]
+    fn adopting_a_pi_file_keeps_what_the_rendering_dropped() {
+        let rendered = crate::agent::Pi.convert_agent_content(PI_STORED, "planner");
+        let disk = rendered.replace("Plan.", "Plan better.");
+
+        let adopted =
+            adopted_agent_markdown(&crate::agent::Pi, &stored(PI_STORED), &disk, false).unwrap();
+
+        assert!(adopted.contains("Bash(git:*)"), "{adopted}");
+        assert!(adopted.contains("model: sonnet"), "{adopted}");
+        assert!(adopted.contains("Plan better."), "{adopted}");
+    }
+
+    #[test]
+    fn adopting_a_pi_frontmatter_edit_is_refused() {
+        let rendered = crate::agent::Pi.convert_agent_content(PI_STORED, "planner");
+        let disk = rendered.replace("tools: read", "tools: read, bash");
+
+        assert!(matches!(
+            adopted_agent_markdown(&crate::agent::Pi, &stored(PI_STORED), &disk, false),
+            Err(AdoptRefusal::CannotKeep(_))
+        ));
     }
 
     #[test]

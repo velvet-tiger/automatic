@@ -17,7 +17,9 @@ use std::path::PathBuf;
 
 use super::helpers::{build_global_selected_servers, load_mcp_server_configs};
 use crate::agent::{self, GlobalMcpWriteReport};
-use crate::core::global_mcp::{load_global_mcp_state, save_global_mcp_state, AgentGlobalMcp};
+use crate::core::global_mcp::{
+    global_mcp_state_key, load_global_mcp_state, save_global_mcp_state, AgentGlobalMcp,
+};
 
 // ── Public shapes ────────────────────────────────────────────────────────────
 
@@ -97,17 +99,19 @@ pub fn apply_global_mcp(
     selection: Vec<String>,
 ) -> Result<GlobalMcpApplyReport, String> {
     let _writes = crate::core::hold_library_writes();
-    let agent_id = state_id(agent_id);
-    let agent_id = agent_id.as_str();
+    let target_path = target_path_of(agent_id)?;
+    let key = global_mcp_state_key(agent_id);
     let mut state = load_global_mcp_state()?;
-    let entry = state.agents.entry(agent_id.to_string()).or_default();
+    let entry = state.agents.entry(key.clone()).or_default();
     entry.selected = dedupe_preserving_order(selection);
     let selection = entry.selected.clone();
+    entry.managed = entry.managed_in(&target_path);
+    entry.target_path = Some(target_path);
     let previously_managed = entry.managed.clone();
     // Drop the borrow before the apply pass takes another mut borrow.
     let _ = entry;
     let result = run_apply(agent_id, &selection, &previously_managed)?;
-    let entry = state.agents.entry(agent_id.to_string()).or_default();
+    let entry = state.agents.entry(key).or_default();
     apply_result_to_state(entry, &result, &selection);
     save_global_mcp_state(&state)?;
     Ok(result)
@@ -125,10 +129,10 @@ pub fn preview_global_mcp(
         .ok_or_else(|| format!("{} does not support global MCP writes", agent.label()))?;
 
     let state = load_global_mcp_state()?;
+    let target_path = target.path.display().to_string();
     let previously_managed = state
-        .agents
-        .get(&state_id(agent_id))
-        .map(|a| a.managed.clone())
+        .record(agent_id)
+        .map(|a| a.managed_in(&target_path))
         .unwrap_or_default();
 
     // Snapshot raw entry names on disk.  Uses
@@ -323,8 +327,7 @@ pub fn global_mcp_status(agent_id: &str) -> Result<GlobalMcpStatus, String> {
 
     let state = load_global_mcp_state()?;
     let selection = state
-        .agents
-        .get(&state_id(agent_id))
+        .record(agent_id)
         .map(|a| a.selected.clone())
         .unwrap_or_default();
 
@@ -348,11 +351,13 @@ pub fn global_mcp_status(agent_id: &str) -> Result<GlobalMcpStatus, String> {
 
 // ── Internals ────────────────────────────────────────────────────────────────
 
-/// The key of `agent_id`'s record in the global MCP state.
-fn state_id(agent_id: &str) -> String {
-    agent::from_id(agent_id)
-        .map_or(agent_id, |agent| agent.global_mcp_state_id())
-        .to_string()
+fn target_path_of(agent_id: &str) -> Result<String, String> {
+    let agent = agent::from_id(agent_id)
+        .ok_or_else(|| format!("Unknown agent id: {}", agent_id))?;
+    let target = agent
+        .global_mcp_target()
+        .ok_or_else(|| format!("{} does not support global MCP writes", agent.label()))?;
+    Ok(target.path.display().to_string())
 }
 
 /// Run the write pipeline for `selection` without touching persisted state.
@@ -487,9 +492,12 @@ fn dedupe_preserving_order(input: Vec<String>) -> Vec<String> {
 /// `sync/drift.rs`: which entry names does Automatic currently manage for
 /// `agent_id`?  Always returns an empty vec if no state exists.
 pub fn managed_entries_for(agent_id: &str) -> Vec<String> {
+    let Ok(target_path) = target_path_of(agent_id) else {
+        return Vec::new();
+    };
     load_global_mcp_state()
         .ok()
-        .and_then(|s| s.agents.get(&state_id(agent_id)).map(|a| a.managed.clone()))
+        .and_then(|s| s.record(agent_id).map(|a| a.managed_in(&target_path)))
         .unwrap_or_default()
 }
 
@@ -533,6 +541,25 @@ mod tests {
                 std::fs::read_to_string(tmp.path().join(".pi/agent/mcp.json")).expect("mcp.json");
             assert!(!written.contains("alpha"), "{written}");
             assert!(!load_global_mcp_state().unwrap().agents.contains_key("thinkrail"));
+        });
+    }
+
+    #[test]
+    fn a_moved_target_owns_nothing_in_the_new_file() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("alpha");
+            apply_global_mcp("pi", vec!["alpha".to_string()]).expect("apply");
+
+            // The record now describes a file that is no longer the target.
+            let mut state = load_global_mcp_state().unwrap();
+            state.agents.get_mut("pi").unwrap().target_path = Some("/elsewhere/mcp.json".into());
+            save_global_mcp_state(&state).unwrap();
+
+            // The same name in the current file is the user's, so it stays.
+            assert!(managed_entries_for("pi").is_empty());
+            let report = apply_global_mcp("pi", vec!["alpha".to_string()]).expect("apply");
+            assert_eq!(report.write.skipped, vec!["alpha"]);
         });
     }
 

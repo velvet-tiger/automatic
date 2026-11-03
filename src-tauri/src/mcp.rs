@@ -3281,6 +3281,11 @@ impl AutomaticMcpServer {
                             .to_string(),
                     );
                 }
+                if let Ok(warnings) = crate::sync::project_sync_warnings(&project) {
+                    if !warnings.is_empty() {
+                        response["agent_sync_warnings"] = serde_json::json!(warnings);
+                    }
+                }
                 match crate::sync::mcp_config_sync_notes(&project) {
                     Ok(notes) if !notes.is_empty() => {
                         response["mcp_servers_not_synced"] = serde_json::json!(notes.skipped);

@@ -30,9 +30,10 @@ const UNIVERSAL_DIRS: &[&str] = &[".agents", ".automatic"];
 /// Directories that belong to a general-purpose tool — a VCS host or an editor —
 /// rather than to any AI agent.  Automatic writes only specific files inside
 /// these, so they are ignored file-by-file, never wholesale.  Ignoring the
-/// whole directory would drop the user's CI workflows (`.github/`) or editor
-/// settings (`.vscode/`, `.zed/`), which Automatic never touches.
-const SHARED_TOOL_DIRS: &[&str] = &[".github", ".vscode", ".zed"];
+/// whole directory would drop the user's CI workflows (`.github/`), Pi settings
+/// (`.pi/`) or editor settings (`.vscode/`, `.zed/`), which Automatic never
+/// touches.
+const SHARED_TOOL_DIRS: &[&str] = &[".github", ".pi", ".vscode", ".zed"];
 
 /// Split a project-relative path into its normal components as strings.
 fn rel_components(rel: &Path) -> Vec<String> {
@@ -454,6 +455,22 @@ mod tests {
         ManagedPath {
             path: root.join(rel),
             is_dir: false,
+        }
+    }
+
+    #[test]
+    fn build_patterns_keeps_the_users_pi_files_tracked() {
+        let root = PathBuf::from("/proj");
+        let paths = vec![
+            dir_path(&root, ".pi/agents"),
+            dir_path(&root, ".pi/prompts"),
+            dir_path(&root, ".pi/skills"),
+            file_path(&root, ".pi/mcp.json"),
+        ];
+        let patterns = build_patterns(&root, &paths, false);
+        assert!(!patterns.contains(&"/.pi/".to_string()), "{patterns:?}");
+        for expected in ["/.pi/agents/", "/.pi/prompts/", "/.pi/skills/", "/.pi/mcp.json"] {
+            assert!(patterns.contains(&expected.to_string()), "{expected} in {patterns:?}");
         }
     }
 

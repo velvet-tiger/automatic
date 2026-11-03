@@ -30,6 +30,22 @@ pub struct GlobalMcpState {
     pub agents: HashMap<String, AgentGlobalMcp>,
 }
 
+impl GlobalMcpState {
+    /// The record `agent_id` reads and writes.  Every lookup goes through
+    /// this: agents that write one file share a record, so a raw id would
+    /// show an empty selection and a re-apply would remove the real one.
+    pub fn record(&self, agent_id: &str) -> Option<&AgentGlobalMcp> {
+        self.agents.get(&global_mcp_state_key(agent_id))
+    }
+}
+
+/// The key of `agent_id`'s record in [`GlobalMcpState::agents`].
+pub fn global_mcp_state_key(agent_id: &str) -> String {
+    crate::agent::from_id(agent_id)
+        .map_or(agent_id, |agent| agent.global_mcp_state_id())
+        .to_string()
+}
+
 /// Per-agent slice of the state document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentGlobalMcp {
@@ -49,9 +65,24 @@ pub struct AgentGlobalMcp {
     /// referenced `${workspaceFolder}` (no meaning at global scope).
     #[serde(default)]
     pub rejected: Vec<String>,
+    /// The file `managed` refers to.  When the agent's target has moved,
+    /// those names say nothing about the new file, where a same-named entry
+    /// is the user's.  `None` on records from before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
     /// RFC3339 timestamp of the last successful apply, `None` if never applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_applied: Option<String>,
+}
+
+impl AgentGlobalMcp {
+    /// The names this record owns in `target_path`.
+    pub fn managed_in(&self, target_path: &str) -> Vec<String> {
+        match &self.target_path {
+            Some(recorded) if recorded != target_path => Vec::new(),
+            _ => self.managed.clone(),
+        }
+    }
 }
 
 /// Load the state document, or `Default` if the file does not exist.
@@ -119,6 +150,7 @@ mod tests {
             state.agents.insert(
                 "cursor".to_string(),
                 AgentGlobalMcp {
+                    target_path: None,
                     selected: vec!["fs".to_string(), "web".to_string()],
                     managed: vec!["fs".to_string()],
                     skipped: vec!["web".to_string()],

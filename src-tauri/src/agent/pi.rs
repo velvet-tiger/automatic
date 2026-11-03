@@ -53,7 +53,9 @@ impl Agent for Pi {
             "Pi loads .pi/mcp.json only after you trust the project. Automatic leaves out \
              legacy SSE servers because Pi rejects them. If you replace Pi's MCP support with \
              pi-mcp-adapter, headless runs skip unapproved servers unless \
-             settings.projectServers is \"allow\" in ~/.pi/agent/mcp-adapter.json.",
+             settings.projectServers is \"allow\" in ~/.pi/agent/mcp-adapter.json. Automatic \
+             sees PI_CODING_AGENT_DIR only if it was started with that variable set, not from \
+             your shell profile, so check the target path shown here.",
         )
     }
 
@@ -114,7 +116,7 @@ impl Agent for Pi {
 
     fn mcp_unsupported_reason(&self, server: &Value) -> Option<String> {
         is_sse(server).then(|| {
-            "Pi rejects the legacy SSE transport. Use the server's streamable HTTP URL."
+            "This agent rejects the legacy SSE transport. Use the server's streamable HTTP URL."
                 .to_string()
         })
     }
@@ -122,7 +124,7 @@ impl Agent for Pi {
     fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
         Some(super::GlobalMcpTarget {
             path: pi_agent_dir()?.join("mcp.json"),
-            reload_note: Some("Pi picks up the change in new sessions."),
+            reload_note: Some("The change applies to new sessions."),
         })
     }
 
@@ -151,20 +153,20 @@ impl Agent for Pi {
         Some(dir.join(".pi").join("agents"))
     }
 
-    fn convert_agent_content(&self, content: &str, _name: &str) -> String {
-        super::render_markdown_command(&convert_pi_agent(content).markdown)
+    fn convert_agent_content(&self, content: &str, name: &str) -> String {
+        super::render_markdown_command(&convert_pi_agent(content, name).markdown)
     }
 
     fn agent_content_refusal(&self, content: &str) -> Option<String> {
-        convert_pi_agent(content).refusal
+        convert_pi_agent(content, "").refusal
     }
 
     fn agent_content_warnings(&self, content: &str) -> Vec<String> {
-        convert_pi_agent(content)
-            .dropped_tools
-            .into_iter()
-            .map(|tool| format!("dropped {tool}, which has no Pi equivalent"))
-            .collect()
+        convert_pi_agent(content, "").warnings
+    }
+
+    fn agent_markdown_is_lossy(&self) -> bool {
+        true
     }
 
     // ── Commands ────────────────────────────────────────────────────────
@@ -217,10 +219,13 @@ fn resolve_pi_agent_dir(configured: Option<OsString>, home: Option<PathBuf>) -> 
     };
     // Pi expands a leading `~` itself, so the shell may not have.
     let path = PathBuf::from(&configured);
-    match path.strip_prefix("~") {
-        Ok(rest) => home.map(|home| home.join(rest)),
-        Err(_) => Some(path),
-    }
+    let path = match path.strip_prefix("~") {
+        Ok(rest) => home?.join(rest),
+        Err(_) => path,
+    };
+    // A relative value means whatever Pi's working directory is, and Automatic
+    // must not guess that for a file it writes.
+    path.is_absolute().then_some(path)
 }
 
 fn is_sse(server: &Value) -> bool {
@@ -259,100 +264,145 @@ fn render_pi_servers(servers: &Map<String, Value>) -> Map<String, Value> {
 /// One sub-agent rewritten for `pi-subagents`.
 struct PiAgentConversion {
     markdown: String,
-    /// Tool entries with no Pi equivalent, left out of the allow list.
-    dropped_tools: Vec<String>,
+    /// What the user should hear about: dropped tools, and fields Pi needs.
+    warnings: Vec<String>,
     /// Why this definition must not be written at all.
     refusal: Option<String>,
 }
 
+/// Claude's read-only tools, which is what `permissionMode: plan` allows.
+const PI_READ_ONLY_TOOLS: [&str; 4] = ["read", "grep", "find", "ls"];
+
 /// Rewrite a Claude-style sub-agent for `pi-subagents`.
 ///
-/// Its parser reads one `key: value` per line, so a multi-line value would be
-/// misread.  A `model` it cannot resolve fails the spawn with no fallback, so
-/// only a `provider/id` pin is kept.
+/// Its parser reads one `key: value` per line, last key winning, and trims
+/// keys as JavaScript does.  So a multi-line value would be misread, and a key
+/// Rust reads differently could set `tools` behind this code's back: any key
+/// this code cannot classify refuses the definition.  A `model` it cannot
+/// resolve fails the spawn with no fallback, so only a `provider/id` pin is
+/// kept.
 ///
 /// `tools` must fail closed.  With no `tools` key the sub-agent gets Pi's
-/// defaults (`read`, `bash`, `edit`, `write`) and extension tools, so dropping
-/// the key from a restricted definition would widen it.  An empty list is an
-/// allow list that grants nothing, and `parseNameList` accepts `tools: []`.
-/// Pi has no deny list either, so a denied tool leaves the allow list.  With
-/// no allow list to remove it from the definition is refused, and the output
+/// defaults (`read`, `bash`, `edit`, `write`), so dropping the key from a
+/// restricted definition would widen it.  Extension tools arrive only with
+/// `extensions: true`.  An empty list grants nothing, and `parseNameList`
+/// accepts `tools: []`.  Pi has no deny list or permission modes, so those
+/// narrow the allow list.  What cannot be narrowed is refused, and the output
 /// still carries `tools: []` so that no write path can widen it.
-fn convert_pi_agent(content: &str) -> PiAgentConversion {
-    let unchanged = |markdown: String| PiAgentConversion {
-        markdown,
-        dropped_tools: Vec::new(),
-        refusal: None,
-    };
+fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
     let (Some(yaml), Some(span)) = (super::frontmatter_block(content), super::frontmatter_span(content))
     else {
-        return unchanged(content.to_string());
+        return convert_without_frontmatter(content, name);
     };
     let line_break = &content[3..span.start];
+    let body = &content[span.body_start..];
 
+    let (entries, unclosed_flow) = frontmatter_entries(yaml);
     let mut lines: Vec<String> = Vec::new();
+    let mut problems: Vec<String> = yaml.lines().filter_map(unreadable_line).collect();
+    if unclosed_flow {
+        problems.push("a list or map is never closed".to_string());
+    }
     let mut tools_at: Option<usize> = None;
     let mut allow_lists: Vec<Vec<String>> = Vec::new();
     let mut denied: Vec<String> = Vec::new();
-    for entry in frontmatter_entries(yaml) {
-        match tool_key(&entry.key) {
-            Some(ToolKey::Allow) => {
+    let mut plan_mode = false;
+    let mut has_name = false;
+    let mut has_description = false;
+    for entry in entries {
+        if let Some(problem) = unreadable_key(&entry.key) {
+            problems.push(problem);
+            continue;
+        }
+        let normal = normalised_key(&entry.key);
+        let value = clean_scalar(&entry.value);
+        match (tool_key(&normal), normal.as_str()) {
+            (Some(ToolKey::Allow), _) => {
                 tools_at.get_or_insert(lines.len());
                 allow_lists.push(tool_items(&entry.head, &entry.continuation));
             }
-            Some(ToolKey::Deny) => {
+            (Some(ToolKey::Deny), _) => {
                 tools_at.get_or_insert(lines.len());
                 denied.extend(tool_items(&entry.head, &entry.continuation));
             }
-            None if entry.key == "model" => {
-                if unquoted(&entry.value).contains('/') {
-                    lines.push(entry.line);
+            (None, "model") => {
+                if value.contains('/') {
+                    lines.push(format!("model: {value}"));
                 }
             }
-            None => lines.push(entry.line),
+            (None, "maxturns") => match value.parse::<u32>() {
+                Ok(turns) if turns > 0 => lines.push(format!("max_turns: {turns}")),
+                _ => problems.push(format!("its turn limit '{value}' is not a positive number")),
+            },
+            (None, "permissionmode") => match value {
+                "plan" => {
+                    tools_at.get_or_insert(lines.len());
+                    plan_mode = true;
+                }
+                // These loosen prompting.  Pi's sub-agents never prompt.
+                "default" | "acceptEdits" | "bypassPermissions" => {}
+                other => problems.push(format!("Pi cannot express permission mode '{other}'")),
+            },
+            (None, _) if normal.contains("tool") => {
+                problems.push(format!("Pi would ignore the tool setting '{}'", entry.key));
+            }
+            (None, "name") if value.is_empty() => {}
+            (None, key) => {
+                has_name |= key == "name";
+                has_description |= key == "description" && !value.is_empty();
+                lines.push(entry.line);
+            }
         }
     }
 
-    let mut dropped_tools = Vec::new();
-    let mut allowed: Option<Vec<&'static str>> = None;
-    for list in &allow_lists {
-        let mut names: Vec<&'static str> = Vec::new();
-        for item in list {
-            match pi_tool_name(item) {
-                Some(name) if !names.contains(&name) => names.push(name),
-                Some(_) => {}
-                None => dropped_tools.push(item.clone()),
-            }
-        }
-        // A file that declares two lists gets only what both grant.
+    let mut warnings = Vec::new();
+    let mut allowed = narrowed_allow_list(&allow_lists, &mut warnings);
+    if plan_mode {
         allowed = Some(match allowed {
-            Some(previous) => previous.into_iter().filter(|n| names.contains(n)).collect(),
-            None => names,
+            Some(names) => names.into_iter().filter(|n| PI_READ_ONLY_TOOLS.contains(n)).collect(),
+            None => PI_READ_ONLY_TOOLS.to_vec(),
         });
     }
 
-    let refusal = (allowed.is_none() && !denied.is_empty()).then(|| {
-        format!(
+    problems.extend(denied.iter().filter_map(|item| deny_entry_problem(item)));
+    if allowed.is_none() && !denied.is_empty() {
+        problems.push(format!(
             "it denies {} and Pi has no deny list, so these tools would be granted",
             denied.join(", ")
-        )
-    });
+        ));
+    }
+    let denied_names = denied_tool_names(&denied);
+
+    // The last line of defence: nothing but the line below may set `tools`.
+    let slipped = lines.len();
+    lines.retain(|line| !sets_pi_tools(line));
+    if lines.len() != slipped {
+        problems.push("a key reads as tools to Pi".to_string());
+    }
+
+    let refusal = (!problems.is_empty()).then(|| problems.join("; "));
     if allowed.is_some() || refusal.is_some() {
-        let denied_names: Vec<&str> = denied
-            .iter()
-            .filter_map(|item| pi_tool_name(item.split('(').next().unwrap_or(item)))
-            .collect();
         let names: Vec<&str> = allowed
             .unwrap_or_default()
             .into_iter()
-            .filter(|name| !denied_names.contains(name))
+            .filter(|name| refusal.is_none() && !denied_names.contains(name))
             .collect();
         let line = if names.is_empty() {
             "tools: []".to_string()
         } else {
             format!("tools: {}", names.join(", "))
         };
-        lines.insert(tools_at.unwrap_or(lines.len()), line);
+        lines.insert(tools_at.unwrap_or(lines.len()).min(lines.len()), line);
+    }
+
+    if !has_name && !name.is_empty() {
+        lines.insert(0, format!("name: {}", fallback_name(name)));
+    }
+    if !has_description {
+        warnings.push("it has no description, so Pi will skip it".to_string());
+    }
+    if body.trim().is_empty() {
+        warnings.push("it has no instructions, so Pi will skip it".to_string());
     }
 
     let mut markdown = format!("---{line_break}");
@@ -361,12 +411,154 @@ fn convert_pi_agent(content: &str) -> PiAgentConversion {
         markdown.push_str(line_break);
     }
     markdown.push_str("---");
-    markdown.push_str(&content[span.body_start..]);
+    markdown.push_str(body);
     PiAgentConversion {
         markdown,
-        dropped_tools,
+        warnings,
         refusal,
     }
+}
+
+/// A file with no frontmatter block.  Pi skips it, so it gets a name.  An
+/// opening line with no closing line may have meant to restrict something, so
+/// that is refused rather than turned into an unrestricted sub-agent.
+fn convert_without_frontmatter(content: &str, name: &str) -> PiAgentConversion {
+    let line_break = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let refusal = content
+        .starts_with("---")
+        .then(|| "its frontmatter is never closed".to_string());
+    let name_line = (!name.is_empty()).then(|| format!("name: {}{line_break}", fallback_name(name)));
+    let tools_line = refusal.as_ref().map(|_| format!("tools: []{line_break}"));
+    let markdown = format!(
+        "---{line_break}{}{}---{line_break}{content}",
+        name_line.unwrap_or_default(),
+        tools_line.unwrap_or_default()
+    );
+    PiAgentConversion {
+        markdown,
+        warnings: vec!["it has no description, so Pi will skip it".to_string()],
+        refusal,
+    }
+}
+
+fn fallback_name(name: &str) -> String {
+    super::render_frontmatter_value(name).unwrap_or_else(|| sanitised_value(name))
+}
+
+/// The allow lists a file declares, reduced to what they all grant in Pi's
+/// names.  `tools: inherit` restricts nothing, so it counts as no list.
+fn narrowed_allow_list(
+    allow_lists: &[Vec<String>],
+    warnings: &mut Vec<String>,
+) -> Option<Vec<&'static str>> {
+    let mut allowed: Option<Vec<&'static str>> = None;
+    for list in allow_lists {
+        if matches!(list.as_slice(), [only] if only.eq_ignore_ascii_case("inherit")) {
+            continue;
+        }
+        let mut names: Vec<&'static str> = Vec::new();
+        for item in list {
+            match pi_tool_name(item) {
+                Some(name) if !names.contains(&name) => names.push(name),
+                Some(_) => {}
+                None => warnings.push(format!("dropped {item}, which has no Pi equivalent")),
+            }
+        }
+        // A file that declares two lists gets only what both grant.
+        allowed = Some(match allowed {
+            Some(previous) => previous.into_iter().filter(|n| names.contains(n)).collect(),
+            None => names,
+        });
+    }
+    allowed
+}
+
+/// JavaScript's `trim`, which also strips U+FEFF.  Rust's keeps it.
+fn js_trim(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+}
+
+/// Whether Pi's parser would read `line` as setting `tools`.
+fn sets_pi_tools(line: &str) -> bool {
+    line.split_once(':').is_some_and(|(key, _)| js_trim(key) == "tools")
+}
+
+/// A top-level line that YAML reads as something this code does not model.
+fn unreadable_line(line: &str) -> Option<String> {
+    line.starts_with(['?', '{'])
+        .then(|| format!("cannot read the line '{line}'"))
+}
+
+/// Why `key` cannot be classified, if it cannot.
+fn unreadable_key(key: &str) -> Option<String> {
+    let plain = unquoted(key);
+    let safe = !plain.is_empty()
+        && plain.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+    (!safe).then(|| format!("cannot read the key '{}'", key.escape_default()))
+}
+
+fn normalised_key(key: &str) -> String {
+    unquoted(key)
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_'))
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// A scalar without its comment and quotes.
+fn clean_scalar(value: &str) -> &str {
+    unquoted(without_yaml_comment(value))
+}
+
+/// Why a deny entry cannot be honoured.  An entry that is not exactly a tool,
+/// a scoped tool, or a tool Pi does not have might deny something this code
+/// failed to read.
+fn deny_entry_problem(item: &str) -> Option<String> {
+    let (base, scoped) = match item.split_once('(') {
+        Some((base, rest)) => (base, rest.ends_with(')')),
+        None => (item, true),
+    };
+    let known = !base.contains(char::is_whitespace)
+        && (pi_tool_name_any_case(base).is_some() || is_tool_pi_lacks(base));
+    (!known || !scoped).then(|| format!("cannot read the denied tool '{item}'"))
+}
+
+fn is_tool_pi_lacks(name: &str) -> bool {
+    const TOOLS: [&str; 14] = [
+        "agent",
+        "askuserquestion",
+        "bashoutput",
+        "exitplanmode",
+        "killshell",
+        "multiedit",
+        "notebookedit",
+        "notebookread",
+        "skill",
+        "slashcommand",
+        "task",
+        "todowrite",
+        "webfetch",
+        "websearch",
+    ];
+    let lower = name.to_lowercase();
+    TOOLS.contains(&lower.as_str()) || lower.starts_with("mcp__")
+}
+
+/// Every Pi tool named anywhere in a deny list, matched on word tokens in any
+/// case, so an entry this code could not parse still removes what it names.  A
+/// scoped denial denies part of the tool, so all of it goes.
+fn denied_tool_names(denied: &[String]) -> Vec<&'static str> {
+    denied
+        .iter()
+        .flat_map(|item| item.split(|c: char| !c.is_alphanumeric() && c != '_'))
+        .filter_map(|token| {
+            if token.eq_ignore_ascii_case("MultiEdit") {
+                Some("edit")
+            } else {
+                pi_tool_name_any_case(token)
+            }
+        })
+        .collect()
 }
 
 enum ToolKey {
@@ -374,15 +566,10 @@ enum ToolKey {
     Deny,
 }
 
-/// Classify a frontmatter key, in any of the spellings agent formats use.  Pi
+/// Classify a normalised key, in any of the spellings agent formats use.  Pi
 /// reads only `tools`, so any other spelling would be ignored there.
-fn tool_key(key: &str) -> Option<ToolKey> {
-    let normal: String = unquoted(key)
-        .chars()
-        .filter(|c| !matches!(c, '-' | '_'))
-        .collect::<String>()
-        .to_lowercase();
-    match normal.as_str() {
+fn tool_key(normal: &str) -> Option<ToolKey> {
+    match normal {
         "tools" | "allowedtools" => Some(ToolKey::Allow),
         "disallowedtools" | "deniedtools" | "denytools" | "excludetools" | "excludedtools" => {
             Some(ToolKey::Deny)
@@ -401,9 +588,10 @@ struct FrontmatterEntry {
     line: String,
 }
 
-/// One entry per top-level key of `yaml`, with its value on a single line.
-/// `line` is the source line when the key already fits on one.
-fn frontmatter_entries(yaml: &str) -> Vec<FrontmatterEntry> {
+/// One entry per top-level key of `yaml`, with its value on a single line, and
+/// whether a flow value was still open at the end.  `line` is the source line
+/// when the key already fits on one.
+fn frontmatter_entries(yaml: &str) -> (Vec<FrontmatterEntry>, bool) {
     let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
     for line in yaml.lines().filter(|line| !line.starts_with('#')) {
         let top_level = !line.starts_with([' ', '\t', '-'])
@@ -420,7 +608,8 @@ fn frontmatter_entries(yaml: &str) -> Vec<FrontmatterEntry> {
         }
     }
 
-    groups
+    let unclosed = groups.last().is_some_and(|(_, head, rest)| in_flow_list(head, rest));
+    let entries = groups
         .into_iter()
         .map(|(key, head, continuation)| {
             if continuation.iter().all(|line| line.is_empty()) && !is_block_scalar(&head) {
@@ -429,21 +618,35 @@ fn frontmatter_entries(yaml: &str) -> Vec<FrontmatterEntry> {
                 return FrontmatterEntry { key, head, continuation, value, line };
             }
             let value = joined_value(&head, &continuation);
-            let rendered = super::render_frontmatter_value(&value).unwrap_or_else(|| {
-                // A value holding both quote styles cannot be quoted safely.
-                // Pi's parser reads it plain, so drop the quotes instead.
-                value.replace(['\'', '"'], "")
-            });
+            let rendered = super::render_frontmatter_value(&value)
+                .unwrap_or_else(|| sanitised_value(&value));
             let line = format!("{key}: {rendered}");
             FrontmatterEntry { key, head, continuation, value, line }
+        })
+        .collect();
+    (entries, unclosed)
+}
+
+/// A value that cannot be quoted safely, made safe to write plain.  Pi's
+/// parser reads it plain, so quotes and anything that could end the line go.
+fn sanitised_value(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| {
+            !c.is_control() && !matches!(c, '\'' | '"' | '\u{2028}' | '\u{2029}')
         })
         .collect()
 }
 
 fn in_flow_list(head: &str, continuation: &[String]) -> bool {
-    head.starts_with('[')
-        && !head.contains(']')
-        && !continuation.iter().any(|line| line.contains(']'))
+    let (open, close) = match head.chars().next() {
+        Some('[') => ('[', ']'),
+        Some('{') => ('{', '}'),
+        _ => return false,
+    };
+    let lines = std::iter::once(head).chain(continuation.iter().map(String::as_str));
+    let depth = |c: char| lines.clone().flat_map(str::chars).filter(|x| *x == c).count();
+    depth(open) > depth(close)
 }
 
 fn is_block_scalar(head: &str) -> bool {
@@ -547,6 +750,19 @@ fn without_yaml_comment(line: &str) -> &str {
         previous = c;
     }
     line
+}
+
+fn pi_tool_name_any_case(tool: &str) -> Option<&'static str> {
+    match tool.to_ascii_lowercase().as_str() {
+        "read" => Some("read"),
+        "grep" => Some("grep"),
+        "glob" | "find" => Some("find"),
+        "ls" => Some("ls"),
+        "bash" => Some("bash"),
+        "edit" => Some("edit"),
+        "write" => Some("write"),
+        _ => None,
+    }
 }
 
 /// Pi's name for a tool entry, or `None` when it has no equivalent.  A scoped
@@ -985,7 +1201,7 @@ mod tests {
     }
 
     #[test]
-    fn test_converted_tools_compare_clean_and_stay_stable() {
+    fn test_conversion_is_stable_and_an_edit_shows_as_a_difference() {
         for frontmatter in [
             "tools: Read, Bash(git:*), WebFetch\n",
             "tools: WebFetch\n",
@@ -994,12 +1210,155 @@ mod tests {
             "tools:\n  - Read\n",
         ] {
             let expected = converted(frontmatter);
-            assert!(
-                Pi.agent_file_differences(&expected, &expected).is_empty(),
+            assert_eq!(Pi.convert_agent_content(&expected, "a"), expected, "{frontmatter}");
+            let edited = expected.replace("tools:", "tools: bash,");
+            assert_eq!(
+                Pi.agent_file_differences(&edited, &expected),
+                vec!["content"],
                 "{frontmatter}"
             );
-            assert_eq!(Pi.convert_agent_content(&expected, "a"), expected, "{frontmatter}");
         }
+    }
+
+    /// Exactly what `pi-subagents` does: split on the first colon, JS-trim the
+    /// key, last key wins.
+    fn tools_pi_reads(rendered: &str) -> Option<String> {
+        let block = rendered.split("\n---").next().unwrap_or(rendered);
+        block
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(key, _)| js_trim(key) == "tools")
+            .map(|(_, value)| value.trim().to_string())
+            .next_back()
+    }
+
+    fn refused(frontmatter: &str) -> String {
+        let content = format!("---\nname: a\ndescription: b\n{frontmatter}---\nBody\n");
+        assert!(
+            Pi.agent_content_refusal(&content).is_some(),
+            "not refused: {frontmatter:?}"
+        );
+        let rendered = Pi.convert_agent_content(&content, "a");
+        assert_eq!(tools_pi_reads(&rendered).as_deref(), Some("[]"), "{rendered}");
+        let keys = rendered.lines().filter(|line| sets_pi_tools(line)).count();
+        assert_eq!(keys, 1, "{rendered}");
+        rendered
+    }
+
+    #[test]
+    fn test_keys_that_cannot_be_classified_refuse() {
+        for frontmatter in [
+            "tools: Read\n\u{feff}tools: bash, write\n",
+            "\"to\\x6fls\": bash\n",
+            "\"disallowed\\x54ools\": Bash\n",
+            "? tools\n: bash\n",
+            "<<: {tools: Read}\n",
+            "{tools: bash}\n",
+            "description: [draft\ntools: Read\n",
+            ": bash\n",
+            "disallowTools: Bash\n",
+            "toolset: bash\n",
+        ] {
+            refused(frontmatter);
+        }
+    }
+
+    #[test]
+    fn test_an_unclosed_block_is_refused_not_opened_up() {
+        let content = "---\nname: a\ntools: Read\nBody\n";
+        assert!(Pi.agent_content_refusal(content).is_some());
+        assert!(Pi.convert_agent_content(content, "a").contains("\ntools: []\n"));
+    }
+
+    #[test]
+    fn test_max_turns_maps_and_a_bad_limit_refuses() {
+        assert!(converted("maxTurns: 5\n").contains("\nmax_turns: 5\n"));
+        assert!(!converted("maxTurns: 5\n").contains("maxTurns"));
+        refused("maxTurns: lots\n");
+    }
+
+    #[test]
+    fn test_plan_mode_narrows_to_read_only_tools() {
+        assert_eq!(
+            tools_line("permissionMode: plan\n").as_deref(),
+            Some("tools: read, grep, find, ls")
+        );
+        assert_eq!(
+            tools_line("tools: Read, Bash, Grep\npermissionMode: plan\n").as_deref(),
+            Some("tools: read, grep")
+        );
+        assert!(!converted("permissionMode: plan\n").contains("permissionMode"));
+    }
+
+    #[test]
+    fn test_permission_modes_pi_cannot_express_refuse() {
+        refused("permissionMode: dontAsk\n");
+        refused("permissionMode: somethingNew\n");
+        assert_eq!(tools_line("permissionMode: default\n"), None);
+    }
+
+    #[test]
+    fn test_unparsable_deny_entries_refuse_and_still_remove_tools() {
+        for denied in ["Foo(, Bash", "Bash(don't), Write", "Bash (rm:*)", "Bash Write"] {
+            refused(&format!("tools: Read, Bash, Write\ndisallowedTools: {denied}\n"));
+        }
+        let names = denied_tool_names(&["Foo(, Bash".to_string(), "Bash Write".to_string()]);
+        assert!(names.contains(&"bash") && names.contains(&"write"), "{names:?}");
+    }
+
+    #[test]
+    fn test_denied_names_match_in_any_case() {
+        assert_eq!(
+            tools_line("tools: Read, Bash\ndisallowedTools: BASH\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_denying_a_tool_pi_lacks_is_harmless() {
+        assert_eq!(
+            tools_line("tools: Read\ndisallowedTools: WebFetch, mcp__x__y\n").as_deref(),
+            Some("tools: read")
+        );
+    }
+
+    #[test]
+    fn test_model_comment_and_quotes_are_cleaned() {
+        assert!(converted("model: 'anthropic/x' # pinned\n").contains("\nmodel: anthropic/x\n"));
+        assert!(!converted("model: sonnet # anthropic/x\n").contains("model:"));
+    }
+
+    #[test]
+    fn test_missing_name_is_injected_and_missing_description_warns() {
+        let content = "---\ndescription: b\n---\nBody\n";
+        assert!(Pi.convert_agent_content(content, "fallback").contains("name: fallback\n"));
+        let content = "---\nname: a\n---\nBody\n";
+        assert!(Pi.agent_content_warnings(content).iter().any(|w| w.contains("description")));
+        let plain = Pi.convert_agent_content("Just a body.\n", "fallback");
+        assert!(plain.contains("name: fallback\n"), "{plain}");
+    }
+
+    #[test]
+    fn test_tools_inherit_restricts_nothing_unless_something_else_does() {
+        assert_eq!(tools_line("tools: inherit\n"), None);
+        assert_eq!(
+            tools_line("tools: inherit\npermissionMode: plan\n").as_deref(),
+            Some("tools: read, grep, find, ls")
+        );
+        refused("tools: inherit\ndisallowedTools: Bash\n");
+    }
+
+    #[test]
+    fn test_unquotable_values_lose_control_characters() {
+        assert_eq!(sanitised_value("a'b\"c\u{2028}d\u{7}e"), "abcde");
+    }
+
+    #[test]
+    fn test_relative_agent_dir_is_refused() {
+        assert_eq!(
+            resolve_pi_agent_dir(Some("work/pi".into()), Some(PathBuf::from("/home/me"))),
+            None
+        );
     }
 
     #[test]
@@ -1015,12 +1374,5 @@ mod tests {
         let once = Pi.convert_agent_content(content, "a");
         assert!(once.starts_with("---\r\nname: a\r\n"), "{once:?}");
         assert_eq!(Pi.convert_agent_content(&once, "a"), once);
-    }
-
-    #[test]
-    fn test_converted_agent_has_no_differences_from_itself() {
-        let content = "---\nname: a\ndescription: >\n  long\nmodel: sonnet\ntools: Read\n---\nBody\n";
-        let expected = Pi.convert_agent_content(content, "a");
-        assert!(Pi.agent_file_differences(&expected, &expected).is_empty());
     }
 }

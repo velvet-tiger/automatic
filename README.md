@@ -1,6 +1,6 @@
 # Automatic
 
-Manage and sync your skills, MCP servers, rules, hooks, and project instructions. Works with Claude Code, Codex, Cursor, and 13 other agent tools.
+Manage and sync your skills, MCP servers, rules, hooks, and project instructions. Works with Claude Code, Codex, Cursor, and 16 other agent tools.
 
 <p>
   <a href="https://tryautomatic.app">Website</a>
@@ -133,7 +133,7 @@ Browse, search, and install community resources:
 
 ### Project Sync
 
-- Sync configuration into 17 supported agent tools with one click
+- Sync configuration into 19 supported agent tools with one click
 - Auto-detect installed agents and import their existing MCP server configs
 - Detect configuration drift when on-disk files diverge from saved state
 - Rebuild or recover configuration when drift is detected
@@ -195,7 +195,7 @@ The bundled `automatic` CLI ships as a fourth mode of the desktop binary, alongs
 
 ## Supported Agent Tools
 
-Automatic syncs configuration into 18 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
+Automatic syncs configuration into 19 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
 
 | Tool | Skills | Project instructions | MCP servers | Sub-agents | Commands |
 |---|---|---|---|---|---|

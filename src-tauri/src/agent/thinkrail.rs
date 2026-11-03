@@ -40,8 +40,10 @@ impl Agent for ThinkRail {
              approve a project server before it first runs and again when its entry changes. \
              New ThinkRail workspaces are git worktrees under ~/.thinkrail/worktrees, so files \
              Automatic keeps in .gitignore do not reach them. Add servers at user level to use \
-             them in every workspace, or turn off Manage .gitignore for this project. \
-             Automatic leaves out legacy SSE servers because ThinkRail rejects them.",
+             them in every workspace. Turning off Manage .gitignore also works, but it can \
+             commit literal environment values in .pi/mcp.json. Automatic leaves out legacy SSE \
+             servers because ThinkRail rejects them. Automatic sees PI_CODING_AGENT_DIR only \
+             if it was started with that variable set, so check the target path shown here.",
         )
     }
 
@@ -109,6 +111,10 @@ impl Agent for ThinkRail {
 
     fn convert_agent_content(&self, content: &str, name: &str) -> String {
         Pi.convert_agent_content(content, name)
+    }
+
+    fn agent_markdown_is_lossy(&self) -> bool {
+        Pi.agent_markdown_is_lossy()
     }
 
     fn agent_content_refusal(&self, content: &str) -> Option<String> {
@@ -245,6 +251,54 @@ mod tests {
 
         assert!(!pi_dir.join("mcp.json").exists());
         assert!(pi_dir.join("settings.json").exists());
+    }
+
+    #[test]
+    fn test_removing_keeps_a_system_prompt_with_either_agent_remaining() {
+        let pairs: [(&dyn Agent, &str); 2] = [(&ThinkRail, "pi"), (&Pi, "thinkrail")];
+        for (leaving, stays) in pairs {
+            let dir = tempdir().unwrap();
+            let pi_dir = dir.path().join(".pi");
+            fs::create_dir_all(pi_dir.join("skills").join("mine")).unwrap();
+            fs::write(pi_dir.join("SYSTEM.md"), "mine").unwrap();
+            fs::write(pi_dir.join("skills").join("mine").join("SKILL.md"), "mine").unwrap();
+            let remaining = vec![stays.to_string()];
+
+            let plan = super::super::plan_agent_removal(leaving, dir.path(), &remaining, &[]).unwrap();
+            super::super::apply_removal_plan(leaving, dir.path(), &plan).unwrap();
+
+            assert!(pi_dir.join("SYSTEM.md").exists());
+            assert!(pi_dir.join("skills").join("mine").join("SKILL.md").exists());
+        }
+    }
+
+    #[test]
+    fn test_last_removal_keeps_a_system_prompt() {
+        let dir = tempdir().unwrap();
+        let pi_dir = dir.path().join(".pi");
+        fs::create_dir_all(&pi_dir).unwrap();
+        fs::write(pi_dir.join("SYSTEM.md"), "mine").unwrap();
+        let plan = super::super::plan_agent_removal(&ThinkRail, dir.path(), &[], &[]).unwrap();
+        super::super::apply_removal_plan(&ThinkRail, dir.path(), &plan).unwrap();
+        assert!(pi_dir.join("SYSTEM.md").exists());
+    }
+
+    #[test]
+    fn test_prompt_frontmatter_survives_command_conversion() {
+        let content = "---\ndescription: Review it\nargument-hint: <path>\n---\nReview $ARGUMENTS\n";
+        for agent in [&Pi as &dyn Agent, &ThinkRail] {
+            let rendered = agent.convert_command_content(content, "review");
+            assert!(rendered.contains("description: Review it\n"), "{rendered}");
+            assert!(rendered.contains("argument-hint: <path>\n"), "{rendered}");
+            assert!(rendered.contains("$ARGUMENTS"), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn test_note_warns_about_committing_env_values() {
+        let note = ThinkRail.mcp_note().expect("note");
+        assert!(note.contains("user level"));
+        assert!(note.contains("literal environment values"));
     }
 
     #[test]

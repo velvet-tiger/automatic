@@ -495,6 +495,16 @@ pub trait Agent: Send + Sync {
         render_markdown_command(content)
     }
 
+    /// `true` when [`convert_agent_content`](Agent::convert_agent_content)
+    /// keeps Markdown but drops or rewrites frontmatter, so a file on disk is
+    /// not a full copy of the stored definition.  Adopt and rebuild must not
+    /// take such a file whole.
+    ///
+    /// Default: `false`.
+    fn agent_markdown_is_lossy(&self) -> bool {
+        false
+    }
+
     /// Why this sub-agent must not be written for this agent, or `None` when
     /// it can be.  Sync skips a refused definition and removes any managed
     /// copy, and drift does not report it missing.

@@ -285,7 +285,8 @@ export type ProjectDriftState =
 export type ProjectProblemKind =
   | "mcp_user_scope_conflict"
   | "silent_mode_stale_root_mcp"
-  | "mcp_server_config_invalid";
+  | "mcp_server_config_invalid"
+  | "agent_sync_limits";
 
 export interface ProjectProblem {
   kind: ProjectProblemKind;

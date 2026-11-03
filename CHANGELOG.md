@@ -13,6 +13,8 @@ All notable changes to Automatic are documented here.
 
 - Pi no longer receives legacy SSE servers, which it rejects. Sub-agents are written in the single-line form Pi reads, with Claude model aliases removed and tool names mapped.
 - Removing Pi no longer deletes your own files in `.pi/`, such as `settings.json` and `extensions/`.
+- Automatic ignores only the paths it writes in `.pi/`, not the whole folder. The next sync rewrites the managed `.gitignore` block in projects that use Pi, so your own `.pi/` files can be tracked.
+- Sub-agents that Pi cannot restrict as written are refused, not widened. The project's problems list shows refused sub-agents, dropped tools and left-out SSE servers.
 
 ## [1.38.0] - 2026-11-03
 
