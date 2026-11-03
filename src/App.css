@@ -50,6 +50,15 @@
 }
 
 @theme {
+  --color-chart-skills: var(--chart-skills);
+  --color-chart-rules: var(--chart-rules);
+  --color-chart-mcp: var(--chart-mcp);
+  --color-chart-agents: var(--chart-agents);
+  --color-chart-commands: var(--chart-commands);
+  --color-chart-hooks: var(--chart-hooks);
+}
+
+@theme {
   --color-health-synced: var(--health-synced);
   --color-health-drifted: var(--health-drifted);
   --color-health-checking: var(--health-checking);
@@ -64,6 +73,15 @@
   --health-drifted: #f59e0b;  /* amber — matches default --warning  */
   --health-checking: #3f3f46; /* zinc-700 — neutral track            */
   --health-failed: var(--danger); /* follows each theme's danger colour */
+
+  /* Chart series colours — mid-tones that read on every theme's surfaces, so
+     themes inherit them. Each series is also labelled, never colour alone. */
+  --chart-skills: #2a78d6;
+  --chart-rules: #1baf7a;
+  --chart-mcp: #eb6834;
+  --chart-agents: #eda100;
+  --chart-commands: #e87ba4;
+  --chart-hooks: #6250d6;
 
   /* Avatar palette — focus on indigo and violet */
   --avatar-0: var(--brand);

@@ -104,6 +104,7 @@ import { DocsFilesPanel } from "./panels/DocsFilesPanel";
 import { DocsLinksPanel } from "./panels/DocsLinksPanel";
 import { DocsNotesPanel } from "./panels/DocsNotesPanel";
 import { SummaryPanel } from "./panels/SummaryPanel";
+import { ACTIVITY_HISTORY_LIMIT } from "./summaryStats";
 import { AgentsPanel } from "./panels/AgentsPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { McpServersPanel } from "./panels/McpServersPanel";
@@ -2034,7 +2035,7 @@ export function ProjectEditor({
   const loadActivity = async (projectKey: string) => {
     try {
       setLoadingActivity(true);
-      const raw: string = await invoke("get_project_activity", { project: projectKey, limit: 5 });
+      const raw: string = await invoke("get_project_activity", { project: projectKey, limit: ACTIVITY_HISTORY_LIMIT });
       setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
     } catch (err: any) {
       console.error("Failed to load activity:", err);
@@ -4688,9 +4689,11 @@ export function ProjectEditor({
                     activityEntries={activityEntries}
                     loadingActivity={loadingActivity}
                     loadingMemories={loadingMemories}
+                    driftReport={driftReport}
+                    driftCheckFailed={driftCheckError !== null}
+                    availableAgents={availableAgents}
                     selectTab={selectTab}
                     updateField={updateField}
-                    handleExternalLinkClick={handleExternalLinkClick}
                   />
                 )}
 
