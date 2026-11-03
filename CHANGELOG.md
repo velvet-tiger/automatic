@@ -2,6 +2,19 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.39.0] - 2026-11-03
+
+### Added
+
+- The project Summary panel shows sync status, activity and configuration charts. ([458a85e](https://github.com/velvet-tiger/automatic/commit/458a85e))
+- App Updates in Settings links to the latest changelog and the GitHub issue form. ([0f81f73](https://github.com/velvet-tiger/automatic/commit/0f81f73), [214f7e5](https://github.com/velvet-tiger/automatic/commit/214f7e5))
+
+### Fixed
+
+- The Summary panel refreshes its activity and shows the correct sync, history and theme states. Its loading and calendar states are clearer, and the last sync line wraps. ([58f8a91](https://github.com/velvet-tiger/automatic/commit/58f8a91), [2b5305e](https://github.com/velvet-tiger/automatic/commit/2b5305e), [61a22a4](https://github.com/velvet-tiger/automatic/commit/61a22a4))
+- Stale activity and memory loads no longer appear on the wrong project. ([61a22a4](https://github.com/velvet-tiger/automatic/commit/61a22a4), [7c11b5a](https://github.com/velvet-tiger/automatic/commit/7c11b5a))
+- The App Updates row wraps on narrow windows. ([10c82f4](https://github.com/velvet-tiger/automatic/commit/10c82f4))
+
 ## [1.38.0] - 2026-11-03
 
 ### Added
