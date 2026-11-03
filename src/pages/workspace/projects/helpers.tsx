@@ -105,6 +105,7 @@ export function agentIdToLabel(id: string): string {
 export function relativeTime(iso: string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
   const diffMs = now - then;
   if (diffMs < 0) return "just now";
   const diffSec = Math.floor(diffMs / 1000);

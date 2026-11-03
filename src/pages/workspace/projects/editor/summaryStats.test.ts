@@ -9,8 +9,12 @@ import {
   countRecent,
   dailyCounts,
   groupActivity,
+  historyStart,
   latestSync,
   localDayKey,
+  projectLevelDrift,
+  summarizeSync,
+  truncatedWindowStart,
   visibleActivityDetail,
 } from "./summaryStats";
 
@@ -98,6 +102,18 @@ describe("countRecent", () => {
   it("filters to one event kind", () => {
     expect(countRecent(entries, 30, NOW, "memory_stored")).toBe(1);
   });
+
+  it("covers the same days as the sparkline", () => {
+    const edge = [
+      entry(new Date(2026, 9, 6, 0, 0, 1)),
+      entry(new Date(2026, 9, 5, 23, 59, 59)),
+      entry(new Date(2026, 10, 4, 23, 59, 0)),
+      entry(new Date(2026, 10, 5, 0, 0, 1)),
+    ];
+    const sparkline = dailyCounts(edge, 30, NOW).reduce((sum, count) => sum + count, 0);
+    expect(countRecent(edge, 30, NOW)).toBe(sparkline);
+    expect(sparkline).toBe(2);
+  });
 });
 
 describe("activityLevel", () => {
@@ -125,6 +141,24 @@ describe("groupActivity", () => {
     expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([2, 1, 1, 1]);
   });
 
+  it("keeps syncs apart when they are far apart in time", () => {
+    const entries = [
+      entry(new Date(2026, 10, 4, 12, 0), "sync"),
+      entry(new Date(2026, 10, 4, 11, 30), "sync"),
+      entry(new Date(2026, 10, 3, 9, 0), "sync"),
+    ];
+    expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([2, 1]);
+  });
+
+  it("measures the gap from the previous sync in a run", () => {
+    const entries = [
+      entry(new Date(2026, 10, 4, 12, 0), "sync"),
+      entry(new Date(2026, 10, 4, 11, 20), "sync"),
+      entry(new Date(2026, 10, 4, 10, 40), "sync"),
+    ];
+    expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([3]);
+  });
+
   it("keeps counting a sync run at the limit", () => {
     const entries = [entry(NOW, "skill_added"), entry(NOW, "sync"), entry(NOW, "sync")];
     const groups = groupActivity(entries, 2);
@@ -137,6 +171,10 @@ describe("visibleActivityDetail", () => {
   it("hides feature ids and repeated memory keys", () => {
     expect(visibleActivityDetail(entry(NOW, "feature_created", "e7dcf9d1"))).toBe("");
     expect(visibleActivityDetail(entry(NOW, "memory_stored", "key"))).toBe("");
+  });
+
+  it("keeps the size of a memory clear", () => {
+    expect(visibleActivityDetail(entry(NOW, "memory_cleared", "3 entries"))).toBe("3 entries");
   });
 
   it("keeps other details", () => {
@@ -155,31 +193,99 @@ describe("latestSync", () => {
   });
 });
 
-describe("agentSyncRows", () => {
+describe("history limit", () => {
+  const full = (date: Date) => Array.from({ length: ACTIVITY_HISTORY_LIMIT }, () => entry(date));
+
+  it("reports no start below the limit", () => {
+    expect(historyStart([entry(new Date(2026, 10, 1))])).toBeNull();
+  });
+
+  it("reports the start when it cuts into the window", () => {
+    const start = new Date(2026, 9, 25);
+    expect(truncatedWindowStart(full(start), 30, NOW)).toEqual(start);
+  });
+
+  it("stays silent when history reaches past the window", () => {
+    expect(truncatedWindowStart(full(new Date(2026, 8, 1)), 30, NOW)).toBeNull();
+  });
+});
+
+describe("sync status", () => {
   const label = (id: string) => id.toUpperCase();
+  const files = (count: number) =>
+    Array.from({ length: count }, () => ({})) as DriftReport["agents"][number]["files"];
+  const conflictOnly: DriftReport = {
+    drifted: true,
+    agents: [],
+    gitignore: {} as DriftReport["gitignore"],
+  };
 
   it("marks agents missing from the report as in sync", () => {
     const report: DriftReport = {
       drifted: true,
-      agents: [
-        {
-          agent_id: "cursor",
-          agent_label: "Cursor",
-          files: [{}, {}] as DriftReport["agents"][number]["files"],
-        },
-      ],
+      agents: [{ agent_id: "cursor", agent_label: "Cursor", files: files(2) }],
     };
-    expect(agentSyncRows(["claude", "cursor"], label, report, false)).toEqual([
+    const rows = agentSyncRows(["claude", "cursor"], label, report, false, true);
+    expect(rows).toEqual([
       { id: "claude", label: "CLAUDE", status: "synced", driftedFiles: 0 },
       { id: "cursor", label: "CURSOR", status: "drifted", driftedFiles: 2 },
     ]);
+    expect(summarizeSync(rows, report, false, true)).toEqual({
+      status: "drifted",
+      title: "Out of sync",
+      share: 0.5,
+    });
   });
 
-  it("shows checking before the first report", () => {
-    expect(agentSyncRows(["claude"], label, null, false)[0].status).toBe("checking");
+  it("does not fill the ring for conflict-only drift", () => {
+    const rows = agentSyncRows(["claude"], label, conflictOnly, false, true);
+    expect(rows[0].status).toBe("synced");
+    expect(projectLevelDrift(conflictOnly)).toEqual([".gitignore"]);
+    expect(summarizeSync(rows, conflictOnly, false, true)).toEqual({
+      status: "drifted",
+      title: "Out of sync",
+      share: 0.5,
+    });
+  });
+
+  it("names every kind of project-level drift", () => {
+    const report = {
+      drifted: true,
+      agents: [],
+      instruction_conflicts: [{}],
+      custom_conflicts: [{}],
+    } as unknown as DriftReport;
+    expect(projectLevelDrift(report)).toEqual(["instruction files", "custom assets"]);
+  });
+
+  it("ignores conflicts on a clean report", () => {
+    expect(projectLevelDrift({ drifted: false, agents: [] })).toEqual([]);
+  });
+
+  it("shows checking for a null report", () => {
+    const rows = agentSyncRows(["claude"], label, null, false, true);
+    expect(rows[0].status).toBe("checking");
+    expect(summarizeSync(rows, null, false, true)).toEqual({
+      status: "checking",
+      title: "Checking…",
+      share: 0,
+    });
   });
 
   it("shows a failed check", () => {
-    expect(agentSyncRows(["claude"], label, null, true)[0].status).toBe("failed");
+    const rows = agentSyncRows(["claude"], label, null, true, true);
+    expect(rows[0].status).toBe("failed");
+    expect(summarizeSync(rows, null, true, true).title).toBe("Not checked");
+  });
+
+  it("shows not set up over any report when setup is missing", () => {
+    const report: DriftReport = { drifted: false, agents: [] };
+    const rows = agentSyncRows(["claude"], label, report, false, false);
+    expect(rows[0].status).toBe("not_set_up");
+    expect(summarizeSync(rows, report, false, false)).toEqual({
+      status: "not_set_up",
+      title: "Not set up",
+      share: 0,
+    });
   });
 });

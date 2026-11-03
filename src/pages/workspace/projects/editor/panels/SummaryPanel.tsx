@@ -1,6 +1,4 @@
-// Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
-
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AgentIcon } from "../../../../../components/AgentIcon";
 import { ActivityFeed } from "../ActivityFeed";
@@ -19,9 +17,14 @@ import {
   buildActivityCalendar,
   countRecent,
   dailyCounts,
+  historyStart,
   latestSync,
+  localDayKey,
+  projectLevelDrift,
+  summarizeSync,
+  syncStatusLabel,
+  truncatedWindowStart,
   type AgentSyncRow,
-  type AgentSyncStatus,
 } from "../summaryStats";
 import { relativeTime } from "../../helpers";
 import type { ActivityEntry, AgentInfo, DriftReport, Project, ProjectFileInfo } from "../../types";
@@ -37,12 +40,14 @@ type DocEntry = { path: string; summary?: string };
 interface SummaryPanelProps {
   project: Project;
   isCreating: boolean;
-  memories: Record<string, unknown>;
+  /** Null while no memories are loaded for this project. */
+  memories: Record<string, unknown> | null;
   projectFiles: ProjectFileInfo[];
   linkDocEntries: [string, DocEntry][];
   recsDisplayCount: number;
   activityEntries: ActivityEntry[];
   loadingActivity: boolean;
+  activityLoadFailed: boolean;
   loadingMemories: boolean;
   driftReport: DriftReport | null;
   driftCheckFailed: boolean;
@@ -51,12 +56,23 @@ interface SummaryPanelProps {
   updateField: <K extends keyof Project>(key: K, value: Project[K]) => void;
 }
 
-const SYNC_TITLES: Record<AgentSyncStatus, string> = {
-  synced: "In sync",
-  drifted: "Out of sync",
-  checking: "Checking…",
-  failed: "Not checked",
-};
+function shortDate(date: Date): string {
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** Today's key, updated when the local day changes under a panel left open. */
+function useLocalDay(): string {
+  const [day, setDay] = useState(() => localDayKey(new Date()));
+  useEffect(() => {
+    const timer = setInterval(() => setDay(localDayKey(new Date())), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return day;
+}
+
+function Placeholder({ className }: { className: string }) {
+  return <div role="status" aria-label="Loading" className={`animate-pulse rounded bg-text-muted/15 ${className}`} />;
+}
 
 function configItem(
   key: string,
@@ -70,19 +86,19 @@ function configItem(
   return { key, count, countLabel, emptyLabel, colorClass, onView };
 }
 
+const AGENT_STATUS_CLASSES: Record<AgentSyncRow["status"], string> = {
+  synced: "text-success",
+  drifted: "text-warning",
+  checking: "text-text-muted",
+  failed: "text-danger",
+  not_set_up: "text-text-muted",
+};
+
 function AgentStatus({ row }: { row: AgentSyncRow }) {
-  if (row.status === "drifted") {
-    const files = `${row.driftedFiles} ${row.driftedFiles === 1 ? "file" : "files"}`;
-    return <span className="flex-shrink-0 text-[11px] text-warning">{files}</span>;
-  }
-  if (row.status === "failed") {
-    return <span className="flex-shrink-0 text-[11px] text-danger">Not checked</span>;
-  }
-  return (
-    <span className={`flex-shrink-0 text-[11px] ${row.status === "synced" ? "text-success" : "text-text-muted"}`}>
-      {row.status === "synced" ? "In sync" : "Checking…"}
-    </span>
-  );
+  const text = row.status === "drifted" && row.driftedFiles > 0
+    ? `${row.driftedFiles} ${row.driftedFiles === 1 ? "file" : "files"}`
+    : syncStatusLabel(row.status);
+  return <span className={`flex-shrink-0 text-[11px] ${AGENT_STATUS_CLASSES[row.status]}`}>{text}</span>;
 }
 
 function FooterLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
@@ -102,6 +118,7 @@ export function SummaryPanel({
   recsDisplayCount,
   activityEntries,
   loadingActivity,
+  activityLoadFailed,
   loadingMemories,
   driftReport,
   driftCheckFailed,
@@ -114,7 +131,7 @@ export function SummaryPanel({
   const totalSubAgents = (project.user_agents?.length ?? 0) + (project.custom_agents?.length ?? 0);
   const totalCommands = (project.user_commands?.length ?? 0) + (project.custom_commands?.length ?? 0);
   const totalHooks = project.hooks?.length ?? 0;
-  const memoryCount = Object.keys(memories).length;
+  const memoryCount = memories === null ? null : Object.keys(memories).length;
   const instructionFileCount = projectFiles.filter((file) => file.exists).length;
   const instructionText = instructionFileCount === 0
     ? "No instruction files"
@@ -123,8 +140,7 @@ export function SummaryPanel({
   const docsText = docsCount === 0
     ? "No docs links"
     : `${docsCount} docs ${docsCount === 1 ? "link" : "links"}`;
-  const missingSetup = !project.directory || project.agents.length === 0;
-  const needsSetup = !isCreating && missingSetup;
+  const needsSetup = !isCreating && (!project.directory || project.agents.length === 0);
 
   const configItems: ConfigItem[] = [
     configItem("skills", totalSkills, "skill", "Skills", "bg-chart-skills", () => selectTab("skills")),
@@ -136,43 +152,48 @@ export function SummaryPanel({
   ];
   const configTotal = configItems.reduce((sum, item) => sum + item.count, 0);
 
-  const { calendar, sparkline, recentActivity, recentMemorySaves, lastSync } = useMemo(() => {
+  const localDay = useLocalDay();
+  const stats = useMemo(() => {
     const now = new Date();
     return {
       calendar: buildActivityCalendar(activityEntries, now),
       sparkline: dailyCounts(activityEntries, STAT_WINDOW_DAYS, now),
       recentActivity: countRecent(activityEntries, STAT_WINDOW_DAYS, now),
       recentMemorySaves: countRecent(activityEntries, STAT_WINDOW_DAYS, now, "memory_stored"),
+      windowStart: truncatedWindowStart(activityEntries, STAT_WINDOW_DAYS, now),
       lastSync: latestSync(activityEntries),
     };
-  }, [activityEntries]);
+    // `localDay` recomputes the windows when midnight passes.
+  }, [activityEntries, localDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { calendar, sparkline, recentActivity, recentMemorySaves, windowStart, lastSync } = stats;
   const calendarRange = calendar.historySince === null
     ? `Last ${CALENDAR_WEEKS} weeks`
-    : `Since ${calendar.historySince.toLocaleDateString(undefined, { day: "numeric", month: "short" })}`;
+    : `Since ${shortDate(calendar.historySince)}`;
+  const tileRange = windowStart === null ? undefined : `Since ${shortDate(windowStart)}`;
 
+  const setUp = Boolean(project.directory) && project.agents.length > 0;
   const agentRows = agentSyncRows(
     project.agents,
     (id) => availableAgents.find((agent) => agent.id === id)?.label ?? id,
     driftReport,
     driftCheckFailed,
+    setUp,
   );
-  const overallSync: AgentSyncStatus = driftReport?.drifted
-    ? "drifted"
-    : driftReport !== null
-      ? "synced"
-      : driftCheckFailed
-        ? "failed"
-        : "checking";
-  // Drift is never checked without a directory and an agent, so this is not "Checking…".
-  const syncTitle = missingSetup ? "Not set up" : SYNC_TITLES[overallSync];
-  const syncedShare = overallSync === "checking" || overallSync === "failed"
-    ? 0
-    : agentRows.length === 0
-      ? 1
-      : agentRows.filter((row) => row.status === "synced").length / agentRows.length;
-  const lastSyncText = lastSync === undefined
-    ? "Not synced yet"
-    : [lastSync.detail, relativeTime(lastSync.timestamp)].filter(Boolean).join(", ");
+  const sync = summarizeSync(agentRows, driftReport, driftCheckFailed, setUp);
+  const projectDrift = setUp ? projectLevelDrift(driftReport) : [];
+
+  let lastSyncText = "Not synced yet";
+  if (activityLoadFailed) lastSyncText = "Last sync unavailable";
+  else if (lastSync !== undefined) {
+    lastSyncText = [lastSync.detail, relativeTime(lastSync.timestamp)].filter(Boolean).join(", ");
+  } else if (historyStart(activityEntries) !== null) lastSyncText = "Last sync not in history";
+
+  let memoryTotal: ReactNode = memoryCount;
+  if (memoryCount === null) {
+    if (loadingMemories) memoryTotal = <Placeholder className="h-[26px] w-10" />;
+    else memoryTotal = isCreating ? 0 : "Unavailable";
+  }
+  const memorySavesText = `${recentMemorySaves} ${recentMemorySaves === 1 ? "save" : "saves"} ${windowStart === null ? `in ${STAT_WINDOW_DAYS} days` : `since ${shortDate(windowStart)}`}`;
 
   return (
     <div className="@container space-y-3">
@@ -271,38 +292,62 @@ export function SummaryPanel({
       <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-3">
         <SummaryCard title="Sync status">
           <div className="flex items-center gap-3">
-            <SyncRing status={overallSync} share={syncedShare} />
+            <SyncRing status={sync.status} share={sync.share} />
             <div className="min-w-0">
-              <div className="text-[15px] font-medium text-text-base">{syncTitle}</div>
-              <div className="truncate text-[12px] text-text-muted">{lastSyncText}</div>
+              <div className="text-[15px] font-medium text-text-base">{sync.title}</div>
+              {loadingActivity ? (
+                <Placeholder className="mt-1 h-3 w-24" />
+              ) : (
+                <div className="truncate text-[12px] text-text-muted">{lastSyncText}</div>
+              )}
             </div>
           </div>
         </SummaryCard>
 
-        <SummaryCard title={`Activity, ${STAT_WINDOW_DAYS} days`}>
-          <div className="text-[22px] font-medium leading-tight tabular-nums text-text-base">
-            {loadingActivity ? "…" : recentActivity}
-          </div>
-          {recentActivity > 0 ? (
-            <Sparkline values={sparkline} />
+        <SummaryCard title={`Activity, ${STAT_WINDOW_DAYS} days`} aside={tileRange}>
+          {loadingActivity ? (
+            <Placeholder className="h-[26px] w-10" />
+          ) : activityLoadFailed ? (
+            <div className="text-[12px] text-text-muted">Could not load activity.</div>
           ) : (
-            !loadingActivity && <div className="mt-1 text-[12px] text-text-muted">No recent activity.</div>
+            <>
+              <div className="text-[22px] font-medium leading-tight tabular-nums text-text-base">
+                {recentActivity}
+              </div>
+              {recentActivity > 0 ? (
+                <Sparkline values={sparkline} />
+              ) : (
+                <div className="mt-1 text-[12px] text-text-muted">No recent activity.</div>
+              )}
+            </>
           )}
         </SummaryCard>
 
-        <SummaryCard title="Memories">
-          <div className="text-[22px] font-medium leading-tight tabular-nums text-text-base">
-            {loadingMemories ? "…" : memoryCount}
+        <SummaryCard title="Memories" aside={tileRange}>
+          <div
+            className={typeof memoryTotal === "string"
+              ? "text-[12px] text-text-muted"
+              : "text-[22px] font-medium leading-tight tabular-nums text-text-base"}
+          >
+            {memoryTotal}
           </div>
-          <div className="mt-1 text-[12px] text-text-muted">
-            {recentMemorySaves} {recentMemorySaves === 1 ? "save" : "saves"} in {STAT_WINDOW_DAYS} days
-          </div>
+          {loadingActivity ? (
+            <Placeholder className="mt-1.5 h-3 w-20" />
+          ) : !activityLoadFailed && (
+            <div className="mt-1 text-[12px] text-text-muted">{memorySavesText}</div>
+          )}
         </SummaryCard>
       </div>
 
       <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-2">
         <SummaryCard title="Activity" aside={calendarRange}>
-          <ActivityCalendarGrid days={calendar.days} />
+          {loadingActivity ? (
+            <Placeholder className="h-[109px] w-full" />
+          ) : activityLoadFailed ? (
+            <p className="text-[12px] text-text-muted">Could not load activity.</p>
+          ) : (
+            <ActivityCalendarGrid key={project.name} days={calendar.days} rangeLabel={calendarRange} />
+          )}
         </SummaryCard>
         <SummaryCard title="Configuration" aside={`${configTotal} ${configTotal === 1 ? "item" : "items"}`}>
           <ConfigBreakdown items={configItems} />
@@ -310,7 +355,7 @@ export function SummaryPanel({
       </div>
 
       <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ActivityFeed entries={activityEntries} loading={loadingActivity} />
+        <ActivityFeed entries={activityEntries} loading={loadingActivity} failed={activityLoadFailed} />
         <SummaryCard title="Agents">
           {agentRows.length === 0 ? (
             <button
@@ -327,7 +372,7 @@ export function SummaryPanel({
                   key={row.id}
                   type="button"
                   onClick={() => selectTab("agents")}
-                  className="flex w-full items-center gap-2 py-1.5 text-left transition-colors hover:text-brand"
+                  className="flex w-full items-center gap-2 py-1.5 text-left"
                 >
                   <AgentIcon agentId={row.id} size={14} />
                   <span className="min-w-0 flex-1 truncate text-[12px] text-text-base">{row.label}</span>
@@ -336,10 +381,15 @@ export function SummaryPanel({
               ))}
             </div>
           )}
+          {projectDrift.length > 0 && (
+            <p className="mt-2 border-t border-border-strong/20 pt-2 text-[11px] leading-relaxed text-warning">
+              Project files also differ: {projectDrift.join(", ")}.
+            </p>
+          )}
         </SummaryCard>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-text-muted/60">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-text-muted">
         <FooterLink onClick={() => selectTab("project_file")}>{instructionText}</FooterLink>
         <FooterLink onClick={() => selectTab("docs_links")}>{docsText}</FooterLink>
         <FooterLink onClick={() => selectTab("memory")}>View memory</FooterLink>

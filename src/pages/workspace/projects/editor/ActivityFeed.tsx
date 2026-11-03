@@ -1,5 +1,3 @@
-// Extracted verbatim from Projects.tsx (behavior-preserving refactor).
-
 import { activityMeta, relativeTime } from "../helpers";
 import type { ActivityEntry } from "../types";
 import { SummaryCard } from "./SummaryCharts";
@@ -10,6 +8,7 @@ const MAX_ROWS = 5;
 interface ActivityFeedProps {
   entries: ActivityEntry[];
   loading: boolean;
+  failed: boolean;
 }
 
 function repeatText(count: number): string {
@@ -33,12 +32,14 @@ function ActivityRow({ group, last }: { group: ActivityGroup; last: boolean }) {
   );
 }
 
-export function ActivityFeed({ entries, loading }: ActivityFeedProps) {
+export function ActivityFeed({ entries, loading, failed }: ActivityFeedProps) {
   const groups = groupActivity(entries, MAX_ROWS);
   return (
     <SummaryCard title="Recent activity">
       {loading ? (
         <div className="py-1 text-[12px] text-text-muted">Loading activity…</div>
+      ) : failed ? (
+        <div className="py-1 text-[12px] text-text-muted">Could not load activity.</div>
       ) : groups.length === 0 ? (
         <div className="py-1 text-[12px] italic text-text-muted">
           No activity yet. Save or sync the project to start recording events.

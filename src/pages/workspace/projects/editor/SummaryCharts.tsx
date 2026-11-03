@@ -1,14 +1,14 @@
 // Small SVG and div charts for the project Summary panel.
 
 import { useState, type ReactNode } from "react";
-import { AlertCircle, Check, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { AlertCircle, Check, Minus, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { activityLevel, type AgentSyncStatus, type CalendarDay } from "./summaryStats";
 
 const LEVEL_CLASSES = [
-  "bg-border-strong/25",
-  "bg-brand/25",
-  "bg-brand/50",
-  "bg-brand/75",
+  "bg-text-muted/15",
+  "bg-brand/35",
+  "bg-brand/55",
+  "bg-brand/80",
   "bg-brand",
 ] as const;
 
@@ -27,7 +27,7 @@ export function SummaryCard({
         <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted/60">
           {title}
         </span>
-        {aside && <span className="text-[11px] text-text-muted/60">{aside}</span>}
+        {aside && <span className="text-[11px] text-text-muted">{aside}</span>}
       </div>
       {children}
     </section>
@@ -48,6 +48,7 @@ const RING_STYLES: Record<AgentSyncStatus, { stroke: string; icon: ReactNode }> 
     icon: <RefreshCw size={14} className="text-text-muted" />,
   },
   failed: { stroke: "stroke-danger", icon: <AlertCircle size={16} className="text-danger" /> },
+  not_set_up: { stroke: "stroke-text-muted", icon: <Minus size={16} className="text-text-muted" /> },
 };
 
 /** A ring filled by the share of agents in sync, with the state at its centre. */
@@ -118,14 +119,30 @@ function dayText(day: CalendarDay): string {
   return `${date}: ${day.count} ${day.count === 1 ? "event" : "events"}`;
 }
 
-export function ActivityCalendarGrid({ days }: { days: CalendarDay[] }) {
-  const [hovered, setHovered] = useState<CalendarDay | null>(null);
+/** Gives the calendar's content in words, for anyone who cannot use the grid. */
+export function calendarSummary(days: CalendarDay[]): string {
   const total = days.reduce((sum, day) => sum + day.count, 0);
+  if (total === 0) return "No events in this period.";
+  const busiest = days.reduce((best, day) => (day.count > best.count ? day : best));
+  const date = busiest.date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const events = `${total} ${total === 1 ? "event" : "events"}`;
+  return `${events}. Busiest day ${date}, with ${busiest.count}.`;
+}
+
+export function ActivityCalendarGrid({
+  days,
+  rangeLabel,
+}: {
+  days: CalendarDay[];
+  rangeLabel: string;
+}) {
+  const [hovered, setHovered] = useState<CalendarDay | null>(null);
+  const summary = calendarSummary(days);
   return (
     <div onMouseLeave={() => setHovered(null)}>
       <div
         role="img"
-        aria-label={`${total} ${total === 1 ? "event" : "events"} in this period`}
+        aria-label={`Activity calendar. ${rangeLabel}. ${summary}`}
         className="grid grid-flow-col grid-rows-7 justify-start gap-[3px]"
       >
         {days.map((day) => (
@@ -133,13 +150,15 @@ export function ActivityCalendarGrid({ days }: { days: CalendarDay[] }) {
             key={day.key}
             onMouseEnter={() => setHovered(day.known ? day : null)}
             className={`h-[13px] w-[13px] rounded-[3px] ${
-              day.known ? LEVEL_CLASSES[activityLevel(day.count)] : ""
+              day.known
+                ? LEVEL_CLASSES[activityLevel(day.count)]
+                : "border border-dashed border-text-muted/50"
             }`}
           />
         ))}
       </div>
       <p className="mt-2 min-h-[16px] text-[11px] text-text-muted">
-        {hovered === null ? "Hover a day to see its events." : dayText(hovered)}
+        {hovered === null ? summary : dayText(hovered)}
       </p>
     </div>
   );
@@ -186,7 +205,7 @@ export function ConfigBreakdown({ items }: { items: ConfigItem[] }) {
             onClick={item.onView}
             aria-label={item.count > 0 ? `View ${item.countLabel}` : `Add ${item.emptyLabel}`}
             className={`flex min-w-0 items-center gap-1.5 text-left text-[12px] tabular-nums transition-colors hover:text-text-base ${
-              item.count > 0 ? "text-text-base" : "text-text-muted/60"
+              item.count > 0 ? "text-text-base" : "text-text-muted"
             }`}
           >
             {item.count > 0 ? (
