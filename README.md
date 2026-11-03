@@ -208,6 +208,7 @@ Automatic syncs configuration into 18 agent tools. The matrix below reflects wha
 | Kimi Code | ✓ | ✓ | ✓ | ✓ | — |
 | Zed | ✓ | ✓ | ✓ | ✓ | — |
 | Pi | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ThinkRail | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Droid | ✓ | ✓ | ✓ | — | — |
 | Junie | ✓ | ✓ | ✓ | — | — |
 | Kilo Code | ✓ | ✓ | ✓ | — | — |
@@ -223,6 +224,7 @@ Notes:
 - **Rules** are injected into each tool's project-instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.), so rules support follows the "Project instructions" column.
 - **Antigravity, Cline, Goose, and Warp** manage MCP servers through their own global app/CLI config rather than a project file. Automatic can discover those servers but does not write project-level MCP config for them.
 - **Pi** has built-in MCP and reads sub-agents through the `pi-subagents` community extension. Automatic writes a Pi-scoped `.pi/mcp.json` (kept separate from Claude Code's `.mcp.json`), `.pi/agents/` and `.pi/prompts/`, and shares `AGENTS.md` rather than owning it. Pi rejects legacy SSE servers, so Automatic leaves them out.
+- **ThinkRail** runs Pi and reads the same files, so Automatic writes the same paths for both. Project servers need project trust. New ThinkRail workspaces are git worktrees, so files in `.gitignore` do not reach them. Use user-level MCP servers there, or turn off Manage `.gitignore`.
 - **Z Code** merges MCP servers into the shared `.zcode/config.json`, preserving the user's other keys. Z Code ignores project-level hooks for security (only user-level `~/.zcode/cli/config.json` hooks execute), and its workspace-level command and sub-agent paths are undocumented, so Automatic does not sync those surfaces.
 - Automatic auto-detects installed tools and writes to their config directories.
 

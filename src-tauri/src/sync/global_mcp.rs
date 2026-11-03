@@ -518,6 +518,42 @@ mod tests {
     }
 
     #[test]
+    fn pi_and_thinkrail_share_one_record_for_their_one_file() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            seed_registry("alpha");
+            apply_global_mcp("pi", vec!["alpha".to_string()]).expect("apply");
+
+            let status = global_mcp_status("thinkrail").expect("status");
+            assert!(status.in_sync, "skipped={:?}", status.skipped);
+            assert_eq!(managed_entries_for("thinkrail"), vec!["alpha"]);
+
+            apply_global_mcp("thinkrail", vec![]).expect("deselect");
+            let written =
+                std::fs::read_to_string(tmp.path().join(".pi/agent/mcp.json")).expect("mcp.json");
+            assert!(!written.contains("alpha"), "{written}");
+            assert!(!load_global_mcp_state().unwrap().agents.contains_key("thinkrail"));
+        });
+    }
+
+    #[test]
+    fn sse_server_is_rejected_for_pi_with_a_reason() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let raw = serde_json::json!({ "type": "sse", "url": "https://example.com/sse" });
+            crate::core::save_mcp_server_config("legacy", &raw.to_string()).unwrap();
+
+            let report = apply_global_mcp("pi", vec!["legacy".to_string()]).expect("apply");
+
+            assert!(report.write.written.is_empty());
+            assert_eq!(report.rejected.len(), 1);
+            assert!(report.rejected[0].reason.contains("SSE"));
+            let status = global_mcp_status("pi").expect("status");
+            assert!(!status.in_sync, "a rejected server must not read as in sync");
+        });
+    }
+
+    #[test]
     fn apply_persists_selection_and_populates_managed() {
         let tmp = TempDir::new().unwrap();
         with_test_home(tmp.path().to_path_buf(), || {

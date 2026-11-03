@@ -33,6 +33,7 @@ mod mcp_format_tests;
 mod global_mcp_tests;
 mod opencode;
 mod pi;
+mod thinkrail;
 mod removal;
 mod warp;
 mod zcode;
@@ -65,6 +66,7 @@ pub use opencode::{
     OpenCode,
 };
 pub use pi::Pi;
+pub use thinkrail::ThinkRail;
 pub use removal::{
     apply_removal_plan, plan_agent_removal, RemovalAction, RemovalEntry, RemovalMode, RemovalPlan,
 };
@@ -764,6 +766,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &CodexCli,
         &OpenCode,
         &Pi,
+        &ThinkRail,
         &Warp,
         &ZCode,
         &Zed,

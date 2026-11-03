@@ -2,6 +2,18 @@
 
 All notable changes to Automatic are documented here.
 
+## [Unreleased]
+
+### Added
+
+- ThinkRail is a sync target. It shares Pi's files, and Pi and ThinkRail can sit on one project.
+- Pi syncs commands to `.pi/prompts` and can receive user-level MCP servers in its agent folder, honouring `PI_CODING_AGENT_DIR`.
+
+### Fixed
+
+- Pi no longer receives legacy SSE servers, which it rejects. Sub-agents are written in the single-line form Pi reads, with Claude model aliases removed and tool names mapped.
+- Removing Pi no longer deletes your own files in `.pi/`, such as `settings.json` and `extensions/`.
+
 ## [1.38.0] - 2026-11-03
 
 ### Added
