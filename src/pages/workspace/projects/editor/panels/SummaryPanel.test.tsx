@@ -28,6 +28,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}) {
       loadingActivity={false}
       activityLoadFailed={false}
       loadingMemories={false}
+      memoriesLoadFailed={false}
       driftReport={{ drifted: false, agents: [] }}
       driftCheckFailed={false}
       availableAgents={[]}
@@ -68,6 +69,17 @@ describe("SummaryPanel", () => {
     expect(screen.getAllByRole("status", { name: "Loading" }).length).toBeGreaterThan(0);
     expect(screen.queryByText("0")).toBeNull();
     expect(screen.queryByText("Not synced yet")).toBeNull();
+  });
+
+  it("shows a placeholder before a memories load has started", () => {
+    renderPanel({ memories: null, loadingMemories: false });
+    expect(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+    expect(screen.queryByText("Unavailable")).toBeNull();
+  });
+
+  it("shows unavailable when memories fail to load", () => {
+    renderPanel({ memories: null, memoriesLoadFailed: true });
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 
   it("shows an error when activity fails to load", () => {

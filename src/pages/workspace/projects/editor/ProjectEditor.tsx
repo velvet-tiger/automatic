@@ -789,7 +789,7 @@ export function ProjectEditor({
     }
   }
 
-  const { selectedMemories, loadingMemories, loadMemories } = useProjectMemories(selectedKey, setError);
+  const { selectedMemories, loadingMemories, memoriesLoadFailed, loadMemories } = useProjectMemories(selectedKey, setError);
 
 
   // Groups state — names of all groups this project belongs to, and the full
@@ -4679,6 +4679,7 @@ export function ProjectEditor({
                     loadingActivity={loadingActivity}
                     activityLoadFailed={activityLoadFailed}
                     loadingMemories={loadingMemories}
+                    memoriesLoadFailed={memoriesLoadFailed}
                     driftReport={driftReport}
                     driftCheckFailed={driftCheckError !== null}
                     availableAgents={availableAgents}

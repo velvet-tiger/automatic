@@ -5,10 +5,10 @@ import { AlertCircle, Check, Minus, Plus, RefreshCw, TriangleAlert } from "lucid
 import { activityLevel, type AgentSyncStatus, type CalendarDay } from "./summaryStats";
 
 const LEVEL_CLASSES = [
-  "bg-text-muted/15",
-  "bg-brand/35",
-  "bg-brand/55",
-  "bg-brand/80",
+  "bg-text-muted/10",
+  "bg-brand/45",
+  "bg-brand/65",
+  "bg-brand/85",
   "bg-brand",
 ] as const;
 

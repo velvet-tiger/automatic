@@ -50,14 +50,30 @@ describe("useProjectActivity", () => {
     const slow = deferred();
     invokeMock.mockReturnValueOnce(slow.promise);
     invokeMock.mockResolvedValueOnce(JSON.stringify([entry(2)]));
-    const { result } = renderHook(() => useProjectActivity("b"));
+    const { result, rerender } = renderHook(({ key }) => useProjectActivity(key), {
+      initialProps: { key: "a" },
+    });
     let first: Promise<void> = Promise.resolve();
     act(() => {
       first = result.current.loadActivity("a");
     });
+    rerender({ key: "b" });
     await act(() => result.current.loadActivity("b"));
     slow.resolve(JSON.stringify([entry(1)]));
     await act(() => first);
+    expect(result.current.activityEntries.map((item) => item.id)).toEqual([2]);
+  });
+
+  it("ignores a late load for a project that is no longer selected", async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify([entry(2)]));
+    const { result, rerender } = renderHook(({ key }) => useProjectActivity(key), {
+      initialProps: { key: "a" },
+    });
+    rerender({ key: "b" });
+    await act(() => result.current.loadActivity("b"));
+    await act(() => result.current.loadActivity("a"));
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(result.current.loadingActivity).toBe(false);
     expect(result.current.activityEntries.map((item) => item.id)).toEqual([2]);
   });
 

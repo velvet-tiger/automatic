@@ -9,6 +9,8 @@ export interface ProjectMemories {
    */
   selectedMemories: MemoryRecord | null;
   loadingMemories: boolean;
+  /** True when the selected project's latest load failed. */
+  memoriesLoadFailed: boolean;
   /** Load the memories for `projectKey`. Errors go to `onError`. */
   loadMemories: (projectKey: string) => Promise<void>;
 }
@@ -28,6 +30,7 @@ export function useProjectMemories(
 ): ProjectMemories {
   const [loaded, setLoaded] = useState<{ projectKey: string; entries: MemoryRecord } | null>(null);
   const [loadingMemories, setLoadingMemories] = useState(false);
+  const [failedKey, setFailedKey] = useState<string | null>(null);
   const latestRequest = useRef(0);
 
   const loadMemories = useCallback(
@@ -37,13 +40,17 @@ export function useProjectMemories(
       setLoadingMemories(true);
       try {
         const data: MemoryRecord = await invoke("get_project_memories", { project: projectKey });
-        if (isLatest()) setLoaded({ projectKey, entries: data });
+        if (isLatest()) {
+          setLoaded({ projectKey, entries: data });
+          setFailedKey(null);
+        }
       } catch (err: unknown) {
         if (!isLatest()) return;
         // A failed load drops what was loaded for this project, so no panel
         // shows entries the store may no longer hold. The error is shown
         // because a stale list makes saves look like they did nothing.
         setLoaded((prev) => (prev?.projectKey === projectKey ? null : prev));
+        setFailedKey(projectKey);
         const msg = err instanceof Error ? err.message : String(err);
         console.error("Failed to load memories:", err);
         onError(`Failed to load memories: ${msg}`);
@@ -57,5 +64,7 @@ export function useProjectMemories(
   const selectedMemories =
     loaded !== null && loaded.projectKey === selectedKey ? loaded.entries : null;
 
-  return { selectedMemories, loadingMemories, loadMemories };
+  const memoriesLoadFailed = selectedKey !== null && failedKey === selectedKey;
+
+  return { selectedMemories, loadingMemories, memoriesLoadFailed, loadMemories };
 }

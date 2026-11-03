@@ -49,6 +49,7 @@ interface SummaryPanelProps {
   loadingActivity: boolean;
   activityLoadFailed: boolean;
   loadingMemories: boolean;
+  memoriesLoadFailed: boolean;
   driftReport: DriftReport | null;
   driftCheckFailed: boolean;
   availableAgents: AgentInfo[];
@@ -120,6 +121,7 @@ export function SummaryPanel({
   loadingActivity,
   activityLoadFailed,
   loadingMemories,
+  memoriesLoadFailed,
   driftReport,
   driftCheckFailed,
   availableAgents,
@@ -190,8 +192,9 @@ export function SummaryPanel({
 
   let memoryTotal: ReactNode = memoryCount;
   if (memoryCount === null) {
-    if (loadingMemories) memoryTotal = <Placeholder className="h-[26px] w-10" />;
-    else memoryTotal = isCreating ? 0 : "Unavailable";
+    if (isCreating) memoryTotal = 0;
+    else if (memoriesLoadFailed && !loadingMemories) memoryTotal = "Unavailable";
+    else memoryTotal = <Placeholder className="h-[26px] w-10" />;
   }
   const memorySavesText = `${recentMemorySaves} ${recentMemorySaves === 1 ? "save" : "saves"} ${windowStart === null ? `in ${STAT_WINDOW_DAYS} days` : `since ${shortDate(windowStart)}`}`;
 
@@ -325,7 +328,7 @@ export function SummaryPanel({
           )}
         </SummaryCard>
 
-        <SummaryCard title="Memories" aside={tileRange}>
+        <SummaryCard title="Memories">
           <div
             className={typeof memoryTotal === "string"
               ? "text-[12px] text-text-muted"
@@ -374,7 +377,7 @@ export function SummaryPanel({
                   key={row.id}
                   type="button"
                   onClick={() => selectTab("agents")}
-                  className="flex w-full items-center gap-2 py-1.5 text-left"
+                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded px-1.5 py-1.5 text-left transition-colors hover:bg-surface-hover/40"
                 >
                   <AgentIcon agentId={row.id} size={14} />
                   <span className="min-w-0 flex-1 truncate text-[12px] text-text-base">{row.label}</span>

@@ -112,6 +112,22 @@ describe("useProjectMemories", () => {
     expect(result.current.selectedMemories).toEqual({ b: entry("beta value") });
   });
 
+  it("reports a failed load only for the project it belongs to", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("locked"));
+    invokeMock.mockResolvedValueOnce({});
+    const { result, rerender } = renderHook(({ key }) => useProjectMemories(key, vi.fn()), {
+      initialProps: { key: "alpha" },
+    });
+    expect(result.current.memoriesLoadFailed).toBe(false);
+    await act(() => result.current.loadMemories("alpha"));
+    expect(result.current.memoriesLoadFailed).toBe(true);
+    rerender({ key: "beta" });
+    expect(result.current.memoriesLoadFailed).toBe(false);
+    rerender({ key: "alpha" });
+    await act(() => result.current.loadMemories("alpha"));
+    expect(result.current.memoriesLoadFailed).toBe(false);
+  });
+
   it("clears the selected project's memories when its load fails", async () => {
     const pending = deferInvokes();
     const onError = vi.fn();

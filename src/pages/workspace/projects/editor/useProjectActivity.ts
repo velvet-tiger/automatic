@@ -18,7 +18,9 @@ export interface ProjectActivity {
  * Loads a project's activity for the project editor.
  *
  * Loads can overlap and finish in any order, so only the latest request may
- * change state. Loaded entries carry their project, so they show only while
+ * change state. A load for a project that is no longer selected is ignored,
+ * because a slow project switch can reach it after the next project's load.
+ * Loaded entries carry their project, so they show only while
  * that project is selected. A refresh keeps the current entries on screen
  * until its reply arrives, so saving does not blank the Summary charts.
  */
@@ -26,8 +28,11 @@ export function useProjectActivity(selectedKey: string | null): ProjectActivity 
   const [loaded, setLoaded] = useState<{ projectKey: string; entries: ActivityEntry[] } | null>(null);
   const [failedKey, setFailedKey] = useState<string | null>(null);
   const latestRequest = useRef(0);
+  const selectedRef = useRef(selectedKey);
+  selectedRef.current = selectedKey;
 
   const loadActivity = useCallback(async (projectKey: string) => {
+    if (projectKey !== selectedRef.current) return;
     const request = ++latestRequest.current;
     try {
       const raw: string = await invoke("get_project_activity", {
