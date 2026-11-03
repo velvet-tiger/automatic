@@ -298,7 +298,9 @@ export function SummaryPanel({
               {loadingActivity ? (
                 <Placeholder className="mt-1 h-3 w-24" />
               ) : (
-                <div className="truncate text-[12px] text-text-muted">{lastSyncText}</div>
+                <div title={lastSyncText} className="line-clamp-2 text-[12px] leading-snug text-text-muted">
+                  {lastSyncText}
+                </div>
               )}
             </div>
           </div>

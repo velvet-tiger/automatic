@@ -77,6 +77,13 @@ describe("SummaryPanel", () => {
     expect(screen.queryByText("Not synced yet")).toBeNull();
   });
 
+  it("wraps the last sync line within two lines instead of cutting it short", () => {
+    renderPanel();
+    const line = screen.getByText("Not synced yet");
+    expect(line).toHaveClass("line-clamp-2");
+    expect(line).not.toHaveClass("truncate");
+  });
+
   it("names project-level drift in the Agents card", () => {
     renderPanel({
       driftReport: { drifted: true, agents: [], gitignore: { path: ".gitignore" } as DriftedFile },
