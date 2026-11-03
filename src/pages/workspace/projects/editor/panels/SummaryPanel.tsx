@@ -377,7 +377,7 @@ export function SummaryPanel({
                   key={row.id}
                   type="button"
                   onClick={() => selectTab("agents")}
-                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded px-1.5 py-1.5 text-left transition-colors hover:bg-surface-hover/40"
+                  className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded px-1.5 py-1.5 text-left transition-colors hover:bg-text-muted/10"
                 >
                   <AgentIcon agentId={row.id} size={14} />
                   <span className="min-w-0 flex-1 truncate text-[12px] text-text-base">{row.label}</span>

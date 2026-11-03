@@ -21,7 +21,9 @@ export interface ProjectMemories {
  * Loads can overlap when the user switches projects, and can finish in any
  * order. Only the latest request may change state, including the loading
  * flag, so a slow load for an earlier project never replaces or blanks the
- * current one. Loaded entries also carry their project, so they are shown
+ * current one. A load for a project that is no longer selected is ignored,
+ * because a slow project switch can reach it after the next project's load.
+ * Loaded entries also carry their project, so they are shown
  * only while that project is selected.
  */
 export function useProjectMemories(
@@ -32,9 +34,12 @@ export function useProjectMemories(
   const [loadingMemories, setLoadingMemories] = useState(false);
   const [failedKey, setFailedKey] = useState<string | null>(null);
   const latestRequest = useRef(0);
+  const selectedRef = useRef(selectedKey);
+  selectedRef.current = selectedKey;
 
   const loadMemories = useCallback(
     async (projectKey: string) => {
+      if (projectKey !== selectedRef.current) return;
       const request = ++latestRequest.current;
       const isLatest = () => request === latestRequest.current;
       setLoadingMemories(true);
