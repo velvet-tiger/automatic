@@ -1091,7 +1091,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
               <div className="mb-8">
                 <h3 className="text-sm font-medium mb-2 text-text-base">App Updates</h3>
 
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4">
                   {appVersion && (
                     <span className="text-[12px] text-text-muted">
                       Version {appVersion}
