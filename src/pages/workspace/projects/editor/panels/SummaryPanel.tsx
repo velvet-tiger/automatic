@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { GitBranch } from "lucide-react";
 import { AgentIcon } from "../../../../../components/AgentIcon";
-import { ActivityFeed } from "../ActivityFeed";
+import { RecentCommits } from "../RecentCommits";
+import { useProjectGitActivity, type ProjectGitState } from "../useProjectGitActivity";
 import {
   ActivityCalendarGrid,
   ConfigBreakdown,
@@ -15,8 +17,10 @@ import {
   STAT_WINDOW_DAYS,
   agentSyncRows,
   buildActivityCalendar,
+  commitWindowStats,
   countRecent,
   dailyCounts,
+  gitHistoryStart,
   historyStart,
   latestSync,
   localDayKey,
@@ -27,7 +31,7 @@ import {
   type AgentSyncRow,
 } from "../summaryStats";
 import { relativeTime } from "../../helpers";
-import type { ActivityEntry, AgentInfo, DriftReport, Project, ProjectFileInfo } from "../../types";
+import type { ActivityEntry, AgentInfo, DriftReport, GitRepoState, Project, ProjectFileInfo } from "../../types";
 
 type ProjectTabId =
   | "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills"
@@ -39,6 +43,8 @@ type DocEntry = { path: string; summary?: string };
 
 interface SummaryPanelProps {
   project: Project;
+  /** The selected project's `local_key`. Null while it is being created. */
+  projectKey: string | null;
   isCreating: boolean;
   /** Null while no memories are loaded for this project. */
   memories: Record<string, unknown> | null;
@@ -102,6 +108,32 @@ function AgentStatus({ row }: { row: AgentSyncRow }) {
   return <span className={`flex-shrink-0 text-[11px] ${AGENT_STATUS_CLASSES[row.status]}`}>{text}</span>;
 }
 
+const COMMIT_UNIT = { one: "commit", many: "commits" };
+
+function plural(count: number, one: string, many: string): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}
+
+/** Branch, uncommitted changes and upstream position, above the cards. */
+function RepoLine({ repo }: { repo: GitRepoState }) {
+  let upstream = "No upstream";
+  if (repo.ahead !== null && repo.behind !== null) upstream = `${repo.ahead} ahead, ${repo.behind} behind`;
+  else if (repo.upstream !== null) upstream = `Upstream ${repo.upstream} is gone`;
+  const changes = repo.uncommitted_files === 0
+    ? "No uncommitted changes"
+    : `${plural(repo.uncommitted_files, "uncommitted file", "uncommitted files")}`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-text-muted">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <GitBranch size={12} className="flex-shrink-0" />
+        <span className="truncate">{repo.branch ?? "Detached HEAD"}</span>
+      </span>
+      <span>{changes}</span>
+      <span>{upstream}</span>
+    </div>
+  );
+}
+
 function FooterLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button type="button" onClick={onClick} className="transition-colors hover:text-text-base">
@@ -110,8 +142,60 @@ function FooterLink({ onClick, children }: { onClick: () => void; children: Reac
   );
 }
 
+/** The calendar and commit list need history: not shown when reading it failed. */
+function showCommitHistory(git: ProjectGitState): boolean {
+  return git.status === "loading" || git.status === "loaded";
+}
+
+interface CommitTileStats {
+  lineStats: boolean;
+  sparkline: number[];
+  window: { commits: number; authors: number; insertions: number; deletions: number };
+  windowStart: Date | null;
+}
+
+function CommitsTile({ git, stats }: { git: ProjectGitState; stats: CommitTileStats | null }) {
+  const aside = stats?.windowStart ? `Since ${shortDate(stats.windowStart)}` : undefined;
+  if (git.status === "failed") {
+    return (
+      <SummaryCard title={`Commits, ${STAT_WINDOW_DAYS} days`}>
+        <div title={git.error} className="line-clamp-3 text-[12px] text-text-muted">
+          Couldn't read git history. {git.error}
+        </div>
+      </SummaryCard>
+    );
+  }
+  if (stats === null) {
+    return (
+      <SummaryCard title={`Commits, ${STAT_WINDOW_DAYS} days`}>
+        <Placeholder className="h-[26px] w-10" />
+      </SummaryCard>
+    );
+  }
+  const { commits, authors, insertions, deletions } = stats.window;
+  return (
+    <SummaryCard title={`Commits, ${STAT_WINDOW_DAYS} days`} aside={aside}>
+      <div className="text-[22px] font-medium leading-tight tabular-nums text-text-base">
+        {commits.toLocaleString()}
+      </div>
+      {commits > 0 ? (
+        <>
+          <Sparkline values={stats.sparkline} />
+          <div className="mt-1 truncate text-[12px] tabular-nums text-text-muted">
+            {plural(authors, "author", "authors")}
+            {stats.lineStats && `, +${insertions.toLocaleString()} −${deletions.toLocaleString()} lines`}
+          </div>
+        </>
+      ) : (
+        <div className="mt-1 text-[12px] text-text-muted">No recent commits.</div>
+      )}
+    </SummaryCard>
+  );
+}
+
 export function SummaryPanel({
   project,
+  projectKey,
   isCreating,
   memories,
   projectFiles,
@@ -154,24 +238,38 @@ export function SummaryPanel({
   ];
   const configTotal = configItems.reduce((sum, item) => sum + item.count, 0);
 
+  const git = useProjectGitActivity(isCreating ? null : projectKey, activityEntries[0]?.id);
+  const showGit = git.status !== "none";
+
   const localDay = useLocalDay();
   const stats = useMemo(() => {
     const now = new Date();
     return {
-      calendar: buildActivityCalendar(activityEntries, now),
-      sparkline: dailyCounts(activityEntries, STAT_WINDOW_DAYS, now),
-      recentActivity: countRecent(activityEntries, STAT_WINDOW_DAYS, now),
       recentMemorySaves: countRecent(activityEntries, STAT_WINDOW_DAYS, now, "memory_stored"),
       windowStart: truncatedWindowStart(activityEntries, STAT_WINDOW_DAYS, now),
       lastSync: latestSync(activityEntries),
     };
     // `localDay` recomputes the windows when midnight passes.
   }, [activityEntries, localDay]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { calendar, sparkline, recentActivity, recentMemorySaves, windowStart, lastSync } = stats;
-  const calendarRange = calendar.historySince === null
-    ? `Last ${CALENDAR_WEEKS} weeks`
-    : `Since ${shortDate(calendar.historySince)}`;
-  const tileRange = windowStart === null ? undefined : `Since ${shortDate(windowStart)}`;
+  const { recentMemorySaves, windowStart, lastSync } = stats;
+
+  const gitStats = useMemo(() => {
+    if (git.status !== "loaded") return null;
+    const now = new Date();
+    const { commits } = git.activity;
+    const oldest = gitHistoryStart(git.activity);
+    return {
+      lineStats: git.activity.line_stats,
+      calendar: buildActivityCalendar(commits, now, oldest),
+      sparkline: dailyCounts(commits, STAT_WINDOW_DAYS, now),
+      window: commitWindowStats(commits, STAT_WINDOW_DAYS, now),
+      windowStart: truncatedWindowStart(commits, STAT_WINDOW_DAYS, now, oldest),
+    };
+    // `localDay` recomputes the windows when midnight passes.
+  }, [git, localDay]); // eslint-disable-line react-hooks/exhaustive-deps
+  const commitCalendarRange = gitStats?.calendar.historySince
+    ? `Since ${shortDate(gitStats.calendar.historySince)}`
+    : `Last ${CALENDAR_WEEKS} weeks`;
 
   const setUp = Boolean(project.directory) && project.agents.length > 0;
   const agentRows = agentSyncRows(
@@ -292,7 +390,9 @@ export function SummaryPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-3">
+      {git.status === "loaded" && <RepoLine repo={git.activity.repo} />}
+
+      <div className={`grid grid-cols-1 gap-3 ${showGit ? "@[520px]:grid-cols-3" : "@[520px]:grid-cols-2"}`}>
         <SummaryCard title="Sync status">
           <div className="flex items-center gap-3">
             <SyncRing status={sync.status} share={sync.share} />
@@ -309,24 +409,7 @@ export function SummaryPanel({
           </div>
         </SummaryCard>
 
-        <SummaryCard title={`Activity, ${STAT_WINDOW_DAYS} days`} aside={tileRange}>
-          {loadingActivity ? (
-            <Placeholder className="h-[26px] w-10" />
-          ) : activityLoadFailed ? (
-            <div className="text-[12px] text-text-muted">Could not load activity.</div>
-          ) : (
-            <>
-              <div className="text-[22px] font-medium leading-tight tabular-nums text-text-base">
-                {recentActivity}
-              </div>
-              {recentActivity > 0 ? (
-                <Sparkline values={sparkline} />
-              ) : (
-                <div className="mt-1 text-[12px] text-text-muted">No recent activity.</div>
-              )}
-            </>
-          )}
-        </SummaryCard>
+        {showGit && <CommitsTile git={git} stats={gitStats} />}
 
         <SummaryCard title="Memories">
           <div
@@ -344,23 +427,35 @@ export function SummaryPanel({
         </SummaryCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-2">
-        <SummaryCard title="Activity" aside={calendarRange}>
-          {loadingActivity ? (
-            <Placeholder className="h-[109px] w-full" />
-          ) : activityLoadFailed ? (
-            <p className="text-[12px] text-text-muted">Could not load activity.</p>
-          ) : (
-            <ActivityCalendarGrid key={project.name} days={calendar.days} rangeLabel={calendarRange} />
-          )}
-        </SummaryCard>
+      <div className={`grid grid-cols-1 gap-3 ${showCommitHistory(git) ? "@[520px]:grid-cols-2" : ""}`}>
+        {showCommitHistory(git) && (
+          <SummaryCard title="Commits" aside={gitStats ? commitCalendarRange : undefined}>
+            {gitStats === null ? (
+              <Placeholder className="h-[109px] w-full" />
+            ) : (
+              <ActivityCalendarGrid
+                key={project.name}
+                days={gitStats.calendar.days}
+                rangeLabel={commitCalendarRange}
+                label="Commit calendar"
+                unit={COMMIT_UNIT}
+              />
+            )}
+          </SummaryCard>
+        )}
         <SummaryCard title="Configuration" aside={`${configTotal} ${configTotal === 1 ? "item" : "items"}`}>
           <ConfigBreakdown items={configItems} />
         </SummaryCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 @[520px]:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ActivityFeed entries={activityEntries} loading={loadingActivity} failed={activityLoadFailed} />
+      <div className={`grid grid-cols-1 gap-3 ${showCommitHistory(git) ? "@[520px]:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]" : ""}`}>
+        {showCommitHistory(git) && (
+          <RecentCommits
+            commits={git.status === "loaded" ? git.activity.commits : []}
+            historyDays={git.status === "loaded" ? git.activity.history_days : 0}
+            loading={git.status === "loading"}
+          />
+        )}
         <SummaryCard title="Agents">
           {agentRows.length === 0 ? (
             <button
@@ -398,6 +493,7 @@ export function SummaryPanel({
         <FooterLink onClick={() => selectTab("project_file")}>{instructionText}</FooterLink>
         <FooterLink onClick={() => selectTab("docs_links")}>{docsText}</FooterLink>
         <FooterLink onClick={() => selectTab("memory")}>View memory</FooterLink>
+        <FooterLink onClick={() => selectTab("activity")}>View sync log</FooterLink>
       </div>
     </div>
   );

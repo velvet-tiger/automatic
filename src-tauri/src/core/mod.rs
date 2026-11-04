@@ -28,6 +28,7 @@ mod discover_data;
 mod editors;
 mod env_crypto;
 mod flags;
+pub mod git_activity;
 pub mod gitignore;
 pub mod global_mcp;
 mod group_profiles;
