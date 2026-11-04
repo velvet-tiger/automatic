@@ -121,12 +121,7 @@ fn sync_worktree(dir: Option<std::path::PathBuf>, opts: OutputOptions) -> Result
                 result.kept_tracked.join(", ")
             ));
         }
-        if !result.changed_tracked.is_empty() {
-            lines.push(format!(
-                "Warning: these tracked files changed and could not be put back: {}",
-                result.changed_tracked.join(", ")
-            ));
-        }
+        lines.extend(result.problems().into_iter().map(|p| format!("Warning: {p}")));
         lines.join("\n")
     };
     emit(opts, &result, human).map_err(CliError::Io)

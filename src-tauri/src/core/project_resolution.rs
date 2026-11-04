@@ -286,9 +286,10 @@ pub(crate) fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
     if !git_dir.starts_with(common.join("worktrees")) {
         return false;
     }
+    // Git can write the record relative to its own folder.
     let recorded = std::fs::read_to_string(git_dir.join("gitdir"))
         .ok()
-        .and_then(|path| std::fs::canonicalize(path.trim()).ok());
+        .and_then(|path| std::fs::canonicalize(git_dir.join(path.trim())).ok());
     recorded.is_some() && recorded == std::fs::canonicalize(dir.join(".git")).ok()
 }
 

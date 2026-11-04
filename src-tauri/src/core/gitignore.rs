@@ -15,9 +15,9 @@ use crate::core::{Project, ProjectMode};
 
 /// First line of the managed block.  Presence of this exact prefix identifies
 /// an existing block to replace or remove.
-const BEGIN_MARKER: &str = "# BEGIN Automatic-managed";
+pub(crate) const BEGIN_MARKER: &str = "# BEGIN Automatic-managed";
 /// Last line of the managed block.
-const END_MARKER: &str = "# END Automatic-managed";
+pub(crate) const END_MARKER: &str = "# END Automatic-managed";
 /// Explanatory line written immediately after the begin marker.
 const HEADER_NOTE: &str =
     "# Files generated and managed by Automatic. Regenerated on sync; do not edit inside this block.";

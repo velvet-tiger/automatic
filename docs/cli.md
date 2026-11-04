@@ -92,6 +92,12 @@ committed `CLAUDE.md`, are left as the branch has them. The output lists them
 under `kept_tracked`. Tracked files that changed and could not be put back are
 listed under `changed_tracked`.
 
+When the project manages `.gitignore`, the managed block is also written to the
+repository's `.git/info/exclude`. Git applies that file to every worktree and
+never commits it, so the synced files stay ignored on a branch whose
+`.gitignore` has no block. Any synced file git still does not ignore is listed
+under `unignored`.
+
 ### Skills
 
 ```

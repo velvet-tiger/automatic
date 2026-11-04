@@ -16,10 +16,16 @@
 //! parent (see `core::project_resolution`), so both agree.
 //!
 //! A worktree's tracked files belong to its branch. Sync must not change them,
-//! so the tracked files among sync's targets are read before the sync and put
-//! back afterwards. See [`TrackedSnapshot`].
+//! so the tracked files among sync's targets are read before the sync, and the
+//! ones sync wrote are put back afterwards. See [`TrackedSnapshot`].
+//!
+//! Putting back a tracked `.gitignore` drops sync's managed ignore block, and
+//! an older branch may not have one. So the block also goes into the
+//! repository's `info/exclude`, which git applies to every worktree and never
+//! commits. Without it, an agent's `git add -A` could commit `.mcp.json` and
+//! the env values it holds.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -48,6 +54,33 @@ pub struct WorktreeSync {
     /// Paths are relative to the worktree. Non-empty means the worktree now
     /// shows changes the user did not make.
     pub changed_tracked: Vec<String>,
+    /// Written files git does not ignore in the worktree, relative to it.
+    /// Empty when the project does not manage `.gitignore`, because that
+    /// project chose to let its config be committed.
+    pub unignored: Vec<String>,
+    /// Checks that could not run after the files were written.
+    pub warnings: Vec<String>,
+}
+
+impl WorktreeSync {
+    /// One line per thing the user should look at, for logs and the CLI.
+    pub fn problems(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if !self.changed_tracked.is_empty() {
+            lines.push(format!(
+                "these tracked files changed and could not be put back: {}",
+                self.changed_tracked.join(", ")
+            ));
+        }
+        if !self.unignored.is_empty() {
+            lines.push(format!(
+                "git does not ignore these synced files, so they could be committed: {}",
+                self.unignored.join(", ")
+            ));
+        }
+        lines.extend(self.warnings.iter().cloned());
+        lines
+    }
 }
 
 /// Sync the parent project's config into the linked worktree at `worktree`.
@@ -101,12 +134,15 @@ pub(crate) fn sync_project_worktrees(project: &Project) {
             continue;
         }
         match sync_worktree_for(project, &worktree) {
-            Ok(result) if !result.changed_tracked.is_empty() => eprintln!(
-                "[automatic] worktree sync: {} now shows changes to tracked files: {}",
-                worktree.display(),
-                result.changed_tracked.join(", ")
-            ),
-            Ok(_) => {}
+            Ok(result) => {
+                for problem in result.problems() {
+                    eprintln!(
+                        "[automatic] worktree sync: {}: {}",
+                        worktree.display(),
+                        problem
+                    );
+                }
+            }
             Err(e) => eprintln!(
                 "[automatic] worktree sync: {} was not synced: {}",
                 worktree.display(),
@@ -235,31 +271,152 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
         ProjectMode::Normal => worktree.to_path_buf(),
     };
     let mut targets = fixed_sync_paths(&copy, worktree, &effective_dir);
-    targets.push(worktree.join(".gitignore"));
-    let snapshot = TrackedSnapshot::take(worktree, &targets)?;
-    let modified_before = modified_tracked_files(worktree)?;
+    let gitignore = worktree.join(".gitignore");
+    targets.push(gitignore.clone());
+    let pathspecs = literal_pathspecs(worktree, &targets);
+    let snapshot = TrackedSnapshot::take(worktree, &pathspecs)?;
+    let modified_before = modified_tracked_files(worktree, &pathspecs)?;
 
     let synced = sync_to_directory(&mut copy);
-    // Put the branch's files back even when the sync stopped part way.
-    let restore = snapshot.restore();
-    result.written = synced?;
-    result.kept_tracked = restore.kept;
-
-    let modified_after = modified_tracked_files(worktree)?;
-    let kept: BTreeSet<&String> = result.kept_tracked.iter().collect();
-    result.changed_tracked = restore
-        .failed
+    // Only what sync wrote is put back, so an edit someone else makes during
+    // the sync is left alone. Sync does not list `.gitignore` among its
+    // writes. After a failed sync the written list is unknown, so every
+    // changed entry is put back.
+    let wrote: Option<HashSet<PathBuf>> = synced
+        .as_ref()
+        .ok()
+        .map(|written| written.iter().map(PathBuf::from).collect());
+    let restore = snapshot
+        .restore(|path| path == gitignore || wrote.as_ref().map_or(true, |w| w.contains(path)));
+    let written = match synced {
+        Ok(written) => written,
+        Err(e) if restore.failed.is_empty() => return Err(e),
+        Err(e) => {
+            return Err(format!(
+                "{e}. These tracked files changed and could not be put back: {}",
+                restore.failed.join(", ")
+            ))
+        }
+    };
+    let kept: HashSet<PathBuf> = restore.kept.iter().map(|rel| worktree.join(rel)).collect();
+    result.written = written
         .into_iter()
-        .chain(
-            modified_after
-                .difference(&modified_before)
-                .filter(|path| !kept.contains(path))
-                .cloned(),
-        )
-        .collect::<BTreeSet<String>>()
-        .into_iter()
+        .filter(|path| !kept.contains(Path::new(path)))
         .collect();
+
+    if copy.manage_gitignore {
+        if let Err(e) = exclude_managed_paths(worktree, &copy) {
+            result.warnings.push(e);
+        }
+        match unignored_files(worktree, &result.written) {
+            Ok(unignored) => result.unignored = unignored,
+            Err(e) => result.warnings.push(format!(
+                "Could not check which synced files git ignores: {e}"
+            )),
+        }
+    }
+
+    let mut changed: BTreeSet<String> = restore.failed.into_iter().collect();
+    match modified_tracked_files(worktree, &pathspecs) {
+        Ok(after) => changed.extend(
+            after
+                .difference(&modified_before)
+                .filter(|rel| !restore.kept.contains(rel))
+                .cloned(),
+        ),
+        Err(e) => result
+            .warnings
+            .push(format!("Could not check tracked files after the sync: {e}")),
+    }
+    result.kept_tracked = restore.kept;
+    result.changed_tracked = changed.into_iter().collect();
     Ok(result)
+}
+
+/// Write `project`'s managed ignore patterns into the `info/exclude` of the
+/// repository `worktree` belongs to, replacing an earlier Automatic block.
+/// The patterns are rooted, so they apply at the top of every worktree.
+fn exclude_managed_paths(worktree: &Path, project: &Project) -> Result<(), String> {
+    let common = core::git_common_dir(worktree)
+        .ok_or_else(|| format!("Cannot find the git folder of {}", worktree.display()))?;
+    let info = common.join("info");
+    let path = info.join("exclude");
+    for candidate in [&info, &path] {
+        if fs::symlink_metadata(candidate).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "{} is a link, so Automatic will not write its ignore block there",
+                candidate.display()
+            ));
+        }
+    }
+    let existing = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("Cannot read {}: {}", path.display(), e)),
+    };
+    let block =
+        core::gitignore::render_block(&core::gitignore::project_patterns(worktree, project));
+    let mut content = without_managed_block(&existing)
+        .trim_end_matches('\n')
+        .to_string();
+    if !content.is_empty() {
+        content.push_str("\n\n");
+    }
+    content.push_str(&block);
+    if content == existing {
+        return Ok(());
+    }
+    fs::create_dir_all(&info).map_err(|e| format!("Cannot create {}: {}", info.display(), e))?;
+    fs::write(&path, content).map_err(|e| format!("Cannot write {}: {}", path.display(), e))
+}
+
+/// `text` with every Automatic-managed block removed. An unterminated block
+/// runs to the end of the text.
+fn without_managed_block(text: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim_end() == core::gitignore::BEGIN_MARKER {
+            inside = true;
+        } else if inside && line.trim_end() == core::gitignore::END_MARKER {
+            inside = false;
+        } else if !inside {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The files among `written` that are neither tracked nor ignored.
+fn unignored_files(worktree: &Path, written: &[String]) -> Result<Vec<String>, String> {
+    let targets: Vec<PathBuf> = written.iter().map(PathBuf::from).collect();
+    let pathspecs = literal_pathspecs(worktree, &targets);
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = vec![
+        "--others".to_string(),
+        "--exclude-standard".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(pathspecs);
+    ls_files(worktree, &args)
+}
+
+/// `targets` as literal git pathspecs relative to `root`. A target outside
+/// `root`, or `root` itself, is left out.
+fn literal_pathspecs(root: &Path, targets: &[PathBuf]) -> Vec<String> {
+    let mut pathspecs: Vec<String> = targets
+        .iter()
+        .filter_map(|target| target.strip_prefix(root).ok())
+        .filter(|rel| !rel.as_os_str().is_empty())
+        .filter_map(|rel| rel.to_str())
+        .map(|rel| format!(":(literal){}", rel.replace('\\', "/")))
+        .collect();
+    pathspecs.sort();
+    pathspecs.dedup();
+    pathspecs
 }
 
 /// A `git` command run in `worktree`. Variables that point git at another
@@ -277,6 +434,9 @@ fn git_in(worktree: &Path) -> Command {
         "GIT_COMMON_DIR",
         "GIT_OBJECT_DIRECTORY",
         "GIT_NAMESPACE",
+        // Config passed down by a calling git process, for example a hook.
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
     ] {
         cmd.env_remove(var);
     }
@@ -314,11 +474,18 @@ fn ls_files(worktree: &Path, args: &[String]) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// Tracked files whose working copy differs from the index, or is missing.
-fn modified_tracked_files(worktree: &Path) -> Result<BTreeSet<String>, String> {
-    Ok(ls_files(worktree, &["--modified".to_string()])?
-        .into_iter()
-        .collect())
+/// Tracked files under `pathspecs` whose working copy differs from the
+/// index, or is missing.
+fn modified_tracked_files(
+    worktree: &Path,
+    pathspecs: &[String],
+) -> Result<BTreeSet<String>, String> {
+    if pathspecs.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let mut args = vec!["--modified".to_string(), "--".to_string()];
+    args.extend(pathspecs.iter().cloned());
+    Ok(ls_files(worktree, &args)?.into_iter().collect())
 }
 
 /// How one tracked path looked before the sync.
@@ -347,18 +514,8 @@ struct Restored {
 }
 
 impl TrackedSnapshot {
-    /// Read every tracked file at or under one of `targets`. A target outside
-    /// `root` is ignored.
-    fn take(root: &Path, targets: &[PathBuf]) -> Result<Self, String> {
-        let mut pathspecs: Vec<String> = targets
-            .iter()
-            .filter_map(|target| target.strip_prefix(root).ok())
-            .filter(|rel| !rel.as_os_str().is_empty())
-            .filter_map(|rel| rel.to_str())
-            .map(|rel| format!(":(literal){}", rel.replace('\\', "/")))
-            .collect();
-        pathspecs.sort();
-        pathspecs.dedup();
+    /// Read every tracked file that `pathspecs` match.
+    fn take(root: &Path, pathspecs: &[String]) -> Result<Self, String> {
         if pathspecs.is_empty() {
             return Ok(Self {
                 root: root.to_path_buf(),
@@ -366,7 +523,7 @@ impl TrackedSnapshot {
             });
         }
         let mut args = vec!["--".to_string()];
-        args.extend(pathspecs);
+        args.extend(pathspecs.iter().cloned());
         let entries = ls_files(root, &args)?
             .into_iter()
             .map(|rel| {
@@ -380,16 +537,19 @@ impl TrackedSnapshot {
         })
     }
 
-    /// Put back every entry that no longer looks as it did. Each path is
-    /// checked with [`project_write_refusal`] first, so a restore never writes
-    /// through a link out of the worktree.
-    fn restore(self) -> Restored {
+    /// Put back every entry that `may_restore` accepts and that no longer
+    /// looks as it did. Each path is checked with [`project_write_refusal`]
+    /// first, so a restore never writes through a link out of the worktree.
+    fn restore(self, may_restore: impl Fn(&Path) -> bool) -> Restored {
         let mut restored = Restored {
             kept: Vec::new(),
             failed: Vec::new(),
         };
         for (rel, before) in self.entries {
             let path = self.root.join(&rel);
+            if !may_restore(&path) {
+                continue;
+            }
             match read_state(&path) {
                 Ok(now) if now == before => continue,
                 _ => {}
@@ -438,41 +598,56 @@ fn read_state(path: &Path) -> Result<TrackedState, String> {
     })
 }
 
-/// Make `path` look as `state` describes. Whatever is at `path` now is
-/// removed first, unless it is a folder: a folder may hold files the user
-/// wrote, so it is never removed here.
+/// Make `path` look as `state` describes. A file or link is written beside
+/// `path` and renamed over it, so a crash never leaves the path empty. A
+/// folder at `path` may hold files the user wrote, so it is never replaced.
 fn write_state(path: &Path, state: &TrackedState) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_dir() => {
-            return Err(format!("{} is now a folder", path.display()));
-        }
-        Ok(_) => {
-            fs::remove_file(path).map_err(|e| format!("Cannot remove {}: {}", path.display(), e))?
-        }
+        Ok(meta) if meta.is_dir() => return Err(format!("{} is now a folder", path.display())),
+        Ok(_) => {}
         Err(e) if e.kind() == ErrorKind::NotFound => {}
         Err(e) => return Err(format!("Cannot read {}: {}", path.display(), e)),
     }
-    let ensure_parent = || -> Result<(), String> {
-        match path.parent() {
-            Some(parent) => fs::create_dir_all(parent)
-                .map_err(|e| format!("Cannot create {}: {}", parent.display(), e)),
-            None => Ok(()),
+    let temp = match state {
+        TrackedState::Missing => {
+            return match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("Cannot remove {}: {}", path.display(), e)),
+            };
         }
+        TrackedState::File { .. } | TrackedState::Link(_) => temp_path_beside(path)?,
     };
-    match state {
-        TrackedState::Missing => Ok(()),
-        TrackedState::File { bytes, permissions } => {
-            ensure_parent()?;
-            fs::write(path, bytes)
-                .map_err(|e| format!("Cannot write {}: {}", path.display(), e))?;
-            fs::set_permissions(path, permissions.clone())
-                .map_err(|e| format!("Cannot set permissions on {}: {}", path.display(), e))
-        }
-        TrackedState::Link(target) => {
-            ensure_parent()?;
-            make_link(target, path)
-        }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Cannot create {}: {}", parent.display(), e))?;
     }
+    let _ = fs::remove_file(&temp);
+    let staged = match state {
+        TrackedState::File { bytes, permissions } => fs::write(&temp, bytes)
+            .and_then(|()| fs::set_permissions(&temp, permissions.clone()))
+            .map_err(|e| format!("Cannot write {}: {}", temp.display(), e)),
+        TrackedState::Link(target) => make_link(target, &temp),
+        TrackedState::Missing => unreachable!("handled above"),
+    };
+    let renamed = staged.and_then(|()| {
+        fs::rename(&temp, path)
+            .map_err(|e| format!("Cannot move {} into place: {}", temp.display(), e))
+    });
+    if renamed.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    renamed
+}
+
+/// A temporary name in the same folder as `path`, so a rename stays on one
+/// filesystem.
+fn temp_path_beside(path: &Path) -> Result<PathBuf, String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+    Ok(path.with_file_name(format!(".{name}.automatic-restore-{}", std::process::id())))
 }
 
 #[cfg(unix)]
@@ -527,6 +702,16 @@ mod tests {
     const BRANCH_GITIGNORE: &str = "target/\n";
 
     fn fixture(name: &str) -> Fixture {
+        fixture_with(name, &[], |_| {})
+    }
+
+    /// [`fixture`], with extra `git worktree add` flags (before `add`) and a
+    /// change to the registered project.
+    fn fixture_with(
+        name: &str,
+        worktree_flags: &[&str],
+        change: impl FnOnce(&mut Project),
+    ) -> Fixture {
         let tmp = tempfile::tempdir().expect("tempdir");
         let base = fs::canonicalize(tmp.path()).expect("canonical");
         let main = base.join("main");
@@ -536,16 +721,19 @@ mod tests {
         fs::write(main.join(".gitignore"), BRANCH_GITIGNORE).expect("write");
         git(&main, &["add", "CLAUDE.md", ".gitignore"]);
         git(&main, &["commit", "-q", "-m", "init"]);
-        git(&main, &["worktree", "add", "-q", "-b", "feature", "../wt"]);
+        let mut add: Vec<&str> = worktree_flags.to_vec();
+        add.extend(["worktree", "add", "-q", "-b", "feature", "../wt"]);
+        git(&main, &add);
         let worktree = base.join("wt");
 
-        let project = Project {
+        let mut project = Project {
             name: name.into(),
             directory: main.to_str().unwrap().into(),
             agents: vec!["claude".into()],
             manage_gitignore: true,
             ..Default::default()
         };
+        change(&mut project);
         core::save_project(name, &serde_json::to_string(&project).unwrap()).expect("register");
         Fixture {
             _tmp: tmp,
@@ -578,7 +766,7 @@ mod tests {
             "{result:?}"
         );
         assert!(result.changed_tracked.is_empty(), "{result:?}");
-        assert!(modified_tracked_files(&f.worktree).unwrap().is_empty());
+        assert_eq!(status(&f.worktree), "");
         // No registry entry for the worktree.
         let summaries = core::get_project_summaries().unwrap();
         assert!(registered_at(&f.worktree, &summaries).is_none());
@@ -612,7 +800,7 @@ mod tests {
             "the worktree was not synced"
         );
         assert_eq!(read(&f.worktree.join("CLAUDE.md")), BRANCH_CLAUDE_MD);
-        assert!(modified_tracked_files(&f.worktree).unwrap().is_empty());
+        assert_eq!(status(&f.worktree), "");
     }
 
     #[test]
@@ -709,5 +897,99 @@ mod tests {
             linked_worktrees(&f.main).is_empty(),
             "a removed worktree is still listed"
         );
+    }
+
+    fn status(worktree: &Path) -> String {
+        let output = Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(worktree)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .expect("git status");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    #[test]
+    fn synced_files_are_ignored_even_when_the_branch_gitignore_has_no_block() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-ignored");
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert_eq!(read(&f.worktree.join(".gitignore")), BRANCH_GITIGNORE);
+        assert!(result.unignored.is_empty(), "{result:?}");
+        assert!(result.warnings.is_empty(), "{result:?}");
+        assert_eq!(status(&f.worktree), "", "the worktree shows changes");
+        let exclude = read(&f.main.join(".git/info/exclude"));
+        assert!(exclude.contains(core::gitignore::BEGIN_MARKER), "{exclude}");
+        assert!(exclude.contains("/.mcp.json"), "{exclude}");
+
+        // A second sync replaces the block instead of adding another.
+        sync_linked_worktree(&f.worktree).expect("sync again");
+        let again = read(&f.main.join(".git/info/exclude"));
+        assert_eq!(
+            again.matches(core::gitignore::BEGIN_MARKER).count(),
+            1,
+            "{again}"
+        );
+    }
+
+    #[test]
+    fn a_tracked_mcp_config_on_the_branch_is_left_alone() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-tracked-mcp");
+        let branch_mcp = "{\"mcpServers\":{\"branch\":{\"command\":\"x\"}}}\n";
+        fs::write(f.worktree.join(".mcp.json"), branch_mcp).unwrap();
+        git(&f.worktree, &["add", ".mcp.json"]);
+        git(&f.worktree, &["commit", "-q", "-m", "branch mcp"]);
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert_eq!(read(&f.worktree.join(".mcp.json")), branch_mcp);
+        assert!(
+            result.kept_tracked.contains(&".mcp.json".to_string()),
+            "{result:?}"
+        );
+        assert!(
+            !result.written.iter().any(|w| w.ends_with(".mcp.json")),
+            "{result:?}"
+        );
+        assert_eq!(status(&f.worktree), "");
+    }
+
+    #[test]
+    fn a_worktree_with_relative_git_records_is_found() {
+        let _home = core::temp_test_home();
+        let f = fixture_with(
+            "wt-relative",
+            &["-c", "worktree.useRelativePaths=true"],
+            |_| {},
+        );
+
+        assert_eq!(linked_worktrees(&f.main), vec![f.worktree.clone()]);
+        sync_linked_worktree(&f.worktree).expect("sync worktree");
+        assert!(f.worktree.join(".mcp.json").is_file());
+    }
+
+    #[test]
+    fn a_silent_project_writes_only_under_the_silent_folder() {
+        let _home = core::temp_test_home();
+        let f = fixture_with("wt-silent", &[], |p| p.mode = ProjectMode::Silent);
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        let silent = f.worktree.join(".automatic").join("silent");
+        assert!(!result.written.is_empty());
+        assert!(
+            result
+                .written
+                .iter()
+                .all(|w| Path::new(w).starts_with(&silent)),
+            "{result:?}"
+        );
+        assert!(!f.worktree.join(".mcp.json").exists());
+        assert_eq!(read(&f.worktree.join(".gitignore")), BRANCH_GITIGNORE);
+        assert_eq!(status(&f.worktree), "");
     }
 }
