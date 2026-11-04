@@ -54,8 +54,9 @@ impl Agent for Pi {
              legacy SSE servers because Pi rejects them. If you replace Pi's MCP support with \
              pi-mcp-adapter, headless runs skip unapproved servers unless \
              settings.projectServers is \"allow\" in ~/.pi/agent/mcp-adapter.json. Automatic \
-             reads PI_CODING_AGENT_DIR from your login shell when it starts, so restart \
-             Automatic after you change it, and check the target path shown here.",
+             reads PI_CODING_AGENT_DIR from your login shell when it starts, if the shell answers \
+             within a few seconds. Restart Automatic after you change it, and check the target \
+             path shown here.",
         )
     }
 

@@ -43,8 +43,9 @@ impl Agent for ThinkRail {
              them in every workspace. Turning off Manage .gitignore also works, but it can \
              commit literal environment values in .pi/mcp.json. Automatic leaves out legacy SSE \
              servers because ThinkRail rejects them. Automatic reads PI_CODING_AGENT_DIR from \
-             your login shell when it starts, but not a pi folder chosen in ThinkRail's own \
-             Settings, so check the target path shown here.",
+             your login shell when it starts, if the shell answers within a few seconds. It \
+             cannot see a pi folder chosen in ThinkRail's own Settings, so check the target path \
+             shown here.",
         )
     }
 
