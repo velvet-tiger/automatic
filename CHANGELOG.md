@@ -4,10 +4,14 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-11-04
+
 ### Added
 
 - ThinkRail is a sync target. It shares Pi's files, and Pi and ThinkRail can sit on one project.
 - Pi syncs commands to `.pi/prompts` and can receive user-level MCP servers in its agent folder, honouring `PI_CODING_AGENT_DIR`, including a value exported in your shell profile when Automatic is opened from the Dock.
+- The project Summary shows git commit history in place of sync counts: recent commits, a 13-week calendar, and the branch and upstream state. Folders outside a repository leave the git cards out.
+- Syncing a project also syncs its linked git worktrees, so ignored agent config reaches new worktrees. `automatic projects sync-worktree` syncs one on demand.
 
 ### Fixed
 
@@ -15,6 +19,9 @@ All notable changes to Automatic are documented here.
 - Removing Pi no longer deletes your own files in `.pi/`, such as `settings.json` and `extensions/`.
 - Automatic ignores only the paths it writes in `.pi/`, not the whole folder. The next sync rewrites the managed `.gitignore` block in projects that use Pi, so your own `.pi/` files can be tracked.
 - Sub-agents that Pi cannot restrict as written are refused, not widened. The project's problems list shows refused sub-agents, dropped tools and left-out SSE servers.
+- Pi reads only the exact `name` and `description` keys. Other spellings are written under the exact key with a warning. An `extensions` key with another spelling refuses the sub-agent.
+- A Pi copy that cannot be removed no longer stops the project sync. The problems list names it.
+- Folders inside a linked git worktree that uses relative paths now resolve to their project. Before, Automatic treated the worktree as a separate repository.
 
 ## [1.39.0] - 2026-11-03
 
