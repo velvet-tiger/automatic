@@ -473,8 +473,16 @@ fn xcode_tools_installed() -> bool {
 
 /// The first `name` on PATH that can be run, as `Command::new(name)` finds it.
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    find_in(&std::env::var_os("PATH")?, name)
+}
+
+/// The first `name` in the folders of `path_value`, a PATH-style list.
+/// Folders that are not absolute are skipped, an empty entry and `.`
+/// included. A relative result would resolve against the child's working
+/// folder, and some commands run git inside the untrusted project.
+fn find_in(path_value: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path_value)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|candidate| is_executable_file(candidate))
 }
@@ -555,7 +563,7 @@ command\0filter.cmd.clean\ntouch c\0";
         let envs: Vec<_> = command.get_envs().collect();
         assert!(envs.contains(&(OsStr::new("GIT_ALLOW_PROTOCOL"), Some(OsStr::new("none")))));
         assert!(envs.contains(&(OsStr::new("GIT_NO_LAZY_FETCH"), Some(OsStr::new("1")))));
-        // An exported `GIT_CONFIG` would hide the repository's filters.
+        // An exported `GIT_CONFIG` would hide the filters from every scope.
         assert!(envs.contains(&(OsStr::new("GIT_CONFIG"), None)));
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.windows(2).any(|w| w == ["-c", "protocol.allow=never"]));
@@ -640,6 +648,33 @@ command\0filter.cmd.clean\ntouch c\0";
         assert!(build_command(&git, dir, &filters, MAX_CONFIG_ENTRIES - 3).is_err());
         assert!(build_command(&git, dir, &filters, MAX_CONFIG_ENTRIES - 4).is_ok());
         assert!(build_command(&git, dir, &RepoConfig::default(), MAX_CONFIG_ENTRIES).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_absolute_path_entries_are_searched_for_git() {
+        use std::os::unix::fs::PermissionsExt;
+        let executable_git = |dir: &Path| {
+            let git = dir.join("git");
+            std::fs::write(&git, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+            git
+        };
+        // A relative folder that does hold a `git`, from the test's working
+        // folder, so skipping it is what the test sees.
+        let held = tempfile::Builder::new().prefix("find-in-").tempdir_in("target").unwrap();
+        executable_git(held.path());
+        let cwd = std::env::current_dir().unwrap();
+        let relative = held.path().strip_prefix(&cwd).expect("under the working folder");
+        assert!(relative.join("git").is_file());
+        let absolute = tempfile::tempdir().unwrap();
+        let real = executable_git(absolute.path());
+
+        let rel = relative.display();
+        let list = format!(":.:{rel}:bin:{}", absolute.path().display());
+        assert_eq!(find_in(OsStr::new(&list), "git"), Some(real));
+        let only_relative = format!(":.:{rel}:bin");
+        assert_eq!(find_in(OsStr::new(&only_relative), "git"), None);
     }
 
     #[test]
