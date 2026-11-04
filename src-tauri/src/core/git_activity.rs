@@ -13,13 +13,14 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 
 use serde::Serialize;
 
 use super::git_guard::{
     check_git_reads_repo_config, check_git_supports, git_command, git_install, parse_repo_config,
-    GitInstall, RepoConfig, REPO_CONFIG_ARGS,
+    probe_command, GitInstall, RepoConfig, REPO_CONFIG_ARGS,
 };
 use super::remote_sources::run_git_limited;
 use super::Project;
@@ -282,7 +283,17 @@ fn run_git(
     what: &str,
     allowed_exit: Option<i32>,
 ) -> Result<GitRun, String> {
-    let mut command = git_command(git, dir, config)?;
+    run_command(git_command(git, dir, config)?, dir, args, what, allowed_exit)
+}
+
+/// Run `command`, already built for `dir`, with `args`.
+fn run_command(
+    mut command: Command,
+    dir: &Path,
+    args: &[&str],
+    what: &str,
+    allowed_exit: Option<i32>,
+) -> Result<GitRun, String> {
     command.args(args);
     let label = dir.display().to_string();
     let output = run_git_limited(&mut command, GIT_READ_LIMIT, what, &label)?;
@@ -291,7 +302,7 @@ fn run_git(
         return Ok(GitRun::Output(output.stdout));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("not a git repository") {
+    if is_not_a_repository(&stderr) {
         return Ok(GitRun::NotARepository);
     }
     Err(format!(
@@ -300,6 +311,12 @@ fn run_git(
         label,
         stderr.trim()
     ))
+}
+
+/// Whether git's error text says there is no repository. Older git wrote
+/// "Not a git repository".
+fn is_not_a_repository(stderr: &str) -> bool {
+    stderr.to_ascii_lowercase().contains("not a git repository")
 }
 
 /// Read the repository state and recent commits for `project_dir`.
@@ -336,9 +353,8 @@ fn read_git_activity_with(
     // installed, so this comes before any refusal. Global config still lists
     // filters there. `rev-parse` reads no file content.
     let probe = ["rev-parse", "--git-dir"];
-    if let GitRun::NotARepository =
-        run_git(git, project_dir, &RepoConfig::default(), &probe, "rev-parse", None)?
-    {
+    let command = probe_command(git, project_dir)?;
+    if let GitRun::NotARepository = run_command(command, project_dir, &probe, "rev-parse", None)? {
         return Ok(None);
     }
     check_git_reads_repo_config(git.version, "see its history")?;
@@ -444,7 +460,6 @@ pub fn project_git_dir(project: &Project) -> Result<PathBuf, String> {
 mod tests {
     use super::super::git_guard::{git_available, GitVersion};
     use super::*;
-    use std::process::Command;
 
     const H1: &str = "1111111111111111111111111111111111111111";
     const H2: &str = "2222222222222222222222222222222222222222";
@@ -522,6 +537,13 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
     fn detached_head_has_no_branch() {
         let state = parse_status(b"# branch.oid abc\0# branch.head (detached)\0");
         assert_eq!(state.branch, None);
+    }
+
+    #[test]
+    fn a_missing_repository_is_found_in_either_case() {
+        assert!(is_not_a_repository("fatal: not a git repository (or any of the parent directories): .git"));
+        assert!(is_not_a_repository("fatal: Not a git repository: '/x/.git'"));
+        assert!(!is_not_a_repository("fatal: bad config line 1"));
     }
 
     #[test]
@@ -779,7 +801,9 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
         let script = marker_script(outside.path(), &marker);
         let global = outside.path().join("global.cfg");
         std::fs::write(&global, format!("[filter \"glob\"]\n\tclean = {}\n", script.display())).unwrap();
-        let git = installed.with_version(version).with_global_config(outside.path(), &global);
+        let git = installed
+            .with_version(version)
+            .with_global_config(outside.path(), &global, "filter.glob.clean")?;
         let project = project_with_agents(tmp.path(), &[]);
         let result = read_git_activity_with(tmp.path(), &project, Some(&git));
         assert!(!marker.exists(), "the global filter ran");
@@ -824,7 +848,9 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
             .open(root.join("a.txt"))
             .and_then(|file| file.set_modified(future))
             .unwrap();
-        let git = installed.with_global_config(outside.path(), &global);
+        let Some(git) = installed.with_global_config(outside.path(), &global, "filter.glob.clean") else {
+            return;
+        };
 
         let project = project_with_agents(root, &[]);
         read_git_activity_with(root, &project, Some(&git)).unwrap().expect("a repo");

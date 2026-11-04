@@ -1199,7 +1199,7 @@ mod tests {
             .collect();
         assert!(args.windows(2).any(|w| w == ["-C", "/wt"]), "{args:?}");
         assert!(
-            args.windows(2).any(|w| w == ["-c", "core.fsmonitor=false"]),
+            args.windows(2).any(|w| w == ["-c", "core.fsmonitor="]),
             "{args:?}"
         );
     }
@@ -1228,7 +1228,7 @@ mod tests {
             .err()
             .expect("refused");
         assert!(
-            err.contains("Git filters are set for this repository"),
+            err.contains("Git filters are set in your git config or in this repository's"),
             "{err}"
         );
         assert!(err.ends_with("Update git to sync its worktrees."), "{err}");
@@ -1365,7 +1365,11 @@ mod tests {
         });
         let global = armed.outside.path().join("global.cfg");
         let installed = git_guard::git_install().expect("git is installed");
-        let git = installed.with_global_config(armed.outside.path(), &global);
+        let Some(git) =
+            installed.with_global_config(armed.outside.path(), &global, "filter.glob.clean")
+        else {
+            return;
+        };
         let raw = core::read_project("wt-filter-global").unwrap();
         let project: Project = serde_json::from_str(&raw).unwrap();
 

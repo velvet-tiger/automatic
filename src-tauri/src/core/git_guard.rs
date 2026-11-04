@@ -4,8 +4,9 @@
 //! directory, so its `.git/config` is not trusted. [`git_command`] turns off
 //! the settings that make a read run another program:
 //!
-//! - `core.fsmonitor`, with `-c`. Callers also pass the command options that
-//!   turn off external diff drivers, textconv and signature display.
+//! - `core.fsmonitor`, with an empty `-c` value. Callers also pass the
+//!   command options that turn off external diff drivers, textconv and
+//!   signature display.
 //! - Clean, smudge and process filters, which git runs when it re-checks a
 //!   file's content. Filters from every config scope are turned off,
 //!   includes counted. Their names come from `git config`, which runs
@@ -22,7 +23,11 @@
 //! index, so it never races the user's own git commands. Every call also sets
 //! `protocol.allow=never` and a no-op `core.sshCommand`, so no transport can
 //! run whatever else asks for one. An exported `GIT_CONFIG` is removed,
-//! because `git config` would read only that file and miss the filters.
+//! because `git config` would read only that file and miss the filters. An
+//! inherited `GIT_CONFIG_PARAMETERS` is removed too: git reads it after the
+//! `GIT_CONFIG_COUNT` entries, so a filter passed down that way would beat
+//! the blank. [`probe_command`] leaves out the options old git lacks, for the
+//! first call that finds the repository.
 //!
 //! The filter override needs git 2.31 and `GIT_NO_LAZY_FETCH` needs git 2.44.
 //! Older git ignores both silently, so [`check_git_supports`] refuses a
@@ -168,8 +173,8 @@ fn is_partial_clone_key(key: &[u8]) -> bool {
 // ── Building commands ─────────────────────────────────────────────────────────
 
 /// A `git` command for `dir` with every setting that could run another
-/// program or reach the network turned off. `config` names the repository's
-/// filters to blank. Config the user exported through `GIT_CONFIG_COUNT`
+/// program or reach the network turned off. `config` names the filters to
+/// blank. Config the user exported through `GIT_CONFIG_COUNT`
 /// is kept. Fails when that count is one git cannot read, or leaves no room
 /// for ours.
 pub(crate) fn git_command(
@@ -233,18 +238,41 @@ fn build_command(
     config: &RepoConfig,
     first_index: usize,
 ) -> Result<Command, String> {
+    let mut command = hardened_command(git, config, first_index)?;
+    command.arg("--no-optional-locks").arg("-C").arg(dir);
+    Ok(command)
+}
+
+/// [`git_command`] for `git rev-parse` in `dir`, without the options old git
+/// lacks: `--no-optional-locks` needs git 2.15 and `-C` needs git 1.8.5. It
+/// runs in `dir` instead. `rev-parse` reads no index and takes no optional
+/// lock, so it needs neither. Lets a caller find the repository, and refuse
+/// old git with a clear message, on any git.
+pub(crate) fn probe_command(git: &GitInstall, dir: &Path) -> Result<Command, String> {
+    let inherited = inherited_config_count(std::env::var_os("GIT_CONFIG_COUNT").as_deref())?;
+    let mut command = hardened_command(git, &RepoConfig::default(), inherited)?;
+    command.current_dir(dir);
+    Ok(command)
+}
+
+/// The `-c` settings, environment and filter overrides every command gets.
+fn hardened_command(
+    git: &GitInstall,
+    config: &RepoConfig,
+    first_index: usize,
+) -> Result<Command, String> {
     let mut command = Command::new(&git.path);
     command
         .arg("--no-pager")
-        .arg("--no-optional-locks")
         .args(["-c", "protocol.allow=never"])
         .args(["-c", "core.sshCommand=false"])
-        .args(["-c", "core.fsmonitor=false"])
+        // Empty, not `false`: before git 2.36 the value is a hook path, and
+        // `false` would be run as a program. An empty value is no hook on old
+        // git and boolean false on new git.
+        .args(["-c", "core.fsmonitor="])
         .args(["-c", "core.quotePath=false"])
         .args(["-c", "color.ui=false"])
         .args(["-c", "log.showSignature=false"])
-        .arg("-C")
-        .arg(dir)
         // Callers match error text, so it must not be translated.
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -253,9 +281,13 @@ fn build_command(
         // a per-protocol `protocol.<name>.allow` in the repository's config,
         // which `protocol.allow=never` does not. Works on old git too.
         .env("GIT_ALLOW_PROTOCOL", "none")
-        // `git config` would read only this file and miss the repository's
-        // filters, so they would not be blanked.
-        .env_remove("GIT_CONFIG");
+        // `git config` would read only this file and miss the filters, so
+        // they would not be blanked.
+        .env_remove("GIT_CONFIG")
+        // git reads this after the `GIT_CONFIG_COUNT` entries, so a filter
+        // passed down in it would beat the blank. Our own `-c` arguments are
+        // read from the command line.
+        .env_remove("GIT_CONFIG_PARAMETERS");
 
     let mut overrides: Vec<(String, &str)> = Vec::new();
     for name in &config.filters {
@@ -270,7 +302,7 @@ fn build_command(
         .ok_or_else(|| {
             format!(
                 "GIT_CONFIG_COUNT is set to {first_index}, which leaves no room for the settings \
-                 that keep this repository's git filters off. Unset it to run git safely."
+                 that keep git filters off. Unset it to run git safely."
             )
         })?;
     command.env("GIT_CONFIG_COUNT", count.to_string());
@@ -304,13 +336,14 @@ pub(crate) fn check_git_supports(
 ) -> Result<(), String> {
     if config.non_utf8_filter {
         return Err(format!(
-            "A git filter set for this repository has a name that is not valid UTF-8, so \
-             Automatic cannot turn it off. Rename that filter in your git config to {purpose}."
+            "A git filter has a name that is not valid UTF-8, so Automatic cannot turn it off. \
+             Rename that filter, in your git config or in this repository's, to {purpose}."
         ));
     }
     if !config.filters.is_empty() && version < MIN_VERSION_CONFIG_ENV {
         return Err(format!(
-            "Git filters are set for this repository. Reading it safely needs git \
+            "Git filters are set in your git config or in this repository's. Reading the \
+             repository safely needs git \
              {MIN_VERSION_CONFIG_ENV} or later, and git {version} is installed. Update git to {purpose}."
         ));
     }
@@ -355,22 +388,35 @@ impl GitVersion {
 impl GitInstall {
     /// This git, run through a script in `dir` that points
     /// `GIT_CONFIG_GLOBAL` at `global`, as the user's own global config
-    /// would be. The test's own process environment is left alone.
-    pub(crate) fn with_global_config(&self, dir: &Path, global: &Path) -> Self {
+    /// would be. The test's own process environment is left alone. `None`
+    /// when this git cannot read `key` from that file: git reads
+    /// `GIT_CONFIG_GLOBAL` only from 2.32, and a test would then prove
+    /// nothing.
+    pub(crate) fn with_global_config(&self, dir: &Path, global: &Path, key: &str) -> Option<Self> {
         use std::os::unix::fs::PermissionsExt;
         let wrapper = dir.join("git-with-global-config");
         let script = format!(
-            "#!/bin/sh\nGIT_CONFIG_GLOBAL='{}'\nexport GIT_CONFIG_GLOBAL\nexec '{}' \"$@\"\n",
-            global.display(),
-            self.path.display()
+            "#!/bin/sh\nGIT_CONFIG_GLOBAL={}\nexport GIT_CONFIG_GLOBAL\nexec {} \"$@\"\n",
+            shell_quote(global),
+            shell_quote(&self.path)
         );
         std::fs::write(&wrapper, script).unwrap();
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self {
+        let reads = Command::new(&wrapper)
+            .args(["config", "--global", "--get", key])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        reads.then_some(Self {
             path: wrapper,
             version: self.version,
-        }
+        })
     }
+}
+
+/// `path` in single quotes for `sh`, with each `'` written as `'\''`.
+#[cfg(all(test, unix))]
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
 #[cfg(test)]
@@ -514,6 +560,46 @@ command\0filter.cmd.clean\ntouch c\0";
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.windows(2).any(|w| w == ["-c", "protocol.allow=never"]));
         assert!(args.windows(2).any(|w| w == ["-c", "core.sshCommand=false"]));
+        // Before git 2.36, `false` here would be run as a hook program.
+        assert!(args.windows(2).any(|w| w == ["-c", "core.fsmonitor="]));
+    }
+
+    #[test]
+    fn every_builder_drops_inherited_command_line_config() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
+        let dir = Path::new(".");
+        let config = RepoConfig::default();
+        for command in [
+            git_command(&git, dir, &config).unwrap(),
+            isolated_git_command(&git, dir, &config).unwrap(),
+            probe_command(&git, dir).unwrap(),
+        ] {
+            let envs: Vec<_> = command.get_envs().collect();
+            assert!(envs.contains(&(OsStr::new("GIT_CONFIG_PARAMETERS"), None)), "{envs:?}");
+        }
+    }
+
+    #[test]
+    fn the_probe_leaves_out_options_old_git_lacks_and_keeps_the_hardening() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 10) };
+        let command = probe_command(&git, Path::new("/repo")).unwrap();
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(!args.iter().any(|a| a == "--no-optional-locks"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "-C"), "{args:?}");
+        assert_eq!(command.get_current_dir(), Some(Path::new("/repo")));
+        assert!(args.windows(2).any(|w| w == ["-c", "protocol.allow=never"]));
+        assert!(args.windows(2).any(|w| w == ["-c", "core.sshCommand=false"]));
+        assert!(args.windows(2).any(|w| w == ["-c", "core.fsmonitor="]));
+        let envs: Vec<_> = command.get_envs().collect();
+        assert!(envs.contains(&(OsStr::new("GIT_ALLOW_PROTOCOL"), Some(OsStr::new("none")))));
+        assert!(envs.contains(&(OsStr::new("GIT_CONFIG"), None)));
+        assert!(envs.contains(&(OsStr::new("LC_ALL"), Some(OsStr::new("C")))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(shell_quote(Path::new("/a b/it's")), r"'/a b/it'\''s'");
     }
 
     #[test]
