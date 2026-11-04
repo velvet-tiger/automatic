@@ -6,8 +6,6 @@ import type { ActivityEntry, DriftReport, GitActivity, GitCommit } from "../type
 export const ACTIVITY_HISTORY_LIMIT = 500;
 export const CALENDAR_WEEKS = 13;
 export const STAT_WINDOW_DAYS = 30;
-/** Syncs further apart than this are separate work, so they keep their own rows. */
-const SYNC_GROUP_GAP_MS = 60 * 60 * 1000;
 
 /** Anything with a time: an activity row or a commit. */
 export interface Timestamped {
@@ -26,11 +24,6 @@ export interface ActivityCalendar {
   days: CalendarDay[];
   /** Oldest stored event, set only when history stops inside the calendar. */
   historySince: Date | null;
-}
-
-export interface ActivityGroup {
-  entry: ActivityEntry;
-  count: number;
 }
 
 export type AgentSyncStatus = "synced" | "drifted" | "checking" | "failed" | "not_set_up";
@@ -207,40 +200,6 @@ export function activityLevel(count: number): 0 | 1 | 2 | 3 | 4 {
   if (count <= 5) return 2;
   if (count <= 10) return 3;
   return 4;
-}
-
-function previousSyncIsClose(newer: ActivityEntry | undefined, older: ActivityEntry): boolean {
-  if (newer === undefined || newer.event !== "sync" || older.event !== "sync") return false;
-  const gap = new Date(newer.timestamp).getTime() - new Date(older.timestamp).getTime();
-  return Math.abs(gap) <= SYNC_GROUP_GAP_MS;
-}
-
-/**
- * The newest `limit` rows for the activity list. Consecutive syncs close
- * together collapse into one row, because a save often logs two identical
- * entries.
- */
-export function groupActivity(entries: ActivityEntry[], limit: number): ActivityGroup[] {
-  const groups: ActivityGroup[] = [];
-  let lastInRun: ActivityEntry | undefined;
-  for (const entry of entries) {
-    const previous = groups[groups.length - 1];
-    if (previous !== undefined && previousSyncIsClose(lastInRun, entry)) {
-      previous.count += 1;
-    } else {
-      if (groups.length === limit) break;
-      groups.push({ entry, count: 1 });
-    }
-    lastInRun = entry;
-  }
-  return groups;
-}
-
-/** Feature details hold an internal id. Memory key details repeat the label. */
-export function visibleActivityDetail(entry: ActivityEntry): string {
-  if (entry.event.startsWith("feature_")) return "";
-  if (entry.event === "memory_stored" || entry.event === "memory_deleted") return "";
-  return entry.detail;
 }
 
 export function latestSync(entries: ActivityEntry[]): ActivityEntry | undefined {

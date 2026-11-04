@@ -10,14 +10,12 @@ import {
   countRecent,
   dailyCounts,
   gitHistoryStart,
-  groupActivity,
   historyStart,
   latestSync,
   localDayKey,
   projectLevelDrift,
   summarizeSync,
   truncatedWindowStart,
-  visibleActivityDetail,
 } from "./summaryStats";
 
 // Wednesday 4 November 2026, local time.
@@ -128,59 +126,6 @@ describe("activityLevel", () => {
     [11, 4],
   ])("maps %i events to level %i", (count, level) => {
     expect(activityLevel(count)).toBe(level);
-  });
-});
-
-describe("groupActivity", () => {
-  it("merges consecutive syncs only", () => {
-    const entries = [
-      entry(NOW, "sync"),
-      entry(NOW, "sync"),
-      entry(NOW, "skill_added"),
-      entry(NOW, "skill_added"),
-      entry(NOW, "sync"),
-    ];
-    expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([2, 1, 1, 1]);
-  });
-
-  it("keeps syncs apart when they are far apart in time", () => {
-    const entries = [
-      entry(new Date(2026, 10, 4, 12, 0), "sync"),
-      entry(new Date(2026, 10, 4, 11, 30), "sync"),
-      entry(new Date(2026, 10, 3, 9, 0), "sync"),
-    ];
-    expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([2, 1]);
-  });
-
-  it("measures the gap from the previous sync in a run", () => {
-    const entries = [
-      entry(new Date(2026, 10, 4, 12, 0), "sync"),
-      entry(new Date(2026, 10, 4, 11, 20), "sync"),
-      entry(new Date(2026, 10, 4, 10, 40), "sync"),
-    ];
-    expect(groupActivity(entries, 10).map((group) => group.count)).toEqual([3]);
-  });
-
-  it("keeps counting a sync run at the limit", () => {
-    const entries = [entry(NOW, "skill_added"), entry(NOW, "sync"), entry(NOW, "sync")];
-    const groups = groupActivity(entries, 2);
-    expect(groups).toHaveLength(2);
-    expect(groups[1].count).toBe(2);
-  });
-});
-
-describe("visibleActivityDetail", () => {
-  it("hides feature ids and repeated memory keys", () => {
-    expect(visibleActivityDetail(entry(NOW, "feature_created", "e7dcf9d1"))).toBe("");
-    expect(visibleActivityDetail(entry(NOW, "memory_stored", "key"))).toBe("");
-  });
-
-  it("keeps the size of a memory clear", () => {
-    expect(visibleActivityDetail(entry(NOW, "memory_cleared", "3 entries"))).toBe("3 entries");
-  });
-
-  it("keeps other details", () => {
-    expect(visibleActivityDetail(entry(NOW, "sync", "42 files"))).toBe("42 files");
   });
 });
 
