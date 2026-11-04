@@ -312,6 +312,7 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
     let mut denied: Vec<String> = Vec::new();
     let mut plan_mode = false;
     let mut extensions = false;
+    let mut max_turns: Option<u32> = None;
     let mut has_name = false;
     let mut has_description = false;
     for entry in entries {
@@ -335,8 +336,13 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
                     lines.push(format!("model: {value}"));
                 }
             }
+            // Several spellings may each set a limit, and Pi reads only the
+            // last `max_turns`, so the tightest one is written once.
             (None, "maxturns") => match value.parse::<u32>() {
-                Ok(turns) if turns > 0 => lines.push(format!("max_turns: {turns}")),
+                Ok(turns) if turns > 0 => {
+                    tools_at.get_or_insert(lines.len());
+                    max_turns = Some(max_turns.map_or(turns, |limit| limit.min(turns)));
+                }
                 _ => problems.push(format!("its turn limit '{value}' is not a positive number")),
             },
             (None, "permissionmode") => match value {
@@ -349,9 +355,15 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
                 other => problems.push(format!("Pi cannot express permission mode '{other}'")),
             },
             (None, "extensions") => {
+                // Pi reads only the exact key, last one winning, so a variant
+                // could turn extensions on while this code thinks they are off.
+                if entry.key.trim() != "extensions" {
+                    problems.push(format!("cannot read the key '{}'", entry.key.escape_default()));
+                    continue;
+                }
                 // Pi enables them only for `true`, but any other spelling may
-                // be meant the same way, so only `false` counts as off.
-                extensions = !matches!(value, "" | "false");
+                // be meant the same way.  Any occurrence that is on counts.
+                extensions |= !matches!(value, "" | "false");
                 lines.push(entry.line);
             }
             (None, _) if normal.contains("tool") => {
@@ -364,6 +376,12 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
                 lines.push(entry.line);
             }
         }
+    }
+
+    if let Some(turns) = max_turns {
+        let at = tools_at.unwrap_or(lines.len()).min(lines.len());
+        lines.insert(at, format!("max_turns: {turns}"));
+        tools_at = Some(at + 1);
     }
 
     let mut warnings = Vec::new();
@@ -1343,6 +1361,28 @@ mod tests {
             tools_line("tools: Read\nextensions: false\ndisallowedTools: WebFetch\n").as_deref(),
             Some("tools: read")
         );
+    }
+
+    #[test]
+    fn test_a_later_extensions_variant_cannot_hide_extensions() {
+        for variant in ["Extensions: false", "extensions_: false", "\"extensions\": false"] {
+            let rendered = refused(&format!(
+                "tools: Read\nextensions: true\n{variant}\ndisallowedTools: WebFetch\n"
+            ));
+            assert!(!rendered.contains(variant), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn test_extensions_stay_on_once_any_occurrence_is_on() {
+        refused("tools: Read\nextensions: true\nextensions: false\ndisallowedTools: WebFetch\n");
+    }
+
+    #[test]
+    fn test_several_turn_limits_write_the_tightest_once() {
+        let rendered = converted("max_turns: 5\nmaxTurns: 50\n");
+        assert_eq!(rendered.matches("max_turns:").count(), 1, "{rendered}");
+        assert!(rendered.contains("\nmax_turns: 5\n"), "{rendered}");
     }
 
     #[test]

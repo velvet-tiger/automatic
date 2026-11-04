@@ -195,12 +195,17 @@ pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, S
             if crate::agent::is_managed_agent_file(&copy) {
                 let relative = copy.strip_prefix(&dir).unwrap_or(&copy);
                 warnings.problems.push(format!(
-                    "An earlier copy of `{machine_name}` at `{}` could not be removed. Delete it by hand.",
+                    "Sync has not removed an earlier copy of `{machine_name}` at `{}`. Sync the project, then delete the file by hand if it is still there.",
                     relative.display()
                 ));
             }
         }
     }
+    // Pi and ThinkRail share `.pi/agents`, so both report one stuck copy.
+    let mut seen = HashSet::new();
+    warnings.problems.retain(|line| seen.insert(line.clone()));
+    let mut seen = HashSet::new();
+    warnings.notes.retain(|line| seen.insert(line.clone()));
     Ok(warnings)
 }
 
@@ -2536,8 +2541,29 @@ mod tests {
             .iter()
             .find(|p| matches!(p.kind, ProjectProblemKind::AgentSyncLimits))
             .expect("problem");
-        assert!(problem.solution.iter().any(|s| s.contains("could not be removed")), "{problem:?}");
+        assert!(problem.solution.iter().any(|s| s.contains("has not removed")), "{problem:?}");
         assert_eq!(agent_drift_paths(&project).len(), 1);
+    }
+
+    #[test]
+    fn a_copy_both_pi_and_thinkrail_see_is_reported_once() {
+        let _home = crate::core::temp_test_home();
+        let dir = tempdir().unwrap();
+        let mut project = pi_family_project("pi", dir.path(), REFUSED);
+        project.agents.push("thinkrail".to_string());
+        let agents_dir = dir.path().join(".pi/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("planner.md"),
+            "---\nname: planner\nautomatic-managed: true\n---\nOld.\n",
+        )
+        .unwrap();
+
+        let warnings = project_sync_warnings(&project).expect("warnings");
+        let copies = warnings.problems.iter().filter(|line| line.contains("earlier copy")).count();
+        assert_eq!(copies, 1, "{:?}", warnings.problems);
+        // Each agent's own refusal names that agent, so both stay.
+        assert_eq!(warnings.problems.len(), 3, "{:?}", warnings.problems);
     }
 
     /// After `write_mcp_config` writes the MCP config, `collect_mcp_drift` must
