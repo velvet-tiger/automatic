@@ -140,7 +140,8 @@ fn parse_repo_config(output: &[u8]) -> RepoConfig {
     let mut config = RepoConfig::default();
     let mut fields = text.split('\0');
     while let (Some(scope), Some(entry)) = (fields.next(), fields.next()) {
-        let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
+        // A key written with no value prints with no line feed.
+        let key = entry.split_once('\n').map_or(entry, |(key, _value)| key);
         let repo_scope = scope == "local" || scope == "worktree";
         if !repo_scope {
             continue;
@@ -149,7 +150,11 @@ fn parse_repo_config(output: &[u8]) -> RepoConfig {
             if !config.local_filters.iter().any(|n| n == name) {
                 config.local_filters.push(name.to_string());
             }
-        } else if is_partial_clone_key(key) && !value.trim().is_empty() && value.trim() != "false" {
+        } else if is_partial_clone_key(key) {
+            // Any such key counts, whatever its value. A bare key is a
+            // boolean true to git, and guessing wrong here would let a fetch
+            // through on old git, while guessing wrong the other way only
+            // hides line counts.
             config.partial_clone = true;
         }
     }
@@ -369,7 +374,11 @@ fn git_command(git: &GitInstall, dir: &Path, config: &RepoConfig) -> Command {
         // Error text is matched below, so it must not be translated.
         .env("LC_ALL", "C")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_NO_LAZY_FETCH", "1");
+        .env("GIT_NO_LAZY_FETCH", "1")
+        // An allow-list that overrides every `protocol.*` setting, including
+        // a per-protocol `protocol.<name>.allow` in the repository's config,
+        // which `protocol.allow=never` does not. Works on old git too.
+        .env("GIT_ALLOW_PROTOCOL", "none");
 
     let mut overrides: Vec<(String, &str)> = Vec::new();
     for name in &config.local_filters {
@@ -751,8 +760,26 @@ worktree\0filter.wt.clean\ntouch w\0";
         assert!(config.partial_clone);
         let config = parse_repo_config(b"local\0extensions.partialclone\norigin\0");
         assert!(config.partial_clone);
+        // Any value counts, failing safe: the cost is only hidden line counts.
         let config = parse_repo_config(b"local\0remote.origin.promisor\nfalse\0");
+        assert!(config.partial_clone);
+        // A key with no value is printed with no line feed after it.
+        let config = parse_repo_config(b"local\0remote.origin.promisor\0");
+        assert!(config.partial_clone);
+        let config = parse_repo_config(b"global\0remote.origin.promisor\ntrue\0");
         assert!(!config.partial_clone);
+    }
+
+    #[test]
+    fn every_call_blocks_all_transports() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
+        let command = git_command(&git, Path::new("."), &RepoConfig::default());
+        let envs: Vec<_> = command.get_envs().collect();
+        assert!(envs.contains(&(std::ffi::OsStr::new("GIT_ALLOW_PROTOCOL"), Some(std::ffi::OsStr::new("none")))));
+        assert!(envs.contains(&(std::ffi::OsStr::new("GIT_NO_LAZY_FETCH"), Some(std::ffi::OsStr::new("1")))));
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.windows(2).any(|w| w == ["-c", "protocol.allow=never"]));
+        assert!(args.windows(2).any(|w| w == ["-c", "core.sshCommand=false"]));
     }
 
     #[test]
@@ -1024,5 +1051,19 @@ worktree\0filter.wt.clean\ntouch w\0";
         assert!(!activity.line_stats);
         assert_eq!(activity.commits.len(), 2);
         assert!(!marker.exists(), "core.sshCommand from the repository ran");
+
+        // A bare `promisor` key and a re-allowed `ext` transport: the route
+        // that slipped past a value-based check and `protocol.allow=never`.
+        let config_path = root.join(".git/config");
+        let text = std::fs::read_to_string(&config_path).unwrap();
+        std::fs::write(&config_path, text.replace("promisor = true", "promisor")).unwrap();
+        let ext_marker = outside.path().join("ext-ran");
+        let url = format!("ext::sh -c touch% {}", ext_marker.display());
+        git(&root, &["config", "remote.origin.url", &url]);
+        git(&root, &["config", "protocol.ext.allow", "always"]);
+        let result = read_git_activity(&root, &project);
+        assert!(!ext_marker.exists(), "the ext transport from the repository ran");
+        let activity = result.unwrap().expect("a repo");
+        assert!(!activity.line_stats, "a bare promisor key was not seen as a partial clone");
     }
 }
