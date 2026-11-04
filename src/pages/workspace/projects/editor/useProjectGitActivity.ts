@@ -19,10 +19,43 @@ const IDLE: ProjectGitState = { status: "none" };
  * shown until that read returns.
  */
 const lastKnown = new Map<string, ProjectGitState>();
+/** Projects with a read running. Shared, so a remount cannot start a second. */
+const inFlight = new Set<string>();
+/** Projects asked for again while their read ran. */
+const pending = new Set<string>();
+/** Mounted hooks, told when any project's result changes. */
+const listeners = new Set<() => void>();
 
-/** Test support: forget every cached result. */
+/** Test support: forget every cached result and running read. */
 export function clearGitActivityCache(): void {
   lastKnown.clear();
+  inFlight.clear();
+  pending.clear();
+}
+
+/**
+ * Read `key`'s history into the cache. One read per project runs at a time.
+ * A request made while one runs is held and made once that read finishes,
+ * so a burst of focus events costs at most one more read and a save is never
+ * answered with a read that started before it.
+ */
+async function loadGitActivity(key: string): Promise<void> {
+  if (inFlight.has(key)) {
+    pending.add(key);
+    return;
+  }
+  inFlight.add(key);
+  try {
+    const reply: unknown = await invoke("get_project_git_activity", { project: key });
+    lastKnown.set(key, gitStateFromReply(reply));
+  } catch (err: unknown) {
+    console.error("Failed to load git activity:", err);
+    lastKnown.set(key, { status: "failed", error: checkErrorText(err) });
+  } finally {
+    inFlight.delete(key);
+  }
+  for (const listener of listeners) listener();
+  if (pending.delete(key)) void loadGitActivity(key);
 }
 
 function isGitActivity(value: unknown): value is GitActivity {
@@ -50,55 +83,38 @@ export function gitStateFromReply(reply: unknown): ProjectGitState {
  * has no saved record. The backend reads the saved folder, so loads follow
  * the saved project: `refreshKey` changes when the project's newest activity
  * row does, which a save writes. The window regaining focus also reloads, so
- * the uncommitted count follows work done in another app.
- *
- * One read runs at a time. A request made while one runs is held and made
- * once that read finishes, so a burst of focus events costs at most one more
- * read and a save is never answered with a read that started before it. A
- * reply for a project that is no longer shown is cached but not displayed.
+ * the uncommitted count follows work done in another app. Results are cached
+ * by project, so a reply for a project that is no longer shown is kept but
+ * not displayed.
  */
 export function useProjectGitActivity(
   projectKey: string | null,
   refreshKey: number | undefined,
 ): ProjectGitState {
   const [, setVersion] = useState(0);
-  const inFlight = useRef(false);
-  const pending = useRef(false);
   const currentKey = useRef(projectKey);
   currentKey.current = projectKey;
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    const listener = () => setVersion((v) => v + 1);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+
+  const load = useCallback(() => {
     const key = currentKey.current;
-    if (key === null) return;
-    if (inFlight.current) {
-      pending.current = true;
-      return;
-    }
-    inFlight.current = true;
-    try {
-      const reply: unknown = await invoke("get_project_git_activity", { project: key });
-      lastKnown.set(key, gitStateFromReply(reply));
-    } catch (err: unknown) {
-      console.error("Failed to load git activity:", err);
-      lastKnown.set(key, { status: "failed", error: checkErrorText(err) });
-    } finally {
-      inFlight.current = false;
-    }
-    if (key === currentKey.current) setVersion((v) => v + 1);
-    if (pending.current || key !== currentKey.current) {
-      pending.current = false;
-      void load();
-    }
+    if (key !== null) void loadGitActivity(key);
   }, []);
 
   useEffect(() => {
-    void load();
+    load();
   }, [load, projectKey, refreshKey]);
 
   useEffect(() => {
-    const onFocus = () => void load();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, [load]);
 
   if (projectKey === null) return IDLE;

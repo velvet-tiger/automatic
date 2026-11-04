@@ -23,8 +23,13 @@
 //!   step that needs file contents.
 //!
 //! `--no-optional-locks` stops `git status` from rewriting the index, so a
-//! refresh never races the user's own git commands. `GIT_CONFIG_*` needs
-//! git 2.31 or later.
+//! refresh never races the user's own git commands. Every call also sets
+//! `protocol.allow=never` and a no-op `core.sshCommand`, so no transport can
+//! run whatever else asks for one.
+//!
+//! The filter override needs git 2.31 and `GIT_NO_LAZY_FETCH` needs git 2.44.
+//! Older git ignores both silently, so a repository that needs one of them
+//! is refused on older git rather than read unprotected.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -45,6 +50,27 @@ pub const MAX_COMMITS: usize = 2000;
 /// A local read. A repository that takes longer than this is reported as
 /// unavailable rather than holding a worker.
 const GIT_READ_LIMIT: Duration = Duration::from_secs(20);
+/// The first git that reads `GIT_CONFIG_COUNT`.
+const MIN_VERSION_CONFIG_ENV: GitVersion = GitVersion(2, 31);
+/// The first git that reads `GIT_NO_LAZY_FETCH`.
+const MIN_VERSION_NO_LAZY_FETCH: GitVersion = GitVersion(2, 44);
+
+/// A git release as major and minor numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct GitVersion(u32, u32);
+
+impl std::fmt::Display for GitVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.0, self.1)
+    }
+}
+
+/// The git Automatic runs, found once per run.
+#[derive(Debug, Clone)]
+struct GitInstall {
+    path: PathBuf,
+    version: GitVersion,
+}
 
 /// One commit that touched the project folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -327,11 +353,13 @@ fn parse_hashes(output: &[u8]) -> HashSet<String> {
 /// A `git` command for `dir` with every setting that could run another
 /// program or reach the network turned off. `config` names the repository's
 /// own filters to blank.
-fn git_command(dir: &Path, config: &RepoConfig) -> Command {
-    let mut command = Command::new("git");
+fn git_command(git: &GitInstall, dir: &Path, config: &RepoConfig) -> Command {
+    let mut command = Command::new(&git.path);
     command
         .arg("--no-pager")
         .arg("--no-optional-locks")
+        .args(["-c", "protocol.allow=never"])
+        .args(["-c", "core.sshCommand=false"])
         .args(["-c", "core.fsmonitor=false"])
         .args(["-c", "core.quotePath=false"])
         .args(["-c", "color.ui=false"])
@@ -350,13 +378,37 @@ fn git_command(dir: &Path, config: &RepoConfig) -> Command {
         }
         overrides.push((format!("filter.{name}.required"), "false"));
     }
-    command.env("GIT_CONFIG_COUNT", overrides.len().to_string());
-    for (index, (key, value)) in overrides.iter().enumerate() {
+    // Settings the user exported this way are kept: ours follow them, and
+    // a later entry wins.
+    let inherited = std::env::var("GIT_CONFIG_COUNT")
+        .ok()
+        .and_then(|n| n.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    command.env("GIT_CONFIG_COUNT", (inherited + overrides.len()).to_string());
+    for (offset, (key, value)) in overrides.iter().enumerate() {
+        let index = inherited + offset;
         command
             .env(format!("GIT_CONFIG_KEY_{index}"), key)
             .env(format!("GIT_CONFIG_VALUE_{index}"), value);
     }
     command
+}
+
+/// Refuse a repository whose protection this git would silently ignore.
+fn check_git_supports(config: &RepoConfig, version: GitVersion) -> Result<(), String> {
+    if !config.local_filters.is_empty() && version < MIN_VERSION_CONFIG_ENV {
+        return Err(format!(
+            "This repository defines its own git filters. Reading it safely needs git \
+             {MIN_VERSION_CONFIG_ENV} or later, and git {version} is installed. Update git to see its history."
+        ));
+    }
+    if config.partial_clone && version < MIN_VERSION_NO_LAZY_FETCH {
+        return Err(format!(
+            "This repository is a partial clone. Reading it without fetching needs git \
+             {MIN_VERSION_NO_LAZY_FETCH} or later, and git {version} is installed. Update git to see its history."
+        ));
+    }
+    Ok(())
 }
 
 /// Outcome of a git call that may find no repository.
@@ -366,13 +418,14 @@ enum GitRun {
 }
 
 fn run_git(
+    git: &GitInstall,
     dir: &Path,
     config: &RepoConfig,
     args: &[&str],
     what: &str,
     allowed_exit: Option<i32>,
 ) -> Result<GitRun, String> {
-    let mut command = git_command(dir, config);
+    let mut command = git_command(git, dir, config);
     command.args(args);
     let label = dir.display().to_string();
     let output = run_git_limited(&mut command, GIT_READ_LIMIT, what, &label)?;
@@ -392,7 +445,8 @@ fn run_git(
     ))
 }
 
-/// Whether a usable git is installed, checked once per run.
+/// The installed git, checked once per run. `None` when there is no usable
+/// git.
 ///
 /// On macOS, `/usr/bin/git` is a stub when the Command Line Tools are
 /// missing, and running it opens the system's install dialog. The Summary
@@ -400,26 +454,44 @@ fn run_git(
 /// stub is used only when `xcode-select -p` finds a developer directory,
 /// which opens nothing. Installing git while the app runs takes effect on
 /// the next launch.
-fn git_available() -> bool {
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(detect_git)
+fn git_install() -> Option<&'static GitInstall> {
+    static INSTALL: OnceLock<Option<GitInstall>> = OnceLock::new();
+    INSTALL.get_or_init(detect_git).as_ref()
 }
 
-fn detect_git() -> bool {
-    let Some(git) = find_on_path("git") else {
-        return false;
-    };
-    if cfg!(target_os = "macos") && git == Path::new("/usr/bin/git") && !xcode_tools_installed() {
-        return false;
+#[cfg(test)]
+fn git_available() -> bool {
+    git_install().is_some()
+}
+
+fn detect_git() -> Option<GitInstall> {
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    let path = find_on_path(name)?;
+    if cfg!(target_os = "macos") && path == Path::new("/usr/bin/git") && !xcode_tools_installed() {
+        return None;
     }
-    Command::new(&git)
+    let output = Command::new(&path)
         .arg("--version")
+        .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = parse_git_version(&String::from_utf8_lossy(&output.stdout))?;
+    Some(GitInstall { path, version })
+}
+
+/// The version in `git --version` output, such as
+/// `git version 2.39.5 (Apple Git-154)` or `git version 2.45.1.windows.1`.
+fn parse_git_version(text: &str) -> Option<GitVersion> {
+    let number = text.trim().strip_prefix("git version ")?;
+    let mut parts = number.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some(GitVersion(major, minor))
 }
 
 fn xcode_tools_installed() -> bool {
@@ -433,12 +505,25 @@ fn xcode_tools_installed() -> bool {
         .unwrap_or(false)
 }
 
-/// The first `name` on PATH, the one `Command::new(name)` would run.
+/// The first `name` on PATH that can be run, as `Command::new(name)` finds it.
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_executable_file(candidate))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// Read the repository state and recent commits for `project_dir`.
@@ -458,9 +543,9 @@ pub fn read_git_activity(
             project_dir.display()
         ));
     }
-    if !git_available() {
+    let Some(git) = git_install() else {
         return Ok(None);
-    }
+    };
 
     // `git config --get-regexp` exits 1 when nothing matches.
     let config_args = [
@@ -470,10 +555,11 @@ pub fn read_git_activity(
         "--get-regexp",
         r"^(filter\..*|extensions\.partialclone|remote\..*\.promisor)$",
     ];
-    let config = match run_git(project_dir, &RepoConfig::default(), &config_args, "config", Some(1))? {
+    let config = match run_git(git, project_dir, &RepoConfig::default(), &config_args, "config", Some(1))? {
         GitRun::NotARepository => return Ok(None),
         GitRun::Output(out) => parse_repo_config(&out),
     };
+    check_git_supports(&config, git.version)?;
 
     let status_args = [
         "status",
@@ -484,7 +570,7 @@ pub fn read_git_activity(
         "--",
         ".",
     ];
-    let repo = match run_git(project_dir, &config, &status_args, "status", None)? {
+    let repo = match run_git(git, project_dir, &config, &status_args, "status", None)? {
         GitRun::NotARepository => return Ok(None),
         GitRun::Output(out) => parse_status(&out),
     };
@@ -517,7 +603,7 @@ pub fn read_git_activity(
         log_args.push("--shortstat");
     }
     log_args.extend(["HEAD", "--", "."]);
-    let raw = match run_git(project_dir, &config, &log_args, "log", None)? {
+    let raw = match run_git(git, project_dir, &config, &log_args, "log", None)? {
         GitRun::NotARepository => return Ok(None),
         GitRun::Output(out) => out,
     };
@@ -530,7 +616,7 @@ pub fn read_git_activity(
     let pathspecs = agent_config_pathspecs(project_dir, project);
     let mut tag_args: Vec<&str> = vec!["log", "--format=%H", since.as_str(), max_count.as_str(), "HEAD", "--"];
     tag_args.extend(pathspecs.iter().map(String::as_str));
-    let tagged = match run_git(project_dir, &config, &tag_args, "log", None)? {
+    let tagged = match run_git(git, project_dir, &config, &tag_args, "log", None)? {
         GitRun::NotARepository => return Ok(None),
         GitRun::Output(out) => parse_hashes(&out),
     };
@@ -667,6 +753,26 @@ worktree\0filter.wt.clean\ntouch w\0";
         assert!(config.partial_clone);
         let config = parse_repo_config(b"local\0remote.origin.promisor\nfalse\0");
         assert!(!config.partial_clone);
+    }
+
+    #[test]
+    fn parses_git_versions() {
+        assert_eq!(parse_git_version("git version 2.39.5 (Apple Git-154)\n"), Some(GitVersion(2, 39)));
+        assert_eq!(parse_git_version("git version 2.45.1.windows.1"), Some(GitVersion(2, 45)));
+        assert_eq!(parse_git_version("git version 3.0.0-rc1"), Some(GitVersion(3, 0)));
+        assert_eq!(parse_git_version("not git"), None);
+    }
+
+    #[test]
+    fn older_git_is_refused_only_when_a_protection_needs_it() {
+        let plain = RepoConfig::default();
+        let filters = RepoConfig { local_filters: vec!["evil".into()], partial_clone: false };
+        let partial = RepoConfig { local_filters: vec![], partial_clone: true };
+        assert!(check_git_supports(&plain, GitVersion(2, 20)).is_ok());
+        assert!(check_git_supports(&filters, GitVersion(2, 30)).is_err());
+        assert!(check_git_supports(&filters, GitVersion(2, 31)).is_ok());
+        assert!(check_git_supports(&partial, GitVersion(2, 43)).is_err());
+        assert!(check_git_supports(&partial, GitVersion(2, 44)).is_ok());
     }
 
     #[test]

@@ -103,6 +103,19 @@ describe("useProjectGitActivity", () => {
     expect(subjectOf(result.current)).toBe("after");
   });
 
+  it("does not start a second read when the Summary is remounted mid-read", async () => {
+    const slow = deferred<GitActivity>();
+    invokeMock.mockReturnValueOnce(slow.promise);
+    invokeMock.mockResolvedValue(activity("follow-up"));
+    const first = renderHook(() => useProjectGitActivity("key-a", undefined));
+    first.unmount();
+    const second = renderHook(() => useProjectGitActivity("key-a", undefined));
+    expect(gitCalls()).toHaveLength(1);
+    await act(async () => slow.resolve(activity("slow")));
+    await waitFor(() => expect(subjectOf(second.result.current)).toBe("follow-up"));
+    expect(gitCalls()).toHaveLength(2);
+  });
+
   it("shows the cached result when a project is opened again", async () => {
     invokeMock.mockResolvedValueOnce(activity("cached"));
     const first = renderHook(() => useProjectGitActivity("key-a", undefined));
