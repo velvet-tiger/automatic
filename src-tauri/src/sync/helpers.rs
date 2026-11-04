@@ -1049,12 +1049,69 @@ pub(crate) fn sync_custom_agents(
         let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
         let path = agents_dir.join(agent.agent_file_name(&machine_name));
 
+        if !report_agent_content(agent, &machine_name, &custom_agent.content) {
+            // A copy that cannot go is reported by drift and the problems
+            // list, which check the disk; it must not stop the whole sync.
+            match remove_managed_agent_file(root, &path) {
+                Ok(true) => written.push(path.display().to_string()),
+                Ok(false) => {}
+                Err(e) => eprintln!("[automatic] {e}"),
+            }
+            continue;
+        }
         if write_project_file_or_skip(root, &path, &converted_content)? {
             written.push(path.display().to_string());
         }
     }
 
     Ok(written)
+}
+
+/// What the user should hear about one sub-agent for `agent`, each line naming
+/// both: notes on what was narrowed, and the refusal when it was not written.
+/// Sync logs these, and the project's problems list shows them.
+pub(crate) fn agent_content_notes(
+    agent: &dyn crate::agent::Agent,
+    machine_name: &str,
+    content: &str,
+) -> (Vec<String>, Option<String>) {
+    let label = agent.label();
+    let notes = agent
+        .agent_content_warnings(content)
+        .into_iter()
+        .map(|warning| format!("{label} sub-agent `{machine_name}`: {warning}."))
+        .collect();
+    let refusal = agent
+        .agent_content_refusal(content)
+        .map(|reason| format!("{label} sub-agent `{machine_name}` was not written: {reason}."));
+    (notes, refusal)
+}
+
+/// Log what the agent says about a sub-agent.  Returns `false` when it refused
+/// the definition.
+fn report_agent_content(
+    agent: &dyn crate::agent::Agent,
+    machine_name: &str,
+    content: &str,
+) -> bool {
+    let (notes, refusal) = agent_content_notes(agent, machine_name, content);
+    for line in notes.iter().chain(&refusal) {
+        eprintln!("[automatic] {line}");
+    }
+    agent.agent_content_refusal(content).is_none()
+}
+
+/// Remove an earlier managed copy of a refused sub-agent, which may grant what
+/// the definition now denies.  A file the user wrote is left alone.
+fn remove_managed_agent_file(root: &Path, path: &Path) -> Result<bool, String> {
+    if !crate::agent::is_regular_file_in(root, path) || !crate::agent::is_managed_agent_file(path) {
+        return Ok(false);
+    }
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("Failed to remove refused sub-agent {}: {e}", path.display())),
+    }
 }
 
 /// Sync workspace user agents (from `~/.automatic/agents/`) to a project's
@@ -1098,6 +1155,11 @@ pub(crate) fn sync_user_agents(
 
     // Write each selected agent
     for (user_agent, machine_name) in selected {
+        // A refused name stays out of the expected set, so the sweep below
+        // removes any earlier managed copy.
+        if !report_agent_content(agent, &machine_name, &user_agent.content) {
+            continue;
+        }
         let converted_content = agent.convert_agent_content(&user_agent.content, &machine_name);
         let file_name = agent.agent_file_name(&machine_name);
         let path = agents_dir.join(&file_name);
@@ -1138,8 +1200,15 @@ pub(crate) fn sync_user_agents(
                 {
                     continue;
                 }
-                if fs::remove_file(&path).is_ok() {
-                    written.push(path.display().to_string());
+                match fs::remove_file(&path) {
+                    Ok(()) => written.push(path.display().to_string()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    // Drift reports the file as stale, and the problems list
+                    // names it when its definition was refused.
+                    Err(e) => eprintln!(
+                        "[automatic] could not remove stale sub-agent {}: {e}",
+                        path.display()
+                    ),
                 }
             }
         }
@@ -1363,6 +1432,75 @@ mod tests {
 
     fn tmp() -> TempDir {
         tempfile::tempdir().expect("tempdir")
+    }
+
+    #[test]
+    fn sync_custom_agents_refuses_a_deny_list_pi_cannot_honour() {
+        let dir = tmp();
+        let agents_dir = dir.path().join(".pi").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        // An earlier sync wrote this copy before the definition denied Bash.
+        let stale = agents_dir.join("planner.md");
+        fs::write(&stale, "---\nname: planner\nautomatic-managed: true\n---\nOld.\n").unwrap();
+        let denied = vec![CustomAgent {
+            name: "planner".to_string(),
+            content: "---\nname: planner\ndescription: d\ndisallowedTools: Bash\n---\nPlan.\n"
+                .to_string(),
+        }];
+
+        sync_custom_agents(dir.path(), &agents_dir, &denied, &crate::agent::Pi, &HashSet::new())
+            .expect("a refusal does not fail the sync");
+        assert!(!stale.exists(), "a managed copy must not outlive the refusal");
+
+        // A file the user wrote is not Automatic's to remove.
+        fs::write(&stale, "---\nname: planner\n---\nMine.\n").unwrap();
+        sync_custom_agents(dir.path(), &agents_dir, &denied, &crate::agent::Pi, &HashSet::new())
+            .expect("sync");
+        assert!(fs::read_to_string(&stale).unwrap().contains("Mine."));
+    }
+
+    #[test]
+    fn sync_user_agents_refuses_a_deny_list_pi_cannot_honour() {
+        let _home = crate::core::temp_test_home();
+        let project = tmp();
+        let agents_dir = project.path().join(".pi").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        save_subagent(
+            "planner",
+            "planner",
+            "---\nname: planner\ndescription: d\ndisallowedTools: Bash\n---\nPlan.\n",
+        )
+        .unwrap();
+        let earlier = agents_dir.join("planner.md");
+        fs::write(&earlier, "---\nname: planner\nautomatic-managed: true\n---\nOld.\n").unwrap();
+
+        sync_user_agents(
+            project.path(),
+            &agents_dir,
+            &["planner".to_string()],
+            &[],
+            &crate::agent::Pi,
+        )
+        .expect("a refusal does not fail the sync");
+
+        assert!(!earlier.exists(), "the earlier copy must not outlive the refusal");
+    }
+
+    #[test]
+    fn sync_custom_agents_writes_the_narrowed_tool_list() {
+        let dir = tmp();
+        let agents_dir = dir.path().join(".pi").join("agents");
+        let agents = vec![CustomAgent {
+            name: "planner".to_string(),
+            content: "---\nname: planner\ndescription: d\ntools: Bash(git:*)\n---\nPlan.\n"
+                .to_string(),
+        }];
+
+        sync_custom_agents(dir.path(), &agents_dir, &agents, &crate::agent::ThinkRail, &HashSet::new())
+            .expect("sync");
+
+        let written = fs::read_to_string(agents_dir.join("planner.md")).unwrap();
+        assert!(written.contains("\ntools: []\n"), "{written}");
     }
 
     #[test]

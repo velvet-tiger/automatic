@@ -285,7 +285,8 @@ export type ProjectDriftState =
 export type ProjectProblemKind =
   | "mcp_user_scope_conflict"
   | "silent_mode_stale_root_mcp"
-  | "mcp_server_config_invalid";
+  | "mcp_server_config_invalid"
+  | "agent_sync_limits";
 
 export interface ProjectProblem {
   kind: ProjectProblemKind;
@@ -301,6 +302,8 @@ export interface ProjectProblem {
 export interface ProjectProblemsReport {
   has_problems: boolean;
   problems: ProjectProblem[];
+  /** What sync narrowed or left out on purpose. Nothing needs fixing. */
+  notes?: string[];
 }
 
 export interface ProjectFileInfo {

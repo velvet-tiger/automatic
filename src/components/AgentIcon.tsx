@@ -27,6 +27,7 @@ const AGENT_LOGO_MAP: Record<string, string> = {
   openai: "codex",
   opencode: "opencode",
   pi: "pi",
+  thinkrail: "thinkrail",
   zcode: "zcode",
   zed: "zed",
 };

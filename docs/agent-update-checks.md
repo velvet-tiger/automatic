@@ -28,6 +28,7 @@ Global MCP discovery paths were corrected 2026-08-26.
 | Droid | 2026-11-01 | Not checked in depth. docs.factory.com/changelog returned 404.
 | Antigravity | 2026-11-01 | CLI 1.4.8 to 1.4.12 (Oct 27-30): `terminationBehavior` on `PreInvocation` hooks (gap, minor), plugin `auth.json` optional keys. Comment candidate for VEL-164.
 | Z Code | 2026-11-01 | Changelog newest v3.16.3 (Oct 23), nothing after. No relevant change.
+| ThinkRail | 2026-11-03 | Added 2026-11-03. Runs Pi in-process, so check Pi as well. Repo: github.com/JetBrains/thinkrail.
 | Pi | 2026-11-01 | `pi-mcp-adapter` v7.0.0 (Oct 26): MCP Tasks via `protocolVersion`, `${VAR:-default}` support, `settings.jev` renamed. `.pi/mcp.json` unchanged.
 | Zed | 2026-11-01 | v1.26.2 (Oct 28), v1.27.0-pre: ACP config defaults, no MCP/context_servers change.
 ## Run 2026-11-01 (window 2026-10-25 to 2026-11-01)

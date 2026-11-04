@@ -800,6 +800,14 @@ fn sync_agent_configs_step(
                 }
 
                 let prepared = agent::prepare_mcp_servers(agent_instance, selected_servers, dir);
+                for (name, server) in &prepared {
+                    if let Some(reason) = agent_instance.mcp_unsupported_reason(server) {
+                        eprintln!(
+                            "[automatic] left '{name}' out of {}: {reason}",
+                            agent_instance.label()
+                        );
+                    }
+                }
                 let path = agent_instance.write_mcp_config(dir, &prepared)?;
                 if !path.is_empty() {
                     written_files.push(path);

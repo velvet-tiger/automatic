@@ -163,7 +163,8 @@ fn discover_sub_agents(
                         user_agent_ids.insert(global_id);
                         continue;
                     }
-                    import_agent_file(agent_instance, &raw, fallback_id)
+                    merge_lossy_agent_file(agent_instance, stored, &raw, fallback_id)
+                        .unwrap_or_else(|| import_agent_file(agent_instance, &raw, fallback_id))
                 }
                 Err(reason) => Err(reason),
             };
@@ -503,6 +504,37 @@ fn agent_file_to_markdown(
         "toml" => convert_codex_toml_to_markdown(raw_disk_content, fallback_id).map(Some),
         _ => Ok(None),
     }
+}
+
+/// Read a file in a lossy format against the stored definition it renders.
+/// `None` when the agent's format is not lossy or nothing is stored, so the
+/// file itself is all there is.  Otherwise the stored copy keeps everything
+/// the file cannot hold, and a frontmatter edit is `Err`, which keeps it.
+fn merge_lossy_agent_file(
+    agent_instance: &dyn agent::Agent,
+    stored: &[CustomAgent],
+    raw_disk_content: &str,
+    fallback_id: &str,
+) -> Option<Result<Option<CustomAgent>, String>> {
+    if !agent_instance.agent_markdown_is_lossy() {
+        return None;
+    }
+    let stored = stored_agent_with_machine_name(stored, fallback_id)?;
+    Some(
+        super::agent_adopt::merge_body_into_stored(
+            agent_instance,
+            stored,
+            raw_disk_content,
+            fallback_id,
+        )
+        .map(|content| {
+            Some(CustomAgent {
+                name: stored.name.clone(),
+                content,
+            })
+        })
+        .map_err(|refusal| refusal.message(agent_instance.label())),
+    )
 }
 
 /// Read a sub-agent file as a custom agent.  `Ok(None)` and `Err` mean the
@@ -1117,5 +1149,51 @@ Inspect the repo carefully.\n\
 
         let lf = "---\nname:\nname: \"Second\"\n---\n";
         assert_eq!(core::extract_agent_name(lf).as_deref(), Some("Second"));
+    }
+}
+
+#[cfg(test)]
+mod lossy_tests {
+    use super::*;
+    use crate::agent::Agent;
+
+    const STORED: &str =
+        "---\nname: planner\ndescription: d\ntools: Read, Bash(git:*)\n---\nPlan.\n";
+
+    fn stored() -> Vec<CustomAgent> {
+        vec![CustomAgent {
+            name: "planner".to_string(),
+            content: STORED.to_string(),
+        }]
+    }
+
+    #[test]
+    fn rebuild_keeps_the_stored_definition_for_a_pi_file() {
+        let disk = agent::Pi.convert_agent_content(STORED, "planner");
+        let merged = merge_lossy_agent_file(&agent::Pi, &stored(), &disk, "planner")
+            .expect("lossy")
+            .expect("merged")
+            .expect("agent");
+        assert!(merged.content.contains("Bash(git:*)"), "{}", merged.content);
+    }
+
+    #[test]
+    fn rebuild_refuses_a_frontmatter_edit_in_a_pi_file() {
+        let disk = agent::Pi
+            .convert_agent_content(STORED, "planner")
+            .replace("tools: read", "tools: read, bash");
+        assert!(merge_lossy_agent_file(&agent::Pi, &stored(), &disk, "planner")
+            .expect("lossy")
+            .is_err());
+    }
+
+    #[test]
+    fn rebuild_imports_a_pi_file_with_nothing_stored() {
+        assert!(merge_lossy_agent_file(&agent::Pi, &[], "---\nname: a\n---\nB\n", "a").is_none());
+    }
+
+    #[test]
+    fn other_markdown_agents_are_read_whole() {
+        assert!(merge_lossy_agent_file(&agent::ClaudeCode, &stored(), STORED, "planner").is_none());
     }
 }

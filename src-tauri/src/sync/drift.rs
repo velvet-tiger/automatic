@@ -11,7 +11,7 @@ use crate::core::{Project, ProjectMode, ProjectSummary};
 use super::rebuild::agent_file_is_refused;
 
 use super::helpers::{
-    automatic_project_env_value, build_selected_servers, build_skill_contents,
+    agent_content_notes, automatic_project_env_value, build_selected_servers, build_skill_contents,
     collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
     escaped_silent_dir, load_mcp_server_configs, read_project_text, refused_root_mcp_file,
     McpConfigSyncNotes, McpServerNote, MAX_PROJECT_READ_BYTES,
@@ -36,6 +36,9 @@ pub enum ProjectProblemKind {
     /// An MCP server's stored config fails validation.  Servers with errors
     /// are left out of agent files; servers with warnings still sync.
     McpServerConfigInvalid,
+    /// Sync left out or changed something for one agent because that agent
+    /// cannot hold it, such as a legacy SSE server or a sub-agent tool.
+    AgentSyncLimits,
 }
 
 /// A single actionable problem in a project's configuration.
@@ -67,6 +70,10 @@ pub struct ProjectProblemsReport {
     pub has_problems: bool,
     /// The list of detected problems (may be empty).
     pub problems: Vec<ProjectProblem>,
+    /// Things sync narrowed or left out on purpose, such as a dropped
+    /// sub-agent tool.  Not problems: nothing needs fixing.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// Check for known configuration problems in a project.
@@ -81,6 +88,7 @@ pub struct ProjectProblemsReport {
 /// This is a read-only operation — nothing is written.
 pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport, String> {
     let mut problems: Vec<ProjectProblem> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
 
     if !project.directory.is_empty() && !project.agents.is_empty() {
         let dir = PathBuf::from(&project.directory);
@@ -90,12 +98,21 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
                 problems.extend(silent_stale_root_mcp_problem(project, &dir));
             }
             problems.extend(mcp_config_problems(&mcp_config_sync_notes(project)?));
+            match project_sync_warnings(project) {
+                Ok(warnings) => {
+                    problems.extend(agent_sync_limits_problem(warnings.problems));
+                    notes = warnings.notes;
+                }
+                // `mcp_config_sync_notes` has already reported an unreadable server.
+                Err(e) => eprintln!("[automatic] could not check agent sync limits: {e}"),
+            }
         }
     }
 
     Ok(ProjectProblemsReport {
         has_problems: !problems.is_empty(),
         problems,
+        notes,
     })
 }
 
@@ -105,6 +122,106 @@ pub fn mcp_config_sync_notes(project: &Project) -> Result<McpConfigSyncNotes, St
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
     Ok(collect_mcp_config_notes(&enabled_mcp_servers, &mcp_config))
+}
+
+/// What sync left out or changed for each agent on `project`, one line each.
+#[derive(Debug, Default)]
+pub struct ProjectSyncWarnings {
+    /// Refused sub-agents, and refused copies sync could not remove.
+    pub problems: Vec<String>,
+    /// Dropped tools, missing fields and left-out SSE servers.
+    pub notes: Vec<String>,
+}
+
+impl ProjectSyncWarnings {
+    pub fn all(&self) -> Vec<String> {
+        self.problems.iter().chain(&self.notes).cloned().collect()
+    }
+}
+
+/// Derived from the project and the disk, so the problems list shows these
+/// whenever they are true, not only straight after a sync.
+pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, String> {
+    let enabled_mcp_servers = project.enabled_mcp_servers();
+    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    let selected_servers = build_selected_servers(
+        automatic_project_env_value(project),
+        &enabled_mcp_servers,
+        &mcp_config,
+        StoreRead::Background,
+    )?;
+    let dir = PathBuf::from(&project.directory);
+
+    let mut sub_agents: Vec<(String, String)> = Vec::new();
+    for agent in project.custom_agents.as_deref().unwrap_or(&[]) {
+        if let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) {
+            sub_agents.push((machine_name, agent.content.clone()));
+        }
+    }
+    for name in &project.user_agents {
+        let stored = crate::core::read_subagent(name)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<crate::core::Subagent>(&raw).ok());
+        if let Some(subagent) = stored {
+            sub_agents.push((name.clone(), subagent.content));
+        }
+    }
+
+    let mut warnings = ProjectSyncWarnings::default();
+    for agent_id in &project.agents {
+        let Some(agent_instance) = agent::from_id(agent_id) else {
+            continue;
+        };
+        let prepared = agent::prepare_mcp_servers(agent_instance, &selected_servers, &dir);
+        for (name, server) in &prepared {
+            if let Some(reason) = agent_instance.mcp_unsupported_reason(server) {
+                warnings.notes.push(format!(
+                    "{} MCP server `{name}` was left out: {reason}",
+                    agent_instance.label()
+                ));
+            }
+        }
+        let Some(agents_dir) = agent_instance.agents_dir(&dir) else {
+            continue;
+        };
+        for (machine_name, content) in &sub_agents {
+            let (notes, refusal) = agent_content_notes(agent_instance, machine_name, content);
+            warnings.notes.extend(notes);
+            let Some(refusal) = refusal else {
+                continue;
+            };
+            warnings.problems.push(refusal);
+            let copy = agents_dir.join(agent_instance.agent_file_name(machine_name));
+            if crate::agent::is_managed_agent_file(&copy) {
+                let relative = copy.strip_prefix(&dir).unwrap_or(&copy);
+                warnings.problems.push(format!(
+                    "Sync has not removed an earlier copy of `{machine_name}` at `{}`. Sync the project, then delete the file by hand if it is still there.",
+                    relative.display()
+                ));
+            }
+        }
+    }
+    // Pi and ThinkRail share `.pi/agents`, so both report one stuck copy.
+    let mut seen = HashSet::new();
+    warnings.problems.retain(|line| seen.insert(line.clone()));
+    let mut seen = HashSet::new();
+    warnings.notes.retain(|line| seen.insert(line.clone()));
+    Ok(warnings)
+}
+
+fn agent_sync_limits_problem(warnings: Vec<String>) -> Option<ProjectProblem> {
+    if warnings.is_empty() {
+        return None;
+    }
+    Some(ProjectProblem {
+        kind: ProjectProblemKind::AgentSyncLimits,
+        title: "Sub-agents not written".to_string(),
+        description: "The agent cannot restrict these sub-agents as written, so Automatic did not write them. Change the definition, or remove the agent from the project.".to_string(),
+        solution: warnings,
+        reference_url: None,
+        agents: Vec::new(),
+        resources: Vec::new(),
+    })
 }
 
 /// One fix step per server: its name followed by what validation found.
@@ -1586,6 +1703,9 @@ fn collect_agents_drift(
         let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
             continue;
         };
+        if agent_instance.agent_content_refusal(&agent.content).is_some() {
+            continue;
+        }
         expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
     }
 
@@ -1598,6 +1718,9 @@ fn collect_agents_drift(
                 else {
                     continue;
                 };
+                if agent_instance.agent_content_refusal(&agent.content).is_some() {
+                    continue;
+                }
                 expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
             }
         }
@@ -1612,6 +1735,9 @@ fn collect_agents_drift(
         let Ok(machine_name) = crate::core::custom_agent_machine_name(agent) else {
             continue;
         };
+        if agent_instance.agent_content_refusal(&agent.content).is_some() {
+            continue;
+        }
         let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
         let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
 
@@ -1637,6 +1763,9 @@ fn collect_agents_drift(
                 else {
                     continue;
                 };
+                if agent_instance.agent_content_refusal(&agent.content).is_some() {
+                    continue;
+                }
                 let converted_content =
                     agent_instance.convert_agent_content(&agent.content, &machine_name);
                 let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
@@ -2289,6 +2418,152 @@ mod tests {
                 .map(|f| format!("{} ({})", f.path, f.reason))
                 .collect::<Vec<_>>()
         );
+    }
+
+    fn pi_family_project(agent_id: &str, dir: &Path, content: &str) -> Project {
+        Project {
+            name: "pi-family".to_string(),
+            directory: dir.display().to_string(),
+            agents: vec![agent_id.to_string()],
+            custom_agents: Some(vec![crate::core::CustomAgent {
+                name: "planner".to_string(),
+                content: content.to_string(),
+            }]),
+            ..Default::default()
+        }
+    }
+
+    const NARROWED: &str =
+        "---\nname: planner\ndescription: d\ntools: Read, Bash(git:*)\nmodel: sonnet\n---\nPlan.\n";
+    const REFUSED: &str =
+        "---\nname: planner\ndescription: d\ndisallowedTools: Bash\n---\nPlan.\n";
+
+    fn agent_drift_paths(project: &Project) -> Vec<String> {
+        let mut files = Vec::new();
+        let agent_instance = agent::from_id(&project.agents[0]).unwrap();
+        collect_agents_drift(
+            agent_instance,
+            &PathBuf::from(&project.directory),
+            project.custom_agents.as_deref().unwrap_or(&[]),
+            &[],
+            &HashSet::new(),
+            &mut files,
+        );
+        files.into_iter().map(|f| format!("{} {}", f.path, f.reason)).collect()
+    }
+
+    #[test]
+    fn converted_sub_agents_show_no_drift_after_sync_and_drift_after_an_edit() {
+        let _home = crate::core::temp_test_home();
+        for agent_id in ["pi", "thinkrail"] {
+            let dir = tempdir().unwrap();
+            let mut project = pi_family_project(agent_id, dir.path(), NARROWED);
+            crate::sync::sync_to_directory(&mut project).expect("sync");
+            assert_eq!(agent_drift_paths(&project), Vec::<String>::new(), "{agent_id}");
+
+            let file = dir.path().join(".pi/agents/planner.md");
+            let written = fs::read_to_string(&file).unwrap();
+            assert!(written.contains("tools: read\n"), "{written}");
+            fs::write(&file, written.replace("tools: read", "tools: read, bash")).unwrap();
+            assert_eq!(
+                agent_drift_paths(&project),
+                vec![".pi/agents/planner.md modified"],
+                "{agent_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_sub_agent_is_not_missing_but_a_managed_copy_is_stale() {
+        let _home = crate::core::temp_test_home();
+        for agent_id in ["pi", "thinkrail"] {
+            let dir = tempdir().unwrap();
+            let mut project = pi_family_project(agent_id, dir.path(), REFUSED);
+            crate::sync::sync_to_directory(&mut project).expect("sync");
+            let file = dir.path().join(".pi/agents/planner.md");
+            assert!(!file.exists());
+            assert_eq!(agent_drift_paths(&project), Vec::<String>::new(), "{agent_id}");
+
+            fs::write(&file, "---\nname: planner\nautomatic-managed: true\n---\nOld.\n").unwrap();
+            assert_eq!(agent_drift_paths(&project).len(), 1, "{agent_id}");
+        }
+    }
+
+    #[test]
+    fn project_problems_report_sse_dropped_tools_and_refusals() {
+        let _home = crate::core::temp_test_home();
+        let raw = serde_json::json!({ "type": "sse", "url": "https://example.com/sse" });
+        crate::core::save_mcp_server_config("legacy", &raw.to_string()).unwrap();
+        let dir = tempdir().unwrap();
+        let mut project = pi_family_project(
+            "thinkrail",
+            dir.path(),
+            "---\nname: planner\ndescription: d\ntools: Read, WebFetch\n---\nPlan.\n",
+        );
+        project.mcp_servers = vec!["legacy".to_string()];
+
+        let report = check_project_problems(&project).expect("problems");
+        assert!(report.notes.iter().any(|w| w.contains("`legacy`")), "{:?}", report.notes);
+        assert!(report.notes.iter().any(|w| w.contains("WebFetch")), "{:?}", report.notes);
+        assert!(!report.has_problems, "notes are not problems: {:?}", report.problems);
+
+        project.custom_agents.as_mut().unwrap()[0].content = REFUSED.to_string();
+        let report = check_project_problems(&project).expect("problems");
+        let problem = report
+            .problems
+            .iter()
+            .find(|p| matches!(p.kind, ProjectProblemKind::AgentSyncLimits))
+            .expect("agent sync limits problem");
+        assert!(problem.solution.iter().any(|s| s.contains("was not written")), "{problem:?}");
+    }
+
+    #[test]
+    fn a_refused_copy_sync_cannot_remove_is_reported_and_sync_goes_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let _home = crate::core::temp_test_home();
+        let dir = tempdir().unwrap();
+        let mut project = pi_family_project("pi", dir.path(), REFUSED);
+        let agents_dir = dir.path().join(".pi/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        let copy = agents_dir.join("planner.md");
+        fs::write(&copy, "---\nname: planner\nautomatic-managed: true\n---\nOld.\n").unwrap();
+        fs::set_permissions(&agents_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let synced = crate::sync::sync_to_directory(&mut project);
+        let report = check_project_problems(&project);
+        fs::set_permissions(&agents_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        synced.expect("a copy that cannot go must not stop the sync");
+        assert!(copy.exists());
+        let report = report.expect("problems");
+        let problem = report
+            .problems
+            .iter()
+            .find(|p| matches!(p.kind, ProjectProblemKind::AgentSyncLimits))
+            .expect("problem");
+        assert!(problem.solution.iter().any(|s| s.contains("has not removed")), "{problem:?}");
+        assert_eq!(agent_drift_paths(&project).len(), 1);
+    }
+
+    #[test]
+    fn a_copy_both_pi_and_thinkrail_see_is_reported_once() {
+        let _home = crate::core::temp_test_home();
+        let dir = tempdir().unwrap();
+        let mut project = pi_family_project("pi", dir.path(), REFUSED);
+        project.agents.push("thinkrail".to_string());
+        let agents_dir = dir.path().join(".pi/agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("planner.md"),
+            "---\nname: planner\nautomatic-managed: true\n---\nOld.\n",
+        )
+        .unwrap();
+
+        let warnings = project_sync_warnings(&project).expect("warnings");
+        let copies = warnings.problems.iter().filter(|line| line.contains("earlier copy")).count();
+        assert_eq!(copies, 1, "{:?}", warnings.problems);
+        // Each agent's own refusal names that agent, so both stay.
+        assert_eq!(warnings.problems.len(), 3, "{:?}", warnings.problems);
     }
 
     /// After `write_mcp_config` writes the MCP config, `collect_mcp_drift` must

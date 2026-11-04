@@ -140,6 +140,7 @@ import {
   LayoutTemplate,
   Layers,
   AlertCircle,
+  Info,
   ArrowRight,
   RotateCcw,
   ChevronLeft,
@@ -3775,6 +3776,21 @@ export function ProjectEditor({
               </div>
             )}
 
+            {/* ── Sync notes: narrowed on purpose, nothing to fix ──── */}
+            {(problemsReport?.notes?.length ?? 0) > 0 && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
+              <div className="border-b border-border-strong/40 bg-bg-input px-6 py-2">
+                <div className="flex items-center gap-2 text-text-muted text-[12px]">
+                  <Info size={13} className="shrink-0" />
+                  <span className="font-medium">Sync notes</span>
+                </div>
+                <ul className="mt-1 space-y-0.5 list-disc pl-9 text-[11px] text-text-muted leading-snug">
+                  {(problemsReport?.notes ?? []).map((note, j) => (
+                    <li key={`${j}-${note}`}>{renderInlineCode(note)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* ── Problems banner ──────────────────────────────────── */}
             {problemsReport?.has_problems && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
               <div className="border-b border-danger/25 bg-danger/10">
@@ -3795,8 +3811,8 @@ export function ProjectEditor({
                             <div className="mt-1.5">
                               <div className="text-[11px] font-semibold text-danger/90">How to fix</div>
                               <ul className="mt-0.5 space-y-0.5 list-disc pl-4 text-[11px] text-danger/80 leading-snug">
-                                {problem.solution.map((step) => (
-                                  <li key={step}>{renderInlineCode(step)}</li>
+                                {problem.solution.map((step, j) => (
+                                  <li key={`${j}-${step}`}>{renderInlineCode(step)}</li>
                                 ))}
                               </ul>
                             </div>
