@@ -114,6 +114,15 @@ pub fn sync_linked_worktree(worktree: &Path) -> Result<WorktreeSync, String> {
 /// worktree that cannot be synced is logged and skipped: the parent's sync
 /// already happened and still reports success.
 pub(crate) fn sync_project_worktrees(project: &Project) {
+    if !project.manage_gitignore {
+        if let Err(e) = remove_excluded_paths(Path::new(&project.directory)) {
+            eprintln!(
+                "[automatic] worktree sync: could not remove Automatic's block from the git \
+                 exclude file of '{}': {}",
+                project.name, e
+            );
+        }
+    }
     let worktrees = linked_worktrees(Path::new(&project.directory));
     if worktrees.is_empty() {
         return;
@@ -282,12 +291,11 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
     // the sync is left alone. Sync does not list `.gitignore` among its
     // writes. After a failed sync the written list is unknown, so every
     // changed entry is put back.
-    let wrote: Option<HashSet<PathBuf>> = synced
+    let wrote: Option<Vec<PathBuf>> = synced
         .as_ref()
         .ok()
         .map(|written| written.iter().map(PathBuf::from).collect());
-    let restore = snapshot
-        .restore(|path| path == gitignore || wrote.as_ref().map_or(true, |w| w.contains(path)));
+    let restore = snapshot.restore(|path| may_restore(path, &gitignore, wrote.as_deref()));
     let written = match synced {
         Ok(written) => written,
         Err(e) if restore.failed.is_empty() => return Err(e),
@@ -314,6 +322,10 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
                 "Could not check which synced files git ignores: {e}"
             )),
         }
+    } else if let Some(common) = core::git_common_dir(worktree) {
+        if let Err(e) = update_exclude(&common, None) {
+            result.warnings.push(e);
+        }
     }
 
     let mut changed: BTreeSet<String> = restore.failed.into_iter().collect();
@@ -333,12 +345,43 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
     Ok(result)
 }
 
+/// Whether the restore may put `path` back. Sync reports some writes as a
+/// folder (a skill), which covers every file under it. Sync does not report
+/// `.gitignore`. After a failed sync, `wrote` is `None` and everything may be
+/// put back.
+fn may_restore(path: &Path, gitignore: &Path, wrote: Option<&[PathBuf]>) -> bool {
+    path == gitignore || wrote.map_or(true, |wrote| wrote.iter().any(|w| path.starts_with(w)))
+}
+
 /// Write `project`'s managed ignore patterns into the `info/exclude` of the
 /// repository `worktree` belongs to, replacing an earlier Automatic block.
 /// The patterns are rooted, so they apply at the top of every worktree.
 fn exclude_managed_paths(worktree: &Path, project: &Project) -> Result<(), String> {
     let common = core::git_common_dir(worktree)
         .ok_or_else(|| format!("Cannot find the git folder of {}", worktree.display()))?;
+    let block =
+        core::gitignore::render_block(&core::gitignore::project_patterns(worktree, project));
+    update_exclude(&common, Some(&block))
+}
+
+/// Remove Automatic's block from the `info/exclude` of the repository whose
+/// main checkout is `project_dir`. The block is only written while the
+/// project manages `.gitignore`, so once the user turns that off it must go,
+/// or the files stay hidden in every checkout.
+fn remove_excluded_paths(project_dir: &Path) -> Result<(), String> {
+    if !project_dir.join(".git").is_dir() {
+        return Ok(());
+    }
+    match core::git_common_dir(project_dir) {
+        Some(common) => update_exclude(&common, None),
+        None => Ok(()),
+    }
+}
+
+/// Replace Automatic's block in `<common>/info/exclude` with `block`, or
+/// remove it when `block` is `None`. Writes nothing when the file would not
+/// change.
+fn update_exclude(common: &Path, block: Option<&str>) -> Result<(), String> {
     let info = common.join("info");
     let path = info.join("exclude");
     for candidate in [&info, &path] {
@@ -354,16 +397,18 @@ fn exclude_managed_paths(worktree: &Path, project: &Project) -> Result<(), Strin
         Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("Cannot read {}: {}", path.display(), e)),
     };
-    let block =
-        core::gitignore::render_block(&core::gitignore::project_patterns(worktree, project));
     let mut content = without_managed_block(&existing)
         .trim_end_matches('\n')
         .to_string();
-    if !content.is_empty() {
-        content.push_str("\n\n");
+    if let Some(block) = block {
+        if !content.is_empty() {
+            content.push_str("\n\n");
+        }
+        content.push_str(block);
+    } else if !content.is_empty() {
+        content.push('\n');
     }
-    content.push_str(&block);
-    if content == existing {
+    if content == existing || (block.is_none() && existing.is_empty()) {
         return Ok(());
     }
     fs::create_dir_all(&info).map_err(|e| format!("Cannot create {}: {}", info.display(), e))?;
@@ -991,5 +1036,60 @@ mod tests {
         assert!(!f.worktree.join(".mcp.json").exists());
         assert_eq!(read(&f.worktree.join(".gitignore")), BRANCH_GITIGNORE);
         assert_eq!(status(&f.worktree), "");
+    }
+
+    #[test]
+    fn a_written_folder_covers_the_tracked_files_under_it() {
+        let root = Path::new("/wt");
+        let gitignore = root.join(".gitignore");
+        let skill = root.join(".claude/skills/foo");
+        let wrote = vec![skill.clone(), root.join(".mcp.json")];
+
+        assert!(may_restore(
+            &skill.join("SKILL.md"),
+            &gitignore,
+            Some(&wrote)
+        ));
+        assert!(may_restore(
+            &root.join(".mcp.json"),
+            &gitignore,
+            Some(&wrote)
+        ));
+        assert!(may_restore(&gitignore, &gitignore, Some(&wrote)));
+        assert!(!may_restore(
+            &root.join("CLAUDE.md"),
+            &gitignore,
+            Some(&wrote)
+        ));
+        assert!(!may_restore(
+            &root.join(".claude/skills/foobar/SKILL.md"),
+            &gitignore,
+            Some(&wrote)
+        ));
+        assert!(may_restore(&root.join("CLAUDE.md"), &gitignore, None));
+    }
+
+    #[test]
+    fn turning_off_gitignore_management_removes_the_exclude_block() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-unmanage");
+        let exclude = f.main.join(".git/info/exclude");
+        let before = read(&exclude);
+        sync_linked_worktree(&f.worktree).expect("sync worktree");
+        assert!(read(&exclude).contains(core::gitignore::BEGIN_MARKER));
+
+        let raw = core::read_project("wt-unmanage").unwrap();
+        let mut project: Project = serde_json::from_str(&raw).unwrap();
+        project.manage_gitignore = false;
+        core::save_project("wt-unmanage", &serde_json::to_string(&project).unwrap()).unwrap();
+        super::super::sync_project_without_autodetect(&mut project).expect("parent sync");
+
+        let after = read(&exclude);
+        assert!(!after.contains(core::gitignore::BEGIN_MARKER), "{after}");
+        assert_eq!(
+            after.trim_end(),
+            before.trim_end(),
+            "git's own lines were changed"
+        );
     }
 }
