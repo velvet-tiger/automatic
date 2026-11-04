@@ -54,8 +54,8 @@ impl Agent for Pi {
              legacy SSE servers because Pi rejects them. If you replace Pi's MCP support with \
              pi-mcp-adapter, headless runs skip unapproved servers unless \
              settings.projectServers is \"allow\" in ~/.pi/agent/mcp-adapter.json. Automatic \
-             sees PI_CODING_AGENT_DIR only if it was started with that variable set, not from \
-             your shell profile, so check the target path shown here.",
+             reads PI_CODING_AGENT_DIR from your login shell when it starts, so restart \
+             Automatic after you change it, and check the target path shown here.",
         )
     }
 
@@ -1054,6 +1054,21 @@ mod tests {
             Some(home.join("work").join("pi"))
         );
         assert_eq!(resolve_pi_agent_dir(Some("~/x".into()), None), None);
+    }
+
+    /// The login-shell probe passes a profile's value on unexpanded, so a
+    /// bare `~` and a trailing slash must resolve as Pi resolves them.
+    #[test]
+    fn test_agent_dir_expands_a_bare_tilde_from_the_shell() {
+        let home = PathBuf::from("/home/me");
+        assert_eq!(
+            resolve_pi_agent_dir(Some("~".into()), Some(home.clone())),
+            Some(home.clone())
+        );
+        assert_eq!(
+            resolve_pi_agent_dir(Some("~/work/pi/".into()), Some(home.clone())),
+            Some(home.join("work").join("pi"))
+        );
     }
 
     #[test]

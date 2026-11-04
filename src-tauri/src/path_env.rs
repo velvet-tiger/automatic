@@ -15,6 +15,18 @@
 //! `fix-path-env` package): ask the user's own login shell what its `PATH`
 //! is, once, and adopt it for the rest of this process's lifetime.
 //!
+//! # Other variables
+//!
+//! The same probe reads a short allowlist of other variables,
+//! [`ADOPTED_VARS`], that change where an agent keeps its files. Pi's
+//! `PI_CODING_AGENT_DIR` is one: exported in `.zshrc`, it moves Pi's
+//! user-level folder, and Automatic must write there too. A variable is
+//! adopted only when this process did not inherit a value, so an app
+//! started from a terminal keeps the value it was started with. The probe
+//! reads the shell's exported environment, which is exactly what an agent
+//! started from that shell sees. A shell variable that is set but not
+//! exported is left out, as the agent would not see it either.
+//!
 //! # When the shell is slow
 //!
 //! The startup probe has a short limit so a broken profile cannot hold up
@@ -58,13 +70,29 @@ const STARTUP_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(unix)]
 const REPROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Markers around the `PATH` in the probe's output. An interactive login
-/// shell can print banners before the command and logout text after it, so
-/// the `PATH` is taken from between these and nowhere else.
+/// Markers around the environment in the probe's output. An interactive
+/// login shell can print banners before the command and logout text after
+/// it, so the environment is taken from between these and nowhere else.
 #[cfg(unix)]
 const PATH_START: &str = "__AUTOMATIC_PATH_START__";
 #[cfg(unix)]
 const PATH_END: &str = "__AUTOMATIC_PATH_END__";
+
+/// Variables other than `PATH` that are adopted from the login shell. Each
+/// one changes where an agent reads its files, so Automatic must see the
+/// same value the agent does. Keep this list short: every entry is a value
+/// the user's profile can set for the whole app.
+#[cfg(unix)]
+pub(crate) const ADOPTED_VARS: &[&str] = &["PI_CODING_AGENT_DIR"];
+
+/// What the probe read from the login shell.
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellEnv {
+    path: String,
+    /// Only names in [`ADOPTED_VARS`], each with a non-empty value.
+    vars: Vec<(String, String)>,
+}
 
 /// Whether the shell's `PATH` has been adopted, and whether the one allowed
 /// re-probe has been used.
@@ -82,8 +110,8 @@ static PROBE_STATE: Mutex<ProbeState> = Mutex::new(ProbeState {
     reprobe_attempted: false,
 });
 
-/// Adopt the login shell's `PATH`. If the shell does not answer in time,
-/// log why and append common install folders instead.
+/// Adopt the login shell's `PATH` and [`ADOPTED_VARS`]. If the shell does
+/// not answer in time, log why and append common install folders instead.
 #[cfg(unix)]
 pub fn fix_path_env() {
     // `make fresh` sets a minimal PATH on purpose, to imitate a bare machine.
@@ -92,8 +120,8 @@ pub fn fix_path_env() {
     }
     let mut state = PROBE_STATE.lock().unwrap_or_else(|e| e.into_inner());
     match probe_login_shell_path(STARTUP_PROBE_TIMEOUT) {
-        Ok(path) => {
-            std::env::set_var("PATH", path);
+        Ok(env) => {
+            adopt(&env);
             state.adopted = true;
         }
         Err(reason) => {
@@ -125,30 +153,55 @@ pub fn reprobe_login_shell_path() {
         return;
     }
     let mut state = PROBE_STATE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(path) = reprobe_with(&mut state, || probe_login_shell_path(REPROBE_TIMEOUT)) {
-        std::env::set_var("PATH", path);
+    if let Some(env) = reprobe_with(&mut state, || probe_login_shell_path(REPROBE_TIMEOUT)) {
+        adopt(&env);
     }
 }
 
 #[cfg(not(unix))]
 pub fn reprobe_login_shell_path() {}
 
+/// Set this process's `PATH` from the shell, and each adopted variable
+/// that this process did not inherit.
+#[cfg(unix)]
+fn adopt(env: &ShellEnv) {
+    std::env::set_var("PATH", &env.path);
+    for (name, value) in vars_to_adopt(&env.vars, |name| std::env::var_os(name)) {
+        std::env::set_var(name, value);
+    }
+}
+
+/// The shell's variables that should be set here: those this process has
+/// no value for. An empty inherited value counts as none, as it does for
+/// the agents that read these variables.
+#[cfg(unix)]
+fn vars_to_adopt(
+    shell_vars: &[(String, String)],
+    inherited: impl Fn(&str) -> Option<OsString>,
+) -> Vec<(&str, &str)> {
+    shell_vars
+        .iter()
+        .filter(|(name, _)| inherited(name).is_none_or(|value| value.is_empty()))
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect()
+}
+
 /// The re-probe decision, apart from the shell and the environment. Runs
 /// `probe` only if neither the startup probe nor an earlier re-probe has
-/// been tried to completion, and returns the `PATH` to adopt.
+/// been tried to completion, and returns the environment to adopt.
 #[cfg(unix)]
 fn reprobe_with(
     state: &mut ProbeState,
-    probe: impl FnOnce() -> Result<String, String>,
-) -> Option<String> {
+    probe: impl FnOnce() -> Result<ShellEnv, String>,
+) -> Option<ShellEnv> {
     if state.adopted || state.reprobe_attempted {
         return None;
     }
     state.reprobe_attempted = true;
     match probe() {
-        Ok(path) => {
+        Ok(env) => {
             state.adopted = true;
-            Some(path)
+            Some(env)
         }
         Err(reason) => {
             eprintln!(
@@ -162,16 +215,28 @@ fn reprobe_with(
 
 /// Probe the user's `$SHELL`, falling back to zsh, the macOS default.
 #[cfg(unix)]
-fn probe_login_shell_path(timeout: Duration) -> Result<String, String> {
+fn probe_login_shell_path(timeout: Duration) -> Result<ShellEnv, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     probe_shell(&shell, timeout)
 }
 
-/// Run `shell` as a login shell, print its `PATH` between markers, and
-/// return it, or a short reason the probe failed. Kills the shell if it
-/// passes `timeout`.
+/// The command the probe shell runs. It prints the exported environment,
+/// NUL-separated, between markers. `env -0` is on macOS and GNU systems.
+/// Where it is missing (BusyBox), the shell prints only `PATH`, as the
+/// probe did before it read other variables. The syntax works in sh, bash,
+/// zsh and fish.
 #[cfg(unix)]
-fn probe_shell(shell: &str, timeout: Duration) -> Result<String, String> {
+fn probe_script() -> String {
+    format!(
+        "printf '%s' '{PATH_START}'; command env -0 || printf 'PATH=%s\\000' \"$PATH\"; printf '%s' '{PATH_END}'"
+    )
+}
+
+/// Run `shell` as a login shell, print its environment between markers,
+/// and return `PATH` and [`ADOPTED_VARS`], or a short reason the probe
+/// failed. Kills the shell if it passes `timeout`.
+#[cfg(unix)]
+fn probe_shell(shell: &str, timeout: Duration) -> Result<ShellEnv, String> {
     use std::io::Read;
     use std::time::Instant;
 
@@ -180,10 +245,7 @@ fn probe_shell(shell: &str, timeout: Duration) -> Result<String, String> {
     // stops an interactive login shell from grabbing the parent's tty
     // and stalling MCP hosts like Claude Code with `SIGTTIN`.
     let mut cmd = crate::spawn_safe::safe_command_captured(&shell);
-    cmd.args([
-        "-ilc",
-        &format!("printf '{}%s{}' \"$PATH\"", PATH_START, PATH_END),
-    ]);
+    cmd.args(["-ilc", &probe_script()]);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("could not run '{}': {}", shell, e))?;
@@ -240,8 +302,8 @@ fn probe_shell(shell: &str, timeout: Duration) -> Result<String, String> {
     let drain_deadline = deadline.max(Instant::now() + Duration::from_millis(250));
     let mut output = Vec::new();
     loop {
-        if let Some(path) = parse_probe_output(&String::from_utf8_lossy(&output)) {
-            return Ok(path);
+        if let Some(env) = parse_probe_output(&String::from_utf8_lossy(&output)) {
+            return Ok(env);
         }
         let remaining = drain_deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(remaining) {
@@ -269,14 +331,31 @@ pub(crate) fn kill_process_group(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Pick the `PATH` out of the probe's stdout: the text between the last
-/// start marker and the end marker after it.
+/// Pick the environment out of the probe's stdout: the NUL-separated
+/// `NAME=value` entries between the last start marker and the end marker
+/// after it. Returns `None` unless `PATH` is there and not empty, since an
+/// environment without one is not one the shell meant to print.
 #[cfg(unix)]
-fn parse_probe_output(stdout: &str) -> Option<String> {
+fn parse_probe_output(stdout: &str) -> Option<ShellEnv> {
     let start = stdout.rfind(PATH_START)? + PATH_START.len();
     let len = stdout[start..].find(PATH_END)?;
-    let path = stdout[start..start + len].trim();
-    (!path.is_empty()).then(|| path.to_string())
+    let mut path = None;
+    let mut vars = Vec::new();
+    for entry in stdout[start..start + len].split('\0') {
+        let Some((name, value)) = entry.split_once('=') else {
+            continue;
+        };
+        if name == "PATH" {
+            path = Some(value.trim());
+        } else if ADOPTED_VARS.contains(&name) && !value.is_empty() {
+            vars.push((name.to_string(), value.to_string()));
+        }
+    }
+    let path = path.filter(|p| !p.is_empty())?;
+    Some(ShellEnv {
+        path: path.to_string(),
+        vars,
+    })
 }
 
 /// Append the fallback folders that exist on disk to this process's `PATH`.
@@ -337,8 +416,28 @@ fn path_with_fallbacks(
 mod tests {
     use super::*;
 
+    /// Probe output as `env -0` prints it, with only a `PATH` entry.
     fn wrapped(path: &str) -> String {
-        format!("{}{}{}", PATH_START, path, PATH_END)
+        wrapped_env(&[("PATH", path)])
+    }
+
+    fn wrapped_env(entries: &[(&str, &str)]) -> String {
+        let body: String = entries
+            .iter()
+            .map(|(name, value)| format!("{name}={value}\0"))
+            .collect();
+        format!("{PATH_START}{body}{PATH_END}")
+    }
+
+    fn parsed_path(out: &str) -> Option<String> {
+        parse_probe_output(out).map(|env| env.path)
+    }
+
+    fn env_with_path(path: &str) -> ShellEnv {
+        ShellEnv {
+            path: path.to_string(),
+            vars: Vec::new(),
+        }
     }
 
     #[test]
@@ -348,7 +447,7 @@ mod tests {
             wrapped("/opt/homebrew/bin:/usr/bin")
         );
         assert_eq!(
-            parse_probe_output(&out).as_deref(),
+            parsed_path(&out).as_deref(),
             Some("/opt/homebrew/bin:/usr/bin")
         );
     }
@@ -356,7 +455,7 @@ mod tests {
     #[test]
     fn parse_probe_output_uses_the_last_start_marker() {
         let out = format!("{} junk {}", PATH_START, wrapped("/usr/bin"));
-        assert_eq!(parse_probe_output(&out).as_deref(), Some("/usr/bin"));
+        assert_eq!(parsed_path(&out).as_deref(), Some("/usr/bin"));
     }
 
     #[test]
@@ -365,13 +464,72 @@ mod tests {
         assert_eq!(parse_probe_output("/usr/bin:/bin"), None);
         assert_eq!(parse_probe_output(PATH_START), None);
         assert_eq!(parse_probe_output(&wrapped("  ")), None);
+        assert_eq!(
+            parse_probe_output(&wrapped_env(&[("PI_CODING_AGENT_DIR", "/work/pi")])),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_probe_output_keeps_only_allowlisted_variables() {
+        let out = wrapped_env(&[
+            ("HOME", "/Users/u"),
+            ("PATH", "/usr/bin"),
+            ("PI_CODING_AGENT_DIR", "~/work/pi"),
+            ("SECRET_TOKEN", "do-not-keep"),
+        ]);
+        assert_eq!(
+            parse_probe_output(&out),
+            Some(ShellEnv {
+                path: "/usr/bin".into(),
+                vars: vec![("PI_CODING_AGENT_DIR".into(), "~/work/pi".into())],
+            })
+        );
+    }
+
+    #[test]
+    fn parse_probe_output_keeps_equals_signs_and_newlines_in_values() {
+        let out = wrapped_env(&[
+            ("PATH", "/usr/bin"),
+            ("PI_CODING_AGENT_DIR", "/work/a=b\nc"),
+        ]);
+        let env = parse_probe_output(&out).unwrap();
+        assert_eq!(
+            env.vars,
+            vec![("PI_CODING_AGENT_DIR".into(), "/work/a=b\nc".into())]
+        );
+    }
+
+    #[test]
+    fn parse_probe_output_leaves_out_unset_and_empty_variables() {
+        assert_eq!(
+            parse_probe_output(&wrapped("/usr/bin")).unwrap().vars,
+            vec![]
+        );
+        let out = wrapped_env(&[("PATH", "/usr/bin"), ("PI_CODING_AGENT_DIR", "")]);
+        assert_eq!(parse_probe_output(&out).unwrap().vars, vec![]);
+    }
+
+    #[test]
+    fn inherited_variables_win_over_the_shell() {
+        let shell = vec![("PI_CODING_AGENT_DIR".to_string(), "/from/shell".to_string())];
+        let inherited = |value: &'static str| move |_: &str| Some(OsString::from(value));
+        assert_eq!(vars_to_adopt(&shell, inherited("/from/launch")), vec![]);
+        assert_eq!(
+            vars_to_adopt(&shell, inherited("")),
+            vec![("PI_CODING_AGENT_DIR", "/from/shell")]
+        );
+        assert_eq!(
+            vars_to_adopt(&shell, |_| None),
+            vec![("PI_CODING_AGENT_DIR", "/from/shell")]
+        );
     }
 
     #[test]
     fn reprobe_runs_once_and_adopts_the_result() {
         let mut state = ProbeState::default();
-        let path = reprobe_with(&mut state, || Ok("/opt/homebrew/bin".into()));
-        assert_eq!(path.as_deref(), Some("/opt/homebrew/bin"));
+        let env = reprobe_with(&mut state, || Ok(env_with_path("/opt/homebrew/bin")));
+        assert_eq!(env.map(|e| e.path).as_deref(), Some("/opt/homebrew/bin"));
         assert!(state.adopted);
         assert_eq!(
             reprobe_with(&mut state, || panic!("must not probe again")),
@@ -435,8 +593,68 @@ mod tests {
     fn probe_reads_path_from_a_real_shell() {
         // Uses /bin/sh with a known PATH rather than the developer's own
         // profile, so the result does not depend on the machine.
-        let path = probe_shell("/bin/sh", Duration::from_secs(10)).unwrap();
+        let path = probe_shell("/bin/sh", Duration::from_secs(10))
+            .unwrap()
+            .path;
         assert!(path.contains("/usr/bin"), "unexpected PATH: {path}");
+    }
+
+    /// Runs the probe's command in a plain `/bin/sh` with the given `PATH`
+    /// and an exported test variable, and parses what it prints.
+    fn run_probe_script(path: &str) -> Option<ShellEnv> {
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", &probe_script()])
+            .env_clear()
+            .env("PATH", path)
+            .env("PI_CODING_AGENT_DIR", "~/work/pi")
+            .output()
+            .unwrap();
+        parse_probe_output(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    #[test]
+    fn probe_script_reads_exported_variables() {
+        let env = run_probe_script("/usr/bin:/bin").unwrap();
+        assert_eq!(env.path, "/usr/bin:/bin");
+        assert_eq!(
+            env.vars,
+            vec![("PI_CODING_AGENT_DIR".into(), "~/work/pi".into())]
+        );
+    }
+
+    #[test]
+    fn probe_script_falls_back_to_path_without_env_dash_zero() {
+        // An `env` that rejects every option, as BusyBox's rejects `-0`.
+        let dir = tempfile::tempdir().unwrap();
+        let fake_env = dir.path().join("env");
+        std::fs::write(&fake_env, "#!/bin/sh\nexit 1\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_env, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = format!("{}:/usr/bin:/bin", dir.path().display());
+        let env = run_probe_script(&path).unwrap();
+        assert_eq!(env.path, path);
+        assert_eq!(env.vars, vec![]);
+    }
+
+    #[test]
+    fn probe_reads_adopted_variables_through_a_login_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = fake_shell(
+            dir.path(),
+            &format!(
+                "echo 'Welcome'\nprintf '{PATH_START}PATH=/usr/bin\\000PI_CODING_AGENT_DIR=/work/pi\\000TERM=xterm\\000{PATH_END}'"
+            ),
+        );
+        let env = probe_shell(script.to_str().unwrap(), Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            env,
+            ShellEnv {
+                path: "/usr/bin".into(),
+                vars: vec![("PI_CODING_AGENT_DIR".into(), "/work/pi".into())],
+            }
+        );
     }
 
     /// Writes an executable script standing in for the user's shell. It
@@ -487,12 +705,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let script = fake_shell(
             dir.path(),
-            &format!("sleep 30 &\nprintf '{PATH_START}/usr/bin{PATH_END}'"),
+            &format!("sleep 30 &\nprintf '{PATH_START}PATH=/usr/bin{PATH_END}'"),
         );
 
         let started = std::time::Instant::now();
-        let path = probe_shell(script.to_str().unwrap(), Duration::from_secs(10)).unwrap();
-        assert_eq!(path, "/usr/bin");
+        let env = probe_shell(script.to_str().unwrap(), Duration::from_secs(10)).unwrap();
+        assert_eq!(env.path, "/usr/bin");
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
