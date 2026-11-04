@@ -7,7 +7,7 @@ All notable changes to Automatic are documented here.
 ### Added
 
 - ThinkRail is a sync target. It shares Pi's files, and Pi and ThinkRail can sit on one project.
-- Pi syncs commands to `.pi/prompts` and can receive user-level MCP servers in its agent folder, honouring `PI_CODING_AGENT_DIR`.
+- Pi syncs commands to `.pi/prompts` and can receive user-level MCP servers in its agent folder, honouring `PI_CODING_AGENT_DIR`, including a value exported in your shell profile when Automatic is opened from the Dock.
 
 ### Fixed
 
