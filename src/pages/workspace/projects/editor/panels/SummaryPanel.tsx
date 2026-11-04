@@ -43,6 +43,8 @@ type DocEntry = { path: string; summary?: string };
 
 interface SummaryPanelProps {
   project: Project;
+  /** The selected project's `local_key`. Null while it is being created. */
+  projectKey: string | null;
   isCreating: boolean;
   /** Null while no memories are loaded for this project. */
   memories: Record<string, unknown> | null;
@@ -114,9 +116,9 @@ function plural(count: number, one: string, many: string): string {
 
 /** Branch, uncommitted changes and upstream position, above the cards. */
 function RepoLine({ repo }: { repo: GitRepoState }) {
-  const upstream = repo.ahead === null || repo.behind === null
-    ? "No upstream"
-    : `${repo.ahead} ahead, ${repo.behind} behind`;
+  let upstream = "No upstream";
+  if (repo.ahead !== null && repo.behind !== null) upstream = `${repo.ahead} ahead, ${repo.behind} behind`;
+  else if (repo.upstream !== null) upstream = `Upstream ${repo.upstream} is gone`;
   const changes = repo.uncommitted_files === 0
     ? "No uncommitted changes"
     : `${plural(repo.uncommitted_files, "uncommitted file", "uncommitted files")}`;
@@ -146,6 +148,7 @@ function showCommitHistory(git: ProjectGitState): boolean {
 }
 
 interface CommitTileStats {
+  lineStats: boolean;
   sparkline: number[];
   window: { commits: number; authors: number; insertions: number; deletions: number };
   windowStart: Date | null;
@@ -179,7 +182,8 @@ function CommitsTile({ git, stats }: { git: ProjectGitState; stats: CommitTileSt
         <>
           <Sparkline values={stats.sparkline} />
           <div className="mt-1 truncate text-[12px] tabular-nums text-text-muted">
-            {plural(authors, "author", "authors")}, +{insertions.toLocaleString()} −{deletions.toLocaleString()} lines
+            {plural(authors, "author", "authors")}
+            {stats.lineStats && `, +${insertions.toLocaleString()} −${deletions.toLocaleString()} lines`}
           </div>
         </>
       ) : (
@@ -191,6 +195,7 @@ function CommitsTile({ git, stats }: { git: ProjectGitState; stats: CommitTileSt
 
 export function SummaryPanel({
   project,
+  projectKey,
   isCreating,
   memories,
   projectFiles,
@@ -233,11 +238,7 @@ export function SummaryPanel({
   ];
   const configTotal = configItems.reduce((sum, item) => sum + item.count, 0);
 
-  const git = useProjectGitActivity(
-    isCreating ? null : project.name,
-    project.directory ?? "",
-    activityEntries[0]?.id,
-  );
+  const git = useProjectGitActivity(isCreating ? null : projectKey, activityEntries[0]?.id);
   const showGit = git.status !== "none";
 
   const localDay = useLocalDay();
@@ -258,6 +259,7 @@ export function SummaryPanel({
     const { commits } = git.activity;
     const oldest = gitHistoryStart(git.activity);
     return {
+      lineStats: git.activity.line_stats,
       calendar: buildActivityCalendar(commits, now, oldest),
       sparkline: dailyCounts(commits, STAT_WINDOW_DAYS, now),
       window: commitWindowStats(commits, STAT_WINDOW_DAYS, now),

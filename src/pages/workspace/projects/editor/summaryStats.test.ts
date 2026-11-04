@@ -306,10 +306,11 @@ function commit(timestamp: Date, author = "Sam", insertions = 1, deletions = 0):
 
 function gitActivity(commits: GitCommit[], truncated: boolean): GitActivity {
   return {
-    repo: { branch: "main", uncommitted_files: 0, ahead: null, behind: null, has_commits: true },
+    repo: { branch: "main", uncommitted_files: 0, upstream: null, ahead: null, behind: null, has_commits: true },
     commits,
     truncated,
     history_days: 98,
+    line_stats: true,
   };
 }
 

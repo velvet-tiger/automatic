@@ -397,7 +397,7 @@ export interface ProjectSummary {
 /** One commit that touched the project folder. Mirrors `core::git_activity::GitCommit`. */
 export interface GitCommit {
   hash: string;
-  /** Author date, ISO 8601 with the author's offset. */
+  /** Committer date, ISO 8601 with the committer's offset. */
   timestamp: string;
   author: string;
   subject: string;
@@ -411,7 +411,9 @@ export interface GitRepoState {
   /** Null on a detached HEAD. */
   branch: string | null;
   uncommitted_files: number;
-  /** Null when the branch has no upstream. */
+  /** The upstream branch, kept even when it no longer exists. */
+  upstream: string | null;
+  /** Null when there is no upstream or it is gone. */
   ahead: number | null;
   behind: number | null;
   has_commits: boolean;
@@ -425,6 +427,8 @@ export interface GitActivity {
   /** The commit cap cut the history short. */
   truncated: boolean;
   history_days: number;
+  /** False in a partial clone, where line counts would need a fetch. */
+  line_stats: boolean;
 }
 
 export interface ActivityEntry {

@@ -12,13 +12,27 @@ export type ProjectGitState =
 
 const IDLE: ProjectGitState = { status: "none" };
 
+/**
+ * The last result for each project, kept for the life of the window. Opening
+ * a project again shows it at once, with its final layout, while a fresh read
+ * runs. The values are the backend's replies, so a stale entry is only ever
+ * shown until that read returns.
+ */
+const lastKnown = new Map<string, ProjectGitState>();
+
+/** Test support: forget every cached result. */
+export function clearGitActivityCache(): void {
+  lastKnown.clear();
+}
+
 function isGitActivity(value: unknown): value is GitActivity {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<GitActivity>;
   return Array.isArray(candidate.commits)
     && typeof candidate.repo === "object" && candidate.repo !== null
     && typeof candidate.truncated === "boolean"
-    && typeof candidate.history_days === "number";
+    && typeof candidate.history_days === "number"
+    && typeof candidate.line_stats === "boolean";
 }
 
 /** Checks the backend's reply, since a malformed one would break the charts. */
@@ -31,48 +45,62 @@ export function gitStateFromReply(reply: unknown): ProjectGitState {
 /**
  * Loads a project's git history for the Summary.
  *
- * Loads again when the project or its folder changes, and when the window
- * regains focus, so the uncommitted count follows work done in another app.
- * Only the latest request may change state, because a slow repository can
- * answer after the user has moved to another project. A refresh keeps the
- * current data on screen until its reply arrives.
+ * `projectKey` is the project's `local_key`, the one identifier that never
+ * matches two checkouts. It is null while a new project is being created and
+ * has no saved record. The backend reads the saved folder, so loads follow
+ * the saved project: `refreshKey` changes when the project's newest activity
+ * row does, which a save writes. The window regaining focus also reloads, so
+ * the uncommitted count follows work done in another app.
  *
- * `project` is null while a new project is being created and has no saved
- * record for the backend to read. The backend reads the saved folder, so a
- * folder change shows once saved: `refreshKey` changes when the project's
- * newest activity row does, which a save writes.
+ * One read runs at a time. A request made while one runs is held and made
+ * once that read finishes, so a burst of focus events costs at most one more
+ * read and a save is never answered with a read that started before it. A
+ * reply for a project that is no longer shown is cached but not displayed.
  */
 export function useProjectGitActivity(
-  project: string | null,
-  directory: string,
+  projectKey: string | null,
   refreshKey: number | undefined,
 ): ProjectGitState {
-  const [state, setState] = useState<{ key: string; value: ProjectGitState } | null>(null);
-  const latestRequest = useRef(0);
-  const key = project === null || directory.trim() === "" ? null : `${project}\u0000${directory}`;
+  const [, setVersion] = useState(0);
+  const inFlight = useRef(false);
+  const pending = useRef(false);
+  const currentKey = useRef(projectKey);
+  currentKey.current = projectKey;
 
   const load = useCallback(async () => {
-    if (project === null || key === null) return;
-    const request = ++latestRequest.current;
-    try {
-      const reply: unknown = await invoke("get_project_git_activity", { project });
-      if (request !== latestRequest.current) return;
-      setState({ key, value: gitStateFromReply(reply) });
-    } catch (err: unknown) {
-      if (request !== latestRequest.current) return;
-      console.error("Failed to load git activity:", err);
-      setState({ key, value: { status: "failed", error: checkErrorText(err) } });
+    const key = currentKey.current;
+    if (key === null) return;
+    if (inFlight.current) {
+      pending.current = true;
+      return;
     }
-  }, [project, key]);
+    inFlight.current = true;
+    try {
+      const reply: unknown = await invoke("get_project_git_activity", { project: key });
+      lastKnown.set(key, gitStateFromReply(reply));
+    } catch (err: unknown) {
+      console.error("Failed to load git activity:", err);
+      lastKnown.set(key, { status: "failed", error: checkErrorText(err) });
+    } finally {
+      inFlight.current = false;
+    }
+    if (key === currentKey.current) setVersion((v) => v + 1);
+    if (pending.current || key !== currentKey.current) {
+      pending.current = false;
+      void load();
+    }
+  }, []);
 
   useEffect(() => {
     void load();
+  }, [load, projectKey, refreshKey]);
+
+  useEffect(() => {
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [load, refreshKey]);
+  }, [load]);
 
-  if (key === null) return IDLE;
-  if (state === null || state.key !== key) return { status: "loading" };
-  return state.value;
+  if (projectKey === null) return IDLE;
+  return lastKnown.get(projectKey) ?? { status: "loading" };
 }

@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { invokeMock, mockInvoke } from "../../../../../test/tauriMock";
 import userEvent from "@testing-library/user-event";
 import { SummaryPanel } from "./SummaryPanel";
+import { clearGitActivityCache } from "../useProjectGitActivity";
 import { emptyProject } from "../../helpers";
 import type { ComponentProps } from "react";
 import type { DriftedFile, GitActivity } from "../../types";
@@ -20,6 +21,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}) {
   render(
     <SummaryPanel
       project={project}
+      projectKey="kelpie-key"
       isCreating={false}
       memories={{}}
       projectFiles={[]}
@@ -44,7 +46,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}) {
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
 const REPO: GitActivity = {
-  repo: { branch: "main", uncommitted_files: 3, ahead: 2, behind: 0, has_commits: true },
+  repo: { branch: "main", uncommitted_files: 3, upstream: "origin/main", ahead: 2, behind: 0, has_commits: true },
   commits: [
     {
       hash: "aaaaaaaa1",
@@ -67,10 +69,12 @@ const REPO: GitActivity = {
   ],
   truncated: false,
   history_days: 98,
+  line_stats: true,
 };
 
 describe("SummaryPanel", () => {
   beforeEach(() => {
+    clearGitActivityCache();
     invokeMock.mockReset();
     mockInvoke({ get_project_git_activity: null });
   });
@@ -146,7 +150,7 @@ describe("SummaryPanel", () => {
 
   it("leaves the git cards out for a folder that is not a repository", async () => {
     renderPanel();
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_project_git_activity", { project: "kelpie" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("get_project_git_activity", { project: "kelpie-key" }));
     await waitFor(() => expect(screen.queryByText("Recent commits")).toBeNull());
     expect(screen.queryByText("Commits, 30 days")).toBeNull();
     expect(screen.queryByText("Commits")).toBeNull();
@@ -165,9 +169,33 @@ describe("SummaryPanel", () => {
   });
 
   it("says no upstream when the branch has none", async () => {
-    mockInvoke({ get_project_git_activity: { ...REPO, repo: { ...REPO.repo, ahead: null, behind: null } } });
+    mockInvoke({
+      get_project_git_activity: { ...REPO, repo: { ...REPO.repo, upstream: null, ahead: null, behind: null } },
+    });
     renderPanel();
     expect(await screen.findByText("No upstream")).toBeInTheDocument();
+  });
+
+  it("says the upstream is gone when it was deleted", async () => {
+    mockInvoke({ get_project_git_activity: { ...REPO, repo: { ...REPO.repo, ahead: null, behind: null } } });
+    renderPanel();
+    expect(await screen.findByText("Upstream origin/main is gone")).toBeInTheDocument();
+  });
+
+  it("leaves line counts out when git cannot count them", async () => {
+    mockInvoke({ get_project_git_activity: { ...REPO, line_stats: false } });
+    renderPanel();
+    expect(await screen.findByText("2 authors")).toBeInTheDocument();
+    expect(screen.queryByText(/lines/)).toBeNull();
+  });
+
+  it("asks for the project by its local key, not its name", async () => {
+    renderPanel();
+    await waitFor(() => expect(invokeMock).toHaveBeenCalled());
+    const projects = invokeMock.mock.calls
+      .filter(([cmd]) => cmd === "get_project_git_activity")
+      .map(([, args]) => (args as { project: string }).project);
+    expect(new Set(projects)).toEqual(new Set(["kelpie-key"]));
   });
 
   it("shows the reason when git history cannot be read", async () => {

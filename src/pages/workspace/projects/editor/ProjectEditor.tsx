@@ -4686,6 +4686,7 @@ export function ProjectEditor({
                 {projectTab === "summary" && project && (
                   <SummaryPanel
                     project={project}
+                    projectKey={selectedKey}
                     isCreating={isCreating}
                     memories={selectedMemories}
                     projectFiles={projectFiles}
