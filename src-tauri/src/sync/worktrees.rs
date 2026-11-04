@@ -24,6 +24,11 @@
 //! repository's `info/exclude`, which git applies to every worktree and never
 //! commits. Without it, an agent's `git add -A` could commit `.mcp.json` and
 //! the env values it holds.
+//!
+//! The repository can be one the user downloaded with its `.git` folder, so
+//! its config is not trusted. Every git call goes through [`WorktreeGit`],
+//! which blanks the repository's own filters and turns off the other settings
+//! that run a program. See `core::git_guard`.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -33,6 +38,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
+use crate::core::git_guard::{self, GitInstall, RepoConfig};
 use crate::core::{self, Project, ProjectMode, ProjectSummary};
 
 use super::engine::{fixed_sync_paths, sync_to_directory};
@@ -275,6 +281,8 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
         return Ok(result);
     }
 
+    let git = WorktreeGit::open(worktree)?;
+
     let effective_dir = match copy.mode {
         ProjectMode::Silent => worktree.join(".automatic").join("silent"),
         ProjectMode::Normal => worktree.to_path_buf(),
@@ -283,8 +291,8 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
     let gitignore = worktree.join(".gitignore");
     targets.push(gitignore.clone());
     let pathspecs = literal_pathspecs(worktree, &targets);
-    let snapshot = TrackedSnapshot::take(worktree, &pathspecs)?;
-    let modified_before = modified_tracked_files(worktree, &pathspecs)?;
+    let snapshot = TrackedSnapshot::take(&git, &pathspecs)?;
+    let modified_before = modified_tracked_files(&git, &pathspecs)?;
 
     let synced = sync_to_directory(&mut copy);
     // Only what sync wrote is put back, so an edit someone else makes during
@@ -316,7 +324,7 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
         if let Err(e) = exclude_managed_paths(worktree, &copy) {
             result.warnings.push(e);
         }
-        match unignored_files(worktree, &result.written) {
+        match unignored_files(&git, &result.written) {
             Ok(unignored) => result.unignored = unignored,
             Err(e) => result.warnings.push(format!(
                 "Could not check which synced files git ignores: {e}"
@@ -329,7 +337,7 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
     }
 
     let mut changed: BTreeSet<String> = restore.failed.into_iter().collect();
-    match modified_tracked_files(worktree, &pathspecs) {
+    match modified_tracked_files(&git, &pathspecs) {
         Ok(after) => changed.extend(
             after
                 .difference(&modified_before)
@@ -434,9 +442,9 @@ fn without_managed_block(text: &str) -> String {
 }
 
 /// The files among `written` that are neither tracked nor ignored.
-fn unignored_files(worktree: &Path, written: &[String]) -> Result<Vec<String>, String> {
+fn unignored_files(git: &WorktreeGit, written: &[String]) -> Result<Vec<String>, String> {
     let targets: Vec<PathBuf> = written.iter().map(PathBuf::from).collect();
-    let pathspecs = literal_pathspecs(worktree, &targets);
+    let pathspecs = literal_pathspecs(git.worktree, &targets);
     if pathspecs.is_empty() {
         return Ok(Vec::new());
     }
@@ -446,7 +454,7 @@ fn unignored_files(worktree: &Path, written: &[String]) -> Result<Vec<String>, S
         "--".to_string(),
     ];
     args.extend(pathspecs);
-    ls_files(worktree, &args)
+    ls_files(git, &args)
 }
 
 /// `targets` as literal git pathspecs relative to `root`. A target outside
@@ -464,34 +472,67 @@ fn literal_pathspecs(root: &Path, targets: &[PathBuf]) -> Vec<String> {
     pathspecs
 }
 
-/// A `git` command run in `worktree`. Variables that point git at another
-/// repository are removed, since this may run inside a git hook that sets
-/// them. The fsmonitor hook is turned off so a read never starts one.
-fn git_in(worktree: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(worktree)
-        .args(["-c", "core.fsmonitor=false"]);
-    for var in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_NAMESPACE",
-        // Config passed down by a calling git process, for example a hook.
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-    ] {
-        cmd.env_remove(var);
-    }
-    cmd
+/// The git that reads one worktree, with its repository's config already
+/// read. Made once per worktree sync.
+///
+/// `git ls-files --modified` reads a file's content when stat data cannot
+/// settle whether it changed: the file has the indexed size but a new time
+/// or inode, or its index entry is racy. Reading content runs the clean
+/// filter the repository's config names for that file. So every call goes
+/// through [`git_guard::isolated_git_command`], which blanks those filters.
+/// It also drops the variables a calling git sets, since this can run inside
+/// a git hook.
+struct WorktreeGit<'a> {
+    worktree: &'a Path,
+    install: &'static GitInstall,
+    config: RepoConfig,
 }
 
-/// Run `git ls-files -z` in `worktree` with `args`, and return the listed
+impl<'a> WorktreeGit<'a> {
+    /// Find git and read the repository config in `worktree`, so config at
+    /// worktree scope counts. Fails when there is no usable git, or when the
+    /// installed git would silently ignore a protection this repository
+    /// needs.
+    fn open(worktree: &'a Path) -> Result<Self, String> {
+        let install = git_guard::git_install().ok_or_else(|| {
+            format!(
+                "No usable git was found, so the tracked files of {} cannot be protected",
+                worktree.display()
+            )
+        })?;
+        let output = git_guard::isolated_git_command(install, worktree, &RepoConfig::default())
+            .args(git_guard::REPO_CONFIG_ARGS)
+            .output()
+            .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
+        // `git config --get-regexp` exits 1 when nothing matches.
+        if !output.status.success() && output.status.code() != Some(1) {
+            return Err(format!(
+                "git config failed in {}: {}",
+                worktree.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let config = git_guard::parse_repo_config(&output.stdout);
+        git_guard::check_git_supports(&config, install.version, "sync its worktrees")?;
+        Ok(Self {
+            worktree,
+            install,
+            config,
+        })
+    }
+
+    /// A `git` command run in the worktree.
+    fn command(&self) -> Command {
+        git_guard::isolated_git_command(self.install, self.worktree, &self.config)
+    }
+}
+
+/// Run `git ls-files -z` in the worktree with `args`, and return the listed
 /// paths, relative to the worktree.
-fn ls_files(worktree: &Path, args: &[String]) -> Result<Vec<String>, String> {
-    let output = git_in(worktree)
+fn ls_files(git: &WorktreeGit, args: &[String]) -> Result<Vec<String>, String> {
+    let worktree = git.worktree;
+    let output = git
+        .command()
         .args(["ls-files", "-z"])
         .args(args)
         .output()
@@ -522,7 +563,7 @@ fn ls_files(worktree: &Path, args: &[String]) -> Result<Vec<String>, String> {
 /// Tracked files under `pathspecs` whose working copy differs from the
 /// index, or is missing.
 fn modified_tracked_files(
-    worktree: &Path,
+    git: &WorktreeGit,
     pathspecs: &[String],
 ) -> Result<BTreeSet<String>, String> {
     if pathspecs.is_empty() {
@@ -530,7 +571,7 @@ fn modified_tracked_files(
     }
     let mut args = vec!["--modified".to_string(), "--".to_string()];
     args.extend(pathspecs.iter().cloned());
-    Ok(ls_files(worktree, &args)?.into_iter().collect())
+    Ok(ls_files(git, &args)?.into_iter().collect())
 }
 
 /// How one tracked path looked before the sync.
@@ -559,8 +600,9 @@ struct Restored {
 }
 
 impl TrackedSnapshot {
-    /// Read every tracked file that `pathspecs` match.
-    fn take(root: &Path, pathspecs: &[String]) -> Result<Self, String> {
+    /// Read every tracked file in the worktree that `pathspecs` match.
+    fn take(git: &WorktreeGit, pathspecs: &[String]) -> Result<Self, String> {
+        let root = git.worktree;
         if pathspecs.is_empty() {
             return Ok(Self {
                 root: root.to_path_buf(),
@@ -569,7 +611,7 @@ impl TrackedSnapshot {
         }
         let mut args = vec!["--".to_string()];
         args.extend(pathspecs.iter().cloned());
-        let entries = ls_files(root, &args)?
+        let entries = ls_files(git, &args)?
             .into_iter()
             .map(|rel| {
                 let state = read_state(&root.join(&rel))?;
@@ -1067,6 +1109,124 @@ mod tests {
             Some(&wrote)
         ));
         assert!(may_restore(&root.join("CLAUDE.md"), &gitignore, None));
+    }
+
+    /// A shell script that creates `marker` and passes its input through, as
+    /// a clean filter does.
+    #[cfg(unix)]
+    fn marker_script(dir: &Path, marker: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("payload.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    #[cfg(unix)]
+    fn set_mtime(path: &Path, time: std::time::SystemTime) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(time))
+            .unwrap_or_else(|e| panic!("set the time of {}: {e}", path.display()));
+    }
+
+    #[test]
+    fn a_worktree_command_drops_the_callers_git_settings_and_keeps_the_overrides() {
+        let git = WorktreeGit {
+            worktree: Path::new("/wt"),
+            install: git_guard::git_install().expect("git is installed"),
+            config: git_guard::parse_repo_config(b"local\0filter.evil.clean\nx\0"),
+        };
+        let command = git.command();
+        // `Some(None)` is a removed variable, `None` one left as inherited.
+        let env = |key: &str| {
+            command
+                .get_envs()
+                .find(|(k, _)| *k == std::ffi::OsStr::new(key))
+                .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        for removed in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_NAMESPACE",
+            "GIT_CONFIG_PARAMETERS",
+        ] {
+            assert_eq!(env(removed), Some(None), "{removed} is not removed");
+        }
+        // Our four overrides, numbered from 0, whatever the caller exported.
+        assert_eq!(env("GIT_CONFIG_COUNT"), Some(Some("4".into())));
+        assert_eq!(
+            env("GIT_CONFIG_KEY_0"),
+            Some(Some("filter.evil.clean".into()))
+        );
+        assert_eq!(env("GIT_CONFIG_VALUE_0"), Some(Some(String::new())));
+        assert_eq!(
+            env("GIT_CONFIG_KEY_3"),
+            Some(Some("filter.evil.required".into()))
+        );
+        assert_eq!(env("GIT_CONFIG_VALUE_3"), Some(Some("false".into())));
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|w| w == ["-C", "/wt"]), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["-c", "core.fsmonitor=false"]),
+            "{args:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_clean_filter_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter");
+        let target = f.worktree.join("CLAUDE.md");
+        // 2099-01-01. An index entry whose time is not older than the index
+        // file is racy, so `git ls-files --modified` must read the file.
+        let future = std::time::UNIX_EPOCH + std::time::Duration::from_secs(4_070_908_800);
+        set_mtime(&target, future);
+        // Record that time in the index before any filter exists.
+        git(&f.worktree, &["add", "CLAUDE.md"]);
+
+        let outside = tempfile::tempdir().unwrap();
+        let marker = outside.path().join("clean-ran");
+        let script = marker_script(outside.path(), &marker);
+        git(
+            &f.main,
+            &["config", "filter.evil.clean", script.to_str().unwrap()],
+        );
+        git(&f.main, &["config", "core.trustctime", "false"]);
+        fs::create_dir_all(f.main.join(".git/info")).unwrap();
+        fs::write(
+            f.main.join(".git/info/attributes"),
+            "CLAUDE.md filter=evil\n",
+        )
+        .unwrap();
+        // Same size and time, other content: only reading the file shows it.
+        let edited = BRANCH_CLAUDE_MD.replace("instructions", "instructionz");
+        assert_eq!(edited.len(), BRANCH_CLAUDE_MD.len());
+        fs::write(&target, &edited).unwrap();
+        set_mtime(&target, future);
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert!(!marker.exists(), "the repository's clean filter ran");
+        assert!(f.worktree.join(".mcp.json").is_file(), "{result:?}");
+        assert_eq!(read(&target), edited);
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+
+        // The setup does reach the filter: git without the override runs it.
+        git(&f.worktree, &["ls-files", "--modified", "--", "CLAUDE.md"]);
+        assert!(marker.exists(), "the test no longer reaches the filter");
     }
 
     #[test]
