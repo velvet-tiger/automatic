@@ -33,6 +33,7 @@ mod mcp_format_tests;
 mod global_mcp_tests;
 mod opencode;
 mod pi;
+mod thinkrail;
 mod removal;
 mod warp;
 mod zcode;
@@ -65,6 +66,7 @@ pub use opencode::{
     OpenCode,
 };
 pub use pi::Pi;
+pub use thinkrail::ThinkRail;
 pub use removal::{
     apply_removal_plan, plan_agent_removal, RemovalAction, RemovalEntry, RemovalMode, RemovalPlan,
 };
@@ -95,7 +97,7 @@ pub struct AgentCapabilities {
     /// Automatic can write user-level (home-directory) MCP server config for
     /// this agent, so servers are available in every session/chat regardless of
     /// project.  Deliberately decoupled from [`mcp_servers`] — Cline, Warp and
-    /// Antigravity all have global-yes / project-no, and Pi has the opposite.
+    /// Antigravity all have global-yes / project-no.
     ///
     /// Defaults to `false`; each agent opts in with an actual writer.
     pub global_mcp_servers: bool,
@@ -254,6 +256,32 @@ pub trait Agent: Send + Sync {
             "{} does not support global MCP server writes",
             self.label()
         ))
+    }
+
+    /// Why this agent cannot load `server`, a prepared entry, or `None` when
+    /// it can.  The writers leave such an entry out, and the reason tells the
+    /// user why it is missing.
+    ///
+    /// Default: every entry can be written.
+    fn mcp_unsupported_reason(&self, _server: &Value) -> Option<String> {
+        None
+    }
+
+    /// The file a global record from before records stored their target
+    /// described.  Such a record owns names only there.
+    ///
+    /// Default: the current target, which for most agents never moves.
+    fn legacy_global_mcp_path(&self) -> Option<PathBuf> {
+        self.global_mcp_target().map(|target| target.path)
+    }
+
+    /// The agent whose saved global MCP selection this agent uses.  Two
+    /// agents that write one user-level file must share a record, or each
+    /// would treat the other's entries as the user's own.
+    ///
+    /// Default: this agent's own record.
+    fn global_mcp_state_id(&self) -> &'static str {
+        self.id()
     }
 
     /// Rewrite the "inherit from the environment" markers of one server entry.
@@ -473,6 +501,33 @@ pub trait Agent: Send + Sync {
     /// JSON.
     fn convert_agent_content(&self, content: &str, _name: &str) -> String {
         render_markdown_command(content)
+    }
+
+    /// `true` when [`convert_agent_content`](Agent::convert_agent_content)
+    /// keeps Markdown but drops or rewrites frontmatter, so a file on disk is
+    /// not a full copy of the stored definition.  Adopt and rebuild must not
+    /// take such a file whole.
+    ///
+    /// Default: `false`.
+    fn agent_markdown_is_lossy(&self) -> bool {
+        false
+    }
+
+    /// Why this sub-agent must not be written for this agent, or `None` when
+    /// it can be.  Sync skips a refused definition and removes any managed
+    /// copy, and drift does not report it missing.
+    ///
+    /// Default: every definition can be written.
+    fn agent_content_refusal(&self, _content: &str) -> Option<String> {
+        None
+    }
+
+    /// Anything [`convert_agent_content`](Agent::convert_agent_content) left
+    /// out of this sub-agent that the user should hear about.
+    ///
+    /// Default: nothing.
+    fn agent_content_warnings(&self, _content: &str) -> Vec<String> {
+        Vec::new()
     }
 
     /// Return what differs between a sub-agent file on disk and `expected`,
@@ -746,6 +801,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &CodexCli,
         &OpenCode,
         &Pi,
+        &ThinkRail,
         &Warp,
         &ZCode,
         &Zed,
@@ -1868,7 +1924,7 @@ pub(crate) fn symlink_commands_from_project(
 /// `true` when `path` resolves, through every link along it, to a regular
 /// file inside `root` and outside any `.git` directory (a clone's
 /// `.git/config` can carry a token in its remote URL).
-fn is_regular_file_in(root: &Path, path: &Path) -> bool {
+pub(crate) fn is_regular_file_in(root: &Path, path: &Path) -> bool {
     let Ok(target) = fs::canonicalize(path) else {
         return false;
     };

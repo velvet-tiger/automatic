@@ -30,6 +30,22 @@ pub struct GlobalMcpState {
     pub agents: HashMap<String, AgentGlobalMcp>,
 }
 
+impl GlobalMcpState {
+    /// The record `agent_id` reads and writes.  Every lookup goes through
+    /// this: agents that write one file share a record, so a raw id would
+    /// show an empty selection and a re-apply would remove the real one.
+    pub fn record(&self, agent_id: &str) -> Option<&AgentGlobalMcp> {
+        self.agents.get(&global_mcp_state_key(agent_id))
+    }
+}
+
+/// The key of `agent_id`'s record in [`GlobalMcpState::agents`].
+pub fn global_mcp_state_key(agent_id: &str) -> String {
+    crate::agent::from_id(agent_id)
+        .map_or(agent_id, |agent| agent.global_mcp_state_id())
+        .to_string()
+}
+
 /// Per-agent slice of the state document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentGlobalMcp {
@@ -49,9 +65,36 @@ pub struct AgentGlobalMcp {
     /// referenced `${workspaceFolder}` (no meaning at global scope).
     #[serde(default)]
     pub rejected: Vec<String>,
+    /// The file `managed` refers to.  When the agent's target has moved,
+    /// those names say nothing about the new file, where a same-named entry
+    /// is the user's.  `None` on records from before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
     /// RFC3339 timestamp of the last successful apply, `None` if never applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_applied: Option<String>,
+}
+
+impl AgentGlobalMcp {
+    /// The names this record owns in `target_path`.  A record from before
+    /// targets were stored owns names only in `legacy_path`.
+    pub fn managed_in(&self, target_path: &str, legacy_path: Option<&str>) -> Vec<String> {
+        let owner = self.target_path.as_deref().or(legacy_path);
+        if owner == Some(target_path) {
+            self.managed.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The names this record owns in `agent`'s current global target.
+    pub fn managed_for(&self, agent: &dyn crate::agent::Agent) -> Vec<String> {
+        let Some(target) = agent.global_mcp_target() else {
+            return Vec::new();
+        };
+        let legacy = agent.legacy_global_mcp_path().map(|p| p.display().to_string());
+        self.managed_in(&target.path.display().to_string(), legacy.as_deref())
+    }
 }
 
 /// Load the state document, or `Default` if the file does not exist.
@@ -103,6 +146,23 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn a_legacy_record_owns_names_only_in_its_default_file() {
+        let legacy = AgentGlobalMcp {
+            managed: vec!["alpha".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(legacy.managed_in("/home/me/.pi/agent/mcp.json", Some("/home/me/.pi/agent/mcp.json")), vec!["alpha"]);
+        assert!(legacy.managed_in("/work/pi/mcp.json", Some("/home/me/.pi/agent/mcp.json")).is_empty());
+        assert!(legacy.managed_in("/work/pi/mcp.json", None).is_empty());
+
+        let current = AgentGlobalMcp {
+            target_path: Some("/work/pi/mcp.json".to_string()),
+            ..legacy
+        };
+        assert_eq!(current.managed_in("/work/pi/mcp.json", Some("/home/me/.pi/agent/mcp.json")), vec!["alpha"]);
+    }
+
+    #[test]
     fn load_returns_default_when_file_absent() {
         let tmp = TempDir::new().unwrap();
         with_test_home(tmp.path().to_path_buf(), || {
@@ -119,6 +179,7 @@ mod tests {
             state.agents.insert(
                 "cursor".to_string(),
                 AgentGlobalMcp {
+                    target_path: None,
                     selected: vec!["fs".to_string(), "web".to_string()],
                     managed: vec!["fs".to_string()],
                     skipped: vec!["web".to_string()],

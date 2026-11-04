@@ -1118,7 +1118,7 @@ fn owned_dirs_never_overlap_another_agents_paths() {
 #[test]
 fn shared_parent_directories_are_never_owned() {
     let root = Path::new("/project");
-    let shared = [".agents", ".github", ".vscode", ".automatic"];
+    let shared = [".agents", ".github", ".vscode", ".automatic", ".pi"];
     for agent in all() {
         for owned in agent.owned_dirs(root) {
             for name in shared {

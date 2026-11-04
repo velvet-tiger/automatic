@@ -116,6 +116,7 @@ const AGENT_OPTIONS = [
   { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "pi", label: "Pi" },
+  { id: "thinkrail", label: "ThinkRail" },
   { id: "warp", label: "Warp" },
   { id: "zcode", label: "Z Code" },
   { id: "zed", label: "Zed" },

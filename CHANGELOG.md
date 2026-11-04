@@ -2,6 +2,33 @@
 
 All notable changes to Automatic are documented here.
 
+## [Unreleased]
+
+### Added
+
+- ThinkRail is a sync target. It shares Pi's files, and Pi and ThinkRail can sit on one project.
+- Pi syncs commands to `.pi/prompts` and can receive user-level MCP servers in its agent folder, honouring `PI_CODING_AGENT_DIR`, including a value exported in your shell profile when Automatic is opened from the Dock.
+
+### Fixed
+
+- Pi no longer receives legacy SSE servers, which it rejects. Sub-agents are written in the single-line form Pi reads, with Claude model aliases removed and tool names mapped.
+- Removing Pi no longer deletes your own files in `.pi/`, such as `settings.json` and `extensions/`.
+- Automatic ignores only the paths it writes in `.pi/`, not the whole folder. The next sync rewrites the managed `.gitignore` block in projects that use Pi, so your own `.pi/` files can be tracked.
+- Sub-agents that Pi cannot restrict as written are refused, not widened. The project's problems list shows refused sub-agents, dropped tools and left-out SSE servers.
+
+## [1.39.0] - 2026-11-03
+
+### Added
+
+- The project Summary panel shows sync status, activity and configuration charts. ([458a85e](https://github.com/velvet-tiger/automatic/commit/458a85e))
+- App Updates in Settings links to the latest changelog and the GitHub issue form. ([0f81f73](https://github.com/velvet-tiger/automatic/commit/0f81f73), [214f7e5](https://github.com/velvet-tiger/automatic/commit/214f7e5))
+
+### Fixed
+
+- The Summary panel refreshes its activity and shows the correct sync, history and theme states. Its loading and calendar states are clearer, and the last sync line wraps. ([58f8a91](https://github.com/velvet-tiger/automatic/commit/58f8a91), [2b5305e](https://github.com/velvet-tiger/automatic/commit/2b5305e), [61a22a4](https://github.com/velvet-tiger/automatic/commit/61a22a4))
+- Stale activity and memory loads no longer appear on the wrong project. ([61a22a4](https://github.com/velvet-tiger/automatic/commit/61a22a4), [7c11b5a](https://github.com/velvet-tiger/automatic/commit/7c11b5a))
+- The App Updates row wraps on narrow windows. ([10c82f4](https://github.com/velvet-tiger/automatic/commit/10c82f4))
+
 ## [1.38.0] - 2026-11-03
 
 ### Added
