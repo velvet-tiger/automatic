@@ -1,6 +1,6 @@
 // Pure calculations behind the project Summary panel.
 
-import type { ActivityEntry, DriftReport } from "../types";
+import type { ActivityEntry, DriftReport, GitActivity, GitCommit } from "../types";
 
 /** Mirrors `MAX_ENTRIES_PER_PROJECT` in `src-tauri/src/activity.rs`. */
 export const ACTIVITY_HISTORY_LIMIT = 500;
@@ -8,6 +8,11 @@ export const CALENDAR_WEEKS = 13;
 export const STAT_WINDOW_DAYS = 30;
 /** Syncs further apart than this are separate work, so they keep their own rows. */
 const SYNC_GROUP_GAP_MS = 60 * 60 * 1000;
+
+/** Anything with a time: an activity row or a commit. */
+export interface Timestamped {
+  timestamp: string;
+}
 
 export interface CalendarDay {
   key: string;
@@ -67,7 +72,7 @@ function addLocalDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
-function countByLocalDay(entries: ActivityEntry[]): Map<string, number> {
+function countByLocalDay(entries: readonly Timestamped[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const entry of entries) {
     const date = new Date(entry.timestamp);
@@ -79,7 +84,7 @@ function countByLocalDay(entries: ActivityEntry[]): Map<string, number> {
 }
 
 /** The oldest parseable event. Entries arrive newest first, but this does not rely on it. */
-function oldestEventDate(entries: ActivityEntry[]): Date | null {
+function oldestEventDate(entries: readonly Timestamped[]): Date | null {
   let oldest: Date | null = null;
   for (const entry of entries) {
     const date = new Date(entry.timestamp);
@@ -90,14 +95,52 @@ function oldestEventDate(entries: ActivityEntry[]): Date | null {
 }
 
 /** Oldest stored event, or null when the limit has not discarded any history. */
-export function historyStart(entries: ActivityEntry[]): Date | null {
+export function historyStart(entries: readonly Timestamped[]): Date | null {
   return entries.length >= ACTIVITY_HISTORY_LIMIT ? oldestEventDate(entries) : null;
 }
 
-/** Where history starts, when that falls inside the last `days` days. */
-export function truncatedWindowStart(entries: ActivityEntry[], days: number, now: Date): Date | null {
-  const start = historyStart(entries);
+/**
+ * Where history starts, when that falls inside the last `days` days.
+ * `start` defaults to the activity log's limit; commits pass their own.
+ */
+export function truncatedWindowStart(
+  entries: readonly Timestamped[],
+  days: number,
+  now: Date,
+  start: Date | null = historyStart(entries),
+): Date | null {
   return start !== null && start > windowStart(days, now) ? start : null;
+}
+
+/** The oldest commit read, when the commit cap cut the history short. */
+export function gitHistoryStart(activity: GitActivity): Date | null {
+  return activity.truncated ? oldestEventDate(activity.commits) : null;
+}
+
+export interface CommitWindowStats {
+  commits: number;
+  authors: number;
+  insertions: number;
+  deletions: number;
+}
+
+/** Totals for commits in the last `days` local days, the same days as `dailyCounts`. */
+export function commitWindowStats(commits: readonly GitCommit[], days: number, now: Date): CommitWindowStats {
+  const start = windowStart(days, now).getTime();
+  const end = addLocalDays(startOfLocalDay(now), 1).getTime();
+  const authors = new Set<string>();
+  let count = 0;
+  let insertions = 0;
+  let deletions = 0;
+  for (const commit of commits) {
+    const time = new Date(commit.timestamp).getTime();
+    if (!(time >= start && time < end)) continue;
+    count += 1;
+    authors.add(commit.author);
+    insertions += commit.insertions;
+    deletions += commit.deletions;
+  }
+  return { commits: count, authors: authors.size, insertions, deletions };
 }
 
 function windowStart(days: number, now: Date): Date {
@@ -108,12 +151,15 @@ function windowStart(days: number, now: Date): Date {
  * Days for the activity calendar, oldest first. The first day is a Sunday, so
  * the seven-row grid lines up by weekday.
  */
-export function buildActivityCalendar(entries: ActivityEntry[], now: Date): ActivityCalendar {
+export function buildActivityCalendar(
+  entries: readonly Timestamped[],
+  now: Date,
+  oldest: Date | null = historyStart(entries),
+): ActivityCalendar {
   const today = startOfLocalDay(now);
   const start = addLocalDays(today, -today.getDay() - (CALENDAR_WEEKS - 1) * 7);
   const counts = countByLocalDay(entries);
 
-  const oldest = historyStart(entries);
   const historySince = oldest !== null && oldest > start ? oldest : null;
   const firstKnownDay = historySince === null ? start : startOfLocalDay(historySince);
 
@@ -126,7 +172,7 @@ export function buildActivityCalendar(entries: ActivityEntry[], now: Date): Acti
 }
 
 /** Daily event counts for the last `days` days, oldest first, ending today. */
-export function dailyCounts(entries: ActivityEntry[], days: number, now: Date): number[] {
+export function dailyCounts(entries: readonly Timestamped[], days: number, now: Date): number[] {
   const today = startOfLocalDay(now);
   const counts = countByLocalDay(entries);
   return Array.from({ length: days }, (_, index) => {
@@ -140,7 +186,7 @@ export function dailyCounts(entries: ActivityEntry[], days: number, now: Date): 
  * Covers the same days as `dailyCounts`, so a tile matches its sparkline.
  */
 export function countRecent(
-  entries: ActivityEntry[],
+  entries: ReadonlyArray<Timestamped & { event?: string }>,
   days: number,
   now: Date,
   event?: string,

@@ -58,3 +58,23 @@ pub fn get_all_activity(limit: usize) -> Result<String, String> {
     let entries = activity::get_all_activity(n)?;
     serde_json::to_string(&for_display(entries)?).map_err(|e| e.to_string())
 }
+
+/// Recent commits and working-tree state for a project's folder, for the
+/// Summary. `None` when the folder is not in a git repository. The folder
+/// comes from the project registry, never from the caller, so this cannot be
+/// pointed at an arbitrary path.
+#[tauri::command]
+pub async fn get_project_git_activity(
+    project: String,
+) -> Result<Option<crate::core::git_activity::GitActivity>, String> {
+    tokio::task::spawn_blocking(move || {
+        let ident = crate::core::canonical_project_ident(&project)?;
+        let raw = crate::core::read_project(&ident)?;
+        let project: crate::core::Project =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+        let dir = crate::core::git_activity::project_git_dir(&project)?;
+        crate::core::git_activity::read_git_activity(&dir, &project)
+    })
+    .await
+    .map_err(|e| format!("Git activity task failed: {}", e))?
+}

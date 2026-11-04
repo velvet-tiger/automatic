@@ -394,6 +394,39 @@ export interface ProjectSummary {
   awaiting_confirmation?: boolean;
 }
 
+/** One commit that touched the project folder. Mirrors `core::git_activity::GitCommit`. */
+export interface GitCommit {
+  hash: string;
+  /** Author date, ISO 8601 with the author's offset. */
+  timestamp: string;
+  author: string;
+  subject: string;
+  insertions: number;
+  deletions: number;
+  /** The commit changed a file Automatic writes for this project. */
+  touches_agent_config: boolean;
+}
+
+export interface GitRepoState {
+  /** Null on a detached HEAD. */
+  branch: string | null;
+  uncommitted_files: number;
+  /** Null when the branch has no upstream. */
+  ahead: number | null;
+  behind: number | null;
+  has_commits: boolean;
+}
+
+/** Mirrors `core::git_activity::GitActivity`. */
+export interface GitActivity {
+  repo: GitRepoState;
+  /** Newest first. */
+  commits: GitCommit[];
+  /** The commit cap cut the history short. */
+  truncated: boolean;
+  history_days: number;
+}
+
 export interface ActivityEntry {
   id: number;
   project: string;

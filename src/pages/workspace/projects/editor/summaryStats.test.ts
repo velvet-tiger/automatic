@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { ActivityEntry, DriftReport } from "../types";
+import type { ActivityEntry, DriftReport, GitActivity, GitCommit } from "../types";
 import {
   ACTIVITY_HISTORY_LIMIT,
   CALENDAR_WEEKS,
   activityLevel,
   agentSyncRows,
   buildActivityCalendar,
+  commitWindowStats,
   countRecent,
   dailyCounts,
+  gitHistoryStart,
   groupActivity,
   historyStart,
   latestSync,
@@ -287,5 +289,71 @@ describe("sync status", () => {
       title: "Not set up",
       share: 0,
     });
+  });
+});
+
+function commit(timestamp: Date, author = "Sam", insertions = 1, deletions = 0): GitCommit {
+  return {
+    hash: `${timestamp.getTime()}${author}`,
+    timestamp: timestamp.toISOString(),
+    author,
+    subject: "change",
+    insertions,
+    deletions,
+    touches_agent_config: false,
+  };
+}
+
+function gitActivity(commits: GitCommit[], truncated: boolean): GitActivity {
+  return {
+    repo: { branch: "main", uncommitted_files: 0, ahead: null, behind: null, has_commits: true },
+    commits,
+    truncated,
+    history_days: 98,
+  };
+}
+
+describe("commitWindowStats", () => {
+  it("totals commits, authors and lines inside the window only", () => {
+    const commits = [
+      commit(new Date(2026, 10, 4, 9), "Sam", 10, 2),
+      commit(new Date(2026, 10, 1, 9), "Alex", 5, 5),
+      commit(new Date(2026, 10, 1, 10), "Sam", 1, 0),
+      commit(new Date(2026, 8, 1), "Old", 100, 100),
+    ];
+    expect(commitWindowStats(commits, 30, NOW)).toEqual({
+      commits: 3,
+      authors: 2,
+      insertions: 16,
+      deletions: 7,
+    });
+  });
+
+  it("matches the sparkline at the window edge", () => {
+    const edge = [commit(new Date(2026, 9, 6, 0, 0, 1)), commit(new Date(2026, 9, 5, 23, 59))];
+    const sparkline = dailyCounts(edge, 30, NOW).reduce((sum, count) => sum + count, 0);
+    expect(commitWindowStats(edge, 30, NOW).commits).toBe(sparkline);
+  });
+});
+
+describe("gitHistoryStart", () => {
+  it("is the oldest commit only when the cap cut history short", () => {
+    const commits = [commit(new Date(2026, 10, 3)), commit(new Date(2026, 9, 20))];
+    expect(gitHistoryStart(gitActivity(commits, true))).toEqual(new Date(2026, 9, 20));
+    expect(gitHistoryStart(gitActivity(commits, false))).toBeNull();
+  });
+
+  it("marks calendar days before a truncated history as unknown", () => {
+    const commits = [commit(new Date(2026, 10, 3)), commit(new Date(2026, 9, 20))];
+    const { days, historySince } = buildActivityCalendar(commits, NOW, new Date(2026, 9, 20));
+    expect(historySince).toEqual(new Date(2026, 9, 20));
+    expect(days.find((d) => d.key === "2026-10-19")?.known).toBe(false);
+    expect(days.find((d) => d.key === "2026-10-20")?.known).toBe(true);
+    expect(truncatedWindowStart(commits, 30, NOW, new Date(2026, 9, 20))).toEqual(new Date(2026, 9, 20));
+  });
+
+  it("ignores the activity log limit for commits", () => {
+    const many = Array.from({ length: 600 }, () => commit(new Date(2026, 10, 3)));
+    expect(buildActivityCalendar(many, NOW, null).historySince).toBeNull();
   });
 });

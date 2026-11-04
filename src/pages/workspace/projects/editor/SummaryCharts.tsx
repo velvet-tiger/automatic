@@ -114,35 +114,50 @@ export function Sparkline({ values }: { values: number[] }) {
   );
 }
 
-function dayText(day: CalendarDay): string {
+/** What one calendar day counts, as singular and plural nouns. */
+export interface CalendarUnit {
+  one: string;
+  many: string;
+}
+
+const EVENT_UNIT: CalendarUnit = { one: "event", many: "events" };
+
+function countText(count: number, unit: CalendarUnit): string {
+  return `${count} ${count === 1 ? unit.one : unit.many}`;
+}
+
+function dayText(day: CalendarDay, unit: CalendarUnit): string {
   const date = day.date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  return `${date}: ${day.count} ${day.count === 1 ? "event" : "events"}`;
+  return `${date}: ${countText(day.count, unit)}`;
 }
 
 /** Gives the calendar's content in words, for anyone who cannot use the grid. */
-export function calendarSummary(days: CalendarDay[]): string {
+export function calendarSummary(days: CalendarDay[], unit: CalendarUnit = EVENT_UNIT): string {
   const total = days.reduce((sum, day) => sum + day.count, 0);
-  if (total === 0) return "No events in this period.";
+  if (total === 0) return `No ${unit.many} in this period.`;
   const busiest = days.reduce((best, day) => (day.count > best.count ? day : best));
   const date = busiest.date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-  const events = `${total} ${total === 1 ? "event" : "events"}`;
-  return `${events}. Busiest day ${date}, with ${busiest.count}.`;
+  return `${countText(total, unit)}. Busiest day ${date}, with ${busiest.count}.`;
 }
 
 export function ActivityCalendarGrid({
   days,
   rangeLabel,
+  label = "Activity calendar",
+  unit = EVENT_UNIT,
 }: {
   days: CalendarDay[];
   rangeLabel: string;
+  label?: string;
+  unit?: CalendarUnit;
 }) {
   const [hovered, setHovered] = useState<CalendarDay | null>(null);
-  const summary = calendarSummary(days);
+  const summary = calendarSummary(days, unit);
   return (
     <div onMouseLeave={() => setHovered(null)}>
       <div
         role="img"
-        aria-label={`Activity calendar. ${rangeLabel}. ${summary}`}
+        aria-label={`${label}. ${rangeLabel}. ${summary}`}
         className="grid grid-flow-col grid-rows-7 justify-start gap-[3px]"
       >
         {days.map((day) => (
@@ -158,7 +173,7 @@ export function ActivityCalendarGrid({
         ))}
       </div>
       <p className="mt-2 min-h-[16px] text-[11px] text-text-muted">
-        {hovered === null ? summary : dayText(hovered)}
+        {hovered === null ? summary : dayText(hovered, unit)}
       </p>
     </div>
   );

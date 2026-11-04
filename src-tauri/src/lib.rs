@@ -370,6 +370,7 @@ pub fn run() {
             get_project_activity,
             get_project_activity_paged,
             get_project_activity_count,
+            get_project_git_activity,
             get_all_activity,
             track_event,
             restart_app,
