@@ -313,8 +313,7 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
     let mut plan_mode = false;
     let mut extensions = false;
     let mut max_turns: Option<u32> = None;
-    let mut has_name = false;
-    let mut has_description = false;
+    let mut identity = IdentityFields::default();
     for entry in entries {
         if let Some(problem) = unreadable_key(&entry.key) {
             problems.push(problem);
@@ -369,12 +368,10 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
             (None, _) if normal.contains("tool") => {
                 problems.push(format!("Pi would ignore the tool setting '{}'", entry.key));
             }
-            (None, "name") if value.is_empty() => {}
-            (None, key) => {
-                has_name |= key == "name";
-                has_description |= key == "description" && !value.is_empty();
-                lines.push(entry.line);
+            (None, key @ ("name" | "description")) => {
+                identity.record(key, entry.key.trim(), value, lines.len());
             }
+            (None, _) => lines.push(entry.line),
         }
     }
 
@@ -432,7 +429,17 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
         lines.insert(tools_at.unwrap_or(lines.len()).min(lines.len()), line);
     }
 
-    if !has_name && !name.is_empty() {
+    warnings.extend(identity.variants.iter().map(|key| {
+        format!("it spells `{key}` in a form Pi does not read, so Automatic writes the exact key")
+    }));
+    let has_description = identity.description.is_some();
+    for (key, field) in [("description", identity.description), ("name", identity.name)] {
+        let Some((at, value)) = field else {
+            continue;
+        };
+        lines.insert(at.min(lines.len()), format!("{key}: {}", fallback_name(&value)));
+    }
+    if !lines.iter().any(|line| line.starts_with("name:")) && !name.is_empty() {
         lines.insert(0, format!("name: {}", fallback_name(name)));
     }
     if !has_description {
@@ -453,6 +460,43 @@ fn convert_pi_agent(content: &str, name: &str) -> PiAgentConversion {
         markdown,
         warnings,
         refusal,
+    }
+}
+
+/// The `name` and `description` a file sets, each written once under the key
+/// Pi reads.  Pi reads only the exact keys, last one winning, so an exact key
+/// beats a variant such as `Name` or `"name"`, which is used only when the
+/// exact key is missing.  An empty value counts as missing.
+#[derive(Default)]
+struct IdentityFields {
+    /// Line position and value.
+    name: Option<(usize, String)>,
+    description: Option<(usize, String)>,
+    name_is_exact: bool,
+    description_is_exact: bool,
+    /// Variant spellings seen, to warn about.
+    variants: Vec<String>,
+}
+
+impl IdentityFields {
+    fn record(&mut self, key: &str, raw_key: &str, value: &str, at: usize) {
+        let exact = raw_key == key;
+        if !exact && !self.variants.iter().any(|seen| seen == raw_key) {
+            self.variants.push(raw_key.to_string());
+        }
+        if value.is_empty() {
+            return;
+        }
+        let (field, field_is_exact) = if key == "name" {
+            (&mut self.name, &mut self.name_is_exact)
+        } else {
+            (&mut self.description, &mut self.description_is_exact)
+        };
+        if exact || !*field_is_exact {
+            let at = field.as_ref().map_or(at, |(first, _)| *first);
+            *field = Some((at, value.to_string()));
+            *field_is_exact |= exact;
+        }
     }
 }
 
@@ -1383,6 +1427,53 @@ mod tests {
         let rendered = converted("max_turns: 5\nmaxTurns: 50\n");
         assert_eq!(rendered.matches("max_turns:").count(), 1, "{rendered}");
         assert!(rendered.contains("\nmax_turns: 5\n"), "{rendered}");
+    }
+
+    fn pi_reads(rendered: &str, key: &str) -> Vec<String> {
+        let block = rendered.split("\n---").next().unwrap_or(rendered);
+        block
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(k, _)| js_trim(k) == key)
+            .map(|(_, v)| v.trim().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_a_variant_name_is_written_as_the_exact_key() {
+        let content = "---\nName: x\ndescription: d\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(content, "fallback");
+        assert_eq!(pi_reads(&rendered, "name"), vec!["x"], "{rendered}");
+        assert!(!rendered.contains("Name:"), "{rendered}");
+        assert!(Pi.agent_content_warnings(content).iter().any(|w| w.contains("`Name`")));
+    }
+
+    #[test]
+    fn test_a_variant_description_is_written_as_the_exact_key() {
+        let content = "---\nname: a\nDescription: y\n---\nBody\n";
+        let rendered = Pi.convert_agent_content(content, "a");
+        assert_eq!(pi_reads(&rendered, "description"), vec!["y"], "{rendered}");
+        let warnings = Pi.agent_content_warnings(content);
+        assert!(warnings.iter().any(|w| w.contains("`Description`")), "{warnings:?}");
+        assert!(!warnings.iter().any(|w| w.contains("no description")), "{warnings:?}");
+    }
+
+    #[test]
+    fn test_an_exact_key_beats_a_variant_whatever_the_order() {
+        for frontmatter in [
+            "name: exact\n\"name\": variant\ndescription: exact\nDescription: variant\n",
+            "Name: variant\nname: exact\nDescription: variant\ndescription: exact\n",
+        ] {
+            let rendered = Pi.convert_agent_content(&format!("---\n{frontmatter}---\nBody\n"), "a");
+            assert_eq!(pi_reads(&rendered, "name"), vec!["exact"], "{rendered}");
+            assert_eq!(pi_reads(&rendered, "description"), vec!["exact"], "{rendered}");
+        }
+    }
+
+    #[test]
+    fn test_the_last_exact_name_wins_as_in_pi() {
+        let rendered = Pi.convert_agent_content("---\nname: one\nname: two\ndescription: d\n---\nB\n", "a");
+        assert_eq!(pi_reads(&rendered, "name"), vec!["two"], "{rendered}");
     }
 
     #[test]
