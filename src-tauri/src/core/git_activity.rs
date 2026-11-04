@@ -332,6 +332,15 @@ fn read_git_activity_with(
     let Some(git) = git else {
         return Ok(None);
     };
+    // Outside a repository there is no history to show, whatever git is
+    // installed, so this comes before any refusal. Global config still lists
+    // filters there. `rev-parse` reads no file content.
+    let probe = ["rev-parse", "--git-dir"];
+    if let GitRun::NotARepository =
+        run_git(git, project_dir, &RepoConfig::default(), &probe, "rev-parse", None)?
+    {
+        return Ok(None);
+    }
     check_git_reads_repo_config(git.version, "see its history")?;
 
     // `git config --get-regexp` exits 1 when nothing matches.
@@ -575,14 +584,7 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
         }
         let tmp = tempfile::tempdir().unwrap();
         // The test means nothing if the temp dir itself sits inside a repository.
-        let inside = Command::new("git")
-            .arg("-C")
-            .arg(tmp.path())
-            .args(["rev-parse", "--is-inside-work-tree"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if inside {
+        if inside_a_repository(tmp.path()) {
             return;
         }
         let project = project_with_agents(tmp.path(), &[]);
@@ -743,13 +745,61 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
             return;
         };
         let old = installed.with_version(GitVersion::new(2, 25));
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = committed_repo();
         let project = project_with_agents(tmp.path(), &[]);
         let err = read_git_activity_with(tmp.path(), &project, Some(&old)).unwrap_err();
         assert!(
             err.contains("needs git 2.26 or later, and git 2.25 is installed. Update git to see its history."),
             "{err}"
         );
+    }
+
+    fn inside_a_repository(dir: &Path) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Read a folder outside any repository with git reporting `version`
+    /// and a global config that sets a filter. `None` when the test cannot
+    /// run here.
+    #[cfg(unix)]
+    fn read_outside_a_repository(version: GitVersion) -> Option<Result<Option<GitActivity>, String>> {
+        let installed = git_install()?;
+        let tmp = tempfile::tempdir().unwrap();
+        if inside_a_repository(tmp.path()) {
+            return None;
+        }
+        let outside = tempfile::tempdir().unwrap();
+        let marker = outside.path().join("global-ran");
+        let script = marker_script(outside.path(), &marker);
+        let global = outside.path().join("global.cfg");
+        std::fs::write(&global, format!("[filter \"glob\"]\n\tclean = {}\n", script.display())).unwrap();
+        let git = installed.with_version(version).with_global_config(outside.path(), &global);
+        let project = project_with_agents(tmp.path(), &[]);
+        let result = read_git_activity_with(tmp.path(), &project, Some(&git));
+        assert!(!marker.exists(), "the global filter ran");
+        Some(result)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_outside_a_repository_reads_as_none_with_a_global_filter_on_old_git() {
+        if let Some(result) = read_outside_a_repository(GitVersion::new(2, 30)) {
+            assert_eq!(result, Ok(None));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_outside_a_repository_reads_as_none_on_git_without_show_scope() {
+        if let Some(result) = read_outside_a_repository(GitVersion::new(2, 25)) {
+            assert_eq!(result, Ok(None));
+        }
     }
 
     #[cfg(unix)]
