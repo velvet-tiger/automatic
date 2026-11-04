@@ -662,6 +662,9 @@ command\0filter.cmd.clean\ntouch c\0";
         };
         // A relative folder that does hold a `git`, from the test's working
         // folder, so skipping it is what the test sees.
+        // `target` is git-ignored here, and may not exist when the build
+        // output goes elsewhere.
+        std::fs::create_dir_all("target").unwrap();
         let held = tempfile::Builder::new().prefix("find-in-").tempdir_in("target").unwrap();
         executable_git(held.path());
         let cwd = std::env::current_dir().unwrap();
