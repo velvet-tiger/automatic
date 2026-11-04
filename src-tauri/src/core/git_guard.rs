@@ -6,15 +6,15 @@
 //!
 //! - `core.fsmonitor`, with `-c`. Callers also pass the command options that
 //!   turn off external diff drivers, textconv and signature display.
-//! - Clean, smudge and process filters defined in the repository's own config
-//!   (local or worktree scope, includes counted), which git runs when it
-//!   re-checks a file's content. Their names come from `git config`, which
-//!   runs nothing, and are blanked through `GIT_CONFIG_*` variables, so a name
+//! - Clean, smudge and process filters, which git runs when it re-checks a
+//!   file's content. Filters from every config scope are turned off,
+//!   includes counted. Their names come from `git config`, which runs
+//!   nothing, and are blanked through `GIT_CONFIG_*` variables, so a name
 //!   holding `=` cannot escape the override. An empty name counts too. A name
 //!   that is not valid UTF-8 cannot be passed to git on every platform, so
-//!   [`check_git_supports`] refuses that repository. Filters from the user's
-//!   global config, such as Git LFS, stay on: they are the user's own, and
-//!   turning them off makes files look changed.
+//!   [`check_git_supports`] refuses the read. The cost: a file a global
+//!   filter tracks, such as a Git LFS file, can show as changed when its stat
+//!   data changed since git last checked it.
 //! - Lazy fetches in a partial clone, which would run `core.sshCommand` and
 //!   write objects. `GIT_NO_LAZY_FETCH` stops them on git 2.44 and later.
 //!
@@ -22,8 +22,7 @@
 //! index, so it never races the user's own git commands. Every call also sets
 //! `protocol.allow=never` and a no-op `core.sshCommand`, so no transport can
 //! run whatever else asks for one. An exported `GIT_CONFIG` is removed,
-//! because `git config` would read only that file and miss the repository's
-//! filters.
+//! because `git config` would read only that file and miss the filters.
 //!
 //! The filter override needs git 2.31 and `GIT_NO_LAZY_FETCH` needs git 2.44.
 //! Older git ignores both silently, so [`check_git_supports`] refuses a
@@ -95,12 +94,12 @@ pub(crate) struct GitInstall {
 /// The repository settings that change how Automatic reads it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RepoConfig {
-    /// Filter drivers defined at local or worktree scope. A name may be
-    /// empty.
-    local_filters: Vec<String>,
-    /// True when a filter at local or worktree scope has a name that is not
-    /// valid UTF-8, which cannot be blanked on every platform.
+    /// Filter drivers defined in any config scope. A name may be empty.
+    filters: Vec<String>,
+    /// True when a filter has a name that is not valid UTF-8, which cannot be
+    /// blanked on every platform.
     non_utf8_filter: bool,
+    /// Set from local and worktree scope only.
     pub(crate) partial_clone: bool,
 }
 
@@ -132,19 +131,16 @@ pub(crate) fn parse_repo_config(output: &[u8]) -> RepoConfig {
         // A key written with no value prints with no line feed.
         let key = entry.split(|b| *b == b'\n').next().unwrap_or(entry);
         let repo_scope = scope == b"local" || scope == b"worktree";
-        if !repo_scope {
-            continue;
-        }
         if let Some(name) = filter_name(key) {
             match std::str::from_utf8(name) {
                 Ok(name) => {
-                    if !config.local_filters.iter().any(|n| n == name) {
-                        config.local_filters.push(name.to_string());
+                    if !config.filters.iter().any(|n| n == name) {
+                        config.filters.push(name.to_string());
                     }
                 }
                 Err(_) => config.non_utf8_filter = true,
             }
-        } else if is_partial_clone_key(key) {
+        } else if repo_scope && is_partial_clone_key(key) {
             // Any such key counts, whatever its value. A bare key is a
             // boolean true to git, and guessing wrong here would let a fetch
             // through on old git, while guessing wrong the other way only
@@ -173,7 +169,7 @@ fn is_partial_clone_key(key: &[u8]) -> bool {
 
 /// A `git` command for `dir` with every setting that could run another
 /// program or reach the network turned off. `config` names the repository's
-/// own filters to blank. Config the user exported through `GIT_CONFIG_COUNT`
+/// filters to blank. Config the user exported through `GIT_CONFIG_COUNT`
 /// is kept. Fails when that count is one git cannot read, or leaves no room
 /// for ours.
 pub(crate) fn git_command(
@@ -262,7 +258,7 @@ fn build_command(
         .env_remove("GIT_CONFIG");
 
     let mut overrides: Vec<(String, &str)> = Vec::new();
-    for name in &config.local_filters {
+    for name in &config.filters {
         for variable in ["clean", "smudge", "process"] {
             overrides.push((format!("filter.{name}.{variable}"), ""));
         }
@@ -308,13 +304,13 @@ pub(crate) fn check_git_supports(
 ) -> Result<(), String> {
     if config.non_utf8_filter {
         return Err(format!(
-            "This repository defines a git filter whose name is not valid UTF-8, so Automatic \
-             cannot turn it off. Rename that filter in the repository's git config to {purpose}."
+            "A git filter set for this repository has a name that is not valid UTF-8, so \
+             Automatic cannot turn it off. Rename that filter in your git config to {purpose}."
         ));
     }
-    if !config.local_filters.is_empty() && version < MIN_VERSION_CONFIG_ENV {
+    if !config.filters.is_empty() && version < MIN_VERSION_CONFIG_ENV {
         return Err(format!(
-            "This repository defines its own git filters. Reading it safely needs git \
+            "Git filters are set for this repository. Reading it safely needs git \
              {MIN_VERSION_CONFIG_ENV} or later, and git {version} is installed. Update git to {purpose}."
         ));
     }
@@ -352,6 +348,28 @@ pub(crate) fn git_available() -> bool {
 impl GitVersion {
     pub(crate) fn new(major: u32, minor: u32) -> Self {
         Self(major, minor)
+    }
+}
+
+#[cfg(all(test, unix))]
+impl GitInstall {
+    /// This git, run through a script in `dir` that points
+    /// `GIT_CONFIG_GLOBAL` at `global`, as the user's own global config
+    /// would be. The test's own process environment is left alone.
+    pub(crate) fn with_global_config(&self, dir: &Path, global: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let wrapper = dir.join("git-with-global-config");
+        let script = format!(
+            "#!/bin/sh\nGIT_CONFIG_GLOBAL='{}'\nexport GIT_CONFIG_GLOBAL\nexec '{}' \"$@\"\n",
+            global.display(),
+            self.path.display()
+        );
+        std::fs::write(&wrapper, script).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self {
+            path: wrapper,
+            version: self.version,
+        }
     }
 }
 
@@ -434,14 +452,16 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
-    fn repo_config_keeps_only_repository_filters() {
-        let out = b"global\0filter.lfs.clean\ngit-lfs clean -- %f\0\
+    fn repo_config_keeps_filters_from_every_scope() {
+        let out = b"system\0filter.sys.smudge\ntouch s\0\
+global\0filter.lfs.clean\ngit-lfs clean -- %f\0\
 local\0filter.evil.clean\ntouch x\0\
 local\0filter.evil.process\ntouch y\0\
 local\0filter.inc.luded=x.smudge\ntouch z\0\
-worktree\0filter.wt.clean\ntouch w\0";
+worktree\0filter.wt.clean\ntouch w\0\
+command\0filter.cmd.clean\ntouch c\0";
         let config = parse_repo_config(out);
-        assert_eq!(config.local_filters, vec!["evil", "inc.luded=x", "wt"]);
+        assert_eq!(config.filters, vec!["sys", "lfs", "evil", "inc.luded=x", "wt", "cmd"]);
         assert!(!config.partial_clone);
     }
 
@@ -449,7 +469,7 @@ worktree\0filter.wt.clean\ntouch w\0";
     fn repo_config_keeps_an_empty_filter_name() {
         let config = parse_repo_config(b"local\0filter..clean\ntouch x\0local\0filter.clean\nx\0");
         // `filter.clean` has no driver name, so it is no filter at all.
-        assert_eq!(config.local_filters, vec![""]);
+        assert_eq!(config.filters, vec![""]);
         assert!(!config.non_utf8_filter);
     }
 
@@ -457,10 +477,10 @@ worktree\0filter.wt.clean\ntouch w\0";
     fn repo_config_flags_a_filter_name_that_is_not_utf8() {
         let config = parse_repo_config(b"local\0filter.ev\xffil.clean\ntouch x\0local\0filter.ok.clean\nx\0");
         assert!(config.non_utf8_filter);
-        assert_eq!(config.local_filters, vec!["ok"]);
-        // Only the repository's own filters count.
+        assert_eq!(config.filters, vec!["ok"]);
+        // A global filter counts as much as the repository's own.
         let config = parse_repo_config(b"global\0filter.\xff.clean\nx\0");
-        assert!(!config.non_utf8_filter);
+        assert!(config.non_utf8_filter);
         // A value that is not UTF-8 is not a name.
         let config = parse_repo_config(b"local\0filter.ok.clean\n\xff\0");
         assert!(!config.non_utf8_filter);
@@ -554,7 +574,7 @@ worktree\0filter.wt.clean\ntouch w\0";
     #[test]
     fn older_git_is_refused_only_when_a_protection_needs_it() {
         let plain = RepoConfig::default();
-        let filters = RepoConfig { local_filters: vec!["evil".into()], ..RepoConfig::default() };
+        let filters = RepoConfig { filters: vec!["evil".into()], ..RepoConfig::default() };
         let partial = RepoConfig { partial_clone: true, ..RepoConfig::default() };
         let non_utf8 = RepoConfig { non_utf8_filter: true, ..RepoConfig::default() };
         let purpose = "see its history";

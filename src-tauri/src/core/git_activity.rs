@@ -18,8 +18,8 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::git_guard::{
-    check_git_supports, git_command, git_install, parse_repo_config, GitInstall, RepoConfig,
-    REPO_CONFIG_ARGS,
+    check_git_reads_repo_config, check_git_supports, git_command, git_install, parse_repo_config,
+    GitInstall, RepoConfig, REPO_CONFIG_ARGS,
 };
 use super::remote_sources::run_git_limited;
 use super::Project;
@@ -313,15 +313,26 @@ pub fn read_git_activity(
     project_dir: &Path,
     project: &Project,
 ) -> Result<Option<GitActivity>, String> {
+    read_git_activity_with(project_dir, project, git_install())
+}
+
+/// [`read_git_activity`] with `git`, the install to run. `None` means there is
+/// no usable git.
+fn read_git_activity_with(
+    project_dir: &Path,
+    project: &Project,
+    git: Option<&GitInstall>,
+) -> Result<Option<GitActivity>, String> {
     if !project_dir.is_dir() {
         return Err(format!(
             "Project folder {} does not exist",
             project_dir.display()
         ));
     }
-    let Some(git) = git_install() else {
+    let Some(git) = git else {
         return Ok(None);
     };
+    check_git_reads_repo_config(git.version, "see its history")?;
 
     // `git config --get-regexp` exits 1 when nothing matches.
     let config = match run_git(git, project_dir, &RepoConfig::default(), &REPO_CONFIG_ARGS, "config", Some(1))? {
@@ -422,7 +433,7 @@ pub fn project_git_dir(project: &Project) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::git_guard::git_available;
+    use super::super::git_guard::{git_available, GitVersion};
     use super::*;
     use std::process::Command;
 
@@ -724,6 +735,59 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
         assert!(!clean_marker.exists(), "clean filter from the repository ran");
         assert!(!process_marker.exists(), "process filter from the repository ran");
         assert!(!included_marker.exists(), "included filter ran");
+    }
+
+    #[test]
+    fn git_without_show_scope_is_refused_with_a_clear_message() {
+        let Some(installed) = git_install() else {
+            return;
+        };
+        let old = installed.with_version(GitVersion::new(2, 25));
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_with_agents(tmp.path(), &[]);
+        let err = read_git_activity_with(tmp.path(), &project, Some(&old)).unwrap_err();
+        assert!(
+            err.contains("needs git 2.26 or later, and git 2.25 is installed. Update git to see its history."),
+            "{err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_filter_from_the_global_config_is_not_run() {
+        let Some(installed) = git_install() else {
+            return;
+        };
+        let tmp = committed_repo();
+        let root = tmp.path();
+        let outside = tempfile::tempdir().unwrap();
+        let marker = outside.path().join("global-ran");
+        let script = marker_script(outside.path(), &marker);
+        let global = outside.path().join("global.cfg");
+        std::fs::write(&global, format!("[filter \"glob\"]\n\tclean = {}\n", script.display())).unwrap();
+        std::fs::write(root.join(".git/info/attributes"), "a.txt filter=glob\n").unwrap();
+        // The same content with a new time: status must hash the file, through
+        // its filter.
+        let future = std::time::UNIX_EPOCH + std::time::Duration::from_secs(4_070_908_800);
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("a.txt"))
+            .and_then(|file| file.set_modified(future))
+            .unwrap();
+        let git = installed.with_global_config(outside.path(), &global);
+
+        let project = project_with_agents(root, &[]);
+        read_git_activity_with(root, &project, Some(&git)).unwrap().expect("a repo");
+        assert!(!marker.exists(), "the clean filter from the global config ran");
+
+        // The setup does reach the filter: git with that global config runs it.
+        let _ = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .output()
+            .expect("run git");
+        assert!(marker.exists(), "the test no longer reaches the filter");
     }
 
     #[test]

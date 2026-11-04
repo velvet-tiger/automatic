@@ -27,8 +27,8 @@
 //!
 //! The repository can be one the user downloaded with its `.git` folder, so
 //! its config is not trusted. Every git call goes through [`WorktreeGit`],
-//! which blanks the repository's own filters and turns off the other settings
-//! that run a program. See `core::git_guard`.
+//! which blanks every git filter and turns off the other settings that run a
+//! program. See `core::git_guard`.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -112,7 +112,7 @@ pub fn sync_linked_worktree(worktree: &Path) -> Result<WorktreeSync, String> {
     let project: Project = serde_json::from_str(&raw)
         .map_err(|e| format!("Invalid project data for '{}': {}", parent.name, e))?;
     core::ensure_project_writable(&project)?;
-    sync_worktree_for(&project, &worktree)
+    sync_worktree_for(&project, &worktree, git_guard::git_install())
 }
 
 /// Sync every linked worktree of `project`'s folder that is not registered as
@@ -148,7 +148,7 @@ pub(crate) fn sync_project_worktrees(project: &Project) {
         if registered_at(&worktree, &summaries).is_some() {
             continue;
         }
-        match sync_worktree_for(project, &worktree) {
+        match sync_worktree_for(project, &worktree, git_guard::git_install()) {
             Ok(result) => {
                 for problem in result.problems() {
                     eprintln!(
@@ -264,8 +264,13 @@ fn parent_summary<'a>(
 }
 
 /// Copy `project`'s config into `worktree` and put back any tracked file the
-/// copy changed.
-fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync, String> {
+/// copy changed. `install` is the git to read the worktree with, `None` when
+/// there is no usable git.
+fn sync_worktree_for(
+    project: &Project,
+    worktree: &Path,
+    install: Option<&GitInstall>,
+) -> Result<WorktreeSync, String> {
     let mut copy = project.clone();
     copy.directory = worktree
         .to_str()
@@ -281,7 +286,7 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
         return Ok(result);
     }
 
-    let git = WorktreeGit::open(worktree, git_guard::git_install())?;
+    let git = WorktreeGit::open(worktree, install)?;
 
     let effective_dir = match copy.mode {
         ProjectMode::Silent => worktree.join(".automatic").join("silent"),
@@ -478,7 +483,7 @@ fn literal_pathspecs(root: &Path, targets: &[PathBuf]) -> Vec<String> {
 /// `git ls-files --modified` reads a file's content when stat data cannot
 /// settle whether it changed: the file has the indexed size but a new time
 /// or inode, or its index entry is racy. Reading content runs the clean
-/// filter the repository's config names for that file. So every call goes
+/// filter git's config names for that file. So every call goes
 /// through [`git_guard::isolated_git_command`], which blanks those filters.
 /// It also drops the variables a calling git sets, since this can run inside
 /// a git hook.
@@ -1222,7 +1227,10 @@ mod tests {
         let err = WorktreeGit::open(&f.worktree, Some(&old))
             .err()
             .expect("refused");
-        assert!(err.contains("defines its own git filters"), "{err}");
+        assert!(
+            err.contains("Git filters are set for this repository"),
+            "{err}"
+        );
         assert!(err.ends_with("Update git to sync its worktrees."), "{err}");
 
         let new_enough = installed.with_version(GitVersion::new(2, 31));
@@ -1341,6 +1349,47 @@ mod tests {
         assert_eq!(read(&f.worktree.join("CLAUDE.md")), armed.edited);
         assert!(result.changed_tracked.is_empty(), "{result:?}");
         assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clean_filter_from_the_global_config_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-global");
+        let armed = arm_filter(&f, b"glob", |a| {
+            fs::write(
+                a.outside.path().join("global.cfg"),
+                format!("[filter \"glob\"]\n\tclean = {}\n", a.script.display()),
+            )
+            .unwrap();
+        });
+        let global = armed.outside.path().join("global.cfg");
+        let installed = git_guard::git_install().expect("git is installed");
+        let git = installed.with_global_config(armed.outside.path(), &global);
+        let raw = core::read_project("wt-filter-global").unwrap();
+        let project: Project = serde_json::from_str(&raw).unwrap();
+
+        let result = sync_worktree_for(&project, &f.worktree, Some(&git)).expect("sync worktree");
+
+        assert!(
+            !armed.marker.exists(),
+            "the clean filter from the global config ran"
+        );
+        assert_eq!(read(&f.worktree.join("CLAUDE.md")), armed.edited);
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        // The setup does reach the filter: git with that global config runs it.
+        let _ = Command::new("git")
+            .args(["ls-files", "--modified", "--", "CLAUDE.md"])
+            .current_dir(&f.worktree)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env("GIT_CONFIG_GLOBAL", &global)
+            .output()
+            .expect("run git");
+        assert!(
+            armed.marker.exists(),
+            "the test no longer reaches the filter"
+        );
     }
 
     #[cfg(unix)]
