@@ -467,17 +467,34 @@ mod tests {
             &format!("sleep 30 &\necho $! > '{}'\nwait", pid_file.display()),
         );
 
-        let started = std::time::Instant::now();
-        let err = probe_shell(script.to_str().unwrap(), Duration::from_millis(500)).unwrap_err();
-        assert!(err.contains("did not answer"), "unexpected error: {err}");
-        assert!(started.elapsed() < Duration::from_secs(5));
+        // The probe's limit starts when it spawns the shell, so under a
+        // loaded test run a short limit can kill the shell before it has
+        // recorded its child. That run proves nothing about the child, so
+        // retry with a longer limit. Every attempt must still time out.
+        let mut child_pid = None;
+        for limit_ms in [500, 2_000, 5_000] {
+            let limit = Duration::from_millis(limit_ms);
+            let started = std::time::Instant::now();
+            let err = probe_shell(script.to_str().unwrap(), limit).unwrap_err();
+            assert!(err.contains("did not answer"), "unexpected error: {err}");
+            assert!(started.elapsed() < limit + Duration::from_secs(5));
 
-        let child_pid = std::fs::read_to_string(&pid_file).unwrap();
-        let child_pid = child_pid.trim();
+            match std::fs::read_to_string(&pid_file) {
+                Ok(pid) if !pid.trim().is_empty() => {
+                    child_pid = Some(pid.trim().to_string());
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => panic!("could not read {}: {e}", pid_file.display()),
+            }
+        }
+        let child_pid = child_pid.expect("the fake shell never recorded its child's pid");
+
         // A SIGKILLed process can linger briefly until it is reaped.
         let gone = (0..40).any(|_| {
             std::thread::sleep(Duration::from_millis(50));
-            !process_is_alive(child_pid)
+            !process_is_alive(&child_pid)
         });
         assert!(gone, "the shell's child {child_pid} survived the timeout");
     }
