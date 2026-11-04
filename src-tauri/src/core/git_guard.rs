@@ -10,21 +10,26 @@
 //!   (local or worktree scope, includes counted), which git runs when it
 //!   re-checks a file's content. Their names come from `git config`, which
 //!   runs nothing, and are blanked through `GIT_CONFIG_*` variables, so a name
-//!   holding `=` cannot escape the override. Filters from the user's global
-//!   config, such as Git LFS, stay on: they are the user's own, and turning
-//!   them off makes files look changed.
+//!   holding `=` cannot escape the override. An empty name counts too. A name
+//!   that is not valid UTF-8 cannot be passed to git on every platform, so
+//!   [`check_git_supports`] refuses that repository. Filters from the user's
+//!   global config, such as Git LFS, stay on: they are the user's own, and
+//!   turning them off makes files look changed.
 //! - Lazy fetches in a partial clone, which would run `core.sshCommand` and
 //!   write objects. `GIT_NO_LAZY_FETCH` stops them on git 2.44 and later.
 //!
 //! `--no-optional-locks` stops a read such as `git status` from rewriting the
 //! index, so it never races the user's own git commands. Every call also sets
 //! `protocol.allow=never` and a no-op `core.sshCommand`, so no transport can
-//! run whatever else asks for one.
+//! run whatever else asks for one. An exported `GIT_CONFIG` is removed,
+//! because `git config` would read only that file and miss the repository's
+//! filters.
 //!
 //! The filter override needs git 2.31 and `GIT_NO_LAZY_FETCH` needs git 2.44.
 //! Older git ignores both silently, so [`check_git_supports`] refuses a
 //! repository that needs one of them on older git, rather than let it be read
-//! unprotected.
+//! unprotected. Reading the config needs git 2.26, which
+//! [`check_git_reads_repo_config`] checks.
 //!
 //! A caller reads the config with [`REPO_CONFIG_ARGS`] and
 //! [`parse_repo_config`], checks it, and then runs every later command through
@@ -41,17 +46,33 @@ use std::sync::OnceLock;
 const MIN_VERSION_CONFIG_ENV: GitVersion = GitVersion(2, 31);
 /// The first git that reads `GIT_NO_LAZY_FETCH`.
 const MIN_VERSION_NO_LAZY_FETCH: GitVersion = GitVersion(2, 44);
+/// The first git with `git config --show-scope`, which [`REPO_CONFIG_ARGS`]
+/// uses.
+const MIN_VERSION_SHOW_SCOPE: GitVersion = GitVersion(2, 26);
+/// git refuses a `GIT_CONFIG_COUNT` above `INT_MAX`.
+const MAX_CONFIG_ENTRIES: usize = i32::MAX as usize;
 
 /// Variables a calling git process, such as one running a hook, sets to point
-/// git at its own repository or to hand it config.
-const CALLER_VARIABLES: [&str; 7] = [
+/// git at its own repository or to hand it config: the list
+/// `git rev-parse --local-env-vars` prints, and `GIT_NAMESPACE`.
+/// `GIT_CONFIG_COUNT` is on git's list too, but the builder sets it rather
+/// than removing it, or the filter overrides would be dropped with it.
+const CALLER_VARIABLES: [&str; 15] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_OBJECT_DIRECTORY",
     "GIT_DIR",
     "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
     "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
     "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
     "GIT_NAMESPACE",
-    "GIT_CONFIG_PARAMETERS",
 ];
 
 /// A git release as major and minor numbers.
@@ -74,13 +95,18 @@ pub(crate) struct GitInstall {
 /// The repository settings that change how Automatic reads it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RepoConfig {
-    /// Filter drivers defined at local or worktree scope.
+    /// Filter drivers defined at local or worktree scope. A name may be
+    /// empty.
     local_filters: Vec<String>,
+    /// True when a filter at local or worktree scope has a name that is not
+    /// valid UTF-8, which cannot be blanked on every platform.
+    non_utf8_filter: bool,
     pub(crate) partial_clone: bool,
 }
 
 /// The `git config` arguments that list every setting [`parse_repo_config`]
-/// reads. Run them through [`git_command`] with a default [`RepoConfig`].
+/// reads. Check the version with [`check_git_reads_repo_config`] first, then
+/// run them through a builder with a default [`RepoConfig`].
 /// `git config --get-regexp` exits 1 when nothing matches, which is not an
 /// error.
 pub(crate) const REPO_CONFIG_ARGS: [&str; 5] = [
@@ -95,20 +121,28 @@ pub(crate) const REPO_CONFIG_ARGS: [&str; 5] = [
 
 /// Parse `git config --show-scope -z --get-regexp` output: records of
 /// `scope NUL key LF value NUL`.
+///
+/// The output is read as bytes. Decoding it first would turn a filter name
+/// that is not UTF-8 into another name, and blank a filter that does not
+/// exist.
 pub(crate) fn parse_repo_config(output: &[u8]) -> RepoConfig {
-    let text = String::from_utf8_lossy(output);
     let mut config = RepoConfig::default();
-    let mut fields = text.split('\0');
+    let mut fields = output.split(|b| *b == 0);
     while let (Some(scope), Some(entry)) = (fields.next(), fields.next()) {
         // A key written with no value prints with no line feed.
-        let key = entry.split_once('\n').map_or(entry, |(key, _value)| key);
-        let repo_scope = scope == "local" || scope == "worktree";
+        let key = entry.split(|b| *b == b'\n').next().unwrap_or(entry);
+        let repo_scope = scope == b"local" || scope == b"worktree";
         if !repo_scope {
             continue;
         }
         if let Some(name) = filter_name(key) {
-            if !config.local_filters.iter().any(|n| n == name) {
-                config.local_filters.push(name.to_string());
+            match std::str::from_utf8(name) {
+                Ok(name) => {
+                    if !config.local_filters.iter().any(|n| n == name) {
+                        config.local_filters.push(name.to_string());
+                    }
+                }
+                Err(_) => config.non_utf8_filter = true,
             }
         } else if is_partial_clone_key(key) {
             // Any such key counts, whatever its value. A bare key is a
@@ -121,16 +155,18 @@ pub(crate) fn parse_repo_config(output: &[u8]) -> RepoConfig {
     config
 }
 
-/// The driver name in `filter.<name>.<variable>`. The name may hold dots.
-fn filter_name(key: &str) -> Option<&str> {
-    let rest = key.strip_prefix("filter.")?;
-    let (name, _variable) = rest.rsplit_once('.')?;
-    (!name.is_empty()).then_some(name)
+/// The driver name in `filter.<name>.<variable>`. The name may hold dots,
+/// and may be empty: `[filter ""]` prints as `filter..clean`, and git applies
+/// it to a file whose `filter` attribute is empty.
+fn filter_name(key: &[u8]) -> Option<&[u8]> {
+    let rest = key.strip_prefix(b"filter.")?;
+    let dot = rest.iter().rposition(|b| *b == b'.')?;
+    Some(&rest[..dot])
 }
 
-fn is_partial_clone_key(key: &str) -> bool {
+fn is_partial_clone_key(key: &[u8]) -> bool {
     let key = key.to_ascii_lowercase();
-    key == "extensions.partialclone" || (key.starts_with("remote.") && key.ends_with(".promisor"))
+    key == b"extensions.partialclone" || (key.starts_with(b"remote.") && key.ends_with(b".promisor"))
 }
 
 // ── Building commands ─────────────────────────────────────────────────────────
@@ -138,15 +174,39 @@ fn is_partial_clone_key(key: &str) -> bool {
 /// A `git` command for `dir` with every setting that could run another
 /// program or reach the network turned off. `config` names the repository's
 /// own filters to blank. Config the user exported through `GIT_CONFIG_COUNT`
-/// is kept.
-pub(crate) fn git_command(git: &GitInstall, dir: &Path, config: &RepoConfig) -> Command {
+/// is kept. Fails when that count is one git cannot read, or leaves no room
+/// for ours.
+pub(crate) fn git_command(
+    git: &GitInstall,
+    dir: &Path,
+    config: &RepoConfig,
+) -> Result<Command, String> {
     // Settings the user exported this way are kept: ours follow them, and
     // a later entry wins.
-    let inherited = std::env::var("GIT_CONFIG_COUNT")
-        .ok()
-        .and_then(|n| n.trim().parse::<usize>().ok())
-        .unwrap_or(0);
+    let inherited = inherited_config_count(std::env::var_os("GIT_CONFIG_COUNT").as_deref())?;
     build_command(git, dir, config, inherited)
+}
+
+/// The number of entries in an inherited `GIT_CONFIG_COUNT`. Unset or empty
+/// is 0, as git reads it. A value that is not a count is an error rather
+/// than 0, because guessing would put our entries where git does not read
+/// them.
+fn inherited_config_count(value: Option<&std::ffi::OsStr>) -> Result<usize, String> {
+    let Some(value) = value else {
+        return Ok(0);
+    };
+    let not_a_count = || {
+        format!(
+            "GIT_CONFIG_COUNT is set to '{}', which is not a count git can read. Unset it to \
+             run git safely.",
+            value.to_string_lossy()
+        )
+    };
+    match value.to_str().map(str::trim) {
+        Some("") => Ok(0),
+        Some(text) => text.parse::<usize>().map_err(|_| not_a_count()),
+        None => Err(not_a_count()),
+    }
 }
 
 /// [`git_command`], cut off from a calling git process. For code that can
@@ -157,16 +217,26 @@ pub(crate) fn git_command(git: &GitInstall, dir: &Path, config: &RepoConfig) -> 
 /// by numbering ours from 0 and setting `GIT_CONFIG_COUNT` to our count, so
 /// git reads ours and nothing past them. Removing `GIT_CONFIG_COUNT` instead
 /// would also drop the filter overrides.
-pub(crate) fn isolated_git_command(git: &GitInstall, dir: &Path, config: &RepoConfig) -> Command {
-    let mut command = build_command(git, dir, config, 0);
+pub(crate) fn isolated_git_command(
+    git: &GitInstall,
+    dir: &Path,
+    config: &RepoConfig,
+) -> Result<Command, String> {
+    let mut command = build_command(git, dir, config, 0)?;
     for variable in CALLER_VARIABLES {
         command.env_remove(variable);
     }
-    command
+    Ok(command)
 }
 
 /// The shared builder. Our `GIT_CONFIG_*` entries start at `first_index`.
-fn build_command(git: &GitInstall, dir: &Path, config: &RepoConfig, first_index: usize) -> Command {
+/// Fails when they would take the count past what git reads.
+fn build_command(
+    git: &GitInstall,
+    dir: &Path,
+    config: &RepoConfig,
+    first_index: usize,
+) -> Result<Command, String> {
     let mut command = Command::new(&git.path);
     command
         .arg("--no-pager")
@@ -186,7 +256,10 @@ fn build_command(git: &GitInstall, dir: &Path, config: &RepoConfig, first_index:
         // An allow-list that overrides every `protocol.*` setting, including
         // a per-protocol `protocol.<name>.allow` in the repository's config,
         // which `protocol.allow=never` does not. Works on old git too.
-        .env("GIT_ALLOW_PROTOCOL", "none");
+        .env("GIT_ALLOW_PROTOCOL", "none")
+        // `git config` would read only this file and miss the repository's
+        // filters, so they would not be blanked.
+        .env_remove("GIT_CONFIG");
 
     let mut overrides: Vec<(String, &str)> = Vec::new();
     for name in &config.local_filters {
@@ -195,14 +268,35 @@ fn build_command(git: &GitInstall, dir: &Path, config: &RepoConfig, first_index:
         }
         overrides.push((format!("filter.{name}.required"), "false"));
     }
-    command.env("GIT_CONFIG_COUNT", (first_index + overrides.len()).to_string());
+    let count = first_index
+        .checked_add(overrides.len())
+        .filter(|count| *count <= MAX_CONFIG_ENTRIES)
+        .ok_or_else(|| {
+            format!(
+                "GIT_CONFIG_COUNT is set to {first_index}, which leaves no room for the settings \
+                 that keep this repository's git filters off. Unset it to run git safely."
+            )
+        })?;
+    command.env("GIT_CONFIG_COUNT", count.to_string());
     for (offset, (key, value)) in overrides.iter().enumerate() {
         let index = first_index + offset;
         command
             .env(format!("GIT_CONFIG_KEY_{index}"), key)
             .env(format!("GIT_CONFIG_VALUE_{index}"), value);
     }
-    command
+    Ok(command)
+}
+
+/// Refuse a git too old to run [`REPO_CONFIG_ARGS`]. `purpose` ends the
+/// message's last sentence, "Update git to ...".
+pub(crate) fn check_git_reads_repo_config(version: GitVersion, purpose: &str) -> Result<(), String> {
+    if version < MIN_VERSION_SHOW_SCOPE {
+        return Err(format!(
+            "Reading this repository's git config safely needs git {MIN_VERSION_SHOW_SCOPE} or \
+             later, and git {version} is installed. Update git to {purpose}."
+        ));
+    }
+    Ok(())
 }
 
 /// Refuse a repository whose protection this git would silently ignore.
@@ -212,6 +306,12 @@ pub(crate) fn check_git_supports(
     version: GitVersion,
     purpose: &str,
 ) -> Result<(), String> {
+    if config.non_utf8_filter {
+        return Err(format!(
+            "This repository defines a git filter whose name is not valid UTF-8, so Automatic \
+             cannot turn it off. Rename that filter in the repository's git config to {purpose}."
+        ));
+    }
     if !config.local_filters.is_empty() && version < MIN_VERSION_CONFIG_ENV {
         return Err(format!(
             "This repository defines its own git filters. Reading it safely needs git \
@@ -246,6 +346,24 @@ pub(crate) fn git_install() -> Option<&'static GitInstall> {
 #[cfg(test)]
 pub(crate) fn git_available() -> bool {
     git_install().is_some()
+}
+
+#[cfg(test)]
+impl GitVersion {
+    pub(crate) fn new(major: u32, minor: u32) -> Self {
+        Self(major, minor)
+    }
+}
+
+#[cfg(test)]
+impl GitInstall {
+    /// This git, reporting `version` instead of its own.
+    pub(crate) fn with_version(&self, version: GitVersion) -> Self {
+        Self {
+            path: self.path.clone(),
+            version,
+        }
+    }
 }
 
 fn detect_git() -> Option<GitInstall> {
@@ -328,6 +446,27 @@ worktree\0filter.wt.clean\ntouch w\0";
     }
 
     #[test]
+    fn repo_config_keeps_an_empty_filter_name() {
+        let config = parse_repo_config(b"local\0filter..clean\ntouch x\0local\0filter.clean\nx\0");
+        // `filter.clean` has no driver name, so it is no filter at all.
+        assert_eq!(config.local_filters, vec![""]);
+        assert!(!config.non_utf8_filter);
+    }
+
+    #[test]
+    fn repo_config_flags_a_filter_name_that_is_not_utf8() {
+        let config = parse_repo_config(b"local\0filter.ev\xffil.clean\ntouch x\0local\0filter.ok.clean\nx\0");
+        assert!(config.non_utf8_filter);
+        assert_eq!(config.local_filters, vec!["ok"]);
+        // Only the repository's own filters count.
+        let config = parse_repo_config(b"global\0filter.\xff.clean\nx\0");
+        assert!(!config.non_utf8_filter);
+        // A value that is not UTF-8 is not a name.
+        let config = parse_repo_config(b"local\0filter.ok.clean\n\xff\0");
+        assert!(!config.non_utf8_filter);
+    }
+
+    #[test]
     fn repo_config_detects_a_partial_clone() {
         let config = parse_repo_config(b"local\0remote.origin.promisor\ntrue\0");
         assert!(config.partial_clone);
@@ -346,10 +485,12 @@ worktree\0filter.wt.clean\ntouch w\0";
     #[test]
     fn every_call_blocks_all_transports() {
         let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
-        let command = git_command(&git, Path::new("."), &RepoConfig::default());
+        let command = git_command(&git, Path::new("."), &RepoConfig::default()).unwrap();
         let envs: Vec<_> = command.get_envs().collect();
         assert!(envs.contains(&(OsStr::new("GIT_ALLOW_PROTOCOL"), Some(OsStr::new("none")))));
         assert!(envs.contains(&(OsStr::new("GIT_NO_LAZY_FETCH"), Some(OsStr::new("1")))));
+        // An exported `GIT_CONFIG` would hide the repository's filters.
+        assert!(envs.contains(&(OsStr::new("GIT_CONFIG"), None)));
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(args.windows(2).any(|w| w == ["-c", "protocol.allow=never"]));
         assert!(args.windows(2).any(|w| w == ["-c", "core.sshCommand=false"]));
@@ -359,7 +500,7 @@ worktree\0filter.wt.clean\ntouch w\0";
     fn inherited_config_entries_come_before_the_overrides() {
         let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
         let config = parse_repo_config(b"local\0filter.evil.clean\nx\0");
-        let command = build_command(&git, Path::new("."), &config, 3);
+        let command = build_command(&git, Path::new("."), &config, 3).unwrap();
         let env = |key: &str| {
             command
                 .get_envs()
@@ -375,6 +516,34 @@ worktree\0filter.wt.clean\ntouch w\0";
     }
 
     #[test]
+    fn an_inherited_count_git_cannot_read_is_an_error() {
+        assert_eq!(inherited_config_count(None), Ok(0));
+        assert_eq!(inherited_config_count(Some(OsStr::new(""))), Ok(0));
+        assert_eq!(inherited_config_count(Some(OsStr::new(" 3"))), Ok(3));
+        assert!(inherited_config_count(Some(OsStr::new("three"))).is_err());
+        assert!(inherited_config_count(Some(OsStr::new("99999999999999999999999"))).is_err());
+    }
+
+    #[test]
+    fn a_count_past_what_git_reads_is_an_error() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
+        let filters = parse_repo_config(b"local\0filter.evil.clean\nx\0");
+        let dir = Path::new(".");
+        // Wrapping would put our entries where git does not read them.
+        assert!(build_command(&git, dir, &filters, usize::MAX).is_err());
+        assert!(build_command(&git, dir, &filters, MAX_CONFIG_ENTRIES - 3).is_err());
+        assert!(build_command(&git, dir, &filters, MAX_CONFIG_ENTRIES - 4).is_ok());
+        assert!(build_command(&git, dir, &RepoConfig::default(), MAX_CONFIG_ENTRIES).is_ok());
+    }
+
+    #[test]
+    fn git_without_show_scope_is_refused() {
+        let err = check_git_reads_repo_config(GitVersion(2, 25), "see its history").unwrap_err();
+        assert!(err.contains("needs git 2.26 or later, and git 2.25 is installed"), "{err}");
+        assert!(check_git_reads_repo_config(GitVersion(2, 26), "see its history").is_ok());
+    }
+
+    #[test]
     fn parses_git_versions() {
         assert_eq!(parse_git_version("git version 2.39.5 (Apple Git-154)\n"), Some(GitVersion(2, 39)));
         assert_eq!(parse_git_version("git version 2.45.1.windows.1"), Some(GitVersion(2, 45)));
@@ -385,8 +554,9 @@ worktree\0filter.wt.clean\ntouch w\0";
     #[test]
     fn older_git_is_refused_only_when_a_protection_needs_it() {
         let plain = RepoConfig::default();
-        let filters = RepoConfig { local_filters: vec!["evil".into()], partial_clone: false };
-        let partial = RepoConfig { local_filters: vec![], partial_clone: true };
+        let filters = RepoConfig { local_filters: vec!["evil".into()], ..RepoConfig::default() };
+        let partial = RepoConfig { partial_clone: true, ..RepoConfig::default() };
+        let non_utf8 = RepoConfig { non_utf8_filter: true, ..RepoConfig::default() };
         let purpose = "see its history";
         assert!(check_git_supports(&plain, GitVersion(2, 20), purpose).is_ok());
         assert!(check_git_supports(&filters, GitVersion(2, 30), purpose).is_err());
@@ -395,5 +565,8 @@ worktree\0filter.wt.clean\ntouch w\0";
         assert!(check_git_supports(&partial, GitVersion(2, 44), purpose).is_ok());
         let err = check_git_supports(&filters, GitVersion(2, 30), purpose).unwrap_err();
         assert!(err.ends_with("git 2.30 is installed. Update git to see its history."), "{err}");
+        // No git version can blank a name it cannot be given.
+        let err = check_git_supports(&non_utf8, GitVersion(2, 56), purpose).unwrap_err();
+        assert!(err.contains("not valid UTF-8"), "{err}");
     }
 }

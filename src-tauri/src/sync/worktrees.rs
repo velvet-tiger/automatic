@@ -281,7 +281,7 @@ fn sync_worktree_for(project: &Project, worktree: &Path) -> Result<WorktreeSync,
         return Ok(result);
     }
 
-    let git = WorktreeGit::open(worktree)?;
+    let git = WorktreeGit::open(worktree, git_guard::git_install())?;
 
     let effective_dir = match copy.mode {
         ProjectMode::Silent => worktree.join(".automatic").join("silent"),
@@ -484,23 +484,27 @@ fn literal_pathspecs(root: &Path, targets: &[PathBuf]) -> Vec<String> {
 /// a git hook.
 struct WorktreeGit<'a> {
     worktree: &'a Path,
-    install: &'static GitInstall,
+    install: &'a GitInstall,
     config: RepoConfig,
 }
 
+/// Ends the "Update git to ..." sentence of a refusal.
+const GIT_PURPOSE: &str = "sync its worktrees";
+
 impl<'a> WorktreeGit<'a> {
-    /// Find git and read the repository config in `worktree`, so config at
-    /// worktree scope counts. Fails when there is no usable git, or when the
-    /// installed git would silently ignore a protection this repository
-    /// needs.
-    fn open(worktree: &'a Path) -> Result<Self, String> {
-        let install = git_guard::git_install().ok_or_else(|| {
+    /// Read the repository config in `worktree` with `install`, so config at
+    /// worktree scope counts. Fails when there is no usable git (`install` is
+    /// `None`), or when it would ignore or cannot apply a protection this
+    /// repository needs.
+    fn open(worktree: &'a Path, install: Option<&'a GitInstall>) -> Result<Self, String> {
+        let install = install.ok_or_else(|| {
             format!(
                 "No usable git was found, so the tracked files of {} cannot be protected",
                 worktree.display()
             )
         })?;
-        let output = git_guard::isolated_git_command(install, worktree, &RepoConfig::default())
+        git_guard::check_git_reads_repo_config(install.version, GIT_PURPOSE)?;
+        let output = git_guard::isolated_git_command(install, worktree, &RepoConfig::default())?
             .args(git_guard::REPO_CONFIG_ARGS)
             .output()
             .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
@@ -513,7 +517,7 @@ impl<'a> WorktreeGit<'a> {
             ));
         }
         let config = git_guard::parse_repo_config(&output.stdout);
-        git_guard::check_git_supports(&config, install.version, "sync its worktrees")?;
+        git_guard::check_git_supports(&config, install.version, GIT_PURPOSE)?;
         Ok(Self {
             worktree,
             install,
@@ -522,7 +526,7 @@ impl<'a> WorktreeGit<'a> {
     }
 
     /// A `git` command run in the worktree.
-    fn command(&self) -> Command {
+    fn command(&self) -> Result<Command, String> {
         git_guard::isolated_git_command(self.install, self.worktree, &self.config)
     }
 }
@@ -532,7 +536,7 @@ impl<'a> WorktreeGit<'a> {
 fn ls_files(git: &WorktreeGit, args: &[String]) -> Result<Vec<String>, String> {
     let worktree = git.worktree;
     let output = git
-        .command()
+        .command()?
         .args(["ls-files", "-z"])
         .args(args)
         .output()
@@ -752,6 +756,7 @@ fn make_link(target: &Path, path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::git_guard::GitVersion;
 
     fn git(dir: &Path, args: &[&str]) {
         let output = Command::new("git")
@@ -1142,7 +1147,7 @@ mod tests {
             install: git_guard::git_install().expect("git is installed"),
             config: git_guard::parse_repo_config(b"local\0filter.evil.clean\nx\0"),
         };
-        let command = git.command();
+        let command = git.command().expect("command");
         // `Some(None)` is a removed variable, `None` one left as inherited.
         let env = |key: &str| {
             command
@@ -1150,16 +1155,26 @@ mod tests {
                 .find(|(k, _)| *k == std::ffi::OsStr::new(key))
                 .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
         };
-        for removed in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_COMMON_DIR",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_NAMESPACE",
-            "GIT_CONFIG_PARAMETERS",
-        ] {
-            assert_eq!(env(removed), Some(None), "{removed} is not removed");
+        // Every variable git itself names as pointing at a repository.
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        let listed = Command::new("git")
+            .args(["rev-parse", "--local-env-vars"])
+            .current_dir(tmp.path())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .expect("git rev-parse");
+        assert!(listed.status.success(), "{listed:?}");
+        let listed = String::from_utf8(listed.stdout).unwrap();
+        let mut removed: Vec<&str> = listed
+            .lines()
+            .filter(|v| *v != "GIT_CONFIG_COUNT")
+            .collect();
+        assert!(removed.contains(&"GIT_CONFIG"), "{listed}");
+        removed.push("GIT_NAMESPACE");
+        for variable in removed {
+            assert_eq!(env(variable), Some(None), "{variable} is not removed");
         }
         // Our four overrides, numbered from 0, whatever the caller exported.
         assert_eq!(env("GIT_CONFIG_COUNT"), Some(Some("4".into())));
@@ -1184,11 +1199,68 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    fn git_init(dir: &Path) {
+        git(dir, &["init", "-q"]);
+    }
+
     #[test]
-    fn a_repository_clean_filter_is_not_run_by_worktree_sync() {
+    fn a_worktree_sync_without_a_usable_git_is_refused() {
+        let err = WorktreeGit::open(Path::new("/wt"), None)
+            .err()
+            .expect("refused");
+        assert!(err.contains("No usable git was found"), "{err}");
+    }
+
+    #[test]
+    fn git_too_old_for_the_repositorys_filters_is_refused() {
         let _home = core::temp_test_home();
-        let f = fixture("wt-filter");
+        let f = fixture("wt-old-git");
+        git(&f.main, &["config", "filter.evil.clean", "false"]);
+        let installed = git_guard::git_install().expect("git is installed");
+
+        let old = installed.with_version(GitVersion::new(2, 30));
+        let err = WorktreeGit::open(&f.worktree, Some(&old))
+            .err()
+            .expect("refused");
+        assert!(err.contains("defines its own git filters"), "{err}");
+        assert!(err.ends_with("Update git to sync its worktrees."), "{err}");
+
+        let new_enough = installed.with_version(GitVersion::new(2, 31));
+        assert!(WorktreeGit::open(&f.worktree, Some(&new_enough)).is_ok());
+    }
+
+    #[test]
+    fn git_without_show_scope_is_refused_with_a_clear_message() {
+        let installed = git_guard::git_install().expect("git is installed");
+        let old = installed.with_version(GitVersion::new(2, 25));
+        let err = WorktreeGit::open(Path::new("/wt"), Some(&old))
+            .err()
+            .expect("refused");
+        assert!(
+            err.contains("needs git 2.26 or later, and git 2.25 is installed"),
+            "{err}"
+        );
+        assert!(err.ends_with("Update git to sync its worktrees."), "{err}");
+    }
+
+    /// A tracked file whose change only a content read shows, and the
+    /// script a filter on it runs.
+    #[cfg(unix)]
+    struct ArmedFilter {
+        /// Holds the script and the marker, outside the repository.
+        outside: tempfile::TempDir,
+        script: PathBuf,
+        /// Created when the script runs.
+        marker: PathBuf,
+        /// The worktree's `CLAUDE.md` as edited.
+        edited: String,
+    }
+
+    /// Make `CLAUDE.md` in `f`'s worktree a racy, same-size edit, and give it
+    /// the filter whose attribute value is `attr` in the repository's
+    /// `info/attributes`. `define` defines that filter.
+    #[cfg(unix)]
+    fn arm_filter(f: &Fixture, attr: &[u8], define: impl FnOnce(&ArmedFilter)) -> ArmedFilter {
         let target = f.worktree.join("CLAUDE.md");
         // 2099-01-01. An index entry whose time is not older than the index
         // file is racy, so `git ls-files --modified` must read the file.
@@ -1198,35 +1270,275 @@ mod tests {
         git(&f.worktree, &["add", "CLAUDE.md"]);
 
         let outside = tempfile::tempdir().unwrap();
-        let marker = outside.path().join("clean-ran");
+        let marker = outside.path().join("filter-ran");
         let script = marker_script(outside.path(), &marker);
-        git(
-            &f.main,
-            &["config", "filter.evil.clean", script.to_str().unwrap()],
-        );
-        git(&f.main, &["config", "core.trustctime", "false"]);
-        fs::create_dir_all(f.main.join(".git/info")).unwrap();
-        fs::write(
-            f.main.join(".git/info/attributes"),
-            "CLAUDE.md filter=evil\n",
-        )
-        .unwrap();
-        // Same size and time, other content: only reading the file shows it.
         let edited = BRANCH_CLAUDE_MD.replace("instructions", "instructionz");
         assert_eq!(edited.len(), BRANCH_CLAUDE_MD.len());
-        fs::write(&target, &edited).unwrap();
+        let armed = ArmedFilter {
+            outside,
+            script,
+            marker,
+            edited,
+        };
+        define(&armed);
+        git(&f.main, &["config", "core.trustctime", "false"]);
+        fs::create_dir_all(f.main.join(".git/info")).unwrap();
+        let mut attributes = b"CLAUDE.md filter=".to_vec();
+        attributes.extend_from_slice(attr);
+        attributes.push(b'\n');
+        fs::write(f.main.join(".git/info/attributes"), attributes).unwrap();
+        // Same size and time, other content: only reading the file shows it.
+        fs::write(&target, &armed.edited).unwrap();
         set_mtime(&target, future);
+        armed
+    }
+
+    /// Append a filter section to the repository's config as raw bytes, so
+    /// its name can hold any byte. `header` is the `[filter "..."]` line.
+    #[cfg(unix)]
+    fn append_filter_section(f: &Fixture, header: &[u8], script: &Path) {
+        use std::io::Write;
+        let mut config = fs::File::options()
+            .append(true)
+            .open(f.main.join(".git/config"))
+            .unwrap();
+        config.write_all(header).unwrap();
+        writeln!(config, "\n\tclean = {}", script.display()).unwrap();
+    }
+
+    /// Show that the setup reaches the filter: git without the override runs
+    /// it. A filter that does not speak git's protocol can make git fail, so
+    /// only the marker counts.
+    #[cfg(unix)]
+    fn assert_plain_git_runs_the_filter(f: &Fixture, armed: &ArmedFilter) {
+        let _ = Command::new("git")
+            .args(["ls-files", "--modified", "--", "CLAUDE.md"])
+            .current_dir(&f.worktree)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .expect("run git");
+        assert!(
+            armed.marker.exists(),
+            "the test no longer reaches the filter"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_clean_filter_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter");
+        let armed = arm_filter(&f, b"evil", |a| {
+            let script = a.script.to_str().unwrap();
+            git(&f.main, &["config", "filter.evil.clean", script]);
+        });
 
         let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
 
-        assert!(!marker.exists(), "the repository's clean filter ran");
+        assert!(!armed.marker.exists(), "the repository's clean filter ran");
         assert!(f.worktree.join(".mcp.json").is_file(), "{result:?}");
-        assert_eq!(read(&target), edited);
+        assert_eq!(read(&f.worktree.join("CLAUDE.md")), armed.edited);
         assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
 
-        // The setup does reach the filter: git without the override runs it.
-        git(&f.worktree, &["ls-files", "--modified", "--", "CLAUDE.md"]);
-        assert!(marker.exists(), "the test no longer reaches the filter");
+    #[cfg(unix)]
+    #[test]
+    fn a_required_clean_filter_at_worktree_scope_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-worktree-scope");
+        let armed = arm_filter(&f, b"wtf", |a| {
+            git(&f.main, &["config", "extensions.worktreeConfig", "true"]);
+            let script = a.script.to_str().unwrap();
+            git(
+                &f.worktree,
+                &["config", "--worktree", "filter.wtf.clean", script],
+            );
+            git(
+                &f.worktree,
+                &["config", "--worktree", "filter.wtf.required", "true"],
+            );
+        });
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert!(
+            !armed.marker.exists(),
+            "the worktree-scope clean filter ran"
+        );
+        assert_eq!(read(&f.worktree.join("CLAUDE.md")), armed.edited);
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert!(result.warnings.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_included_filter_with_dots_in_its_name_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-include");
+        let armed = arm_filter(&f, b"a.b", |a| {
+            let included = a.outside.path().join("included.cfg");
+            fs::write(
+                &included,
+                format!("[filter \"a.b\"]\n\tclean = {}\n", a.script.display()),
+            )
+            .unwrap();
+            git(
+                &f.main,
+                &["config", "include.path", included.to_str().unwrap()],
+            );
+        });
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert!(!armed.marker.exists(), "the included clean filter ran");
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_filter_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-process");
+        let armed = arm_filter(&f, b"proc", |a| {
+            let script = a.script.to_str().unwrap();
+            git(&f.main, &["config", "filter.proc.process", script]);
+        });
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert!(!armed.marker.exists(), "the process filter ran");
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_mixed_case_filter_name_with_dots_and_equals_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-mixed");
+        let armed = arm_filter(&f, b"A.b=C", |a| {
+            append_filter_section(&f, b"[filter \"A.b=C\"]", &a.script);
+        });
+
+        let result = sync_linked_worktree(&f.worktree).expect("sync worktree");
+
+        assert!(!armed.marker.exists(), "the mixed-case filter ran");
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    /// `[filter ""]` prints as `filter..clean`, and git applies it to a file
+    /// whose `filter` attribute is empty.
+    #[cfg(unix)]
+    #[test]
+    fn a_filter_with_an_empty_name_is_not_run_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-empty");
+        let armed = arm_filter(&f, b"", |a| {
+            append_filter_section(&f, b"[filter \"\"]", &a.script);
+        });
+
+        let result = sync_linked_worktree(&f.worktree);
+
+        assert!(
+            !armed.marker.exists(),
+            "the filter with an empty name ran: {result:?}"
+        );
+        let result = result.expect("sync worktree");
+        assert!(result.changed_tracked.is_empty(), "{result:?}");
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    /// A name that is not UTF-8 cannot be blanked on every platform, so the
+    /// repository is refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_filter_with_a_non_utf8_name_is_refused_by_worktree_sync() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-non-utf8");
+        let armed = arm_filter(&f, b"ev\xffil", |a| {
+            append_filter_section(&f, b"[filter \"ev\xffil\"]", &a.script);
+        });
+
+        let result = sync_linked_worktree(&f.worktree);
+
+        assert!(
+            !armed.marker.exists(),
+            "the filter with a non-UTF-8 name ran: {result:?}"
+        );
+        let err = result.unwrap_err();
+        assert!(err.contains("not valid UTF-8"), "{err}");
+        assert!(!f.worktree.join(".mcp.json").exists());
+        assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    #[test]
+    fn filters_from_includes_include_ifs_and_worktree_scope_are_all_read() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-filter-scopes");
+        let common = f.main.join(".git");
+        fs::write(
+            common.join("inc.cfg"),
+            "[filter \"viaInclude\"]\n\tclean = x\n",
+        )
+        .unwrap();
+        fs::write(
+            common.join("incif.cfg"),
+            "[filter \"viaIncludeIf\"]\n\tclean = x\n",
+        )
+        .unwrap();
+        git(&f.main, &["config", "include.path", "inc.cfg"]);
+        let record = fs::read_dir(common.join("worktrees"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let wt_gitdir = fs::canonicalize(record).unwrap();
+        let include_if = format!("includeIf.gitdir:{}.path", wt_gitdir.display());
+        git(&f.main, &["config", &include_if, "incif.cfg"]);
+        git(&f.main, &["config", "extensions.worktreeConfig", "true"]);
+        git(
+            &f.worktree,
+            &["config", "--worktree", "filter.viaWorktree.process", "x"],
+        );
+
+        let wt = WorktreeGit::open(&f.worktree, git_guard::git_install()).expect("open");
+
+        let seen = format!("{:?}", wt.config);
+        for name in ["viaInclude", "viaIncludeIf", "viaWorktree"] {
+            assert!(
+                seen.contains(&format!("\"{name}\"")),
+                "{name} missing from {seen}"
+            );
+        }
+    }
+
+    /// The empty-name override relies on git reading `filter..clean`.
+    #[test]
+    fn git_accepts_an_override_for_the_empty_filter_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["config", "--show-scope", "--get-regexp", "^filter\\."])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "filter..clean")
+            .env("GIT_CONFIG_VALUE_0", "")
+            .env("GIT_CONFIG_KEY_1", "filter..required")
+            .env("GIT_CONFIG_VALUE_1", "false")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{out:?}");
+        assert!(stdout.contains("command\tfilter..clean"), "{stdout}");
     }
 
     #[test]

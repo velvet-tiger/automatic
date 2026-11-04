@@ -282,7 +282,7 @@ fn run_git(
     what: &str,
     allowed_exit: Option<i32>,
 ) -> Result<GitRun, String> {
-    let mut command = git_command(git, dir, config);
+    let mut command = git_command(git, dir, config)?;
     command.args(args);
     let label = dir.display().to_string();
     let output = run_git_limited(&mut command, GIT_READ_LIMIT, what, &label)?;
