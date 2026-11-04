@@ -252,7 +252,8 @@ fn probe_login_shell_path(timeout: Duration) -> Result<ShellEnv, String> {
 /// with `env -0`, then `PATH` on its own, each after its marker. `PATH`
 /// does not depend on `env -0`: where that is missing (BusyBox) or prints
 /// something else, only the variables are lost. Plain `;` keeps the syntax
-/// valid in sh, bash, zsh and every fish version.
+/// valid in sh, bash, zsh and fish. Fish before 3.0 joins a quoted `$PATH`
+/// with spaces, as it did before this probe read other variables.
 #[cfg(unix)]
 fn probe_script(markers: &ProbeMarkers) -> String {
     format!(
