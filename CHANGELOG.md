@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.40.1] - 2026-11-05
+
+### Fixed
+
+- Worktree sync and the project Summary no longer run git filters, fsmonitor hooks or other programs named in git config when they read a repository. This covers filters set in your own git config, such as Git LFS, so a file a global filter tracks can show as changed in the Summary until git next checks it.
+- Worktree sync and the Summary refuse git that is too old to read a repository safely, and say which version is needed. Before, the Summary showed git's usage text on git older than 2.26.
+
 ## [1.40.0] - 2026-11-04
 
 ### Added
