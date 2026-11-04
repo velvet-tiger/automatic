@@ -91,6 +91,12 @@ pub enum ProjectsAction {
     Show { name: String },
     /// Sync the named project to its configured directory.
     Sync { name: String },
+    /// Copy the parent project's config into a linked git worktree. Tracked
+    /// files in the worktree are left as the branch has them.
+    SyncWorktree {
+        /// The worktree folder. Defaults to the current directory.
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

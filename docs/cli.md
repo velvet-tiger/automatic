@@ -68,11 +68,29 @@ single-binary install on macOS / Linux exactly.
 automatic projects list
 automatic projects show <name>
 automatic projects sync <name>
+automatic projects sync-worktree [<dir>]
 ```
 
 `show` prints the full project config (registry plus the on-disk copy under
 the project directory). `sync` writes agent config files into the project
 directory and returns the list of files written.
+
+`sync-worktree` copies a project's config into one of its linked git
+worktrees. `<dir>` defaults to the current directory. The worktree's main
+checkout must be a registered project, and the worktree must not be registered
+as a project of its own. No registry entry is written.
+
+A new worktree has only the files git tracks. Automatic's agent config is
+usually ignored, so without this the worktree has no MCP config, skills or
+agent folders. Every `projects sync` of the parent also syncs its linked
+worktrees, so this command matters most for a worktree created after the
+parent's last sync.
+
+The copy uses the parent's config, not the `.automatic.json` on the
+worktree's branch. Files git tracks in the worktree, such as `.gitignore` or a
+committed `CLAUDE.md`, are left as the branch has them. The output lists them
+under `kept_tracked`. Tracked files that changed and could not be put back are
+listed under `changed_tracked`.
 
 ### Skills
 

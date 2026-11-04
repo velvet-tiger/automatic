@@ -120,7 +120,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         let _ = crate::core::save_project(crate::core::project_ident(project), &proj_str);
     }
 
-    sync_to_directory_inner(project, true)
+    let written = sync_to_directory_inner(project, true)?;
+    super::worktrees::sync_project_worktrees(project);
+    Ok(written)
 }
 
 /// Write a project's configuration to its directory **without** updating the
@@ -324,7 +326,7 @@ fn sync_to_directory_inner(
 /// Every path sync writes or reads at a fixed location.  Files sync writes
 /// by name inside these directories (skills, commands, sub-agents, rules,
 /// hook scripts) are checked one by one where they are written.
-fn fixed_sync_paths(project: &Project, dir: &Path, effective_dir: &Path) -> Vec<PathBuf> {
+pub(super) fn fixed_sync_paths(project: &Project, dir: &Path, effective_dir: &Path) -> Vec<PathBuf> {
     let ed = effective_dir;
     let uses = |id: &str| project.agents.iter().any(|a| a == id);
     let mut paths = vec![

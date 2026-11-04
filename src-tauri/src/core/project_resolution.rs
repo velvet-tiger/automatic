@@ -266,7 +266,7 @@ fn linked_git_dir(dir: &Path) -> Option<PathBuf> {
 
 /// The `.git` folder shared by `root` and its linked worktrees. `root` may be
 /// a linked worktree itself.
-fn git_common_dir(root: &Path) -> Option<PathBuf> {
+pub(crate) fn git_common_dir(root: &Path) -> Option<PathBuf> {
     let dot_git = root.join(".git");
     if dot_git.is_dir() {
         return std::fs::canonicalize(dot_git).ok();
@@ -279,7 +279,7 @@ fn git_common_dir(root: &Path) -> Option<PathBuf> {
 /// Whether `dir` is a linked worktree of `common`: its `.git` file points into
 /// `common/worktrees`, and git's record there points back at it. A `.git` file
 /// alone proves nothing, because anything that can write a folder can write one.
-fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
+pub(crate) fn is_linked_worktree(dir: &Path, common: Option<&Path>) -> bool {
     let (Some(common), Some(git_dir)) = (common, linked_git_dir(dir)) else {
         return false;
     };

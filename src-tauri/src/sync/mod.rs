@@ -6,6 +6,7 @@ mod engine;
 pub mod global_mcp;
 mod helpers;
 mod rebuild;
+mod worktrees;
 
 // Re-export the public API so callers can use `sync::function_name` as before.
 pub use autodetect::autodetect_project_dependencies;
@@ -49,6 +50,7 @@ pub use engine::{
     discover_new_agent_mcp_configs, sync_new_project_from_existing_files, sync_project,
     sync_project_without_autodetect, sync_to_directory,
 };
+pub use worktrees::{sync_linked_worktree, WorktreeSync};
 pub use rebuild::{
     rebuild_instruction_snapshots, rebuild_project_state, rebuild_project_with_refusals,
 };

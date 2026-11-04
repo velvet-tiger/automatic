@@ -1,4 +1,4 @@
-//! `automatic projects ...` — list, show, sync.
+//! `automatic projects ...` — list, show, sync, sync-worktree.
 
 use super::output::{emit, emit_raw_json, emit_status, OutputOptions};
 use super::{CliError, ProjectsAction};
@@ -17,6 +17,7 @@ pub fn dispatch(action: ProjectsAction, opts: OutputOptions) -> Result<(), CliEr
         ProjectsAction::Sync { name } => {
             sync_project(&core::canonical_project_ident(&name).map_err(CliError::from)?, opts)
         }
+        ProjectsAction::SyncWorktree { dir } => sync_worktree(dir, opts),
     }
 }
 
@@ -97,4 +98,36 @@ fn sync_project(name: &str, opts: OutputOptions) -> Result<(), CliError> {
     } else {
         emit_status(opts, "ok", &message).map_err(CliError::Io)
     }
+}
+
+fn sync_worktree(dir: Option<std::path::PathBuf>, opts: OutputOptions) -> Result<(), CliError> {
+    let dir = match dir {
+        Some(dir) => dir,
+        None => std::env::current_dir()
+            .map_err(|e| CliError::Io(format!("Cannot read the current directory: {}", e)))?,
+    };
+    let result = sync::sync_linked_worktree(&dir).map_err(CliError::from)?;
+    let human = || {
+        let mut lines = vec![format!(
+            "Synced {} file{} from project '{}' into {}",
+            result.written.len(),
+            if result.written.len() == 1 { "" } else { "s" },
+            result.project,
+            result.worktree
+        )];
+        if !result.kept_tracked.is_empty() {
+            lines.push(format!(
+                "Left as the branch has them (tracked by git): {}",
+                result.kept_tracked.join(", ")
+            ));
+        }
+        if !result.changed_tracked.is_empty() {
+            lines.push(format!(
+                "Warning: these tracked files changed and could not be put back: {}",
+                result.changed_tracked.join(", ")
+            ));
+        }
+        lines.join("\n")
+    };
+    emit(opts, &result, human).map_err(CliError::Io)
 }
