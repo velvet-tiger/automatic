@@ -2466,5 +2466,25 @@
         }
       ]
     }
+  },
+  {
+    "slug": "fly-io",
+    "name": "io.fly/mcp",
+    "title": "Fly.io",
+    "description": "Manage Fly.io Machines, volumes, Managed Postgres and Sprites. Each call uses a short-lived credential scoped to the org, apps and actions you grant. In beta.",
+    "provider": "Fly.io",
+    "icon": "fly.io",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://docs.fly.io/model-context-protocol/setup-agent",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.fly.io"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
   }
 ]
