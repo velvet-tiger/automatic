@@ -272,6 +272,30 @@ fn is_windows_launchable(path: &Path) -> bool {
         })
 }
 
+/// Whether `path` sits directly in one of the absolute folders in `path_dirs`.
+///
+/// `where`, like `cmd.exe`, searches the current directory before `PATH`.
+/// `Command` deliberately does not, so spawning `where`'s answer as-is would
+/// let a `code.cmd` planted in the app's working directory run. Only a match
+/// from a real, absolute `PATH` folder is accepted. Windows paths ignore
+/// case, so the folders are compared without it.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_in_path_dir(path: &Path, path_dirs: &[PathBuf]) -> bool {
+    fn normalise(dir: &Path) -> String {
+        dir.to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_ascii_lowercase()
+    }
+    let Some(parent) = path.parent().filter(|p| p.is_absolute()) else {
+        return false;
+    };
+    let parent = normalise(parent);
+    path_dirs
+        .iter()
+        .filter(|dir| dir.is_absolute())
+        .any(|dir| normalise(dir) == parent)
+}
+
 /// Resolve the first path for `binary` on `$PATH` that this OS can start.
 ///
 /// On Windows this returns the full path of a shim such as `code.cmd`.
@@ -279,11 +303,15 @@ fn is_windows_launchable(path: &Path) -> bool {
 /// `Command::new("code")` only tries `code.exe`.
 pub(crate) fn find_binary_on_path(binary: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
+    let path_dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).collect())
+        .unwrap_or_default();
+    #[cfg(target_os = "windows")]
     let (result, accept) = (
         super::git_guard::console_free_command("where")
             .arg(binary)
             .output(),
-        is_windows_launchable,
+        |path: &Path| is_windows_launchable(path) && is_in_path_dir(path, &path_dirs),
     );
     #[cfg(not(target_os = "windows"))]
     let (result, accept) = (
@@ -543,7 +571,10 @@ C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n";
     #[test]
     fn lookup_output_returns_none_when_no_path_can_start() {
         let output = b"C:\\tools\\opencode\r\nC:\\tools\\opencode.ps1\r\n";
-        assert_eq!(parse_command_lookup_output(output, is_windows_launchable), None);
+        assert_eq!(
+            parse_command_lookup_output(output, is_windows_launchable),
+            None
+        );
     }
 
     #[test]
@@ -553,6 +584,30 @@ C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n";
             parse_command_lookup_output(output, |_| true),
             Some(PathBuf::from("/usr/local/bin/code"))
         );
+    }
+
+    #[test]
+    fn path_dir_check_rejects_the_working_directory_and_relative_entries() {
+        let tmp = tmp();
+        let on_path = tmp.path().join("bin");
+        let working_dir = tmp.path().join("project");
+        let path_dirs = vec![on_path.clone(), PathBuf::from("."), PathBuf::from("tools")];
+
+        assert!(is_in_path_dir(&on_path.join("npm.cmd"), &path_dirs));
+        // `where` lists a planted file in the working directory first.
+        assert!(!is_in_path_dir(&working_dir.join("code.cmd"), &path_dirs));
+        assert!(!is_in_path_dir(Path::new("./code.cmd"), &path_dirs));
+        assert!(!is_in_path_dir(Path::new("tools/code.cmd"), &path_dirs));
+        assert!(!is_in_path_dir(Path::new("code.cmd"), &path_dirs));
+    }
+
+    #[test]
+    fn path_dir_check_ignores_case_and_a_trailing_separator() {
+        let tmp = tmp();
+        let dir = tmp.path().join("NodeJS");
+        let listed = PathBuf::from(format!("{}/", dir.display()));
+        let found = PathBuf::from(dir.display().to_string().to_lowercase()).join("npm.cmd");
+        assert!(is_in_path_dir(&found, &[listed]));
     }
 
     #[test]
