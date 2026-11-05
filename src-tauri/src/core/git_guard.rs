@@ -369,18 +369,28 @@ pub(crate) fn unsafe_ownership_message(stderr: &str, dir: &Path) -> Option<Strin
                 .to_string(),
         );
     };
-    if !same_folder(path, dir) {
-        return Some(format!(
-            "Git found a repository at {path}, which is not the project folder, and will not \
-             read it because another user owns that folder. Do not trust that folder unless \
-             you expected a repository there."
-        ));
-    }
-    let explanation = format!(
-        "Git will not read the repository at {path}, because its folder belongs to a \
-         different user. This is common for WSL folders, network shares and external drives."
-    );
     let shell = if cfg!(windows) { "PowerShell or Git Bash" } else { "a terminal" };
+    let explanation = match folder_relation(path, dir) {
+        FolderRelation::Same => format!(
+            "Git will not read the repository at {path}, because its folder belongs to a \
+             different user."
+        ),
+        FolderRelation::Parent if !is_root_folder(path) => format!(
+            "Git will not read the repository at {path}, which holds the project folder, \
+             because that folder belongs to a different user."
+        ),
+        // A repository at a drive or share root, or beside the project, is
+        // where another user plants one: no command to trust it.
+        FolderRelation::Parent | FolderRelation::Other => {
+            return Some(format!(
+                "Git found a repository at {path}, which is not the project folder, and will \
+                 not read it because another user owns that folder. Do not trust that folder \
+                 unless you expected a repository there."
+            ))
+        }
+    };
+    let explanation =
+        format!("{explanation} This is common for WSL folders, network shares and external drives.");
     Some(match refusal.hint.filter(|hint| hint_names(hint, path)) {
         Some(command) => format!(
             "{explanation} If you trust it, run this command once in {shell}, then try \
@@ -457,37 +467,78 @@ fn hint_names(hint: &str, path: &str) -> bool {
     value.strip_prefix("%(prefix)/").unwrap_or(value) == path
 }
 
-/// Whether git's `refused` path, written with `/`, is the folder `dir`.
+/// Where git's refused folder sits relative to the project folder.
+#[derive(Debug, PartialEq, Eq)]
+enum FolderRelation {
+    Same,
+    /// The refused folder holds the project folder, as for a project inside
+    /// a larger repository.
+    Parent,
+    Other,
+}
+
+/// How git's `refused` path, written with `/`, relates to the folder `dir`.
 /// Windows paths are compared without case, in plain form. A path git
 /// resolved through a link is compared with `dir` resolved too.
-fn same_folder(refused: &str, dir: &Path) -> bool {
-    let normal = |path: &str| -> String {
-        // For comparing only: a long verbatim path has no plain form git can
-        // be given, but git still reports it without the prefix.
-        let plain = plain_windows_path(path).unwrap_or_else(|| {
-            if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-                format!(r"\\{unc}")
-            } else {
-                path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
-            }
-        });
-        let slashed = if cfg!(windows) { plain.replace('\\', "/") } else { plain };
-        let trimmed = slashed.trim_end_matches('/');
-        let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
-        if cfg!(windows) {
-            trimmed.to_lowercase()
-        } else {
-            trimmed.to_string()
-        }
-    };
-    let refused = normal(refused);
+fn folder_relation(refused: &str, dir: &Path) -> FolderRelation {
+    let refused = comparable_path(refused);
     let resolved = dir.canonicalize().ok();
-    let same = [Some(dir), resolved.as_deref()]
+    let candidates: Vec<String> = [Some(dir), resolved.as_deref()]
         .into_iter()
         .flatten()
         .filter_map(Path::to_str)
-        .any(|candidate| normal(candidate) == refused);
-    same
+        .map(comparable_path)
+        .collect();
+    if candidates.contains(&refused) {
+        return FolderRelation::Same;
+    }
+    let prefix = if refused.ends_with('/') { refused.clone() } else { format!("{refused}/") };
+    if candidates.iter().any(|candidate| candidate.starts_with(&prefix)) {
+        FolderRelation::Parent
+    } else {
+        FolderRelation::Other
+    }
+}
+
+/// `path` in one form for comparing: plain Windows form, `/` separators on
+/// Windows, no trailing `/` except for `/` itself, and no case on Windows.
+fn comparable_path(path: &str) -> String {
+    // A long verbatim path has no plain form git can be given, but git still
+    // reports it without the prefix.
+    let plain = plain_windows_path(path).unwrap_or_else(|| {
+        if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+        }
+    });
+    let slashed = if cfg!(windows) { plain.replace('\\', "/") } else { plain };
+    let trimmed = slashed.trim_end_matches('/');
+    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
+    if cfg!(windows) {
+        trimmed.to_lowercase()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Whether git's `path` is a filesystem, drive or share root: `/`, `C:/`,
+/// or `//server/share`. A repository there holds every folder below it, so
+/// Automatic never offers to trust one.
+fn is_root_folder(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return true;
+    }
+    if let Some(unc) = path.strip_prefix("//") {
+        return unc.split('/').filter(|part| !part.is_empty()).count() <= 2;
+    }
+    false
 }
 
 /// A [`Command`] for `program` that opens no console window on Windows. For
@@ -1013,14 +1064,49 @@ command\0filter.cmd.clean\ntouch c\0";
         }
     }
 
+    fn refusal_at(path: &str) -> String {
+        format!(
+            "fatal: detected dubious ownership in repository at '{path}'\n\
+             To add an exception for this directory, call:\n\n\
+             \tgit config --global --add safe.directory '{path}'\n"
+        )
+    }
+
     #[test]
-    fn a_repository_above_the_project_gets_a_warning_not_a_command() {
-        let stderr = "fatal: detected dubious ownership in repository at 'C:/'\n\
-                      To add an exception for this directory, call:\n\n\
-                      \tgit config --global --add safe.directory C:/\n";
-        let message = unsafe_ownership_message(stderr, Path::new("C:/Users/me/app")).unwrap();
-        assert!(!message.contains('\n'), "{message}");
+    fn a_larger_repository_holding_the_project_gets_the_command() {
+        let message =
+            unsafe_ownership_message(&refusal_at("/srv/mono"), Path::new("/srv/mono/apps/web")).unwrap();
+        assert!(message.contains("which holds the project folder"), "{message}");
+        assert_eq!(last_line(&message), "git config --global --add safe.directory '/srv/mono'");
+        // A name that only starts the same is not a parent.
+        let message =
+            unsafe_ownership_message(&refusal_at("/srv/mono"), Path::new("/srv/monorepo")).unwrap();
         assert!(message.contains("not the project folder"), "{message}");
+        assert!(!message.contains('\n'), "{message}");
+    }
+
+    #[test]
+    fn a_repository_at_a_root_gets_a_warning_not_a_command() {
+        for (root, dir) in [
+            ("C:/", "C:/Users/me/app"),
+            ("/", "/srv/app"),
+            ("//server/share", "//server/share/app"),
+            ("//wsl.localhost/Ubuntu-24.04", "//wsl.localhost/Ubuntu-24.04/home/me/app"),
+        ] {
+            let message = unsafe_ownership_message(&refusal_at(root), Path::new(dir)).unwrap();
+            assert!(!message.contains('\n'), "{root}: {message}");
+            assert!(message.contains("not the project folder"), "{root}: {message}");
+        }
+    }
+
+    #[test]
+    fn roots_are_recognised() {
+        for path in ["/", "C:", "C:/", "c:\\", "//server/share", "//server/share/", "//server"] {
+            assert!(is_root_folder(path), "{path}");
+        }
+        for path in ["/srv", "C:/Users", "//server/share/dir", "relative"] {
+            assert!(!is_root_folder(path), "{path}");
+        }
     }
 
     #[test]
@@ -1039,9 +1125,9 @@ command\0filter.cmd.clean\ntouch c\0";
     fn a_long_verbatim_project_folder_matches_gits_path() {
         let long = "a".repeat(250);
         let dir = PathBuf::from(format!(r"\\?\C:\work\{long}"));
-        assert!(same_folder(&format!("C:/work/{long}"), &dir));
+        assert_eq!(folder_relation(&format!("C:/work/{long}"), &dir), FolderRelation::Same);
         let dir = PathBuf::from(format!(r"\\?\UNC\server\share\{long}"));
-        assert!(same_folder(&format!("//server/share/{long}"), &dir));
+        assert_eq!(folder_relation(&format!("//server/share/{long}"), &dir), FolderRelation::Same);
     }
 
     #[cfg(windows)]
