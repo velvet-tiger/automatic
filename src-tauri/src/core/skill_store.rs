@@ -129,7 +129,7 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
 
     let clone_url = format!("https://github.com/{}.git", source);
     let clone_result = run_git_limited(
-        std::process::Command::new("git").args([
+        crate::core::git_guard::console_free_command("git").args([
             "clone",
             "--depth",
             "1",
@@ -160,7 +160,7 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
     }
 
     // Get the flat file list from the local clone.
-    let ls_result = std::process::Command::new("git")
+    let ls_result = crate::core::git_guard::console_free_command("git")
         .args([
             "-C",
             tmp_dir.to_str().unwrap_or(""),
@@ -172,7 +172,7 @@ fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), 
         .output();
 
     // Get the actual branch name so we can build a raw.githubusercontent.com URL.
-    let branch_result = std::process::Command::new("git")
+    let branch_result = crate::core::git_guard::console_free_command("git")
         .args([
             "-C",
             tmp_dir.to_str().unwrap_or(""),

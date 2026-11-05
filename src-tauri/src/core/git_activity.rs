@@ -305,7 +305,7 @@ fn run_command(
     if is_not_a_repository(&stderr) {
         return Ok(GitRun::NotARepository);
     }
-    if let Some(message) = unsafe_ownership_message(&stderr) {
+    if let Some(message) = unsafe_ownership_message(&stderr, dir) {
         return Err(message);
     }
     Err(format!(
@@ -600,6 +600,32 @@ u UU N... 1 2 3 4 a b c conflict.rs\0\
             std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         script
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_another_user_owns_gets_the_safe_directory_command() {
+        let Some(installed) = git_install() else {
+            return;
+        };
+        let repo = committed_repo();
+        let root = repo.path().canonicalize().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let Some(git) = installed.assuming_another_owner(outside.path(), &root) else {
+            return;
+        };
+        let project = project_with_agents(repo.path(), &[]);
+        // Through the folder as stored, which may be a link to `root`.
+        let err = read_git_activity_with(repo.path(), &project, Some(&git)).unwrap_err();
+        let shown = root.display().to_string();
+        assert!(err.starts_with(&format!("Git will not read the repository at {shown},")), "{err}");
+        // git quotes the path only when it needs to.
+        let last = err.lines().last().unwrap();
+        assert!(
+            last == format!("git config --global --add safe.directory {shown}")
+                || last == format!("git config --global --add safe.directory '{shown}'"),
+            "{err}"
+        );
     }
 
     #[test]

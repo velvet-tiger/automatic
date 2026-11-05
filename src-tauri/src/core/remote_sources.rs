@@ -1071,7 +1071,7 @@ fn remove_stale_staging(sources_dir: &Path, min_age: Duration) {
 /// the folder on failure.
 fn run_git_clone(args: &[String], repo: &str) -> Result<(), String> {
     let output = run_git_limited(
-        Command::new("git").args(args),
+        crate::core::git_guard::console_free_command("git").args(args),
         GIT_CLONE_LIMIT,
         "clone",
         repo,
@@ -1088,7 +1088,7 @@ fn run_git_clone(args: &[String], repo: &str) -> Result<(), String> {
 /// on the default branch, so the caller must not publish it.
 fn check_out_commit(clone_path: &Path, pin: &PinningConfig, repo: &str) -> Result<(), String> {
     let fetch_output = run_git_limited(
-        Command::new("git")
+        crate::core::git_guard::console_free_command("git")
             .args([
                 "fetch",
                 "--depth",
@@ -1108,7 +1108,7 @@ fn check_out_commit(clone_path: &Path, pin: &PinningConfig, repo: &str) -> Resul
         return Err(format!("git fetch commit failed: {}", stderr.trim()));
     }
 
-    let checkout_output = Command::new("git")
+    let checkout_output = crate::core::git_guard::console_free_command("git")
         .args(["checkout", "--detach", "--end-of-options", &pin.git_ref])
         .current_dir(clone_path)
         .output()
@@ -1227,6 +1227,7 @@ pub(crate) fn run_git_limited(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    crate::core::git_guard::hide_console_window(command);
     // No terminal is attached, so a prompt could only sit until the limit.
     let mut child = command
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -1315,7 +1316,7 @@ fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> DrainedPipe
 
 /// Get the current HEAD commit SHA for a cloned source.
 fn git_head_sha(clone_path: &Path) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = crate::core::git_guard::console_free_command("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(clone_path)
         .output()
@@ -1342,7 +1343,7 @@ fn git_checked_out_pin(clone_path: &Path) -> Result<PinningConfig, String> {
         }
     }
     let run = |args: &[&str]| -> Result<Option<String>, String> {
-        let output = Command::new("git")
+        let output = crate::core::git_guard::console_free_command("git")
             .args(args)
             .current_dir(clone_path)
             .output()
@@ -1392,7 +1393,7 @@ pub fn git_update_source(repo: &str) -> Result<String, String> {
     }
 
     let output = run_git_limited(
-        Command::new("git")
+        crate::core::git_guard::console_free_command("git")
             .args(["pull", "--ff-only"])
             .current_dir(&clone_path),
         GIT_PULL_LIMIT,
