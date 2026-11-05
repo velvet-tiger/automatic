@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { GitBranch } from "lucide-react";
+import { Check, Copy, GitBranch } from "lucide-react";
 import { AgentIcon } from "../../../../../components/AgentIcon";
 import { RecentCommits } from "../RecentCommits";
-import { useProjectGitActivity, type ProjectGitState } from "../useProjectGitActivity";
+import { splitFixCommand, useProjectGitActivity, type ProjectGitState } from "../useProjectGitActivity";
 import {
   ActivityCalendarGrid,
   ConfigBreakdown,
@@ -142,6 +142,35 @@ function FooterLink({ onClick, children }: { onClick: () => void; children: Reac
   );
 }
 
+/** Copies `text`, and shows a tick once the clipboard has it. */
+function CopyCommandButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  function handleCopy() {
+    navigator.clipboard.writeText(text).then(
+      () => setCopied(true),
+      // The command stays on screen and selectable, so a refused clipboard
+      // only costs the shortcut.
+      (err: unknown) => console.error("Copying the git command failed:", err),
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="flex-shrink-0 rounded p-0.5 text-text-muted hover:text-text-base"
+      aria-label="Copy command"
+      title="Copy"
+    >
+      {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
 /** The calendar and commit list need history: not shown when reading it failed. */
 function showCommitHistory(git: ProjectGitState): boolean {
   return git.status === "loading" || git.status === "loaded";
@@ -157,11 +186,18 @@ interface CommitTileStats {
 function CommitsTile({ git, stats }: { git: ProjectGitState; stats: CommitTileStats | null }) {
   const aside = stats?.windowStart ? `Since ${shortDate(stats.windowStart)}` : undefined;
   if (git.status === "failed") {
+    const { message, command } = splitFixCommand(git.error);
     return (
       <SummaryCard title={`Commits, ${STAT_WINDOW_DAYS} days`}>
-        <div title={git.error} className="line-clamp-3 text-[12px] text-text-muted">
-          Couldn't read git history. {git.error}
+        <div title={git.error} className={`${command ? "" : "line-clamp-3 "}text-[12px] text-text-muted`}>
+          Couldn't read git history. {message}
         </div>
+        {command && (
+          <div className="mt-2 flex items-start gap-1 rounded bg-bg-input border border-border-strong/40 px-2 py-1">
+            <code className="flex-1 break-all font-mono text-[11px] text-text-base select-text">{command}</code>
+            <CopyCommandButton text={command} />
+          </div>
+        )}
       </SummaryCard>
     );
   }

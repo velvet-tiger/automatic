@@ -515,10 +515,14 @@ impl<'a> WorktreeGit<'a> {
             .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
         // `git config --get-regexp` exits 1 when nothing matches.
         if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(message) = git_guard::unsafe_ownership_message(&stderr, worktree) {
+                return Err(message);
+            }
             return Err(format!(
                 "git config failed in {}: {}",
                 worktree.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
+                stderr.trim()
             ));
         }
         let config = git_guard::parse_repo_config(&output.stdout);
@@ -547,10 +551,17 @@ fn ls_files(git: &WorktreeGit, args: &[String]) -> Result<Vec<String>, String> {
         .output()
         .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // `git config` in `WorktreeGit::open` runs even when git refuses the
+        // folder's owner, reading only the user's config, so the refusal
+        // shows here first.
+        if let Some(message) = git_guard::unsafe_ownership_message(&stderr, worktree) {
+            return Err(message);
+        }
         return Err(format!(
             "git ls-files failed in {}: {}",
             worktree.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            stderr.trim()
         ));
     }
     output
@@ -1349,6 +1360,34 @@ mod tests {
         assert_eq!(read(&f.worktree.join("CLAUDE.md")), armed.edited);
         assert!(result.changed_tracked.is_empty(), "{result:?}");
         assert_plain_git_runs_the_filter(&f, &armed);
+    }
+
+    /// git refuses a worktree another user owns. Its `git config` read
+    /// still succeeds, so the refusal must be explained where it does fail.
+    #[cfg(unix)]
+    #[test]
+    fn a_worktree_another_user_owns_gets_the_safe_directory_command() {
+        let _home = core::temp_test_home();
+        let f = fixture("wt-other-owner");
+        let outside = tempfile::tempdir().unwrap();
+        let installed = git_guard::git_install().expect("git is installed");
+        let Some(git) = installed.assuming_another_owner(outside.path(), &f.worktree) else {
+            return;
+        };
+        let raw = core::read_project("wt-other-owner").unwrap();
+        let project: Project = serde_json::from_str(&raw).unwrap();
+
+        let err = sync_worktree_for(&project, &f.worktree, Some(&git)).unwrap_err();
+
+        let shown = f.worktree.display().to_string();
+        assert!(err.starts_with(&format!("Git will not read the repository at {shown},")), "{err}");
+        // git quotes the path only when it needs to.
+        let last = err.lines().last().unwrap();
+        assert!(
+            last == format!("git config --global --add safe.directory {shown}")
+                || last == format!("git config --global --add safe.directory '{shown}'"),
+            "{err}"
+        );
     }
 
     #[cfg(unix)]

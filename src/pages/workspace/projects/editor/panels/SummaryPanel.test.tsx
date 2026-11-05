@@ -207,6 +207,19 @@ describe("SummaryPanel", () => {
     expect(screen.queryByText("Recent commits")).toBeNull();
   });
 
+  it("shows git's safe.directory command when git refuses the folder's owner", async () => {
+    const command = "git config --global --add safe.directory '%(prefix)///wsl.localhost/Ubuntu/home/me/app'";
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "get_project_git_activity"
+        ? Promise.reject(`Git will not read this repository, because its folder belongs to a different user. If you trust it, run this command once, then try again:\n${command}`)
+        : Promise.resolve(undefined),
+    );
+    renderPanel();
+    expect(await screen.findByText(command)).toBeInTheDocument();
+    expect(screen.getByText(/Couldn't read git history\. Git will not read/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+  });
+
   it("does not read git history while a project is being created", () => {
     renderPanel({ isCreating: true });
     expect(invokeMock).not.toHaveBeenCalledWith("get_project_git_activity", expect.anything());

@@ -614,7 +614,7 @@ pub fn clean_opencode_snapshots() -> Result<CleanSnapshotsResult, String> {
         // ── Run git gc on live snapshot repos ─────────────────────────────
         // Only attempt gc on directories that look like bare git repos.
         if path.join("objects").exists() && path.join("HEAD").exists() {
-            let status = std::process::Command::new("git")
+            let status = crate::core::git_guard::console_free_command("git")
                 .args(["gc", "--prune=now", "--quiet"])
                 .current_dir(&path)
                 .status();
