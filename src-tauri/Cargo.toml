@@ -9,7 +9,7 @@ members = [".", "cli-bin"]
 
 [package]
 name = "automatic"
-version = "1.40.1"
+version = "1.40.2"
 description = "Manage your AI dependencies"
 authors = ["you"]
 edition = "2021"

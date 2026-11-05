@@ -4,6 +4,16 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.40.2] - 2026-11-06
+
+### Fixed
+
+- On Windows, git and the other helper programs Automatic starts no longer open console windows. Before, the Summary reloaded git history each time the window gained focus, and each new console window took focus, so windows kept opening.
+- On Windows, Automatic now detects agent and editor CLIs such as `claude`, `code` and `cursor`, and can open editors installed as `.cmd` shims. Before, every CLI showed as missing because stock Windows has no `which`.
+- On Windows, CLI lookups use only absolute folders on PATH. A `code.cmd` placed in the app's working folder can no longer run when you open an editor.
+- When git refuses a project folder that another user owns, such as a WSL path, a network share or an external drive, the Summary and worktree sync explain why. They show git's `safe.directory` command for you to copy, but only when the command is safe to paste into a shell. A project inside a larger repository names that repository. A repository at a drive, filesystem or share root gets a warning and no command.
+- Long verbatim Windows project paths (`\\?\UNC\...`) now match the path git reports, so a `safe.directory` exception takes effect.
+
 ## [1.40.1] - 2026-11-05
 
 ### Fixed
