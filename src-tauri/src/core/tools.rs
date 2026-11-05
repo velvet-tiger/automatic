@@ -243,26 +243,60 @@ pub fn list_tools_with_detection() -> Result<Vec<ToolEntry>, String> {
     Ok(entries)
 }
 
-fn parse_command_lookup_output(output: &[u8]) -> Option<PathBuf> {
+/// Return the first path in `which` or `where` output that `accept` allows.
+fn parse_command_lookup_output(output: &[u8], accept: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     let stdout = String::from_utf8_lossy(output);
     stdout
         .lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
+        .filter(|line| !line.is_empty())
         .map(PathBuf::from)
+        .find(|path| accept(path))
 }
 
-/// Resolve the first executable path for `binary` found on `$PATH`.
+/// Whether Windows can start `path` through [`std::process::Command`].
+///
+/// `where code` lists VS Code's extensionless `code` shell script, kept for
+/// Git Bash and WSL, before `code.cmd`. npm installs the same pair for every
+/// global CLI. Windows cannot start the extensionless script, so a lookup
+/// must skip it. `Command` starts `.exe` and `.com` files directly, and runs
+/// `.cmd` and `.bat` files through `cmd.exe` with escaped arguments.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_windows_launchable(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ["exe", "com", "cmd", "bat"]
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
+        })
+}
+
+/// Resolve the first path for `binary` on `$PATH` that this OS can start.
+///
+/// On Windows this returns the full path of a shim such as `code.cmd`.
+/// Callers that launch the program must spawn this path, because
+/// `Command::new("code")` only tries `code.exe`.
 pub(crate) fn find_binary_on_path(binary: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
-    let result = super::git_guard::console_free_command("where").arg(binary).output();
+    let (result, accept) = (
+        super::git_guard::console_free_command("where")
+            .arg(binary)
+            .output(),
+        is_windows_launchable,
+    );
     #[cfg(not(target_os = "windows"))]
-    let result = super::git_guard::console_free_command("which").arg(binary).output();
+    let (result, accept) = (
+        super::git_guard::console_free_command("which")
+            .arg(binary)
+            .output(),
+        |_: &Path| true,
+    );
 
     result
         .ok()
         .filter(|o| o.status.success())
-        .and_then(|o| parse_command_lookup_output(&o.stdout))
+        .and_then(|o| parse_command_lookup_output(&o.stdout, accept))
 }
 
 /// [`find_binary_on_path`], but on a miss ask the login shell for its
@@ -490,6 +524,45 @@ mod tests {
         let dir = tmp.path().join("tools");
         let result = save_at(&dir, "bad-tool", "not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn lookup_output_skips_paths_windows_cannot_start() {
+        // `where code` output on a Windows machine with VS Code installed.
+        let output = b"C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code\r\n\
+C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n";
+        let found = parse_command_lookup_output(output, is_windows_launchable);
+        assert_eq!(
+            found,
+            Some(PathBuf::from(
+                "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd"
+            ))
+        );
+    }
+
+    #[test]
+    fn lookup_output_returns_none_when_no_path_can_start() {
+        let output = b"C:\\tools\\opencode\r\nC:\\tools\\opencode.ps1\r\n";
+        assert_eq!(parse_command_lookup_output(output, is_windows_launchable), None);
+    }
+
+    #[test]
+    fn lookup_output_takes_the_first_line_when_all_are_accepted() {
+        let output = b"\n/usr/local/bin/code\n/opt/bin/code\n";
+        assert_eq!(
+            parse_command_lookup_output(output, |_| true),
+            Some(PathBuf::from("/usr/local/bin/code"))
+        );
+    }
+
+    #[test]
+    fn windows_launchable_extensions_ignore_case() {
+        for name in ["a.exe", "a.EXE", "a.com", "a.Cmd", "a.bat"] {
+            assert!(is_windows_launchable(Path::new(name)), "{name}");
+        }
+        for name in ["a", "a.ps1", "a.js", "a.exe.txt"] {
+            assert!(!is_windows_launchable(Path::new(name)), "{name}");
+        }
     }
 
     #[test]

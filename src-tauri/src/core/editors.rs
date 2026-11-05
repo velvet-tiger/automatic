@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use super::git_guard::console_free_command;
+use super::tools::{find_binary_on_path, which_binary};
 
 // ── Editor Detection & Open ───────────────────────────────────────────────────
 
@@ -20,16 +21,7 @@ fn app_installed(app_path: &str, cli_name: Option<&str>) -> bool {
     if std::path::Path::new(app_path).exists() {
         return true;
     }
-    if let Some(cli) = cli_name {
-        // Use `which` to check if the CLI is on PATH
-        console_free_command("which")
-            .arg(cli)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    } else {
-        false
-    }
+    cli_name.is_some_and(which_binary)
 }
 
 /// Return all supported editors with their installation status.
@@ -182,137 +174,24 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
         "codex" => console_free_command("open")
             .args(["-a", "Codex", path])
             .spawn(),
-        "vscode" => {
-            // Prefer the CLI; fall back to `open -a`
-            if which_available("code") {
-                console_free_command("code").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "Visual Studio Code", path])
-                    .spawn()
-            }
-        }
-        "cursor" => {
-            if which_available("cursor") {
-                console_free_command("cursor").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "Cursor", path])
-                    .spawn()
-            }
-        }
-        "zed" => {
-            if which_available("zed") {
-                console_free_command("zed").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "Zed", path])
-                    .spawn()
-            }
-        }
-        "textmate" => {
-            if which_available("mate") {
-                console_free_command("mate").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "TextMate", path])
-                    .spawn()
-            }
-        }
+        "vscode" => open_with_cli_or_app("code", "Visual Studio Code", path),
+        "cursor" => open_with_cli_or_app("cursor", "Cursor", path),
+        "zed" => open_with_cli_or_app("zed", "Zed", path),
+        "textmate" => open_with_cli_or_app("mate", "TextMate", path),
         "antigravity" => console_free_command("open")
             .args(["-a", "Antigravity", path])
             .spawn(),
-        "xcode" => {
-            if which_available("xed") {
-                console_free_command("xed").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "Xcode", path])
-                    .spawn()
-            }
-        }
+        "xcode" => open_with_cli_or_app("xed", "Xcode", path),
         // ── JetBrains IDEs ──────────────────────────────────────────────
-        "intellij" => {
-            if which_available("idea") {
-                console_free_command("idea").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "IntelliJ IDEA", path])
-                    .spawn()
-            }
-        }
-        "phpstorm" => {
-            if which_available("phpstorm") {
-                console_free_command("phpstorm").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "PhpStorm", path])
-                    .spawn()
-            }
-        }
-        "webstorm" => {
-            if which_available("webstorm") {
-                console_free_command("webstorm").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "WebStorm", path])
-                    .spawn()
-            }
-        }
-        "pycharm" => {
-            if which_available("pycharm") {
-                console_free_command("pycharm").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "PyCharm", path])
-                    .spawn()
-            }
-        }
-        "rustrover" => {
-            if which_available("rustrover") {
-                console_free_command("rustrover").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "RustRover", path])
-                    .spawn()
-            }
-        }
-        "clion" => {
-            if which_available("clion") {
-                console_free_command("clion").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "CLion", path])
-                    .spawn()
-            }
-        }
-        "goland" => {
-            if which_available("goland") {
-                console_free_command("goland").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "GoLand", path])
-                    .spawn()
-            }
-        }
-        "datagrip" => {
-            if which_available("datagrip") {
-                console_free_command("datagrip").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "DataGrip", path])
-                    .spawn()
-            }
-        }
-        "rider" => {
-            if which_available("rider") {
-                console_free_command("rider").arg(path).spawn()
-            } else {
-                console_free_command("open")
-                    .args(["-a", "Rider", path])
-                    .spawn()
-            }
-        }
+        "intellij" => open_with_cli_or_app("idea", "IntelliJ IDEA", path),
+        "phpstorm" => open_with_cli_or_app("phpstorm", "PhpStorm", path),
+        "webstorm" => open_with_cli_or_app("webstorm", "WebStorm", path),
+        "pycharm" => open_with_cli_or_app("pycharm", "PyCharm", path),
+        "rustrover" => open_with_cli_or_app("rustrover", "RustRover", path),
+        "clion" => open_with_cli_or_app("clion", "CLion", path),
+        "goland" => open_with_cli_or_app("goland", "GoLand", path),
+        "datagrip" => open_with_cli_or_app("datagrip", "DataGrip", path),
+        "rider" => open_with_cli_or_app("rider", "Rider", path),
         other => return Err(format!("Unknown editor id: {}", other)),
     };
 
@@ -389,11 +268,19 @@ pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
     Ok(format!("data:image/png;base64,{}", b64))
 }
 
-/// Return true when `name` resolves to an executable via `which`.
-fn which_available(name: &str) -> bool {
-    console_free_command("which")
-        .arg(name)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// Open `path` with the editor's CLI when it is on `PATH`, else with
+/// `open -a <app_name>`. The CLI is spawned by its resolved path, because
+/// `Command::new("code")` on Windows only tries `code.exe` and so misses
+/// shims such as `code.cmd` and `cursor.cmd`.
+fn open_with_cli_or_app(
+    cli: &str,
+    app_name: &str,
+    path: &str,
+) -> std::io::Result<std::process::Child> {
+    match find_binary_on_path(cli) {
+        Some(binary) => console_free_command(binary).arg(path).spawn(),
+        None => console_free_command("open")
+            .args(["-a", app_name, path])
+            .spawn(),
+    }
 }
