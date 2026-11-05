@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use super::git_guard::{
     check_git_reads_repo_config, check_git_supports, git_command, git_install, parse_repo_config,
-    probe_command, GitInstall, RepoConfig, REPO_CONFIG_ARGS,
+    probe_command, unsafe_ownership_message, GitInstall, RepoConfig, REPO_CONFIG_ARGS,
 };
 use super::remote_sources::run_git_limited;
 use super::Project;
@@ -304,6 +304,9 @@ fn run_command(
     let stderr = String::from_utf8_lossy(&output.stderr);
     if is_not_a_repository(&stderr) {
         return Ok(GitRun::NotARepository);
+    }
+    if let Some(message) = unsafe_ownership_message(&stderr) {
+        return Err(message);
     }
     Err(format!(
         "git {} failed in {}: {}",

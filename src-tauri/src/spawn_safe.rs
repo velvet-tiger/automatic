@@ -30,6 +30,7 @@
 //! * On unix, `pre_exec` calls `setsid(2)` so the child runs in a new
 //!   session with no controlling terminal — `open("/dev/tty")` fails with
 //!   `ENXIO` and `tcsetpgrp` cannot touch the parent's tty.
+//! * On Windows, `CREATE_NO_WINDOW`, so the child opens no console window.
 //!
 //! The invariants are enforced through this module. Direct
 //! `std::process::Command` construction on the proxy/serve path is a bug.
@@ -96,13 +97,20 @@ fn attach_setsid(cmd: &mut Command) {
     }
 }
 
-#[cfg(not(unix))]
-fn attach_setsid(_cmd: &mut Command) {
-    // Windows has no `setsid`. Detaching from the console is handled by the
-    // `CREATE_NO_WINDOW` process-creation flag, which the app's release
-    // build already sets via `#![windows_subsystem = "windows"]`. Nothing
-    // further is needed here.
+#[cfg(windows)]
+fn attach_setsid(cmd: &mut Command) {
+    // Windows has no `setsid` or controlling terminal. The risk there is a
+    // console window: the release build has no console
+    // (`windows_subsystem = "windows"` hides only the app's own), so Windows
+    // opens a new window for every console program the app starts, unless
+    // the child is created with `CREATE_NO_WINDOW`.
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
 }
+
+#[cfg(not(any(unix, windows)))]
+fn attach_setsid(_cmd: &mut Command) {}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

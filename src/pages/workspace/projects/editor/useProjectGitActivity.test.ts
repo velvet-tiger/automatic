@@ -2,7 +2,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { invokeMock, resetInvokeMock } from "../../../../test/tauriMock";
 import type { GitActivity } from "../types";
-import { clearGitActivityCache, gitStateFromReply, useProjectGitActivity } from "./useProjectGitActivity";
+import { clearGitActivityCache, gitStateFromReply, splitFixCommand, useProjectGitActivity } from "./useProjectGitActivity";
+
+describe("splitFixCommand", () => {
+  it("takes git's safe.directory command off the last line", () => {
+    expect(splitFixCommand("Git will not read this.\ngit config --global --add safe.directory /srv/app")).toEqual({
+      message: "Git will not read this.",
+      command: "git config --global --add safe.directory /srv/app",
+    });
+  });
+
+  it("leaves every other error whole", () => {
+    for (const error of [
+      "git log failed in /work: boom",
+      "git config --global --add safe.directory /srv/app",
+      "first line\nsecond line",
+    ]) {
+      expect(splitFixCommand(error)).toEqual({ message: error, command: null });
+    }
+  });
+});
 
 function activity(subject: string): GitActivity {
   return {

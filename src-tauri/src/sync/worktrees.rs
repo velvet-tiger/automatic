@@ -515,10 +515,14 @@ impl<'a> WorktreeGit<'a> {
             .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
         // `git config --get-regexp` exits 1 when nothing matches.
         if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(message) = git_guard::unsafe_ownership_message(&stderr) {
+                return Err(message);
+            }
             return Err(format!(
                 "git config failed in {}: {}",
                 worktree.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
+                stderr.trim()
             ));
         }
         let config = git_guard::parse_repo_config(&output.stdout);
