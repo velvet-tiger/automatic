@@ -543,7 +543,10 @@ fn is_root_folder(path: &str) -> bool {
 
 /// A [`Command`] for `program` that opens no console window on Windows. For
 /// git calls outside the hardened builders, such as clones of sources the
-/// user added.
+/// user added, and for every other program the app starts that the user
+/// should not see: tool lookups, the `claude` CLI, editor launchers, dev
+/// servers. Only a launch meant to show the user a window, such as opening a
+/// terminal, uses a plain [`Command`].
 pub(crate) fn console_free_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     let mut command = Command::new(program);
     hide_console_window(&mut command);
@@ -802,7 +805,7 @@ fn parse_git_version(text: &str) -> Option<GitVersion> {
 }
 
 fn xcode_tools_installed() -> bool {
-    Command::new("/usr/bin/xcode-select")
+    console_free_command("/usr/bin/xcode-select")
         .arg("-p")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

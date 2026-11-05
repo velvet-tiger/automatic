@@ -2279,7 +2279,7 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
 ///
 /// Uses the system `which` command to avoid depending on an additional crate.
 pub(crate) fn cli_available(cli_name: &str) -> bool {
-    std::process::Command::new("which")
+    crate::core::git_guard::console_free_command("which")
         .arg(cli_name)
         .output()
         .map(|o| o.status.success())

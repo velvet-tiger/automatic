@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::git_guard::console_free_command;
 use super::paths::get_automatic_dir;
 
 // ── Plugins ──────────────────────────────────────────────────────────────────
@@ -307,7 +308,7 @@ fn find_claude_binary() -> Option<std::path::PathBuf> {
     }
 
     // 1. Try bare `claude` first (works in terminal / CI).
-    if std::process::Command::new("claude")
+    if console_free_command("claude")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -332,7 +333,7 @@ fn find_claude_binary() -> Option<std::path::PathBuf> {
         };
 
         if path.exists() {
-            if std::process::Command::new(&path)
+            if console_free_command(&path)
                 .arg("--version")
                 .output()
                 .map(|o| o.status.success())
@@ -365,12 +366,12 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
     // different path (e.g. a release build path when running as a dev build)
     // does not cause the subsequent `plugin install` to fail.  Ignore errors
     // here — if it wasn't registered the remove is a no-op.
-    let _ = std::process::Command::new(&claude)
+    let _ = console_free_command(&claude)
         .args(["plugin", "marketplace", "remove", MARKETPLACE_NAME])
         .output();
 
     // Register the marketplace with the current (correct) path.
-    let add_result = std::process::Command::new(&claude)
+    let add_result = console_free_command(&claude)
         .args(["plugin", "marketplace", "add", plugins_path])
         .output()
         .map_err(|e| format!("Failed to run claude plugin marketplace add: {}", e))?;
@@ -383,12 +384,12 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
     // Uninstall any previously installed version so that a stale plugin entry
     // (pointing at the old marketplace path) does not block reinstall.
     // Ignore errors — the plugin may not be installed yet.
-    let _ = std::process::Command::new(&claude)
+    let _ = console_free_command(&claude)
         .args(["plugin", "uninstall", "automatic"])
         .output();
 
     // Install the automatic plugin from the freshly registered marketplace.
-    let install_result = std::process::Command::new(&claude)
+    let install_result = console_free_command(&claude)
         .args([
             "plugin",
             "install",

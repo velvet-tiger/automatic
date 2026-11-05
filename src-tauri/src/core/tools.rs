@@ -255,9 +255,9 @@ fn parse_command_lookup_output(output: &[u8]) -> Option<PathBuf> {
 /// Resolve the first executable path for `binary` found on `$PATH`.
 pub(crate) fn find_binary_on_path(binary: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("where").arg(binary).output();
+    let result = super::git_guard::console_free_command("where").arg(binary).output();
     #[cfg(not(target_os = "windows"))]
-    let result = std::process::Command::new("which").arg(binary).output();
+    let result = super::git_guard::console_free_command("which").arg(binary).output();
 
     result
         .ok()
