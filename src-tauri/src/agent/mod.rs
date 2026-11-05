@@ -2277,13 +2277,11 @@ pub(crate) fn home_dir() -> Option<PathBuf> {
 
 /// Return `true` if `cli_name` resolves to an executable on `$PATH`.
 ///
-/// Uses the system `which` command to avoid depending on an additional crate.
+/// Delegates to [`crate::core::tools::which_binary`], which runs `where` on
+/// Windows. Stock Windows has no `which`, so calling it reported every CLI
+/// as missing there.
 pub(crate) fn cli_available(cli_name: &str) -> bool {
-    crate::core::git_guard::console_free_command("which")
-        .arg(cli_name)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::core::tools::which_binary(cli_name)
 }
 
 /// Replace each inherited key's `env` value in place with `render(key)`.
