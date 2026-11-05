@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use super::git_guard::console_free_command;
+
 // ── Editor Detection & Open ───────────────────────────────────────────────────
 
 /// Known editors with their detection strategy (macOS-first, cross-platform fallback).
@@ -20,7 +22,7 @@ fn app_installed(app_path: &str, cli_name: Option<&str>) -> bool {
     }
     if let Some(cli) = cli_name {
         // Use `which` to check if the CLI is on PATH
-        std::process::Command::new("which")
+        console_free_command("which")
             .arg(cli)
             .output()
             .map(|o| o.status.success())
@@ -147,14 +149,16 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
     let status = match editor_id {
         "finder" => {
             // `open` on macOS opens Finder at the directory
-            std::process::Command::new("open")
+            console_free_command("open")
                 .arg(path)
                 .spawn()
                 .map_err(|e| format!("Failed to open Finder: {}", e))?;
             return Ok(());
         }
         "terminal" => {
-            // `open -a Terminal <dir>` opens a new Terminal window in that directory
+            // `open -a Terminal <dir>` opens a new Terminal window in that directory.
+            // A plain `Command`, unlike every other launch here: this one exists
+            // to show the user a window, so it must never get `CREATE_NO_WINDOW`.
             std::process::Command::new("open")
                 .args(["-a", "Terminal", path])
                 .spawn()
@@ -169,60 +173,60 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
             // the app and cannot be bypassed from here.
             let encoded = urlencoding::encode(path);
             let url = format!("claude://code/new?folder={}", encoded);
-            std::process::Command::new("open")
+            console_free_command("open")
                 .arg(&url)
                 .spawn()
                 .map_err(|e| format!("Failed to open Claude: {}", e))?;
             return Ok(());
         }
-        "codex" => std::process::Command::new("open")
+        "codex" => console_free_command("open")
             .args(["-a", "Codex", path])
             .spawn(),
         "vscode" => {
             // Prefer the CLI; fall back to `open -a`
             if which_available("code") {
-                std::process::Command::new("code").arg(path).spawn()
+                console_free_command("code").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "Visual Studio Code", path])
                     .spawn()
             }
         }
         "cursor" => {
             if which_available("cursor") {
-                std::process::Command::new("cursor").arg(path).spawn()
+                console_free_command("cursor").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "Cursor", path])
                     .spawn()
             }
         }
         "zed" => {
             if which_available("zed") {
-                std::process::Command::new("zed").arg(path).spawn()
+                console_free_command("zed").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "Zed", path])
                     .spawn()
             }
         }
         "textmate" => {
             if which_available("mate") {
-                std::process::Command::new("mate").arg(path).spawn()
+                console_free_command("mate").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "TextMate", path])
                     .spawn()
             }
         }
-        "antigravity" => std::process::Command::new("open")
+        "antigravity" => console_free_command("open")
             .args(["-a", "Antigravity", path])
             .spawn(),
         "xcode" => {
             if which_available("xed") {
-                std::process::Command::new("xed").arg(path).spawn()
+                console_free_command("xed").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "Xcode", path])
                     .spawn()
             }
@@ -230,81 +234,81 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
         // ── JetBrains IDEs ──────────────────────────────────────────────
         "intellij" => {
             if which_available("idea") {
-                std::process::Command::new("idea").arg(path).spawn()
+                console_free_command("idea").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "IntelliJ IDEA", path])
                     .spawn()
             }
         }
         "phpstorm" => {
             if which_available("phpstorm") {
-                std::process::Command::new("phpstorm").arg(path).spawn()
+                console_free_command("phpstorm").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "PhpStorm", path])
                     .spawn()
             }
         }
         "webstorm" => {
             if which_available("webstorm") {
-                std::process::Command::new("webstorm").arg(path).spawn()
+                console_free_command("webstorm").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "WebStorm", path])
                     .spawn()
             }
         }
         "pycharm" => {
             if which_available("pycharm") {
-                std::process::Command::new("pycharm").arg(path).spawn()
+                console_free_command("pycharm").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "PyCharm", path])
                     .spawn()
             }
         }
         "rustrover" => {
             if which_available("rustrover") {
-                std::process::Command::new("rustrover").arg(path).spawn()
+                console_free_command("rustrover").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "RustRover", path])
                     .spawn()
             }
         }
         "clion" => {
             if which_available("clion") {
-                std::process::Command::new("clion").arg(path).spawn()
+                console_free_command("clion").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "CLion", path])
                     .spawn()
             }
         }
         "goland" => {
             if which_available("goland") {
-                std::process::Command::new("goland").arg(path).spawn()
+                console_free_command("goland").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "GoLand", path])
                     .spawn()
             }
         }
         "datagrip" => {
             if which_available("datagrip") {
-                std::process::Command::new("datagrip").arg(path).spawn()
+                console_free_command("datagrip").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "DataGrip", path])
                     .spawn()
             }
         }
         "rider" => {
             if which_available("rider") {
-                std::process::Command::new("rider").arg(path).spawn()
+                console_free_command("rider").arg(path).spawn()
             } else {
-                std::process::Command::new("open")
+                console_free_command("open")
                     .args(["-a", "Rider", path])
                     .spawn()
             }
@@ -363,7 +367,7 @@ pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
 
     // Convert .icns → PNG if not already cached
     if !out_path.exists() {
-        let output = std::process::Command::new("sips")
+        let output = console_free_command("sips")
             .args(["-s", "format", "png", icns_path, "--out", &out_str])
             .output()
             .map_err(|e| format!("Failed to run sips: {}", e))?;
@@ -387,7 +391,7 @@ pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
 
 /// Return true when `name` resolves to an executable via `which`.
 fn which_available(name: &str) -> bool {
-    std::process::Command::new("which")
+    console_free_command("which")
         .arg(name)
         .output()
         .map(|o| o.status.success())

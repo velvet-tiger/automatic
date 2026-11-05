@@ -46,13 +46,14 @@ fn build_command() -> Command {
     // (unlike cmd.exe's own PATH search) does not probe for that extension.
     // Routing through `cmd /C` gets the same shim resolution cmd.exe itself
     // would apply — mirrors `dev_servers::process::build_command`.
-    let mut cmd = Command::new("cmd");
+    let mut cmd = crate::core::git_guard::console_free_command("cmd");
     cmd.args(["/C", "maildev", "--mcp"]);
     cmd
 }
 
 #[cfg(not(windows))]
 fn build_command() -> Command {
+    // A plain `Command`: never built on Windows, so no console window to hide.
     let mut cmd = Command::new("maildev");
     cmd.arg("--mcp");
     cmd
@@ -90,6 +91,7 @@ fn spawn_stderr_drain<R: std::io::Read + Send + 'static>(
 
 #[cfg(unix)]
 fn terminate_and_wait(child: &mut Child, pid: u32) {
+    // Plain `Command`s: Unix only, where there is no console window to hide.
     let pgid = pid as i32;
     // Negative pid targets the whole process group.
     let _ = Command::new("kill").args(["-TERM", &format!("-{}", pgid)]).status();
@@ -105,7 +107,7 @@ fn terminate_and_wait(child: &mut Child, pid: u32) {
 
 #[cfg(windows)]
 fn terminate_and_wait(child: &mut Child, pid: u32) {
-    let _ = Command::new("taskkill")
+    let _ = crate::core::git_guard::console_free_command("taskkill")
         .args(["/T", "/F", "/PID", &pid.to_string()])
         .status();
     let _ = child.wait();

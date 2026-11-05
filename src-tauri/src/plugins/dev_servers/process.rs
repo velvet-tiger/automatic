@@ -153,13 +153,14 @@ fn build_command(pm: PackageManager, script: &str) -> Command {
     // they are `.cmd` shims, and `CreateProcess` (unlike cmd.exe's own PATH
     // search) does not probe for that extension. Routing through `cmd /C`
     // gets the same shim resolution cmd.exe itself would apply.
-    let mut cmd = Command::new("cmd");
+    let mut cmd = crate::core::git_guard::console_free_command("cmd");
     cmd.args(["/C", pm.binary(), "run", script]);
     cmd
 }
 
 #[cfg(not(windows))]
 fn build_command(pm: PackageManager, script: &str) -> Command {
+    // A plain `Command`: never built on Windows, so no console window to hide.
     let mut cmd = Command::new(pm.binary());
     cmd.args(["run", script]);
     cmd
@@ -433,6 +434,7 @@ fn start_with_grace(
 
 #[cfg(unix)]
 fn terminate_and_wait(child: &mut Child, pid: u32) {
+    // Plain `Command`s: Unix only, where there is no console window to hide.
     let pgid = pid as i32;
     // Negative pid targets the whole process group, reaching children the
     // package manager spawned (the actual dev server), not just its own pid.
@@ -451,7 +453,7 @@ fn terminate_and_wait(child: &mut Child, pid: u32) {
 fn terminate_and_wait(child: &mut Child, pid: u32) {
     // /T kills the process tree rooted at pid (cmd.exe -> npm/pnpm/yarn ->
     // node), /F forces termination without prompting.
-    let _ = Command::new("taskkill")
+    let _ = crate::core::git_guard::console_free_command("taskkill")
         .args(["/T", "/F", "/PID", &pid.to_string()])
         .status();
     let _ = child.wait();
