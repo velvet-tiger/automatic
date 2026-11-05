@@ -462,7 +462,15 @@ fn hint_names(hint: &str, path: &str) -> bool {
 /// resolved through a link is compared with `dir` resolved too.
 fn same_folder(refused: &str, dir: &Path) -> bool {
     let normal = |path: &str| -> String {
-        let plain = plain_windows_path(path).unwrap_or_else(|| path.to_string());
+        // For comparing only: a long verbatim path has no plain form git can
+        // be given, but git still reports it without the prefix.
+        let plain = plain_windows_path(path).unwrap_or_else(|| {
+            if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+                format!(r"\\{unc}")
+            } else {
+                path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+            }
+        });
         let slashed = if cfg!(windows) { plain.replace('\\', "/") } else { plain };
         let trimmed = slashed.trim_end_matches('/');
         let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
@@ -1024,6 +1032,16 @@ command\0filter.cmd.clean\ntouch c\0";
         assert!(unsafe_ownership_message(stderr, dir).is_none());
         let stderr = "warning: x\nfatal: unable to read tree\nfatal: detected dubious ownership in repository at '/x'\n";
         assert!(unsafe_ownership_message(stderr, dir).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_long_verbatim_project_folder_matches_gits_path() {
+        let long = "a".repeat(250);
+        let dir = PathBuf::from(format!(r"\\?\C:\work\{long}"));
+        assert!(same_folder(&format!("C:/work/{long}"), &dir));
+        let dir = PathBuf::from(format!(r"\\?\UNC\server\share\{long}"));
+        assert!(same_folder(&format!("//server/share/{long}"), &dir));
     }
 
     #[cfg(windows)]
