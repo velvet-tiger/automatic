@@ -469,6 +469,22 @@ mod tests {
     const H3: &str = "3333333333333333333333333333333333333333";
 
     #[test]
+    fn agent_config_pathspecs_exclude_agent_local_files() {
+        // CLAUDE.local.md is gitignored but is the user's file, not
+        // Automatic's, so git activity must not count it as agent config.
+        let project = Project {
+            agents: vec!["claude".to_string()],
+            ..Default::default()
+        };
+        let specs = agent_config_pathspecs(Path::new("/proj"), &project);
+        assert!(specs.contains(&":(literal)CLAUDE.md".to_string()), "{specs:?}");
+        assert!(
+            !specs.iter().any(|s| s.contains("CLAUDE.local.md")),
+            "{specs:?}"
+        );
+    }
+
+    #[test]
     fn parses_commits_with_shortstat() {
         let out = format!(
             "{H1}\02026-11-01T10:00:00+11:00\0Sam Lee\0fix: thing\0\n 3 files changed, 13 insertions(+), 1 deletion(-)\n\

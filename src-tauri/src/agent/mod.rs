@@ -744,6 +744,21 @@ pub trait Agent: Send + Sync {
         }
         out
     }
+
+    /// Machine-local files the agent itself creates under `dir`, such as
+    /// Claude Code's `CLAUDE.local.md`.  Automatic never writes these, but the
+    /// managed `.gitignore` block lists them so personal settings are not
+    /// committed.
+    ///
+    /// Kept apart from [`managed_gitignore_paths`](Agent::managed_gitignore_paths)
+    /// because that list also means "files Automatic wrote" to git activity.
+    /// List only paths outside the agent's own directory: a path inside it is
+    /// already covered by that directory's ignore.
+    ///
+    /// Default: empty vec.
+    fn local_gitignore_paths(&self, _dir: &Path) -> Vec<ManagedPath> {
+        vec![]
+    }
 }
 
 // ── Frontend DTO ────────────────────────────────────────────────────────────

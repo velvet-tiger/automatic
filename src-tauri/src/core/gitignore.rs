@@ -122,7 +122,7 @@ pub fn build_patterns(
 }
 
 /// Build the patterns for `project` from the paths every selected agent
-/// reports it owns.
+/// reports it owns, plus the machine-local files each agent creates itself.
 ///
 /// The sync engine writes the block from this list and drift detection
 /// compares the block on disk against it, so both must call this one
@@ -133,7 +133,11 @@ pub fn project_patterns(project_dir: &Path, project: &Project) -> Vec<String> {
         .agents
         .iter()
         .filter_map(|id| crate::agent::from_id(id))
-        .flat_map(|agent| agent.managed_gitignore_paths(project_dir))
+        .flat_map(|agent| {
+            let mut paths = agent.managed_gitignore_paths(project_dir);
+            paths.extend(agent.local_gitignore_paths(project_dir));
+            paths
+        })
         .collect();
     let silent = matches!(project.mode, ProjectMode::Silent);
     build_patterns(project_dir, &managed_paths, silent)
@@ -456,6 +460,57 @@ mod tests {
             path: root.join(rel),
             is_dir: false,
         }
+    }
+
+    fn claude_project() -> Project {
+        Project {
+            agents: vec!["claude".to_string()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn project_patterns_ignore_claude_local_instructions() {
+        let root = PathBuf::from("/proj");
+        let patterns = project_patterns(&root, &claude_project());
+        assert!(
+            patterns.contains(&"/CLAUDE.local.md".to_string()),
+            "{patterns:?}"
+        );
+        // Local settings live in `.claude/`, which is ignored whole, so they
+        // need no pattern of their own.
+        assert!(patterns.contains(&"/.claude/".to_string()), "{patterns:?}");
+        assert!(
+            !patterns.iter().any(|p| p.contains("settings.local")),
+            "{patterns:?}"
+        );
+    }
+
+    #[test]
+    fn project_patterns_skip_claude_local_instructions_without_claude() {
+        let root = PathBuf::from("/proj");
+        let project = Project {
+            agents: vec!["codex".to_string()],
+            ..Default::default()
+        };
+        let patterns = project_patterns(&root, &project);
+        assert!(
+            !patterns.iter().any(|p| p.contains("CLAUDE.local.md")),
+            "{patterns:?}"
+        );
+    }
+
+    #[test]
+    fn project_patterns_silent_mode_lists_only_automatic_dir() {
+        let root = PathBuf::from("/proj");
+        let project = Project {
+            mode: ProjectMode::Silent,
+            ..claude_project()
+        };
+        assert_eq!(
+            project_patterns(&root, &project),
+            vec!["/.automatic/".to_string()]
+        );
     }
 
     #[test]
