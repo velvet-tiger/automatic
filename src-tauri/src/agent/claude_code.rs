@@ -208,6 +208,16 @@ impl Agent for ClaudeCode {
         vec![dir.join(".mcp.json")]
     }
 
+    fn local_gitignore_paths(&self, dir: &Path) -> Vec<super::ManagedPath> {
+        // Claude Code's personal, per-machine instructions. Its local settings
+        // (`.claude/settings.local.json` and friends) sit inside `.claude/`,
+        // which the block already ignores whole.
+        vec![super::ManagedPath {
+            path: dir.join("CLAUDE.local.md"),
+            is_dir: false,
+        }]
+    }
+
     // ── Global MCP config ──────────────────────────────────────────────────
 
     fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
