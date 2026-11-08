@@ -30,8 +30,6 @@ export function countLabel(severity: ProjectNoticeSeverity, count: number): stri
 interface ProjectNoticeListProps {
   /** local_key of the open project. The hidden state is kept per project. */
   projectKey: string;
-  /* Mount with `key={projectKey}`, so the hidden state is read fresh for
-     each project and never compared with another project's notices. */
   /** Already sorted, most urgent first. */
   notices: ProjectNotice[];
   renderNotice: (notice: ProjectNotice) => ReactNode;
@@ -41,10 +39,24 @@ interface ProjectNoticeListProps {
  * The one list of problems, warnings and notices at the top of the project
  * editor. The user can hide it; the counts stay in view, and a new problem
  * opens it again. Takes no space when there is nothing to show.
+ *
+ * The hidden state is kept with the project it was read for, so after a
+ * project switch it is never compared with another project's notices, even
+ * if the caller does not remount the list.
  */
 export function ProjectNoticeList({ projectKey, notices, renderNotice }: ProjectNoticeListProps) {
   // The problem ids the user saw when they hid the list, or null when open.
-  const [hiddenWith, setHiddenWith] = useState<string[] | null>(() => readHiddenNotices(projectKey));
+  const [hidden, setHidden] = useState<{ key: string; seen: string[] | null }>(() => ({
+    key: projectKey,
+    seen: readHiddenNotices(projectKey),
+  }));
+  let hiddenWith = hidden.seen;
+  if (hidden.key !== projectKey) {
+    // Adjusting state during render: React re-renders at once with the new value.
+    hiddenWith = readHiddenNotices(projectKey);
+    setHidden({ key: projectKey, seen: hiddenWith });
+  }
+  const setHiddenWith = (seen: string[] | null) => setHidden({ key: projectKey, seen });
 
   const reopened = hiddenWith !== null && !staysHidden(hiddenWith, notices);
   useEffect(() => {

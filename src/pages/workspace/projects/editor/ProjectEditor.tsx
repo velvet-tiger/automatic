@@ -480,6 +480,9 @@ export function ProjectEditor({
   // Why the last problems check could not run, when it could not. A failed
   // check must not leave an older report, or no banner at all, on screen.
   const [problemsCheckError, setProblemsCheckError] = useState<string | null>(null);
+  // The project the drift and problems state above belongs to. It moves to
+  // the new project in the same effect that clears that state.
+  const [checksKey, setChecksKey] = useState<string | null>(selectedKey);
 
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
@@ -1012,8 +1015,10 @@ export function ProjectEditor({
 
   // Reset drift + problems + recommendations state whenever the active project changes
   useEffect(() => {
+    setChecksKey(selectedKey);
     setDriftReport(null);
     setProblemsReport(null);
+    setDriftCheckError(null);
     setProblemsCheckError(null);
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
@@ -3284,6 +3289,7 @@ export function ProjectEditor({
         driftCheckError,
         problemsReport,
         problemsCheckError,
+        checksKey,
       })
     : [];
 

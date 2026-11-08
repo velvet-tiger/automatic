@@ -43,6 +43,7 @@ function inputs(overrides: Partial<ProjectNoticeInputs> = {}): ProjectNoticeInpu
     driftCheckError: null,
     problemsReport: null,
     problemsCheckError: null,
+    checksKey: "app",
     ...overrides,
   };
 }
@@ -100,6 +101,17 @@ describe("collectProjectNotices", () => {
     const failing = { driftCheckError: "e", driftReport: { drifted: true, agents: [] } };
     expect(ids(inputs({ ...failing, project: project({ agents: [] }) }))).toEqual([]);
     expect(ids(inputs({ ...failing, project: project({ directory: "" }) }))).toEqual([]);
+  });
+
+  it("ignores check results that belong to the previous project", () => {
+    const stale = inputs({
+      checksKey: "previous",
+      driftReport: { drifted: true, agents: [] },
+      driftCheckError: "e",
+      problemsReport: { has_problems: true, problems: [problem], notes: ["n"] },
+    });
+    expect(ids(stale)).toEqual([]);
+    expect(ids({ ...stale, project: project({ mode: "silent" }) })).toEqual(["silent_mode"]);
   });
 
   it("reports a missing folder as a problem", () => {

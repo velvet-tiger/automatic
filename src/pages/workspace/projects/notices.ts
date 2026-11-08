@@ -21,6 +21,13 @@ export interface ProjectNoticeInputs {
   driftCheckError: string | null;
   problemsReport: ProjectProblemsReport | null;
   problemsCheckError: string | null;
+  /**
+   * The project the four check values above belong to. The editor clears
+   * them in an effect after a project switch, so for one render they still
+   * describe the previous project. They are ignored until this matches
+   * `selectedKey`.
+   */
+  checksKey: string | null;
 }
 
 export const NOTICE_SEVERITIES: readonly ProjectNoticeSeverity[] = ["problem", "warning", "notice"];
@@ -48,6 +55,11 @@ function problemKey(problem: ProjectProblem): string {
 export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotice[] {
   const { project, selectedKey, isCreating, dirty, readOnly } = inputs;
   if (isCreating) return [];
+  const current = inputs.checksKey === selectedKey;
+  const driftReport = current ? inputs.driftReport : null;
+  const problemsReport = current ? inputs.problemsReport : null;
+  const driftCheckError = current ? inputs.driftCheckError : null;
+  const problemsCheckError = current ? inputs.problemsCheckError : null;
 
   const notices: ProjectNotice[] = [];
   const checked = Boolean(project.directory) && project.agents.length > 0;
@@ -65,7 +77,7 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
   // A failed check is shown even with unsaved edits: the user must be able
   // to see that the checks are not running.
   if (checked) {
-    for (const failure of checkFailureNotices(inputs.driftCheckError, inputs.problemsCheckError)) {
+    for (const failure of checkFailureNotices(driftCheckError, problemsCheckError)) {
       notices.push({
         id: `check_failure:${failure.title}`,
         severity: "problem",
@@ -75,7 +87,7 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
     }
   }
 
-  const report = inputs.problemsReport;
+  const report = problemsReport;
   if (checked && !dirty && report?.has_problems) {
     const seen = new Map<string, number>();
     report.problems.forEach((problem) => {
@@ -93,8 +105,8 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
 
   // Drift describes files on disk, not the edits in memory, so it ignores
   // `dirty`. A read-only project still shows it, as information.
-  if (checked && inputs.driftReport?.drifted) {
-    notices.push({ id: "drift", severity: "warning", count: 1, source: { kind: "drift", report: inputs.driftReport } });
+  if (checked && driftReport?.drifted) {
+    notices.push({ id: "drift", severity: "warning", count: 1, source: { kind: "drift", report: driftReport } });
   }
 
   if (hasKey && project.local_awaiting_confirmation === true) {

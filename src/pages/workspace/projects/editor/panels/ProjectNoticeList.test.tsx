@@ -92,6 +92,16 @@ describe("ProjectNoticeList", () => {
     expect(localStorage.getItem("automatic.project_notices.hidden.b")).toBe(JSON.stringify(["missing_directory"]));
   });
 
+  it("reads the new project's hidden state even when the list is not remounted", () => {
+    const other: ProjectNotice = { ...problem, id: "problem:x#0" };
+    localStorage.setItem("automatic.project_notices.hidden.a", JSON.stringify(["problem:x#0"]));
+    localStorage.setItem("automatic.project_notices.hidden.b", JSON.stringify(["missing_directory"]));
+    const { rerender } = render(<ProjectNoticeList projectKey="a" notices={[other]} renderNotice={renderRow} />);
+    rerender(<ProjectNoticeList projectKey="b" notices={[problem]} renderNotice={renderRow} />);
+    expect(screen.queryByText("row missing_directory")).not.toBeInTheDocument();
+    expect(localStorage.getItem("automatic.project_notices.hidden.b")).toBe(JSON.stringify(["missing_directory"]));
+  });
+
   it("points aria-controls at the rows only while they are shown", () => {
     render(<ProjectNoticeList projectKey="app" notices={[drift]} renderNotice={renderRow} />);
     const head = screen.getByRole("button", { name: /Needs attention/ });
