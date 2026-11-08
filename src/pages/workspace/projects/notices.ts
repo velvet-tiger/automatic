@@ -4,6 +4,7 @@ import type {
   Project,
   ProjectNotice,
   ProjectNoticeSeverity,
+  ProjectProblem,
   ProjectProblemsReport,
 } from "./types";
 
@@ -27,6 +28,16 @@ export const NOTICE_SEVERITIES: readonly ProjectNoticeSeverity[] = ["problem", "
 function waitingFor(pending: string[] | undefined, ignored: string[] | undefined): string[] {
   const skip = ignored ?? [];
   return (pending ?? []).filter((entry) => !skip.includes(entry));
+}
+
+/**
+ * A problem's identity across checks. It must not depend on the problem's
+ * position, or fixing one problem would make the next look new and reopen a
+ * hidden list. Some titles change with the number of servers ("MCP server"
+ * or "MCP servers"), so the plural is folded away.
+ */
+function problemKey(problem: ProjectProblem): string {
+  return `problem:${problem.kind}:${problem.title.toLowerCase().replace(/\bservers\b/g, "server")}`;
 }
 
 /**
@@ -66,9 +77,13 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
 
   const report = inputs.problemsReport;
   if (checked && !dirty && report?.has_problems) {
-    report.problems.forEach((problem, i) => {
+    const seen = new Map<string, number>();
+    report.problems.forEach((problem) => {
+      const key = problemKey(problem);
+      const repeat = seen.get(key) ?? 0;
+      seen.set(key, repeat + 1);
       notices.push({
-        id: `problem:${problem.kind}:${problem.title}:${i}`,
+        id: `${key}#${repeat}`,
         severity: "problem",
         count: 1,
         source: { kind: "problem", problem },

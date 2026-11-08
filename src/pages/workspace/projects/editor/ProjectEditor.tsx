@@ -3267,9 +3267,9 @@ export function ProjectEditor({
       await reloadProject(selectedKey);
       setSyncStatus("saved");
       setTimeout(() => setSyncStatus(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setSyncStatus(null);
-      setError(`Failed to relink project: ${err}`);
+      setError(`Failed to relink project: ${String(err)}`);
     }
   };
 
@@ -3692,6 +3692,7 @@ export function ProjectEditor({
             {/* ── Notice list: problems, warnings and notices ──────── */}
             {!isCreating && selectedKey && project && (
               <ProjectNoticeList
+                key={selectedKey}
                 projectKey={selectedKey}
                 notices={notices}
                 renderNotice={(notice) => (

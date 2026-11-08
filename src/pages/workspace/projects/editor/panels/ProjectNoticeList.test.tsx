@@ -76,9 +76,27 @@ describe("ProjectNoticeList", () => {
   });
 
   it("keeps each project's hidden state apart", () => {
-    const { rerender } = render(<ProjectNoticeList projectKey="app" notices={[drift]} renderNotice={renderRow} />);
+    const { rerender } = render(<ProjectNoticeList key="app" projectKey="app" notices={[drift]} renderNotice={renderRow} />);
     fireEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
-    rerender(<ProjectNoticeList projectKey="other" notices={[drift]} renderNotice={renderRow} />);
+    rerender(<ProjectNoticeList key="other" projectKey="other" notices={[drift]} renderNotice={renderRow} />);
     expect(screen.getByText("row drift")).toBeInTheDocument();
+  });
+
+  it("does not clear the next project's hidden state when switching projects", () => {
+    const other: ProjectNotice = { ...problem, id: "problem:x#0" };
+    localStorage.setItem("automatic.project_notices.hidden.a", JSON.stringify(["problem:x#0"]));
+    localStorage.setItem("automatic.project_notices.hidden.b", JSON.stringify(["missing_directory"]));
+    const { rerender } = render(<ProjectNoticeList key="a" projectKey="a" notices={[other]} renderNotice={renderRow} />);
+    rerender(<ProjectNoticeList key="b" projectKey="b" notices={[problem]} renderNotice={renderRow} />);
+    expect(screen.queryByText("row missing_directory")).not.toBeInTheDocument();
+    expect(localStorage.getItem("automatic.project_notices.hidden.b")).toBe(JSON.stringify(["missing_directory"]));
+  });
+
+  it("points aria-controls at the rows only while they are shown", () => {
+    render(<ProjectNoticeList projectKey="app" notices={[drift]} renderNotice={renderRow} />);
+    const head = screen.getByRole("button", { name: /Needs attention/ });
+    expect(document.getElementById(head.getAttribute("aria-controls") ?? "")).not.toBeNull();
+    fireEvent.click(head);
+    expect(head).not.toHaveAttribute("aria-controls");
   });
 });

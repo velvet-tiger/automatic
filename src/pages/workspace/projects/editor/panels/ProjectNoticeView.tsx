@@ -223,7 +223,7 @@ function DriftRow({ report, actions }: { report: DriftReport; actions: ProjectNo
   return (
     <NoticeRow
       severity="warning"
-      title="Configuration has drifted"
+      title={actions.readOnly ? "Files differ from the Automatic settings" : "Configuration has drifted"}
       actions={
         !actions.readOnly && (
           <button onClick={actions.onSync} disabled={actions.syncing} className={NOTICE_PRIMARY_BUTTON}>
@@ -234,7 +234,7 @@ function DriftRow({ report, actions }: { report: DriftReport; actions: ProjectNo
     >
       <div>
         {actions.readOnly
-          ? "Files Automatic manages in this folder differ from its Automatic settings. Read-only mode leaves them as they are."
+          ? "Files Automatic manages in this folder differ from its settings. Read-only mode leaves them as they are."
           : "Files Automatic manages no longer match its settings. Click a file to see the change."}
       </div>
       {report.agents.map((agentDrift) => (

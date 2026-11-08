@@ -124,6 +124,21 @@ describe("collectProjectNotices", () => {
     expect(ids(inputs({ project: awaiting, selectedKey: null }))).toEqual([]);
   });
 
+  it("keeps a problem's id when another problem is fixed", () => {
+    const other = { ...problem, kind: "agent_sync_limits" as const, title: "Sub-agents not written" };
+    const before = ids(inputs({ problemsReport: { has_problems: true, problems: [problem, other] } }));
+    const after = ids(inputs({ problemsReport: { has_problems: true, problems: [other] } }));
+    expect(after).toEqual([before[1]]);
+  });
+
+  it("keeps a problem's id when its title changes between singular and plural", () => {
+    const one = { ...problem, title: "MCP server also configured at user scope" };
+    const two = { ...problem, title: "MCP servers also configured at user scope" };
+    expect(ids(inputs({ problemsReport: { has_problems: true, problems: [one] } }))).toEqual(
+      ids(inputs({ problemsReport: { has_problems: true, problems: [two] } })),
+    );
+  });
+
   it("gives each problem its own id", () => {
     const report = { has_problems: true, problems: [problem, { ...problem, title: "other" }] };
     const result = ids(inputs({ problemsReport: report }));

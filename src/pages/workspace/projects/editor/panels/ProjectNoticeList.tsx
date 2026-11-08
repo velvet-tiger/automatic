@@ -30,6 +30,8 @@ export function countLabel(severity: ProjectNoticeSeverity, count: number): stri
 interface ProjectNoticeListProps {
   /** local_key of the open project. The hidden state is kept per project. */
   projectKey: string;
+  /* Mount with `key={projectKey}`, so the hidden state is read fresh for
+     each project and never compared with another project's notices. */
   /** Already sorted, most urgent first. */
   notices: ProjectNotice[];
   renderNotice: (notice: ProjectNotice) => ReactNode;
@@ -43,10 +45,6 @@ interface ProjectNoticeListProps {
 export function ProjectNoticeList({ projectKey, notices, renderNotice }: ProjectNoticeListProps) {
   // The problem ids the user saw when they hid the list, or null when open.
   const [hiddenWith, setHiddenWith] = useState<string[] | null>(() => readHiddenNotices(projectKey));
-
-  useEffect(() => {
-    setHiddenWith(readHiddenNotices(projectKey));
-  }, [projectKey]);
 
   const reopened = hiddenWith !== null && !staysHidden(hiddenWith, notices);
   useEffect(() => {
@@ -74,7 +72,7 @@ export function ProjectNoticeList({ projectKey, notices, renderNotice }: Project
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        aria-controls={listId}
+        aria-controls={open ? listId : undefined}
         className="flex w-full flex-wrap items-center gap-2.5 px-6 py-2 text-left hover:bg-bg-input/40 transition-colors"
       >
         <span className="text-[12px] font-semibold text-text-base">{heading}</span>
