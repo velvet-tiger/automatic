@@ -3,23 +3,34 @@ import { AlertCircle, AlertTriangle, Info } from "lucide-react";
 import type { ProjectNoticeSeverity } from "../../types";
 
 /**
+ * Text colour for each severity. The raw --warning and --danger are too pale
+ * on their own tint in the light themes, so the text mixes them with the
+ * theme's text colour: darker in light themes, lighter in dark ones.
+ */
+export const SEVERITY_TEXT: Record<ProjectNoticeSeverity, string> = {
+  problem: "text-[color-mix(in_srgb,var(--danger)_70%,var(--text-base))]",
+  warning: "text-[color-mix(in_srgb,var(--warning)_60%,var(--text-base))]",
+  notice: "text-text-base",
+};
+
+/**
  * Severity shows as an icon and a coloured left edge as well as a tint, so
  * the list still reads in themes that draw warnings and problems in grey.
  */
 const ROW_STYLES: Record<ProjectNoticeSeverity, { row: string; title: string; icon: ReactNode }> = {
   problem: {
     row: "bg-danger/10 border-l-danger",
-    title: "text-danger",
+    title: SEVERITY_TEXT.problem,
     icon: <AlertCircle size={13} className="shrink-0 mt-0.5 text-danger" aria-hidden="true" />,
   },
   warning: {
     row: "bg-warning/10 border-l-warning",
-    title: "text-warning",
+    title: SEVERITY_TEXT.warning,
     icon: <AlertTriangle size={13} className="shrink-0 mt-0.5 text-warning" aria-hidden="true" />,
   },
   notice: {
     row: "bg-bg-input border-l-border-strong",
-    title: "text-text-base",
+    title: SEVERITY_TEXT.notice,
     icon: <Info size={13} className="shrink-0 mt-0.5 text-text-muted" aria-hidden="true" />,
   },
 };

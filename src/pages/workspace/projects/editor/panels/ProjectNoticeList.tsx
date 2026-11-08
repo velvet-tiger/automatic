@@ -9,10 +9,11 @@ import {
   staysHidden,
   writeHiddenNotices,
 } from "../../notices";
+import { SEVERITY_TEXT } from "./NoticeRow";
 
 const COUNT_STYLES: Record<ProjectNoticeSeverity, string> = {
-  problem: "text-danger border-danger/50",
-  warning: "text-warning border-warning/50",
+  problem: `${SEVERITY_TEXT.problem} border-danger/50`,
+  warning: `${SEVERITY_TEXT.warning} border-warning/50`,
   notice: "text-text-muted border-border-strong",
 };
 
