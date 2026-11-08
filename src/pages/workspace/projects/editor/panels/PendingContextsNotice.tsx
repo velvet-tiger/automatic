@@ -48,7 +48,7 @@ export function PendingContextsNotice({ project, selectedKey, reloadProject }: P
         <NoticeRow
           key={slug}
           severity="warning"
-          title={`This repository asks for the context "${slug}".`}
+          title={`This project's shared settings include the context "${slug}".`}
           actions={
             <>
               <button onClick={() => void act("attach", slug)} disabled={busy} className={NOTICE_PRIMARY_BUTTON}>
@@ -60,7 +60,7 @@ export function PendingContextsNotice({ project, selectedKey, reloadProject }: P
             </>
           }
         >
-          Agents in this project cannot read it until you attach it.
+          It is not turned on for this computer yet. Agents here cannot read it until you attach it.
         </NoticeRow>
       ))}
     </div>

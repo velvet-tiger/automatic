@@ -29,7 +29,7 @@ describe("PendingContextsNotice", () => {
 
   it("names each pending context", () => {
     render(<PendingContextsNotice project={project()} selectedKey="key" reloadProject={vi.fn()} />);
-    expect(screen.getByText('This repository asks for the context "private".')).toBeInTheDocument();
+    expect(screen.getByText('This project\'s shared settings include the context "private".')).toBeInTheDocument();
   });
 
   it("renders nothing once every pending context is ignored", () => {

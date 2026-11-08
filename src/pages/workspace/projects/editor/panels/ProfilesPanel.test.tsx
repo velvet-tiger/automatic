@@ -54,7 +54,7 @@ describe("ProfilesPanel", () => {
     const props = renderPanel({
       project: { ...project(), pending_profiles: ["own"] },
     });
-    expect(screen.getByText("The repository asks for this profile. Nothing from it applies here yet.")).toBeInTheDocument();
+    expect(screen.getByText("This project's shared settings include this profile. It is not turned on for this computer yet.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Detach own")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Ignore"));

@@ -63,8 +63,11 @@ export function NoticeRow({ severity, title, children, actions, alert = false }:
 }
 
 /** Button styles shared by the rows, so every notice's actions look alike. */
+// Solid, not a tint: a brand tint on the warning or danger row tint is too
+// dark to read in the dark themes. `text-brand-text` is each theme's own
+// colour for text on the brand fill.
 export const NOTICE_PRIMARY_BUTTON =
-  "flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  "flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-medium rounded bg-brand hover:bg-brand-hover text-brand-text shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 export const NOTICE_SECONDARY_BUTTON =
   "flex items-center gap-1.5 px-2.5 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
 export const NOTICE_DANGER_BUTTON =

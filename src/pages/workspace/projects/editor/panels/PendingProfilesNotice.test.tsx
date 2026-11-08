@@ -35,9 +35,9 @@ describe("PendingProfilesNotice", () => {
 
   it("lists only what the profile would add", async () => {
     render(<PendingProfilesNotice project={project()} selectedKey="app" reloadProject={vi.fn()} />);
-    expect(screen.getByText('This repository asks for the profile "team".')).toBeInTheDocument();
+    expect(screen.getByText('This project\'s shared settings include the profile "team".')).toBeInTheDocument();
     expect(
-      await screen.findByText("Attaching it adds 1 skill: vitest · 1 MCP server: sentry."),
+      await screen.findByText(/Attaching it adds 1 skill: vitest · 1 MCP server: sentry\./),
     ).toBeInTheDocument();
   });
 

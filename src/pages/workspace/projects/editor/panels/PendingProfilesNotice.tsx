@@ -92,7 +92,7 @@ export function PendingProfilesNotice({ project, selectedKey, reloadProject }: P
           <NoticeRow
             key={name}
             severity="warning"
-            title={`This repository asks for the profile "${name}".`}
+            title={`This project's shared settings include the profile "${name}".`}
             actions={
               <>
                 <button onClick={() => void act("attach_profile_to_project", name)} disabled={busy} className={NOTICE_PRIMARY_BUTTON}>
@@ -104,10 +104,11 @@ export function PendingProfilesNotice({ project, selectedKey, reloadProject }: P
               </>
             }
           >
+            It is not turned on for this computer yet.
             {profile &&
               (additions.length > 0
-                ? `Attaching it adds ${additions.join(" · ")}.`
-                : "Attaching it adds nothing this project does not already have.")}
+                ? ` Attaching it adds ${additions.join(" · ")}.`
+                : " Attaching it adds nothing this project does not already have.")}
           </NoticeRow>
         );
       })}
