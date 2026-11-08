@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BookMarked } from "lucide-react";
 import type { Project } from "../../types";
 import type { ContextTarget } from "../../../contexts/types";
+import { NOTICE_PRIMARY_BUTTON, NOTICE_SECONDARY_BUTTON, NoticeRow } from "./NoticeRow";
 
 interface PendingContextsNoticeProps {
   project: Project;
@@ -42,35 +42,26 @@ export function PendingContextsNotice({ project, selectedKey, reloadProject }: P
   };
 
   return (
-    <div className="space-y-2">
-      {error && <p className="text-[12px] text-danger">{error}</p>}
+    <div>
+      {error && <p className="px-6 py-1.5 text-[12px] text-danger">{error}</p>}
       {waiting.map((slug) => (
-        <div
+        <NoticeRow
           key={slug}
-          className="flex items-start gap-3 px-3 py-2.5 bg-warning/10 border border-warning/30 rounded-lg"
+          severity="warning"
+          title={`This project's shared settings include the context "${slug}".`}
+          actions={
+            <>
+              <button onClick={() => void act("attach", slug)} disabled={busy} className={NOTICE_PRIMARY_BUTTON}>
+                Attach
+              </button>
+              <button onClick={() => void act("ignore", slug)} disabled={busy} className={NOTICE_SECONDARY_BUTTON}>
+                Ignore
+              </button>
+            </>
+          }
         >
-          <BookMarked size={14} className="flex-shrink-0 mt-0.5 text-warning" />
-          <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-medium text-text-base">This repository asks for the context "{slug}".</p>
-            <p className="text-[12px] text-text-muted mt-0.5">
-              Agents in this project cannot read it until you attach it.
-            </p>
-          </div>
-          <button
-            onClick={() => void act("attach", slug)}
-            disabled={busy}
-            className="px-2.5 py-1 text-[12px] font-medium rounded bg-brand/15 text-brand border border-brand/30 hover:bg-brand/25 transition-colors disabled:opacity-50 flex-shrink-0"
-          >
-            Attach
-          </button>
-          <button
-            onClick={() => void act("ignore", slug)}
-            disabled={busy}
-            className="px-2.5 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50 flex-shrink-0"
-          >
-            Ignore
-          </button>
-        </div>
+          It is not turned on for this computer yet. Agents here cannot read it until you attach it.
+        </NoticeRow>
       ))}
     </div>
   );

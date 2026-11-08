@@ -1,5 +1,5 @@
 import { projectSaveKey, saveProject, takeSaveTurn } from "../../../../lib/projectSaves";
-import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { DropdownMenu } from "../../../../components/DropdownMenu";
 import type { AgentOptions } from "../../../../components/AgentSelector";
 import { useProjectMemories } from "./useProjectMemories";
@@ -61,7 +61,6 @@ import {
   parseInvokeResult,
   agentIdToLabel,
   checkErrorText,
-  checkFailureNotices,
   driftChecked,
   emptyProject,
   isHttpDocPath,
@@ -88,10 +87,10 @@ import { AttachProfileModal } from "./AttachProfileModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
-import { PendingProfilesNotice } from "./panels/PendingProfilesNotice";
-import { PendingContextsNotice } from "./panels/PendingContextsNotice";
-import { PendingRegistrationNotice } from "./panels/PendingRegistrationNotice";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
+import { ProjectNoticeList } from "./panels/ProjectNoticeList";
+import { ProjectNoticeView } from "./panels/ProjectNoticeView";
+import { collectProjectNotices } from "../notices";
 import {
   ContextsPanel,
   forgetAttaches,
@@ -140,14 +139,10 @@ import {
   LayoutTemplate,
   Layers,
   AlertCircle,
-  Info,
   ArrowRight,
   RotateCcw,
   ChevronLeft,
   Copy,
-  Link as LinkIcon,
-  ExternalLink,
-  EyeOff,
   Lock,
 } from "lucide-react";
 
@@ -184,22 +179,6 @@ function clearSelectedProject(): void {
   } catch (err: unknown) {
     console.warn("Could not clear the selected project:", err);
   }
-}
-
-/**
- * Render backend problem text, where `backtick-wrapped` spans are commands or
- * paths, with those spans as inline code.
- */
-function renderInlineCode(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`)/).map((part, i) =>
-    part.length > 2 && part.startsWith("`") && part.endsWith("`") ? (
-      <code key={i} className="font-mono text-[10px] bg-danger/10 border border-danger/20 rounded px-1 py-px select-all">
-        {part.slice(1, -1)}
-      </code>
-    ) : (
-      part
-    ),
-  );
 }
 
 /** State of the open agent-removal dialog. */
@@ -501,6 +480,9 @@ export function ProjectEditor({
   // Why the last problems check could not run, when it could not. A failed
   // check must not leave an older report, or no banner at all, on screen.
   const [problemsCheckError, setProblemsCheckError] = useState<string | null>(null);
+  // The project the drift and problems state above belongs to. It moves to
+  // the new project in the same effect that clears that state.
+  const [checksKey, setChecksKey] = useState<string | null>(selectedKey);
 
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
@@ -1033,8 +1015,10 @@ export function ProjectEditor({
 
   // Reset drift + problems + recommendations state whenever the active project changes
   useEffect(() => {
+    setChecksKey(selectedKey);
     setDriftReport(null);
     setProblemsReport(null);
+    setDriftCheckError(null);
     setProblemsCheckError(null);
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
@@ -3270,6 +3254,45 @@ export function ProjectEditor({
     }
   };
 
+  /** Point a project whose folder was moved or deleted at its new folder. */
+  const handleRelinkFolder = async () => {
+    let selected: string | null = null;
+    try {
+      selected = await invoke<string | null>("open_directory_dialog");
+    } catch (err) {
+      console.error("open_directory_dialog failed:", err);
+    }
+    if (!selected || !project || !selectedKey) return;
+    const updatedProject = { ...project, directory: selected, directory_missing: false };
+    setProject(updatedProject);
+    setDirty(false);
+    setSyncStatus("syncing");
+    try {
+      await saveProject(selectedKey, JSON.stringify(updatedProject));
+      await reloadProject(selectedKey);
+      setSyncStatus("saved");
+      setTimeout(() => setSyncStatus(null), 4000);
+    } catch (err: unknown) {
+      setSyncStatus(null);
+      setError(`Failed to relink project: ${String(err)}`);
+    }
+  };
+
+  const notices = project
+    ? collectProjectNotices({
+        project,
+        selectedKey,
+        isCreating,
+        dirty,
+        readOnly,
+        driftReport,
+        driftCheckError,
+        problemsReport,
+        problemsCheckError,
+        checksKey,
+      })
+    : [];
+
   const handleSync = async () => {
     const name = isCreating ? newName.trim() : selectedKey;
     if (!name || !project) return;
@@ -3672,282 +3695,29 @@ export function ProjectEditor({
               </div>
             )}
 
-            {/* ── Missing directory banner ─────────────────────────── */}
-            {!isCreating && project.directory_missing && (
-              <div className="border-b border-danger/30 bg-danger/10 px-6 py-4 flex items-start gap-3 flex-shrink-0">
-                <AlertCircle size={16} className="text-danger shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-semibold text-danger mb-0.5">Project folder not found</div>
-                  <div className="text-[11px] font-mono text-danger/70 truncate">{project.directory}</div>
-                  <div className="text-[11px] text-danger/60 mt-1">This folder has been moved or deleted. Relink it to continue syncing.</div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
-                  <button
-                    onClick={async () => {
-                      let selected: string | null = null;
-                      try {
-                        selected = await invoke<string | null>("open_directory_dialog");
-                      } catch (err) {
-                        console.error("open_directory_dialog failed:", err);
-                      }
-                      if (!selected || !project || !selectedKey) return;
-                      const updatedProject = { ...project, directory: selected, directory_missing: false };
-                      setProject(updatedProject);
-                      setDirty(false);
-                      setSyncStatus("syncing");
-                      try {
-                        await saveProject(selectedKey, JSON.stringify(updatedProject));
-                        await reloadProject(selectedKey);
-                        setSyncStatus("saved");
-                        setTimeout(() => setSyncStatus(null), 4000);
-                      } catch (err: any) {
-                        setSyncStatus(null);
-                        setError(`Failed to relink project: ${err}`);
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-md border border-brand/40 bg-brand/10 text-brand hover:bg-brand/20 transition-colors"
-                  >
-                    <LinkIcon size={12} />
-                    Relink folder
-                  </button>
-                  <button
-                    onClick={() => handleRemove(selectedKey!, project?.name ?? selectedKey!)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-md border border-danger/40 bg-danger/5 text-danger hover:bg-danger/15 transition-colors"
-                  >
-                    <Trash2 size={12} />
-                    Delete project
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ── Silent mode banner ───────────────────────────────── */}
-            {!isCreating && project.mode === 'silent' && project.directory && (
-              <div className="border-b border-border-strong/30 bg-bg-input px-6 py-3 flex items-start gap-3 flex-shrink-0">
-                <EyeOff size={14} className="text-text-muted shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[12px] font-semibold text-text-base mb-0.5">Silent mode enabled</div>
-                  <div className="text-[11px] text-text-muted leading-relaxed">
-                    Automatic writes all files to{" "}
-                    <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code>{" "}
-                    instead of the project root, leaving existing files untouched.
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    const silentDir = `${project.directory}/.automatic/silent`;
-                    const prompt = [
-                      `This project uses Automatic in Silent mode.`,
-                      `All Automatic-generated config is stored under \`.automatic/silent/\` rather than the project root.`,
-                      ``,
-                      `When looking for agent configuration, check:`,
-                      `- Instruction files (CLAUDE.md, AGENTS.md, etc.): \`.automatic/silent/\``,
-                      `- Skills: \`.automatic/silent/.agents/skills/\``,
-                      `- Sub-agents: \`.automatic/silent/.claude/agents/\` (or equivalent for your agent)`,
-                      `- MCP config: \`.automatic/silent/.claude/\` (or equivalent)`,
-                      `- Commands: \`.automatic/silent/.agents/commands/\``,
-                      ``,
-                      `Full path: \`${silentDir}\``,
-                    ].join('\n');
-                    navigator.clipboard.writeText(prompt).catch(() => {});
-                  }}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-border-strong/40 bg-bg-sidebar text-text-muted hover:text-text-base hover:border-border-strong/60 transition-colors"
-                >
-                  <Copy size={11} />
-                  Copy prompt
-                </button>
-              </div>
-            )}
-
-            {/* ── Drift or problems check failure ──────────────────── */}
-            {/* Not gated on `dirty`: the user can still edit and save, but
-                must be able to see that the checks are not running. */}
-            {(driftCheckError !== null || problemsCheckError !== null) && !isCreating && project.directory && project.agents.length > 0 && (
-              <div role="alert" className="border-b border-danger/25 bg-danger/10">
-                {checkFailureNotices(driftCheckError, problemsCheckError).map((notice) => (
-                  <div key={notice.title} className="flex items-start gap-2 px-6 py-2 text-danger text-[12px]">
-                    <AlertCircle size={13} className="shrink-0 mt-0.5" />
-                    <span>
-                      <span className="font-medium">{notice.title}</span>{" "}
-                      {notice.error}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* ── Sync notes: narrowed on purpose, nothing to fix ──── */}
-            {(problemsReport?.notes?.length ?? 0) > 0 && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-border-strong/40 bg-bg-input px-6 py-2">
-                <div className="flex items-center gap-2 text-text-muted text-[12px]">
-                  <Info size={13} className="shrink-0" />
-                  <span className="font-medium">Sync notes</span>
-                </div>
-                <ul className="mt-1 space-y-0.5 list-disc pl-9 text-[11px] text-text-muted leading-snug">
-                  {(problemsReport?.notes ?? []).map((note, j) => (
-                    <li key={`${j}-${note}`}>{renderInlineCode(note)}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* ── Problems banner ──────────────────────────────────── */}
-            {problemsReport?.has_problems && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-danger/25 bg-danger/10">
-                <div className="flex items-center gap-2 px-6 py-2 text-danger text-[12px]">
-                  <AlertCircle size={13} className="shrink-0" />
-                  <span className="font-medium">
-                    {problemsReport.problems.length === 1 ? "1 configuration problem detected" : `${problemsReport.problems.length} configuration problems detected`}
-                  </span>
-                </div>
-                <div className="px-6 pb-3 space-y-2">
-                  {problemsReport.problems.map((problem, i) => (
-                    <div key={i} className="rounded-md border border-danger/20 bg-danger/5 px-3 py-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[12px] font-semibold text-danger mb-0.5">{problem.title}</div>
-                          <div className="text-[11px] text-danger/80 leading-snug">{renderInlineCode(problem.description)}</div>
-                          {problem.solution && problem.solution.length > 0 && (
-                            <div className="mt-1.5">
-                              <div className="text-[11px] font-semibold text-danger/90">How to fix</div>
-                              <ul className="mt-0.5 space-y-0.5 list-disc pl-4 text-[11px] text-danger/80 leading-snug">
-                                {problem.solution.map((step, j) => (
-                                  <li key={`${j}-${step}`}>{renderInlineCode(step)}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {problem.resources.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1.5">
-                              {problem.resources.map((r) => (
-                                <span key={r} className="font-mono text-[10px] bg-danger/10 border border-danger/20 rounded px-1.5 py-0.5 text-danger/70">
-                                  {r}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        {problem.reference_url && (
-                          <a
-                            href={problem.reference_url}
-                            onClick={handleExternalLinkClick(problem.reference_url)}
-                            className="shrink-0 flex items-center gap-1 text-[11px] text-danger/70 hover:text-danger underline decoration-danger/30 transition-colors mt-0.5"
-                          >
-                            <ExternalLink size={10} />
-                            Docs
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* ── Drift warning banner ─────────────────────────────── */}
-            {/* Drift describes real on-disk state independent of any in-memory edits,
-                so the banner stays visible even when the project is `dirty`. */}
-            {/* A read-only project still shows drift, as information: the
-                folder's agent files differ from its settings, which can mean
-                committed files Automatic does not manage. It cannot be synced. */}
-            {driftReport?.drifted && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-warning/25 bg-warning/10">
-                <div className="flex items-center justify-between px-6 py-2 text-warning">
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <AlertCircle size={13} />
-                    <span>
-                      {readOnly
-                        ? "Files Automatic manages in this folder differ from its Automatic settings. Read-only mode leaves them as they are."
-                        : "Configuration has drifted. Files Automatic manages no longer match its settings."}
-                    </span>
-                  </div>
-                  {!readOnly && (
-                  <button
-                    onClick={handleSync}
-                    disabled={syncStatus === "syncing"}
-                    className="text-[12px] font-medium text-warning hover:text-warning-hover underline decoration-warning/40 hover:decoration-warning-hover transition-colors ml-4 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {syncStatus === "syncing" ? "Syncing…" : "Sync now"}
-                  </button>
-                  )}
-                </div>
-                {/* Detail: which agents/files have drifted — click any file to view the diff */}
-                <div className="px-6 pb-3 space-y-1.5">
-                  {driftReport.agents.map((agentDrift) => (
-                    <div key={agentDrift.agent_id}>
-                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">{agentDrift.agent_label}</div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                        {agentDrift.files.map((f, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setDriftDiffFile({ file: f, agentLabel: agentDrift.agent_label })}
-                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
-                            title="View diff"
-                          >
-                            {f.path}
-                            <span className="text-warning/50 font-sans ml-0.5">({f.reason})</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {/* Managed .gitignore block. It belongs to the project, not to one
-                      agent, and only the block is compared, never the whole file. */}
-                  {driftReport.gitignore && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Managed .gitignore block</div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                        <button
-                          onClick={() => driftReport.gitignore && setDriftDiffFile({ file: driftReport.gitignore, agentLabel: "Managed block" })}
-                          className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
-                          title="View diff"
-                        >
-                          {driftReport.gitignore.path}
-                          <span className="text-warning/50 font-sans ml-0.5">({driftReport.gitignore.reason})</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {/* Instruction file conflicts within the drift banner */}
-                  {(driftReport.instruction_conflicts ?? []).length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Instruction files</div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                        {(driftReport.instruction_conflicts ?? []).map((c) => (
-                          <button
-                            key={c.filename}
-                            onClick={() => setInstructionConflict(c)}
-                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
-                            title="Resolve conflict"
-                          >
-                            {c.filename}
-                            <span className="text-warning/50 font-sans ml-0.5">(conflict)</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {/* Project-scoped custom asset conflicts */}
-                  {(driftReport.custom_conflicts ?? []).length > 0 && (
-                    <div>
-                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Project custom assets</div>
-                      <div className="flex flex-wrap gap-x-2 gap-y-1">
-                        {(driftReport.custom_conflicts ?? []).map((c) => (
-                          <button
-                            key={`${c.kind}:${c.name}`}
-                            onClick={() => setCustomAssetConflict(c)}
-                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
-                            title="Resolve conflict"
-                          >
-                            {c.name}
-                            <span className="text-warning/50 font-sans ml-0.5">({c.kind})</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+            {/* ── Notice list: problems, warnings and notices ──────── */}
+            {!isCreating && selectedKey && project && (
+              <ProjectNoticeList
+                key={selectedKey}
+                projectKey={selectedKey}
+                notices={notices}
+                renderNotice={(notice) => (
+                  <ProjectNoticeView
+                    notice={notice}
+                    project={project}
+                    selectedKey={selectedKey}
+                    readOnly={readOnly}
+                    syncing={syncStatus === "syncing"}
+                    onSync={handleSync}
+                    onRelinkFolder={() => void handleRelinkFolder()}
+                    onRemoveProject={() => handleRemove(selectedKey, project.name)}
+                    onOpenDriftFile={(file, agentLabel) => setDriftDiffFile({ file, agentLabel })}
+                    onOpenInstructionConflict={setInstructionConflict}
+                    onOpenCustomConflict={setCustomAssetConflict}
+                    reloadProject={refreshCheckoutDecisions}
+                  />
+                )}
+              />
             )}
 
             {/* ── New project wizard (7 steps) ─────────────────────── */}
@@ -4490,26 +4260,6 @@ export function ProjectEditor({
             {/* Tab content */}
 
             {/* ── Project File tab (full-bleed layout) ──────────── */}
-            {!isCreating && !readOnly && selectedKey && (project.pending_profiles ?? []).some((name) => !(project.local_ignored_profiles ?? []).includes(name)) && (
-              <div className="px-6 pt-3 flex-shrink-0">
-                <PendingProfilesNotice project={project} selectedKey={selectedKey} reloadProject={refreshCheckoutDecisions} />
-              </div>
-            )}
-            {!isCreating && selectedKey && project.local_awaiting_confirmation === true && (
-              <div className="px-6 pt-3 flex-shrink-0">
-                <PendingRegistrationNotice
-                  projectName={project.name}
-                  selectedKey={selectedKey}
-                  reloadProject={refreshCheckoutDecisions}
-                  onRemove={() => handleRemove(selectedKey, project.name)}
-                />
-              </div>
-            )}
-            {!isCreating && selectedKey && (project.pending_contexts ?? []).some((slug) => !(project.local_ignored_contexts ?? []).includes(slug)) && (
-              <div className="px-6 pt-3 flex-shrink-0">
-                <PendingContextsNotice project={project} selectedKey={selectedKey} reloadProject={refreshCheckoutDecisions} />
-              </div>
-            )}
             {projectTab === "project_file" && project && (
               <ProjectFilePanel
                 project={project}

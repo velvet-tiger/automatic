@@ -224,7 +224,7 @@ export function ProfilesPanel({
                   ? "Ignored on this computer. Nothing from it applies here."
                   : unjoinedGroup
                     ? `From the group "${unjoinedGroup}", which this checkout has not joined. Nothing from it applies here yet.`
-                    : "The repository asks for this profile. Nothing from it applies here yet.";
+                    : "This project's shared settings include this profile. It is not turned on for this computer yet.";
               return (
                 <div
                   key={name}

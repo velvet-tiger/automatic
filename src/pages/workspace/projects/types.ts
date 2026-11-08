@@ -476,3 +476,34 @@ export interface ProjectToolEntry {
   /** When `false`, this tool has no per-project effect and should not be offered in the Project Tools tab. */
   project_scoped: boolean;
 }
+
+/**
+ * How urgent a project notice is. A problem needs fixing, a warning needs a
+ * sync or a decision, and a notice is information only.
+ */
+export type ProjectNoticeSeverity = "problem" | "warning" | "notice";
+
+/** What a project notice is about, with the data its row shows. */
+export type ProjectNoticeSource =
+  | { kind: "missing_directory"; directory: string }
+  | { kind: "check_failure"; title: string; error: string }
+  | { kind: "problem"; problem: ProjectProblem }
+  | { kind: "drift"; report: DriftReport }
+  | { kind: "pending_registration" }
+  | { kind: "pending_profiles"; names: string[] }
+  | { kind: "pending_contexts"; slugs: string[] }
+  | { kind: "silent_mode"; directory: string }
+  | { kind: "sync_notes"; notes: string[] };
+
+/**
+ * One entry in the project editor's notice list. `id` is stable across
+ * checks, so the list can tell a new problem from one it has already shown.
+ * `count` is how many rows the entry renders (one per waiting profile, for
+ * example), for the counts in the list header.
+ */
+export interface ProjectNotice {
+  id: string;
+  severity: ProjectNoticeSeverity;
+  count: number;
+  source: ProjectNoticeSource;
+}

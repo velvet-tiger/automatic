@@ -222,7 +222,7 @@ export function ContextsPanel({
                   <>
                     <span
                       className="text-[11px] text-warning bg-warning/10 border border-warning/30 rounded px-1.5 py-0.5 flex-shrink-0"
-                      title="The repository names this context. Agents cannot read it until you attach it."
+                      title="This project's shared settings include this context. It is not turned on for this computer yet, so agents cannot read it until you attach it."
                     >
                       {isIgnored ? "Ignored" : "Pending"}
                     </span>
