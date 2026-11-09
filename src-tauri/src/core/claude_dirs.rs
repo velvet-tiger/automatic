@@ -1008,6 +1008,18 @@ fn shown_claude_path(path: &Path, default: &str) -> String {
     }
 }
 
+/// The user settings file and Claude Code's state file as messages name
+/// them: `~` paths, or the real paths when `CLAUDE_CONFIG_DIR` moved them.
+pub fn shown_claude_files() -> (String, String) {
+    let settings = user_settings_path()
+        .map(|path| shown_claude_path(&path, "~/.claude/settings.json"))
+        .unwrap_or_else(|_| "~/.claude/settings.json".to_string());
+    let state = claude_state_path()
+        .map(|path| shown_claude_path(&path, "~/.claude.json"))
+        .unwrap_or_else(|_| "~/.claude.json".to_string());
+    (settings, state)
+}
+
 /// `~/.claude.json`, which Claude Code writes. Automatic only reads it.
 fn claude_state_path() -> Result<PathBuf, String> {
     super::paths::claude_state_file()

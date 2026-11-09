@@ -166,9 +166,9 @@ fn folder_count(count: usize) -> String {
 }
 
 /// Why the folders went to, or need, user settings, as one sentence.
-fn user_settings_reason(reason: crate::core::UserSettingsReason) -> &'static str {
+fn user_settings_reason(reason: crate::core::UserSettingsReason) -> String {
     use crate::core::UserSettingsReason as R;
-    match reason {
+    let text = match reason {
         R::Preferred => "Your settings say to always use your user settings.",
         R::Silent => "Silent mode never writes into the project folder.",
         R::ReadOnly => "This project is read only on this machine.",
@@ -189,10 +189,14 @@ fn user_settings_reason(reason: crate::core::UserSettingsReason) -> &'static str
             "Automatic could not ask git whether it tracks this project's local settings file."
         }
         R::TrustUnknown => {
-            "Automatic could not read `~/.claude.json`, so it cannot tell whether Claude Code \
-             honours this project's local settings file."
+            return format!(
+                "Automatic could not read `{}`, so it cannot tell whether Claude Code \
+                 honours this project's local settings file.",
+                crate::core::shown_claude_files().1
+            );
         }
-    }
+    };
+    text.to_string()
 }
 
 /// The problem for folders Claude Code's block stops agents from editing,
@@ -218,7 +222,7 @@ fn writable_folders_problem(
         findings.target
     {
         description.push(' ');
-        description.push_str(user_settings_reason(reason));
+        description.push_str(&user_settings_reason(reason));
     }
     Some(ProjectProblem {
         kind: ProjectProblemKind::WritableFoldersBlocked,
@@ -226,8 +230,9 @@ fn writable_folders_problem(
         description,
         solution: vec![
             format!(
-                "Add the folders to `~/.claude/settings.json`, merging them into any \
+                "Add the folders to `{}`, merging them into any \
                  `permissions` already there: `{}`",
+                crate::core::shown_claude_files().0,
                 findings.paste_json
             ),
             "Running Claude Code sessions pick up the change without a restart.".to_string(),
@@ -246,9 +251,10 @@ fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Ve
         if !findings.wanted.is_empty() {
             notes.push(format!(
                 "Claude Code may edit {} outside this project. They are saved in your user \
-                 settings, `~/.claude/settings.json`, so every Claude Code session on this \
+                 settings, `{}`, so every Claude Code session on this \
                  machine may edit them. {}",
                 folder_count(findings.wanted.len()),
+                crate::core::shown_claude_files().0,
                 user_settings_reason(reason)
             ));
         }
