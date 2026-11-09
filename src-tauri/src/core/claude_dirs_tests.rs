@@ -761,6 +761,10 @@ fn denied() -> DeniedPaths {
             PathBuf::from("/home/me/.claude.json"),
             PathBuf::from("/home/me/.automatic"),
         ],
+        sensitive_folders: vec![
+            PathBuf::from("/home/me/.claude"),
+            PathBuf::from("/home/me/.automatic"),
+        ],
     }
 }
 
@@ -794,11 +798,15 @@ fn broad_and_sensitive_folders_are_refused_whatever_their_source() {
         "/home",
         "/home/me",
         "/home/me/.claude",
+        "/home/me/.claude/projects",
+        "/home/me/.claude/hooks",
+        "/home/me/.automatic",
+        "/home/me/.automatic/projects",
     ];
     for folder in refused {
         assert!(refusal_reason(Path::new(folder), &denied()).is_some(), "{folder}");
     }
-    for allowed in ["/home/me/code/b", "/home/me/.claude/skills", "/srv/b"] {
+    for allowed in ["/home/me/code/b", "/home/me/.claude.json.d", "/home/me/.claudex", "/srv/b"] {
         assert!(refusal_reason(Path::new(allowed), &denied()).is_none(), "{allowed}");
     }
     let sources = [
@@ -823,8 +831,18 @@ fn setting_the_home_folder_or_automatics_folder_is_refused() {
     let ws = workspace();
     let a = register(&repo(&ws.base, "a"), "a", |_| {});
     let home = super::super::paths::home_dir().unwrap();
-    fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
-    for folder in [home.clone(), get_automatic_dir().unwrap(), PathBuf::from("/")] {
+    let registry = get_automatic_dir().unwrap().join("projects");
+    let claude_hooks = home.join(".claude").join("hooks");
+    for folder in [&registry, &claude_hooks] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    for folder in [
+        home.clone(),
+        get_automatic_dir().unwrap(),
+        registry,
+        claude_hooks,
+        PathBuf::from("/"),
+    ] {
         let err = set_project_writable_folders(&a.local_key, &[folder.display().to_string()])
             .expect_err("refused");
         assert!(err.contains("cannot be allowed"), "{err}");

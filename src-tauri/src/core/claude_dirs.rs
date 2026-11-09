@@ -520,15 +520,27 @@ pub struct RefusedFolder {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DeniedPaths {
     pub home: PathBuf,
-    /// `~/.claude`, `~/.claude.json` and Automatic's own folder.
+    /// `~/.claude.json`, and `~/.claude` and Automatic's own folder.
     pub sensitive: Vec<PathBuf>,
+    /// The folders among `sensitive`: `~/.claude` and Automatic's own folder.
+    /// Nothing inside them may be granted either.
+    pub sensitive_folders: Vec<PathBuf>,
 }
 
 /// Why `folder` (canonical) must not become a working folder, or `None`. The
-/// filesystem root, the home folder and its ancestors are refused, and so is
-/// any folder that is or holds Claude Code's settings or Automatic's data: an
-/// agent that can edit those can lift its own limits.
+/// filesystem root, the home folder and its ancestors are refused. So is any
+/// folder that is or holds Claude Code's settings or Automatic's data, and
+/// any folder inside `~/.claude` or Automatic's folder: an agent that can
+/// edit those can rewrite its own grants (the registry pointers hold them)
+/// or lift Claude Code's limits.
 pub(crate) fn refusal_reason(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    if let Some(inside) = denied
+        .sensitive_folders
+        .iter()
+        .find(|sensitive| folder.starts_with(sensitive))
+    {
+        return Some(format!("it is inside {}", inside.display()));
+    }
     if folder.parent().is_none() {
         return Some("it is the root of the file system".to_string());
     }
@@ -980,6 +992,7 @@ fn denied_paths() -> Result<DeniedPaths, String> {
             normal(&home.join(".claude.json")),
             normal(&get_automatic_dir()?),
         ],
+        sensitive_folders: vec![normal(&home.join(".claude")), normal(&get_automatic_dir()?)],
     })
 }
 
