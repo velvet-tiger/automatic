@@ -60,7 +60,7 @@ dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
 # Explicit features so a change to rmcp's defaults cannot add code to the
 # build. Only the stdio server and its #[tool] macros are needed.
-rmcp = { version = "3.6", default-features = false, features = [
+rmcp = { version = "3.9", default-features = false, features = [
     "server", "macros", "transport-io",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net", "time"] }
@@ -80,7 +80,7 @@ open = "5"
 rand = "0.9"
 aes-gcm = "0.10"
 hex = "0.4"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 tiktoken-rs = "0.9"
 zip = "9"
 regex = "1"
