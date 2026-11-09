@@ -22,6 +22,7 @@ mod credentials;
 mod custom_assets;
 pub(crate) mod custom_gateway;
 mod claude_code_env;
+mod claude_settings_file;
 mod discover;
 mod deletion_guards;
 mod discover_data;

@@ -671,6 +671,37 @@ pub(crate) fn check_git_supports(
     Ok(())
 }
 
+/// Read the git config of the repository at `dir` with `install`, and refuse
+/// a repository whose protections this git cannot apply. Every later command
+/// for `dir` runs through [`isolated_git_command`] with the returned config.
+/// `purpose` ends the "Update git to ..." sentence of a refusal.
+pub(crate) fn read_checked_repo_config(
+    install: &GitInstall,
+    dir: &Path,
+    purpose: &str,
+) -> Result<RepoConfig, String> {
+    check_git_reads_repo_config(install.version, purpose)?;
+    let output = isolated_git_command(install, dir, &RepoConfig::default())?
+        .args(REPO_CONFIG_ARGS)
+        .output()
+        .map_err(|e| format!("Cannot run git in {}: {}", dir.display(), e))?;
+    // `git config --get-regexp` exits 1 when nothing matches.
+    if !output.status.success() && output.status.code() != Some(1) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(message) = unsafe_ownership_message(&stderr, dir) {
+            return Err(message);
+        }
+        return Err(format!(
+            "git config failed in {}: {}",
+            dir.display(),
+            stderr.trim()
+        ));
+    }
+    let config = parse_repo_config(&output.stdout);
+    check_git_supports(&config, install.version, purpose)?;
+    Ok(config)
+}
+
 // ── Finding git ───────────────────────────────────────────────────────────────
 
 /// The installed git, checked once per run. `None` when there is no usable

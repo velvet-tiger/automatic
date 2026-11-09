@@ -6,16 +6,18 @@
 //! other value in those variables stops the write and nothing changes.
 //!
 //! The merge logic is pure and works on parsed JSON. The file functions at the
-//! bottom add the reading and the atomic write.
+//! bottom add the reading, and `claude_settings_file` the atomic write it
+//! shares with the writable folders feature.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::agents::GatewayCredentialKind;
+use super::claude_settings_file::{
+    followed, hold_settings_writes, load, user_settings_path, write_root, LoadedFile, Permissions,
+};
 
 pub(super) const BASE_URL_VAR: &str = "ANTHROPIC_BASE_URL";
 pub(super) const AUTH_TOKEN_VAR: &str = "ANTHROPIC_AUTH_TOKEN";
@@ -100,24 +102,6 @@ fn fingerprint(salt: &str, token: &str) -> String {
 }
 
 // ── Pure merge logic ──────────────────────────────────────────────────────────
-
-/// Parse the file's text into its root object.
-fn parse_root(raw: &str, path: &Path) -> Result<Map<String, Value>, String> {
-    let value: Value = serde_json::from_str(raw).map_err(|e| {
-        format!(
-            "{} is not valid JSON (line {}). Fix the file, then try again. Nothing was changed.",
-            path.display(),
-            e.line()
-        )
-    })?;
-    match value {
-        Value::Object(root) => Ok(root),
-        _ => Err(format!(
-            "{} does not hold a JSON object. Fix the file, then try again. Nothing was changed.",
-            path.display()
-        )),
-    }
-}
 
 /// The `env` object, or `None` when the file has no `env`.
 fn env_of<'a>(
@@ -251,23 +235,7 @@ fn cleared(
 
 /// Claude Code's user settings file.
 pub(super) fn settings_path() -> Result<PathBuf, String> {
-    Ok(super::paths::home_dir()?.join(".claude").join("settings.json"))
-}
-
-/// The file a path really is. A symlink resolves to its target, so that a
-/// link stays a link when the file is replaced. A link that leads nowhere is
-/// refused.
-fn followed(path: &Path) -> Result<PathBuf, String> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => path.canonicalize().map_err(|e| {
-            format!(
-                "{} is a link that could not be followed: {}. Nothing was changed.",
-                path.display(),
-                e
-            )
-        }),
-        _ => Ok(path.to_path_buf()),
-    }
+    user_settings_path()
 }
 
 /// The file to write a token to. It must really be inside the settings folder.
@@ -318,126 +286,6 @@ fn real_folder_if_present(folder: &Path, path: &Path) -> Result<Option<PathBuf>,
     }
 }
 
-/// The file as it was read.
-struct LoadedFile {
-    /// The text, or `None` when there is no file yet.
-    text: Option<String>,
-    root: Map<String, Value>,
-}
-
-fn load(target: &Path) -> Result<LoadedFile, String> {
-    match fs::read_to_string(target) {
-        Ok(text) => {
-            let root = parse_root(&text, target)?;
-            Ok(LoadedFile {
-                text: Some(text),
-                root,
-            })
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LoadedFile {
-            text: None,
-            root: Map::new(),
-        }),
-        Err(e) => Err(format!(
-            "Could not read {}: {}. Nothing was changed.",
-            target.display(),
-            e
-        )),
-    }
-}
-
-/// Whether the file's permissions change along with its content.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Permissions {
-    /// A token stays in the file, so group and other access is removed.
-    OwnerOnly,
-    /// Values were only removed, so the user's choice stands.
-    Keep,
-}
-
-/// The mode for a file that holds a token.
-#[cfg(unix)]
-fn owner_only(mode: u32) -> u32 {
-    mode & !0o077
-}
-
-/// Give the temporary file the permissions the target should end up with.
-fn copy_permissions(
-    temp: &Path,
-    existing: fs::Permissions,
-    permissions: Permissions,
-) -> std::io::Result<()> {
-    #[cfg(unix)]
-    if permissions == Permissions::OwnerOnly {
-        use std::os::unix::fs::PermissionsExt;
-        return fs::set_permissions(
-            temp,
-            fs::Permissions::from_mode(owner_only(existing.mode())),
-        );
-    }
-    #[cfg(not(unix))]
-    let _ = permissions;
-    fs::set_permissions(temp, existing)
-}
-
-/// Rename the finished temporary file over the target, unless the target has
-/// changed since it was read. Claude Code edits this file too, and this
-/// narrows the window in which its edit could be lost.
-fn replace_unless_changed(
-    temp: tempfile::NamedTempFile,
-    target: &Path,
-    seen: Option<&str>,
-) -> Result<(), String> {
-    let current = match fs::read_to_string(target) {
-        Ok(text) => Some(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("Could not read {}: {}", target.display(), e)),
-    };
-    if current.as_deref() != seen {
-        return Err(format!(
-            "{} changed while Automatic was writing it. Nothing was changed. Try again.",
-            target.display()
-        ));
-    }
-    temp.persist(target)
-        .map(|_| ())
-        .map_err(|e| format!("Could not write {}: {}", target.display(), e.error))
-}
-
-/// Replace `target` in one step, so that Claude Code never reads half a file.
-///
-/// The temporary file sits next to the target, because a rename only works
-/// within one filesystem. It starts with mode 0600, which a new file keeps.
-fn write_root(
-    target: &Path,
-    root: &Map<String, Value>,
-    seen: Option<&str>,
-    permissions: Permissions,
-) -> Result<(), String> {
-    let failed = |e: &dyn std::fmt::Display| format!("Could not write {}: {}", target.display(), e);
-
-    let parent = target
-        .parent()
-        .ok_or_else(|| failed(&"the path has no parent folder"))?;
-    fs::create_dir_all(parent).map_err(|e| failed(&e))?;
-
-    let mut text = serde_json::to_string_pretty(root).map_err(|e| failed(&e))?;
-    text.push('\n');
-
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| failed(&e))?;
-    temp.write_all(text.as_bytes()).map_err(|e| failed(&e))?;
-    temp.as_file().sync_all().map_err(|e| failed(&e))?;
-    match fs::metadata(target) {
-        Ok(existing) => {
-            copy_permissions(temp.path(), existing.permissions(), permissions)
-                .map_err(|e| failed(&e))?;
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(failed(&e)),
-    }
-    replace_unless_changed(temp, target, seen)
-}
-
 /// Load the file and refuse everything a save must not touch.
 fn load_for_save(
     path: &Path,
@@ -471,6 +319,7 @@ pub(super) fn write_file(
     record: Option<&ClaudeCodeRecord>,
     known: KnownValues,
 ) -> Result<ClaudeCodeRecord, String> {
+    let _writes = hold_settings_writes();
     let (target, loaded) = load_for_save(path, desired, record)?;
     let adopted = adopted_variables(env_of(&loaded.root, &target)?, desired, record, known);
     write_root(
@@ -510,6 +359,7 @@ fn clear_where(
     path: &Path,
     owned: impl Fn(&str, &Value) -> bool,
 ) -> Result<Vec<String>, String> {
+    let _writes = hold_settings_writes();
     let target = followed(path)?;
     let loaded = load(&target)?;
     let Some(text) = loaded.text else {
@@ -528,6 +378,7 @@ fn clear_where(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     fn desired<'a>(kind: GatewayCredentialKind, token: &'a str) -> GatewayEnv<'a> {
         GatewayEnv {
@@ -978,28 +829,6 @@ mod tests {
 
         assert_eq!(clear_matching(&path, None, None).expect("report"), [AUTH_TOKEN_VAR]);
         assert_eq!(fs::read_to_string(&path).expect("read"), text);
-    }
-
-    #[test]
-    fn a_file_changed_after_it_was_read_is_not_overwritten() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = file_in(&dir, "{}");
-        let temp = tempfile::NamedTempFile::new_in(dir.path()).expect("temp");
-        fs::write(&path, r#"{"theirs":true}"#).expect("concurrent edit");
-
-        let err = replace_unless_changed(temp, &path, Some("{}")).expect_err("changed");
-
-        assert!(err.contains("changed while"), "{err}");
-        assert_eq!(fs::read_to_string(&path).expect("read"), r#"{"theirs":true}"#);
-    }
-
-    #[test]
-    fn a_file_created_after_the_read_is_not_overwritten() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = file_in(&dir, "{}");
-        let temp = tempfile::NamedTempFile::new_in(dir.path()).expect("temp");
-
-        assert!(replace_unless_changed(temp, &path, None).is_err());
     }
 
     #[test]

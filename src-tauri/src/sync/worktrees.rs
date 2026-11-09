@@ -508,25 +508,7 @@ impl<'a> WorktreeGit<'a> {
                 worktree.display()
             )
         })?;
-        git_guard::check_git_reads_repo_config(install.version, GIT_PURPOSE)?;
-        let output = git_guard::isolated_git_command(install, worktree, &RepoConfig::default())?
-            .args(git_guard::REPO_CONFIG_ARGS)
-            .output()
-            .map_err(|e| format!("Cannot run git in {}: {}", worktree.display(), e))?;
-        // `git config --get-regexp` exits 1 when nothing matches.
-        if !output.status.success() && output.status.code() != Some(1) {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if let Some(message) = git_guard::unsafe_ownership_message(&stderr, worktree) {
-                return Err(message);
-            }
-            return Err(format!(
-                "git config failed in {}: {}",
-                worktree.display(),
-                stderr.trim()
-            ));
-        }
-        let config = git_guard::parse_repo_config(&output.stdout);
-        git_guard::check_git_supports(&config, install.version, GIT_PURPOSE)?;
+        let config = git_guard::read_checked_repo_config(install, worktree, GIT_PURPOSE)?;
         Ok(Self {
             worktree,
             install,
