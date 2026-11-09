@@ -104,7 +104,10 @@ impl ProbeMarkers {
 /// same value the agent does. Keep this list short: every entry is a value
 /// the user's profile can set for the whole app.
 #[cfg(unix)]
-pub(crate) const ADOPTED_VARS: &[&str] = &["PI_CODING_AGENT_DIR"];
+// `CLAUDE_CONFIG_DIR` moves Claude Code's user settings and `.claude.json`.
+// Automatic writes the writable-folder entries there, so the GUI must see the
+// value an agent started from the shell sees, as the MCP server does.
+pub(crate) const ADOPTED_VARS: &[&str] = &["PI_CODING_AGENT_DIR", "CLAUDE_CONFIG_DIR"];
 
 /// What the probe read from the login shell.
 #[cfg(unix)]

@@ -247,20 +247,28 @@ fn candidate(path: &str, resolved: Option<&str>, source: FolderSource) -> Candid
 
 #[test]
 fn the_own_folder_and_folders_inside_it_are_left_out_and_missing_ones_reported() {
+    let _home = temp_test_home();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    let own = home.join("own");
+    let b = home.join("b");
+    for dir in [own.join("sub"), b.clone()] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    let text = |p: &Path| p.to_str().unwrap().to_string();
     let candidates = vec![
-        candidate("/own", Some("/own"), FolderSource::Extra),
-        candidate("/own/sub", Some("/own/sub"), FolderSource::Extra),
-        candidate("/b", Some("/real/b"), FolderSource::Extra),
+        candidate(&text(&own), Some(&text(&own)), FolderSource::Extra),
+        candidate(&text(&own.join("sub")), Some(&text(&own.join("sub"))), FolderSource::Extra),
+        candidate("/link-to-b", Some(&text(&b)), FolderSource::Extra),
         candidate("/gone", None, FolderSource::Extra),
-        candidate("/real/b", Some("/real/b"), FolderSource::MainCheckout),
+        candidate(&text(&b), Some(&text(&b)), FolderSource::MainCheckout),
     ];
 
-    let resolved = resolve_folders(Path::new("/own"), &candidates, &denied());
+    let resolved = resolve_folders(&own, &candidates, &denied_paths().unwrap());
 
     assert_eq!(
         resolved.wanted,
         vec![WantedFolder {
-            path: "/real/b".into(),
+            path: text(&b),
             source: FolderSource::Extra
         }]
     );
@@ -366,8 +374,10 @@ struct Workspace {
     base: PathBuf,
 }
 
+/// A folder for test repositories inside the test home, the only place a
+/// folder may be granted.
 fn workspace() -> Workspace {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = tempfile::tempdir_in(super::super::paths::home_dir().expect("home")).expect("tempdir");
     let base = fs::canonicalize(tmp.path()).expect("canonical");
     Workspace { _tmp: tmp, base }
 }
@@ -753,14 +763,6 @@ fn a_settings_page_save_keeps_the_consent_and_target() {
 
 // ── Fix round 1 ───────────────────────────────────────────────────────────────
 
-fn denied() -> DeniedPaths {
-    DeniedPaths::new(
-        PathBuf::from("/home/me"),
-        vec![PathBuf::from("/home/me/.claude.json")],
-        vec![PathBuf::from("/home/me/.claude"), PathBuf::from("/home/me/.automatic")],
-    )
-}
-
 #[test]
 fn a_missing_list_is_a_fresh_start_not_a_deletion() {
     for file in [json!({}), json!({"permissions": {}}), json!({"permissions": {"allow": []}})] {
@@ -786,33 +788,42 @@ fn a_deleted_local_file_gets_its_entries_back() {
 
 #[test]
 fn broad_and_sensitive_folders_are_refused_whatever_their_source() {
-    let refused = [
-        "/",
-        "/home",
-        "/home/me",
-        "/home/me/.claude",
-        "/home/me/.claude/projects",
-        "/home/me/.claude/hooks",
-        "/home/me/.automatic",
-        "/home/me/.automatic/projects",
-    ];
-    for folder in refused {
-        assert!(refusal_reason(Path::new(folder), &denied()).is_some(), "{folder}");
+    let _home = temp_test_home();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    for dir in [".claude/projects", ".claude/hooks", ".automatic/projects", ".automatic-dev/x", "code/b", ".claudex"] {
+        fs::create_dir_all(home.join(dir)).unwrap();
     }
-    for allowed in ["/home/me/code/b", "/home/me/.claude.json.d", "/home/me/.claudex", "/srv/b"] {
-        assert!(refusal_reason(Path::new(allowed), &denied()).is_none(), "{allowed}");
+    let denied = denied_paths().unwrap();
+    let refused = [
+        PathBuf::from("/"),
+        home.parent().unwrap().to_path_buf(),
+        home.clone(),
+        home.join(".claude"),
+        home.join(".claude/projects"),
+        home.join(".claude/hooks"),
+        home.join(".automatic"),
+        home.join(".automatic/projects"),
+        home.join(".automatic-dev/x"),
+        PathBuf::from("/srv/b"),
+    ];
+    for folder in &refused {
+        assert!(refusal_reason(folder, &denied).is_some(), "{}", folder.display());
+    }
+    for allowed in [home.join("code/b"), home.join(".claudex")] {
+        assert_eq!(refusal_reason(&allowed, &denied), None, "{}", allowed.display());
     }
     let sources = [
         FolderSource::Extra,
         FolderSource::MainCheckout,
         FolderSource::GroupMember { group: "g".into(), project: "p".into() },
     ];
+    let home_text = home.to_str().unwrap();
     let candidates: Vec<Candidate> = sources
         .iter()
-        .map(|source| candidate("/home/me", Some("/home/me"), source.clone()))
+        .map(|source| candidate(home_text, Some(home_text), source.clone()))
         .collect();
 
-    let resolved = resolve_folders(Path::new("/srv/own"), &candidates, &denied());
+    let resolved = resolve_folders(&home.join("code/b"), &candidates, &denied);
 
     assert!(resolved.wanted.is_empty());
     assert_eq!(resolved.refused.len(), 3);
@@ -1136,4 +1147,169 @@ fn a_stored_folder_that_is_missing_now_does_not_block_an_edit() {
         reread(&a).local_writable_folders,
         vec![drive.display().to_string(), canonical(&other)]
     );
+}
+
+// ── Fix round 3: only folders inside the home folder ──────────────────────────
+
+#[test]
+fn only_folders_strictly_inside_the_home_folder_are_accepted() {
+    let _home = temp_test_home();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    let inside = home.join("work").join("b");
+    fs::create_dir_all(&inside).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside = fs::canonicalize(outside.path()).unwrap();
+    let denied = denied_paths().unwrap();
+
+    assert_eq!(refusal_reason(&inside, &denied), None);
+    let home_reason = refusal_reason(&home, &denied).expect("home refused");
+    assert!(home_reason.contains("must be inside your home folder"), "{home_reason}");
+    let outside_reason = refusal_reason(&outside, &denied).expect("outside refused");
+    assert!(outside_reason.contains("must be inside your home folder"), "{outside_reason}");
+}
+
+#[test]
+fn an_ancestor_of_a_guarded_folder_is_refused() {
+    let _home = temp_test_home();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    let config = home.join("config").join("claude");
+    fs::create_dir_all(&config).unwrap();
+    super::super::paths::with_test_claude_config_dir(config.clone(), || {
+        let denied = denied_paths().unwrap();
+        let reason = refusal_reason(&home.join("config"), &denied).expect("refused");
+        assert!(reason.contains("holds"), "{reason}");
+        assert!(refusal_reason(&config.join("x"), &denied).is_some());
+    });
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_alias_roots_and_alias_paths_into_the_home_folder_are_refused() {
+    let _home = temp_test_home();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    let inside = home.join("work");
+    fs::create_dir_all(&inside).unwrap();
+    let denied = denied_paths().unwrap();
+    for root in ["/System", "/System/Volumes", "/System/Volumes/Data", "/.nofollow", "/.resolve", "/.vol", "/Volumes"] {
+        assert!(refusal_reason(Path::new(root), &denied).is_some(), "{root}");
+    }
+    let relative = inside.strip_prefix("/").unwrap();
+    for alias_root in ["/System/Volumes/Data", "/.nofollow"] {
+        let alias = Path::new(alias_root).join(relative);
+        // The alias may be the same folder by identity. It is refused all the
+        // same, because its path is not inside the home path.
+        assert!(refusal_reason(&alias, &denied).is_some(), "{}", alias.display());
+    }
+}
+
+#[test]
+fn a_member_outside_the_home_folder_is_skipped_with_a_note() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let elsewhere = tempfile::tempdir().unwrap();
+    let elsewhere = fs::canonicalize(elsewhere.path()).unwrap();
+    let b = register(&repo(&elsewhere, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+
+    let outcome = sync(&a);
+
+    assert!(outcome.wanted.is_empty());
+    let report = crate::sync::check_project_problems(&reread(&a)).expect("problems");
+    assert!(
+        report.notes.iter().any(|n| n.contains("must be inside your home folder")),
+        "{:?}",
+        report.notes
+    );
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
+}
+
+#[test]
+fn claude_config_dir_moves_the_user_settings_and_state_files() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let config = ws.base.join("claude-config");
+    fs::create_dir_all(&config).unwrap();
+    super::super::paths::with_test_claude_config_dir(config.clone(), || {
+        assert_eq!(user_file(), config.join("settings.json"));
+        assert_eq!(claude_state_path().unwrap(), config.join(".claude.json"));
+        let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+        let b = register(&repo(&ws.base, "b"), "b", |_| {});
+        group("team", &[&a, &b], true);
+        consent();
+
+        sync(&a);
+
+        assert_eq!(
+            directories_in(&config.join("settings.json")),
+            vec![canonical(Path::new(&b.directory))]
+        );
+        let home_settings = super::super::paths::home_dir().unwrap().join(".claude/settings.json");
+        assert!(!home_settings.exists(), "~/.claude/settings.json was written");
+    });
+}
+
+#[test]
+fn a_moved_record_claims_only_what_automatic_recorded() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let own = repo(&ws.base, "new");
+    let path = local_settings_path(&own);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, json!({"permissions": {"additionalDirectories": ["/ours", "/theirs"]}}).to_string()).unwrap();
+    let mut records = DirectoryRecords::default();
+    set_record(&mut records.local_settings, "k", "/gone/old", owned(&["/ours", "/missing"], &["/x"]));
+    let live = BTreeSet::from([own.to_str().unwrap().to_string()]);
+
+    let moved = adopt_moved_local_record(&mut records, "k", &own, &live);
+
+    assert_eq!(moved.as_deref(), Some("/gone/old"));
+    assert_eq!(record_of(&records.local_settings, "k", own.to_str().unwrap()), owned(&["/ours"], &[]));
+    assert!(record_of(&records.local_settings, "k", "/gone/old").is_empty());
+}
+
+#[test]
+fn a_record_is_not_moved_when_its_folder_still_exists_or_is_live() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let own = repo(&ws.base, "new");
+    let old = repo(&ws.base, "old");
+    let path = local_settings_path(&own);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, json!({"permissions": {"additionalDirectories": ["/ours"]}}).to_string()).unwrap();
+    let old_key = old.to_str().unwrap().to_string();
+    let mut records = DirectoryRecords::default();
+    set_record(&mut records.local_settings, "k", &old_key, owned(&["/ours"], &[]));
+
+    let live = BTreeSet::from([own.to_str().unwrap().to_string()]);
+    assert_eq!(adopt_moved_local_record(&mut records, "k", &own, &live), None, "old still exists");
+
+    fs::remove_dir_all(&old).unwrap();
+    let live_with_old = BTreeSet::from([own.to_str().unwrap().to_string(), old_key.clone()]);
+    assert_eq!(adopt_moved_local_record(&mut records, "k", &own, &live_with_old), None, "old is live");
+}
+
+#[test]
+fn a_worktree_does_not_take_its_main_checkouts_record() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let main = repo(&ws.base, "main");
+    git(&main, &["worktree", "add", "-q", "-b", "feature", "../wt"]);
+    let worktree = fs::canonicalize(ws.base.join("wt")).unwrap();
+    let path = local_settings_path(&worktree);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, json!({"permissions": {"additionalDirectories": ["/ours"]}}).to_string()).unwrap();
+    // The main checkout's record. The main checkout still exists, so both the
+    // existence rule and the main-checkout rule refuse the move. The second
+    // cannot be shown alone: once the main checkout is gone, git can no longer
+    // name it as the worktree's main checkout.
+    let main_key = canonical(&main);
+    let mut records = DirectoryRecords::default();
+    set_record(&mut records.local_settings, "k", &main_key, owned(&["/ours"], &[]));
+    let live = BTreeSet::new();
+
+    let moved = adopt_moved_local_record(&mut records, "k", &worktree, &live);
+
+    assert_eq!(moved, None);
+    assert_eq!(record_of(&records.local_settings, "k", &main_key), owned(&["/ours"], &[]));
 }

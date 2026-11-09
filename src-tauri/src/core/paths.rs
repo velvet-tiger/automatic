@@ -31,12 +31,49 @@ pub fn get_automatic_dir() -> Result<PathBuf, String> {
 }
 
 /// The folder `CLAUDE_CONFIG_DIR` names, when it is set to an absolute path.
-/// Claude Code keeps its settings there instead of `~/.claude`, so Automatic
-/// must guard it the same way.
+/// Claude Code then keeps its user settings and `.claude.json` there instead
+/// of `~/.claude` and `~/.claude.json`, so Automatic reads, writes and
+/// guards them there too. Tests never see the real variable: they set a
+/// value for their thread with [`with_test_claude_config_dir`].
 pub(crate) fn claude_config_dir_override() -> Option<PathBuf> {
-    std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
+    #[cfg(test)]
+    let value: Option<std::ffi::OsString> =
+        TEST_CLAUDE_CONFIG_DIR.with(|dir| dir.borrow().clone().map(PathBuf::into_os_string));
+    #[cfg(not(test))]
+    let value = std::env::var_os("CLAUDE_CONFIG_DIR");
+    value.map(PathBuf::from).filter(|path| path.is_absolute())
+}
+
+/// Claude Code's user settings folder: `CLAUDE_CONFIG_DIR`, or `~/.claude`.
+pub(crate) fn claude_config_dir() -> Result<PathBuf, String> {
+    match claude_config_dir_override() {
+        Some(dir) => Ok(dir),
+        None => Ok(home_dir()?.join(".claude")),
+    }
+}
+
+/// Claude Code's own state file: `.claude.json` in `CLAUDE_CONFIG_DIR`, or
+/// `~/.claude.json`. Claude Code 2.1.319 joins the variable, or else the home
+/// folder, with `.claude.json`.
+pub(crate) fn claude_state_file() -> Result<PathBuf, String> {
+    match claude_config_dir_override() {
+        Some(dir) => Ok(dir.join(".claude.json")),
+        None => Ok(home_dir()?.join(".claude.json")),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLAUDE_CONFIG_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Run `test` with `CLAUDE_CONFIG_DIR` set to `dir` for this thread only.
+#[cfg(test)]
+pub(crate) fn with_test_claude_config_dir<T>(dir: PathBuf, test: impl FnOnce() -> T) -> T {
+    let previous = TEST_CLAUDE_CONFIG_DIR.with(|current| current.replace(Some(dir)));
+    let result = test();
+    TEST_CLAUDE_CONFIG_DIR.with(|current| *current.borrow_mut() = previous);
+    result
 }
 
 /// True when `make fresh` started this process in a throwaway home folder.

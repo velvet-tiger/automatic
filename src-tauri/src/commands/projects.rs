@@ -6079,7 +6079,7 @@ mod read_only_tests {
     /// stale, so every path below would write if it were not guarded.
     #[test]
     fn read_only_project_folder_is_never_written() {
-        with_temp_home(|_| {
+        with_temp_home(|home| {
             core::save_rule("test-rule", "Test Rule", "Rule body.\n").expect("save rule");
             let (_keep, dir) = make_project("ro", |p| {
                 p.file_rules
@@ -6088,7 +6088,8 @@ mod read_only_tests {
             sync_project("ro").expect("initial sync");
             // Give the writable-folders step something to write, so it would
             // touch the folder if it could.
-            let other = tempfile::tempdir().expect("other folder");
+            // Folders may be granted only inside the home folder.
+            let other = tempfile::tempdir_in(home).expect("other folder");
             core::set_project_writable_folders("ro", &[other.path().display().to_string()])
                 .expect("extra folder");
             core::set_writable_folders_user_consent(true).expect("consent");

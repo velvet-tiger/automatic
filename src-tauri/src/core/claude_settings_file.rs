@@ -29,9 +29,10 @@ pub(super) fn hold_settings_writes() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Claude Code's user settings file, `~/.claude/settings.json`.
+/// Claude Code's user settings file: `settings.json` in `CLAUDE_CONFIG_DIR`
+/// when that is set, and `~/.claude/settings.json` otherwise.
 pub(super) fn user_settings_path() -> Result<PathBuf, String> {
-    Ok(super::paths::home_dir()?.join(".claude").join("settings.json"))
+    Ok(super::paths::claude_config_dir()?.join("settings.json"))
 }
 
 /// Parse the file's text into its root object.

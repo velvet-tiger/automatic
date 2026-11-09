@@ -639,19 +639,91 @@ impl DeniedPaths {
 /// folders: an agent that can edit those can rewrite its own grants (the
 /// registry pointers hold them) or lift Claude Code's limits.
 ///
-/// Both checks run: by file identity on unix, which catches other names for
-/// the same folder, and by path, which covers paths that do not exist yet.
+/// The folder must also be inside the home folder: an allow-list, so a new
+/// alias for a disk or a system folder is refused without being named here.
+///
+/// Both guard checks run: by file identity on unix, which catches other names
+/// for the same folder, and by path, which covers paths that do not exist.
 pub(crate) fn refusal_reason(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    if let Some(reason) = outside_home(folder, denied) {
+        return Some(reason);
+    }
     #[cfg(unix)]
     if let Some(reason) = identity_refusal(folder, denied) {
         return Some(reason);
     }
-    #[cfg(target_os = "macos")]
-    if folder.starts_with("/System/Volumes/Data") {
-        // Another name for the whole data volume, through firmlinks.
-        return Some("it is under /System/Volumes/Data, another name for your disk".to_string());
-    }
     path_refusal(folder, denied)
+}
+
+/// Why `folder` (canonical) is not strictly inside the home folder, or `None`.
+///
+/// The path must start with the canonical home path, and on unix one of the
+/// folder's own ancestors must also be the home folder by identity. Both are
+/// needed: macOS gives one folder several paths (`/System/Volumes/Data/Users`,
+/// `/.nofollow/Users`), which pass an identity check but not the path check,
+/// and a path check alone would trust a home path that leads elsewhere.
+fn outside_home(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    const MUST_BE_INSIDE: &str = "the folder must be inside your home folder";
+    #[cfg(windows)]
+    let inside = windows_inside(folder, &denied.home);
+    #[cfg(not(windows))]
+    let inside = folder != denied.home && folder.starts_with(&denied.home);
+    if folder == denied.home {
+        return Some(format!("it is your home folder, and {MUST_BE_INSIDE}"));
+    }
+    if !inside {
+        return Some(format!("it is outside your home folder, and {MUST_BE_INSIDE}"));
+    }
+    #[cfg(unix)]
+    {
+        let Some(home_id) = denied.ids.home else {
+            return Some(format!("your home folder cannot be found, and {MUST_BE_INSIDE}"));
+        };
+        let found = folder
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| file_id(ancestor) == Some(home_id));
+        if !found {
+            return Some(format!(
+                "it does not lead to a folder inside your home folder, and {MUST_BE_INSIDE}"
+            ));
+        }
+    }
+    None
+}
+
+/// Whether `folder` is strictly inside `home` on Windows. Both are compared
+/// as a drive letter and lower-cased components, with any `\\?\` prefix
+/// removed. A UNC share, a device path (`\\.\`), `\\?\GLOBALROOT` or any
+/// other verbatim form is never inside.
+#[cfg(windows)]
+fn windows_inside(folder: &Path, home: &Path) -> bool {
+    fn key(path: &Path) -> Option<(u8, Vec<String>)> {
+        use std::path::{Component, Prefix};
+        let mut components = path.components();
+        let drive = match components.next()? {
+            Component::Prefix(prefix) => match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive.to_ascii_uppercase(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut parts = Vec::new();
+        for component in components {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(part) => parts.push(part.to_string_lossy().to_lowercase()),
+                _ => return None,
+            }
+        }
+        Some((drive, parts))
+    }
+    match (key(folder), key(home)) {
+        (Some((drive, parts)), Some((home_drive, home_parts))) => {
+            drive == home_drive && parts.len() > home_parts.len() && parts.starts_with(&home_parts)
+        }
+        _ => false,
+    }
 }
 
 /// [`refusal_reason`] by file identity.
@@ -931,7 +1003,7 @@ fn managed_settings_path() -> Result<PathBuf, String> {
 
 /// `~/.claude.json`, which Claude Code writes. Automatic only reads it.
 fn claude_state_path() -> Result<PathBuf, String> {
-    Ok(super::paths::home_dir()?.join(".claude.json"))
+    super::paths::claude_state_file()
 }
 
 fn local_settings_path(dir: &Path) -> PathBuf {
@@ -1138,21 +1210,25 @@ fn gather_candidates(
 fn denied_paths() -> Result<DeniedPaths, String> {
     let home = super::paths::home_dir()?;
     let normal = |path: &Path| normalised(&path.to_string_lossy());
+    // `get_automatic_dir()` is one of the two data folders, whichever build
+    // runs, so it is not listed again.
     let mut folders = vec![
         normal(&home.join(".claude")),
         normal(&home.join(".automatic")),
         normal(&home.join(".automatic-dev")),
-        normal(&get_automatic_dir()?),
     ];
     if let Some(config) = super::paths::claude_config_dir_override() {
-        folders.push(normal(&config));
+        let config = normal(&config);
+        if !folders.contains(&config) {
+            folders.push(config);
+        }
     }
-    folders.dedup();
-    Ok(DeniedPaths::new(
-        normal(&home),
-        vec![normal(&home.join(".claude.json"))],
-        folders,
-    ))
+    let mut files = vec![normal(&home.join(".claude.json"))];
+    let state = normal(&super::paths::claude_state_file()?);
+    if !files.contains(&state) {
+        files.push(state);
+    }
+    Ok(DeniedPaths::new(normal(&home), files, folders))
 }
 
 /// The folders whose records belong to a checkout that is at `own` now: its
@@ -1456,10 +1532,11 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
 /// When the checkout's folder was renamed, its local-file record is still
 /// keyed by the old folder, and the entries it lists moved with the file.
 /// Move that record to `own`, so the entries stay Automatic's rather than
-/// look like the user's. Only a record whose old folder is gone and is not a
-/// live folder of the checkout is moved, only while `own` has no record, and
-/// only when every entry it lists is in `own`'s local file. Returns the old
-/// folder, whose record the commit must now remove.
+/// look like the user's. Only a record whose old folder is gone, is not a
+/// live folder of the checkout, and is not the main checkout of `own` (a
+/// worktree), is moved, and only while `own` has no record. It claims only
+/// the entries it recorded that `own`'s local file still holds. Returns the
+/// old folder, whose record the commit must now remove.
 fn adopt_moved_local_record(
     records: &mut DirectoryRecords,
     key: &str,
@@ -1472,15 +1549,30 @@ fn adopt_moved_local_record(
         return None;
     }
     let present = settings_file_facts(&local_settings_path(own), "", Some(own)).directories;
-    let (old, entries) = folders.iter().find(|(folder, entries)| {
-        !live.contains(*folder)
-            && !Path::new(folder).exists()
-            && !entries.written.is_empty()
-            && entries.written.is_subset(&present)
+    let main = main_checkout(own);
+    let (old, claimed) = folders.iter().find_map(|(folder, entries)| {
+        if live.contains(folder)
+            || Path::new(folder).exists()
+            || main.as_deref() == Some(Path::new(folder))
+        {
+            return None;
+        }
+        // Only what Automatic recorded, and only what the moved file holds.
+        // An entry the file holds that the record does not list stays the
+        // user's.
+        let claimed: BTreeSet<String> = entries.written.intersection(&present).cloned().collect();
+        (!claimed.is_empty()).then(|| (folder.clone(), claimed))
     })?;
-    let (old, entries) = (old.clone(), entries.clone());
     set_record(&mut records.local_settings, key, &old, OwnedEntries::default());
-    set_record(&mut records.local_settings, key, folder_key, entries);
+    set_record(
+        &mut records.local_settings,
+        key,
+        folder_key,
+        OwnedEntries {
+            written: claimed,
+            declined: BTreeSet::new(),
+        },
+    );
     Some(old)
 }
 
