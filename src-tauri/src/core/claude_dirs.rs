@@ -663,30 +663,27 @@ pub(crate) fn refusal_reason(folder: &Path, denied: &DeniedPaths) -> Option<Stri
 /// `/.nofollow/Users`), which pass an identity check but not the path check,
 /// and a path check alone would trust a home path that leads elsewhere.
 fn outside_home(folder: &Path, denied: &DeniedPaths) -> Option<String> {
-    const MUST_BE_INSIDE: &str = "the folder must be inside your home folder";
+    if folder == denied.home {
+        return Some("it is your home folder, and only folders inside it can be added".to_string());
+    }
     #[cfg(windows)]
     let inside = windows_inside(folder, &denied.home);
     #[cfg(not(windows))]
-    let inside = folder != denied.home && folder.starts_with(&denied.home);
-    if folder == denied.home {
-        return Some(format!("it is your home folder, and {MUST_BE_INSIDE}"));
-    }
+    let inside = folder.starts_with(&denied.home);
     if !inside {
-        return Some(format!("it is outside your home folder, and {MUST_BE_INSIDE}"));
+        return Some("it is outside your home folder".to_string());
     }
     #[cfg(unix)]
     {
         let Some(home_id) = denied.ids.home else {
-            return Some(format!("your home folder cannot be found, and {MUST_BE_INSIDE}"));
+            return Some("Automatic cannot find your home folder".to_string());
         };
         let found = folder
             .ancestors()
             .skip(1)
             .any(|ancestor| file_id(ancestor) == Some(home_id));
         if !found {
-            return Some(format!(
-                "it does not lead to a folder inside your home folder, and {MUST_BE_INSIDE}"
-            ));
+            return Some("it is outside your home folder".to_string());
         }
     }
     None
@@ -899,7 +896,8 @@ pub(crate) struct AssessFacts {
     /// Joined groups whose switch is off.
     pub groups_switched_off: Vec<String>,
     pub last_sync_errors: Vec<String>,
-    /// Why `~/.claude.json` could not be read, when it could not.
+    /// Why Claude Code's state file could not be read, naming it, when it
+    /// could not.
     pub trust_unreadable: Option<String>,
     /// Entries Automatic wrote to the local file before git began tracking
     /// it. Automatic leaves a tracked file alone, so they stay there.
@@ -968,7 +966,7 @@ pub(crate) fn assess(facts: &AssessFacts) -> WritableFoldersFindings {
                 .map(|why| format!("{}: {}", file.shown, why))
         })
         .collect();
-    unreadable.extend(facts.trust_unreadable.iter().map(|why| format!("~/.claude.json: {why}")));
+    unreadable.extend(facts.trust_unreadable.iter().cloned());
     WritableFoldersFindings {
         wanted: facts.folders.wanted.clone(),
         paste_json: paste_json(&uncovered),
@@ -999,6 +997,15 @@ fn managed_settings_path() -> Result<PathBuf, String> {
     return Ok(PathBuf::from(r"C:\Program Files\ClaudeCode\managed-settings.json"));
     #[cfg(all(not(test), not(target_os = "macos"), not(target_os = "windows")))]
     return Ok(PathBuf::from("/etc/claude-code/managed-settings.json"));
+}
+
+/// How a Claude Code file is named to the user: `default` (a `~` path), or
+/// the real path when `CLAUDE_CONFIG_DIR` moved it.
+fn shown_claude_path(path: &Path, default: &str) -> String {
+    match super::paths::claude_config_dir_override() {
+        Some(_) => path.display().to_string(),
+        None => default.to_string(),
+    }
 }
 
 /// `~/.claude.json`, which Claude Code writes. Automatic only reads it.
@@ -1092,18 +1099,19 @@ fn trust_flag(folders: &[String]) -> (TrustFlag, Option<String>) {
         Ok(path) => path,
         Err(e) => return (TrustFlag::Unknown, Some(e)),
     };
+    let shown = shown_claude_path(&path, "~/.claude.json");
     let state: Value = match fs::read_to_string(&path) {
         Ok(raw) => match serde_json::from_str(&raw) {
             Ok(state) => state,
             Err(e) => {
                 return (
                     TrustFlag::Unknown,
-                    Some(format!("could not be parsed (line {})", e.line())),
+                    Some(format!("{shown}: could not be parsed (line {})", e.line())),
                 )
             }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (TrustFlag::Clear, None),
-        Err(e) => return (TrustFlag::Unknown, Some(format!("could not be read: {e}"))),
+        Err(e) => return (TrustFlag::Unknown, Some(format!("{shown}: could not be read: {e}"))),
     };
     let flagged = folders.iter().any(|folder| {
         let Some(entry) = state.get("projects").and_then(|p| p.get(folder)) else {
@@ -1362,7 +1370,11 @@ pub fn writable_folders_findings(project: &Project) -> Result<Option<WritableFol
         } else {
             Vec::new()
         },
-        user: settings_file_facts(&user_settings_path()?, "~/.claude/settings.json", None),
+        user: {
+            let path = user_settings_path()?;
+            let shown = shown_claude_path(&path, "~/.claude/settings.json");
+            settings_file_facts(&path, &shown, None)
+        },
         managed: {
             let path = managed_settings_path()?;
             let shown = path.display().to_string();
@@ -1535,8 +1547,9 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
 /// look like the user's. Only a record whose old folder is gone, is not a
 /// live folder of the checkout, and is not the main checkout of `own` (a
 /// worktree), is moved, and only while `own` has no record. It claims only
-/// the entries it recorded that `own`'s local file still holds. Returns the
-/// old folder, whose record the commit must now remove.
+/// the entries it recorded that `own`'s local file still holds, and keeps the
+/// rest declined. Returns the old folder, whose record the commit must now
+/// remove.
 fn adopt_moved_local_record(
     records: &mut DirectoryRecords,
     key: &str,
@@ -1560,19 +1573,21 @@ fn adopt_moved_local_record(
         // Only what Automatic recorded, and only what the moved file holds.
         // An entry the file holds that the record does not list stays the
         // user's.
-        let claimed: BTreeSet<String> = entries.written.intersection(&present).cloned().collect();
-        (!claimed.is_empty()).then(|| (folder.clone(), claimed))
+        // A recorded entry the file no longer holds was removed by the user,
+        // so it stays declined, as do the entries already declined.
+        let moved = OwnedEntries {
+            written: entries.written.intersection(&present).cloned().collect(),
+            declined: entries
+                .declined
+                .iter()
+                .chain(entries.written.difference(&present))
+                .cloned()
+                .collect(),
+        };
+        (!moved.written.is_empty()).then(|| (folder.clone(), moved))
     })?;
     set_record(&mut records.local_settings, key, &old, OwnedEntries::default());
-    set_record(
-        &mut records.local_settings,
-        key,
-        folder_key,
-        OwnedEntries {
-            written: claimed,
-            declined: BTreeSet::new(),
-        },
-    );
+    set_record(&mut records.local_settings, key, folder_key, claimed);
     Some(old)
 }
 
@@ -1710,7 +1725,7 @@ pub fn set_project_writable_folders(ident: &str, folders: &[String]) -> Result<(
         }
         if let Some(reason) = refusal_reason(&real, &denied) {
             return Err(format!(
-                "Claude Code cannot be allowed to edit '{}', because {}.",
+                "Claude Code may not edit '{}', because {}. Add it in Claude Code yourself if you need it.",
                 folder, reason
             ));
         }

@@ -278,9 +278,15 @@ fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Ve
         }
     }
     for refused in &findings.refused {
+        let folder = match &refused.source {
+            FolderSource::GroupMember { project, .. } => {
+                format!("{}'s folder, `{}`,", project, refused.path)
+            }
+            FolderSource::Extra | FolderSource::MainCheckout => format!("`{}`", refused.path),
+        };
         notes.push(format!(
-            "Automatic will not let Claude Code edit `{}`, because {}.",
-            refused.path, refused.reason
+            "Claude Code may not edit {}, because {}. Add it in Claude Code yourself if you need it.",
+            folder, refused.reason
         ));
     }
     if !findings.left_in_tracked_local.is_empty() {

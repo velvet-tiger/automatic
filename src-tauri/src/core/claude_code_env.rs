@@ -62,9 +62,22 @@ pub struct ClaudeCodeRecord {
     /// The user set those, so a clear leaves them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     adopted: Vec<String>,
+    /// The settings file the values were written to. `CLAUDE_CONFIG_DIR` can
+    /// move Claude Code's settings later, and a clear must still reach this
+    /// file. Records from before this field wrote to `~/.claude/settings.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings_path: Option<PathBuf>,
 }
 
 impl ClaudeCodeRecord {
+    /// The file this record's values were written to.
+    fn written_to(&self) -> Result<PathBuf, String> {
+        match &self.settings_path {
+            Some(path) => Ok(path.clone()),
+            None => Ok(super::paths::home_dir()?.join(".claude").join("settings.json")),
+        }
+    }
+
     fn for_env(env: &GatewayEnv, adopted: Vec<String>) -> Self {
         let token_salt = hex::encode(rand::random::<[u8; 16]>());
         let token_fingerprint = fingerprint(&token_salt, env.token);
@@ -74,6 +87,7 @@ impl ClaudeCodeRecord {
             token_salt,
             token_fingerprint,
             adopted,
+            settings_path: None,
         }
     }
 
@@ -243,6 +257,9 @@ pub(super) fn settings_path() -> Result<PathBuf, String> {
 /// could be committed.
 fn token_target(path: &Path) -> Result<PathBuf, String> {
     let target = followed(path)?;
+    if super::paths::claude_config_dir_override().is_some() {
+        refuse_git_work_tree(&target)?;
+    }
     let folder = path.parent().ok_or("The settings path has no parent folder")?;
     let (Some(home), Some(name), Some(target_folder)) =
         (folder.parent(), folder.file_name(), target.parent())
@@ -271,6 +288,32 @@ fn token_target(path: &Path) -> Result<PathBuf, String> {
         ));
     }
     Ok(target)
+}
+
+/// Refuse a token file inside a git work tree. `CLAUDE_CONFIG_DIR` can name a
+/// real folder in a dotfiles repository, which the link check below cannot
+/// see. The nearest folder that exists is resolved, then each folder above it
+/// is checked for a `.git` entry. Nothing runs git.
+fn refuse_git_work_tree(target: &Path) -> Result<(), String> {
+    let Some(existing) = target.ancestors().skip(1).find(|folder| folder.exists()) else {
+        return Ok(());
+    };
+    let real = existing.canonicalize().map_err(|e| {
+        format!(
+            "Could not check where {} leads: {}. Nothing was changed.",
+            target.display(),
+            e
+        )
+    })?;
+    match real.ancestors().find(|folder| folder.join(".git").exists()) {
+        Some(repository) => Err(format!(
+            "{} is inside the git repository at {}. Automatic will not write a token \
+             there, because it could be committed. Nothing was changed.",
+            target.display(),
+            repository.display()
+        )),
+        None => Ok(()),
+    }
 }
 
 /// The real path of a folder, or `None` when it does not exist.
@@ -319,6 +362,14 @@ pub(super) fn write_file(
     record: Option<&ClaudeCodeRecord>,
     known: KnownValues,
 ) -> Result<ClaudeCodeRecord, String> {
+    // The settings moved since the last save: take Automatic's values out of
+    // the old file, or its token would stay there.
+    if let Some(record) = record {
+        let old = record.written_to()?;
+        if old != path {
+            clear_owned(&old, record)?;
+        }
+    }
     let _writes = hold_settings_writes();
     let (target, loaded) = load_for_save(path, desired, record)?;
     let adopted = adopted_variables(env_of(&loaded.root, &target)?, desired, record, known);
@@ -328,7 +379,9 @@ pub(super) fn write_file(
         loaded.text.as_deref(),
         Permissions::OwnerOnly,
     )?;
-    Ok(ClaudeCodeRecord::for_env(desired, adopted))
+    let mut written = ClaudeCodeRecord::for_env(desired, adopted);
+    written.settings_path = Some(path.to_path_buf());
+    Ok(written)
 }
 
 /// Remove what Automatic wrote from the file. Returns the names of the gateway
@@ -336,7 +389,22 @@ pub(super) fn write_file(
 ///
 /// A link out of the folder is followed here. Taking a token out of a file is
 /// always safe, and it may have been linked after the save.
+/// The file the record was written to is cleared too, when it is not `path`.
 pub(super) fn clear_file(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
+    let mut remaining = Vec::new();
+    let old = record.written_to()?;
+    if old != path {
+        remaining.extend(clear_owned(&old, record)?);
+    }
+    for variable in clear_owned(path, record)? {
+        if !remaining.contains(&variable) {
+            remaining.push(variable);
+        }
+    }
+    Ok(remaining)
+}
+
+fn clear_owned(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
     clear_where(path, |variable, value| {
         record.matches(variable, value) && !record.adopted(variable)
     })
@@ -886,5 +954,59 @@ mod tests {
         let shown = serde_json::to_string(&record).expect("serialise");
 
         assert!(!shown.contains("plain-token"), "{shown}");
+    }
+}
+
+#[cfg(test)]
+mod config_dir_tests {
+    use super::*;
+    use crate::core::paths::{temp_test_home, with_test_claude_config_dir};
+    use std::fs;
+
+    fn desired(token: &str) -> GatewayEnv<'_> {
+        GatewayEnv {
+            base_url: "https://gateway.example.com",
+            kind: GatewayCredentialKind::Bearer,
+            token,
+        }
+    }
+
+    const NONE: KnownValues = KnownValues {
+        base_url: false,
+        token: false,
+    };
+
+    #[test]
+    fn a_clear_after_claude_config_dir_moved_reaches_the_old_file() {
+        let _home = temp_test_home();
+        let old = settings_path().expect("path");
+        let record = write_file(&old, &desired("secret-token"), None, NONE).expect("save");
+        let config = crate::core::paths::home_dir().unwrap().join("config");
+        fs::create_dir_all(&config).unwrap();
+
+        with_test_claude_config_dir(config.clone(), || {
+            let now = settings_path().expect("path");
+            assert_eq!(now, config.join("settings.json"));
+            clear_file(&now, &record).expect("clear");
+        });
+
+        assert!(!fs::read_to_string(&old).unwrap().contains("secret-token"));
+    }
+
+    #[test]
+    fn a_token_is_not_written_into_a_config_dir_inside_a_git_repository() {
+        let _home = temp_test_home();
+        let dotfiles = crate::core::paths::home_dir().unwrap().join("dotfiles");
+        fs::create_dir_all(dotfiles.join(".git")).unwrap();
+        let config = dotfiles.join("claude");
+        fs::create_dir_all(&config).unwrap();
+
+        with_test_claude_config_dir(config.clone(), || {
+            let path = settings_path().expect("path");
+            let err = check_file(&path, &desired("secret-token"), None).expect_err("refused");
+            assert!(err.contains("git repository"), "{err}");
+            assert!(write_file(&path, &desired("secret-token"), None, NONE).is_err());
+        });
+        assert!(!config.join("settings.json").exists());
     }
 }

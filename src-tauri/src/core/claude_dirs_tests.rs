@@ -849,7 +849,7 @@ fn setting_the_home_folder_or_automatics_folder_is_refused() {
     ] {
         let err = set_project_writable_folders(&a.local_key, &[folder.display().to_string()])
             .expect_err("refused");
-        assert!(err.contains("cannot be allowed"), "{err}");
+        assert!(err.contains("may not edit"), "{err}");
     }
     assert!(reread(&a).local_writable_folders.is_empty());
 }
@@ -1064,7 +1064,7 @@ fn a_link_to_claudes_folder_and_both_data_folders_are_refused() {
         fs::create_dir_all(&folder).ok();
         let err = set_project_writable_folders(&a.local_key, &[folder.display().to_string()])
             .expect_err("refused");
-        assert!(err.contains("cannot be allowed"), "{}: {err}", folder.display());
+        assert!(err.contains("may not edit"), "{}: {err}", folder.display());
     }
 }
 
@@ -1163,9 +1163,9 @@ fn only_folders_strictly_inside_the_home_folder_are_accepted() {
 
     assert_eq!(refusal_reason(&inside, &denied), None);
     let home_reason = refusal_reason(&home, &denied).expect("home refused");
-    assert!(home_reason.contains("must be inside your home folder"), "{home_reason}");
+    assert!(home_reason.contains("your home folder"), "{home_reason}");
     let outside_reason = refusal_reason(&outside, &denied).expect("outside refused");
-    assert!(outside_reason.contains("must be inside your home folder"), "{outside_reason}");
+    assert!(outside_reason.contains("outside your home folder"), "{outside_reason}");
 }
 
 #[test]
@@ -1217,7 +1217,7 @@ fn a_member_outside_the_home_folder_is_skipped_with_a_note() {
     assert!(outcome.wanted.is_empty());
     let report = crate::sync::check_project_problems(&reread(&a)).expect("problems");
     assert!(
-        report.notes.iter().any(|n| n.contains("must be inside your home folder")),
+        report.notes.iter().any(|n| n.contains("b's folder") && n.contains("outside your home folder") && n.contains("Add it in Claude Code yourself")),
         "{:?}",
         report.notes
     );
@@ -1264,7 +1264,10 @@ fn a_moved_record_claims_only_what_automatic_recorded() {
     let moved = adopt_moved_local_record(&mut records, "k", &own, &live);
 
     assert_eq!(moved.as_deref(), Some("/gone/old"));
-    assert_eq!(record_of(&records.local_settings, "k", own.to_str().unwrap()), owned(&["/ours"], &[]));
+    assert_eq!(
+        record_of(&records.local_settings, "k", own.to_str().unwrap()),
+        owned(&["/ours"], &["/missing", "/x"])
+    );
     assert!(record_of(&records.local_settings, "k", "/gone/old").is_empty());
 }
 
