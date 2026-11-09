@@ -363,11 +363,13 @@ pub(super) fn write_file(
     known: KnownValues,
 ) -> Result<ClaudeCodeRecord, String> {
     // The settings moved since the last save: take Automatic's values out of
-    // the old file, or its token would stay there.
+    // the old file, or its token would stay there. Check the new file first,
+    // so a refused save leaves the old token where the record says it is.
     if let Some(record) = record {
         let old = record.written_to()?;
         if old != path {
-            clear_owned(&old, record)?;
+            check_file(path, desired, Some(record))?;
+            clear_moved_from(&old, record)?;
         }
     }
     let _writes = hold_settings_writes();
@@ -390,18 +392,33 @@ pub(super) fn write_file(
 /// A link out of the folder is followed here. Taking a token out of a file is
 /// always safe, and it may have been linked after the save.
 /// The file the record was written to is cleared too, when it is not `path`.
+/// The current file is cleared first, so a broken old file cannot keep the
+/// token in the file Claude Code reads now.
 pub(super) fn clear_file(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
-    let mut remaining = Vec::new();
+    let mut remaining = clear_owned(path, record)?;
     let old = record.written_to()?;
     if old != path {
-        remaining.extend(clear_owned(&old, record)?);
-    }
-    for variable in clear_owned(path, record)? {
-        if !remaining.contains(&variable) {
-            remaining.push(variable);
+        for variable in clear_moved_from(&old, record)? {
+            if !remaining.contains(&variable) {
+                remaining.push(variable);
+            }
         }
     }
     Ok(remaining)
+}
+
+/// Clear the file the record was written to before `CLAUDE_CONFIG_DIR`
+/// moved the settings. A failure names that file, because Claude Code no
+/// longer reads it and the user would not otherwise know which one to fix.
+fn clear_moved_from(old: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
+    clear_owned(old, record).map_err(|e| {
+        format!(
+            "Could not remove Automatic's gateway values from {}, where they were saved before \
+             your Claude Code settings moved: {}",
+            old.display(),
+            e
+        )
+    })
 }
 
 fn clear_owned(path: &Path, record: &ClaudeCodeRecord) -> Result<Vec<String>, String> {
@@ -991,6 +1008,29 @@ mod config_dir_tests {
         });
 
         assert!(!fs::read_to_string(&old).unwrap().contains("secret-token"));
+    }
+
+    #[test]
+    fn a_broken_old_settings_file_is_named_and_a_refused_save_keeps_the_old_token() {
+        let _home = temp_test_home();
+        let old = settings_path().expect("path");
+        let record = write_file(&old, &desired("secret-token"), None, NONE).expect("save");
+        let dotfiles = crate::core::paths::home_dir().unwrap().join("dotfiles");
+        fs::create_dir_all(dotfiles.join(".git")).unwrap();
+        let config = dotfiles.join("claude");
+        fs::create_dir_all(&config).unwrap();
+
+        with_test_claude_config_dir(config.clone(), || {
+            let now = settings_path().expect("path");
+            // The new file is refused, so the old file keeps the token the
+            // record points at.
+            assert!(write_file(&now, &desired("secret-token"), Some(&record), NONE).is_err());
+            assert!(fs::read_to_string(&old).unwrap().contains("secret-token"));
+
+            fs::write(&old, "{ not json").unwrap();
+            let err = clear_file(&now, &record).expect_err("old file is broken");
+            assert!(err.contains(&old.display().to_string()), "{err}");
+        });
     }
 
     #[test]

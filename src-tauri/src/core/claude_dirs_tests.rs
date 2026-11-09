@@ -1216,11 +1216,12 @@ fn a_member_outside_the_home_folder_is_skipped_with_a_note() {
 
     assert!(outcome.wanted.is_empty());
     let report = crate::sync::check_project_problems(&reread(&a)).expect("problems");
-    assert!(
-        report.notes.iter().any(|n| n.contains("b's folder") && n.contains("outside your home folder") && n.contains("Add it in Claude Code yourself")),
-        "{:?}",
-        report.notes
+    let expected = format!(
+        "Claude Code may not edit b's folder `{}`, because it is outside your home folder. \
+         Add it in Claude Code yourself if you need it.",
+        elsewhere.join("b").display()
     );
+    assert!(report.notes.contains(&expected), "{:?}", report.notes);
     assert!(report.problems.is_empty(), "{:?}", report.problems);
 }
 

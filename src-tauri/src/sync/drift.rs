@@ -286,7 +286,7 @@ fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Ve
     for refused in &findings.refused {
         let folder = match &refused.source {
             FolderSource::GroupMember { project, .. } => {
-                format!("{}'s folder, `{}`,", project, refused.path)
+                format!("{}'s folder `{}`", project, refused.path)
             }
             FolderSource::Extra | FolderSource::MainCheckout => format!("`{}`", refused.path),
         };
