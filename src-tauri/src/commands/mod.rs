@@ -38,6 +38,7 @@ mod tokens;
 mod tools;
 mod user_commands;
 mod whats_new;
+mod writable_folders;
 
 pub use crate::plugins::build::commands::*;
 pub use crate::plugins::dev_servers::commands::*;
@@ -72,6 +73,7 @@ pub use recommendations::*;
 pub use remote_sources::*;
 pub use rules::*;
 pub use settings::*;
+pub use writable_folders::*;
 pub use skill_store::*;
 pub use skills::*;
 pub use subagents::*;

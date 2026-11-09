@@ -213,7 +213,7 @@ fn worktree_of_record(record: &Path) -> Option<PathBuf> {
 /// The main checkout of the repository that `worktree` is a linked worktree
 /// of. A bare repository or a separate git folder has no main checkout to take
 /// the config from, so it is refused.
-fn main_checkout_of(worktree: &Path) -> Result<PathBuf, String> {
+pub(crate) fn main_checkout_of(worktree: &Path) -> Result<PathBuf, String> {
     let not_a_worktree = || format!("{} is not a linked git worktree", worktree.display());
     let common = core::git_common_dir(worktree).ok_or_else(not_a_worktree)?;
     if !core::is_linked_worktree(worktree, Some(&common)) {

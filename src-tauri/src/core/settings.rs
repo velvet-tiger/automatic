@@ -112,6 +112,28 @@ pub struct Settings {
     /// MCP. Users can link anything from the app regardless.
     #[serde(default)]
     pub agent_folder_links: AgentFolderLinks,
+    /// Where Automatic saves the folders Claude Code may edit for a project
+    /// (see `core::claude_dirs`). Change it with `set_writable_folders_target`.
+    #[serde(default)]
+    pub writable_folders_target: WritableFoldersTarget,
+    /// Whether the user agreed that Claude Code's user settings,
+    /// `~/.claude/settings.json`, may hold project folders. Entries there
+    /// apply to every Claude Code session on the machine, so Automatic writes
+    /// none until this is true.
+    #[serde(default)]
+    pub writable_folders_user_consent: bool,
+}
+
+/// Where the folders Claude Code may edit for a project are saved.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WritableFoldersTarget {
+    /// The project's own `.claude/settings.local.json` when Claude Code will
+    /// honour it there, and user settings otherwise.
+    #[default]
+    PreferLocal,
+    /// Always Claude Code's user settings.
+    AlwaysUser,
 }
 
 /// Which local folders an agent may link into a context. Agent-added
@@ -153,6 +175,8 @@ impl Default for Settings {
             agent_models: HashMap::new(),
             nvm_enabled: false,
             agent_folder_links: AgentFolderLinks::default(),
+            writable_folders_target: WritableFoldersTarget::default(),
+            writable_folders_user_consent: false,
         }
     }
 }

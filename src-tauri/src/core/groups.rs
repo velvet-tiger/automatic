@@ -108,16 +108,31 @@ pub fn save_group(name: &str, data: &str) -> Result<(), String> {
 
     let mut group: ProjectGroup =
         serde_json::from_str(data).map_err(|e| format!("Invalid group data: {}", e))?;
+    let groups_dir = get_groups_dir()?;
+    // A caller that does not know the writable-folders switch (the group
+    // editor before it gained the control) sends no value. That keeps the
+    // stored one rather than turning it off.
+    if !sends_field(data, "agents_edit_across_group") && group_path(&groups_dir, name).exists() {
+        group.agents_edit_across_group = read_group_from_dir(&groups_dir, name)
+            .map_err(|e| format!("Group '{}' could not be read: {}", name, e))?
+            .agents_edit_across_group;
+    }
     // Members arrive as `local_key`s (or ids); store them by project id.
     group.projects = group_members_for_storage(&ProjectKeyIndex::load()?, &group.projects);
     let pretty = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
 
-    let groups_dir = get_groups_dir()?;
     if !groups_dir.exists() {
         fs::create_dir_all(&groups_dir).map_err(|e| e.to_string())?;
     }
 
     fs::write(group_path(&groups_dir, name), &pretty).map_err(|e| e.to_string())
+}
+
+/// Whether the JSON object in `data` has the top-level key `field`.
+fn sends_field(data: &str, field: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .is_some_and(|value| value.get(field).is_some())
 }
 
 /// Record that the checkouts in `joining` are joining group `name`, ahead of
@@ -627,6 +642,7 @@ mod tests {
             projects: projects.iter().map(|p| p.to_string()).collect(),
             contexts: Vec::new(),
             profiles: Vec::new(),
+            agents_edit_across_group: false,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };

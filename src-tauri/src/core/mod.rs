@@ -22,6 +22,7 @@ mod credentials;
 mod custom_assets;
 pub(crate) mod custom_gateway;
 mod claude_code_env;
+mod claude_dirs;
 mod claude_settings_file;
 mod discover;
 mod deletion_guards;
@@ -106,6 +107,12 @@ pub(crate) use library_writes::{hold_library_writes, holds_library_writes};
 pub use paths::*;
 pub use plugins::*;
 pub use profile::*;
+pub use claude_dirs::{
+    forget_writable_folders, set_group_agents_edit, set_writable_folders_target,
+    set_writable_folders_user_consent, sync_writable_folders, writable_folders_apply,
+    writable_folders_findings, paste_json as writable_folders_paste_json, DirsTarget, FolderSource, LocalFileState, MissingFolder,
+    UserSettingsReason, WantedFolder, WritableFoldersFindings, WritableFoldersSync,
+};
 pub use profile_confirmation::*;
 pub use project_files::*;
 pub use project_keys::*;

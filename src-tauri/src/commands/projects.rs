@@ -806,6 +806,14 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     // Resolve the store keys before the registry entry goes.
     let keys = core::project_store_keys(name)?;
     core::delete_project(name)?;
+    // The folders this checkout let Claude Code edit stay in user settings
+    // otherwise, for every session. Best-effort: the delete has happened.
+    if let Err(e) = core::forget_writable_folders(&keys.local_key) {
+        eprintln!(
+            "delete_project: could not remove the folders Claude Code may edit for '{}': {}",
+            name, e
+        );
+    }
 
     // Memory, features, activity and recommendations are kept (user
     // decision, stage 3b step 2). Drop the dev-servers plugin's per-checkout
@@ -6034,6 +6042,12 @@ mod read_only_tests {
                     .insert("_unified".to_string(), vec!["test-rule".to_string()]);
             });
             sync_project("ro").expect("initial sync");
+            // Give the writable-folders step something to write, so it would
+            // touch the folder if it could.
+            let other = tempfile::tempdir().expect("other folder");
+            core::set_project_writable_folders("ro", &[other.path().display().to_string()])
+                .expect("extra folder");
+            core::set_writable_folders_user_consent(true).expect("consent");
             core::set_project_read_only("ro", true).expect("turn on read only");
 
             // Make the folder stale: a sync would put the instruction file
@@ -6059,6 +6073,14 @@ mod read_only_tests {
             resync_all_projects(&SweepProgress::silent());
             reconcile_plugin_resources_in_projects();
             prune_rule_from_projects("test-rule", &SweepProgress::silent());
+            crate::commands::refresh_writable_folders(&["ro".to_string()], &SweepProgress::silent());
+            let writable = crate::commands::sync_project_writable_folders("ro")
+                .expect("writable folders of a read-only project");
+            assert!(
+                matches!(writable.target, Some(core::DirsTarget::User(_))),
+                "{:?}",
+                writable
+            );
 
             // Direct writes are refused with the read-only error.
             let refused = |result: Result<(), String>, what: &str| {

@@ -30,6 +30,8 @@ const RELEASING_FIELD: &str = "local_releasing_profiles";
 const CONFIRMED_CONTEXTS_FIELD: &str = "local_confirmed_contexts";
 const IGNORED_CONTEXTS_FIELD: &str = "local_ignored_contexts";
 const AWAITING_FIELD: &str = "local_awaiting_confirmation";
+const WRITABLE_FOLDERS_FIELD: &str = "local_writable_folders";
+const WRITABLE_NOTICE_FIELD: &str = "local_writable_folders_notice_hidden";
 const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
 const CONTEXT_MIGRATION_MARKER: &str = "contexts_confirmed_migrated";
 
@@ -44,6 +46,8 @@ pub(crate) struct ProfileDecisions {
     confirmed_contexts: Vec<String>,
     ignored_contexts: Vec<String>,
     awaiting_confirmation: bool,
+    writable_folders: Vec<String>,
+    writable_notice_hidden: bool,
 }
 
 impl ProfileDecisions {
@@ -58,6 +62,11 @@ impl ProfileDecisions {
             ignored_contexts: pointer_names(pointer, IGNORED_CONTEXTS_FIELD),
             awaiting_confirmation: pointer
                 .get(AWAITING_FIELD)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            writable_folders: pointer_names(pointer, WRITABLE_FOLDERS_FIELD),
+            writable_notice_hidden: pointer
+                .get(WRITABLE_NOTICE_FIELD)
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
         }
@@ -86,6 +95,8 @@ impl ProfileDecisions {
             confirmed_contexts: project.local_confirmed_contexts.clone(),
             ignored_contexts: project.local_ignored_contexts.clone(),
             awaiting_confirmation: project.local_awaiting_confirmation,
+            writable_folders: project.local_writable_folders.clone(),
+            writable_notice_hidden: project.local_writable_folders_notice_hidden,
         }
     }
 
@@ -98,6 +109,8 @@ impl ProfileDecisions {
         project.local_confirmed_contexts = self.confirmed_contexts;
         project.local_ignored_contexts = self.ignored_contexts;
         project.local_awaiting_confirmation = self.awaiting_confirmation;
+        project.local_writable_folders = self.writable_folders;
+        project.local_writable_folders_notice_hidden = self.writable_notice_hidden;
     }
 
     fn write_to(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
@@ -109,6 +122,7 @@ impl ProfileDecisions {
             (RELEASING_FIELD, &self.releasing),
             (CONFIRMED_CONTEXTS_FIELD, &self.confirmed_contexts),
             (IGNORED_CONTEXTS_FIELD, &self.ignored_contexts),
+            (WRITABLE_FOLDERS_FIELD, &self.writable_folders),
         ] {
             if names.is_empty() {
                 map.remove(field);
@@ -116,10 +130,15 @@ impl ProfileDecisions {
                 map.insert(field.into(), names.clone().into());
             }
         }
-        if self.awaiting_confirmation {
-            map.insert(AWAITING_FIELD.into(), true.into());
-        } else {
-            map.remove(AWAITING_FIELD);
+        for (field, on) in [
+            (AWAITING_FIELD, self.awaiting_confirmation),
+            (WRITABLE_NOTICE_FIELD, self.writable_notice_hidden),
+        ] {
+            if on {
+                map.insert(field.into(), true.into());
+            } else {
+                map.remove(field);
+            }
         }
     }
 }
@@ -481,6 +500,32 @@ pub fn decide_project_context(ident: &str, slug: &str, confirmed: bool) -> Resul
 /// this: no MCP tool can, or the agent could confirm its own registration.
 pub fn confirm_project_registration(ident: &str) -> Result<(), String> {
     edit_decisions(ident, |decisions| decisions.awaiting_confirmation = false)
+}
+
+/// Replace the folders, besides group members, that Claude Code may edit from
+/// the project with identifier `ident`. Writes only the registry pointer.
+/// Each folder must be an absolute path; it is stored as given.
+pub fn set_project_writable_folders(ident: &str, folders: &[String]) -> Result<(), String> {
+    let mut unique: Vec<String> = Vec::new();
+    for folder in folders {
+        if !std::path::Path::new(folder).is_absolute() {
+            return Err(format!("'{}' is not an absolute folder path", folder));
+        }
+        add_name(&mut unique, folder);
+    }
+    edit_decisions(ident, |decisions| decisions.writable_folders = unique)
+}
+
+/// Hide or show the notice that asks whether Claude Code's user settings may
+/// hold this checkout's folders. Writes only the registry pointer.
+pub fn set_writable_folders_notice_hidden(ident: &str, hidden: bool) -> Result<(), String> {
+    edit_decisions(ident, |decisions| decisions.writable_notice_hidden = hidden)
+}
+
+/// Whether the registry entry's checkout joined `group` on this machine. An
+/// entry that cannot be parsed has joined nothing.
+pub(crate) fn entry_joined_group(entry: &RegistryEntry, group: &str) -> bool {
+    ProfileDecisions::of_entry(entry).groups.iter().any(|name| name == group)
 }
 
 /// Record that this checkout joined `group` on this machine.

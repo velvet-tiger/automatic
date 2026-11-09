@@ -39,6 +39,9 @@ pub enum ProjectProblemKind {
     /// Sync left out or changed something for one agent because that agent
     /// cannot hold it, such as a legacy SSE server or a sub-agent tool.
     AgentSyncLimits,
+    /// Claude Code blocks edits outside the working folder, and folders this
+    /// project should be able to edit are listed nowhere it honours.
+    WritableFoldersBlocked,
 }
 
 /// A single actionable problem in a project's configuration.
@@ -74,6 +77,22 @@ pub struct ProjectProblemsReport {
     /// sub-agent tool.  Not problems: nothing needs fixing.
     #[serde(default)]
     pub notes: Vec<String>,
+    /// Set when this project's writable folders need Claude Code's user
+    /// settings and the user has not said whether Automatic may write there.
+    /// Drives the `writable_folders_target` notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writable_folders_target: Option<WritableFoldersTargetNotice>,
+}
+
+/// The decision the `writable_folders_target` notice asks for.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct WritableFoldersTargetNotice {
+    /// The folders that would be saved in user settings.
+    pub folders: Vec<String>,
+    /// Why this project's local settings file cannot hold them.
+    pub reason: crate::core::UserSettingsReason,
+    /// What to add to `~/.claude/settings.json` to do it by hand.
+    pub paste_json: String,
 }
 
 /// Check for known configuration problems in a project.
@@ -109,10 +128,167 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
         }
     }
 
+    let mut writable_folders_target = None;
+    match crate::core::writable_folders_findings(project) {
+        Ok(Some(findings)) => {
+            problems.extend(writable_folders_problem(&findings));
+            notes.extend(writable_folders_notes(&findings));
+            writable_folders_target = writable_folders_target_notice(&findings);
+        }
+        Ok(None) => {}
+        Err(e) => notes.push(format!(
+            "Automatic could not check which other folders Claude Code may edit: {e}"
+        )),
+    }
+
     Ok(ProjectProblemsReport {
         has_problems: !problems.is_empty(),
         problems,
         notes,
+        writable_folders_target,
+    })
+}
+
+const CLAUDE_CODE_LABEL: &str = "Claude Code";
+
+/// "1 folder" or "3 folders".
+fn folder_count(count: usize) -> String {
+    format!("{} folder{}", count, if count == 1 { "" } else { "s" })
+}
+
+/// Why the folders went to, or need, user settings, as one sentence.
+fn user_settings_reason(reason: crate::core::UserSettingsReason) -> &'static str {
+    use crate::core::UserSettingsReason as R;
+    match reason {
+        R::Preferred => "Your settings say to always use your user settings.",
+        R::Silent => "Silent mode never writes into the project folder.",
+        R::ReadOnly => "This project is read only on this machine.",
+        R::NotRepositoryRoot => {
+            "The project folder is not the root of a git repository, so Claude Code would not \
+             read a local settings file there."
+        }
+        R::Tracked => {
+            "Git tracks this project's `.claude/settings.local.json`, and Claude Code ignores \
+             the folders a tracked local file lists."
+        }
+        R::SeenTracked => {
+            "Claude Code ignores this project's local settings file, because it once saw the \
+             file tracked by git. Open Claude Code in this folder once and accept the trust \
+             dialog, then sync, to keep the folders to this project."
+        }
+        R::GitUnavailable => {
+            "Automatic could not ask git whether it tracks this project's local settings file."
+        }
+    }
+}
+
+/// The problem for folders Claude Code's block stops agents from editing,
+/// with the settings to add by hand. Held back while the
+/// `writable_folders_target` notice asks the same question.
+fn writable_folders_problem(
+    findings: &crate::core::WritableFoldersFindings,
+) -> Option<ProjectProblem> {
+    let blocked_by = findings.blocked_by.as_ref()?;
+    if findings.uncovered.is_empty() || findings.ask_for_user_settings {
+        return None;
+    }
+    let mut description = format!(
+        "Claude Code blocks edits outside this project's folder, because `{}` turns the block \
+         on. {} this project should be able to edit {} not listed in any settings file Claude \
+         Code honours, so agents here cannot edit {}.",
+        blocked_by,
+        folder_count(findings.uncovered.len()),
+        if findings.uncovered.len() == 1 { "is" } else { "are" },
+        if findings.uncovered.len() == 1 { "it" } else { "them" },
+    );
+    if let crate::core::DirsTarget::User(reason) | crate::core::DirsTarget::NeedsConsent(reason) =
+        findings.target
+    {
+        description.push(' ');
+        description.push_str(user_settings_reason(reason));
+    }
+    Some(ProjectProblem {
+        kind: ProjectProblemKind::WritableFoldersBlocked,
+        title: "Claude Code cannot edit related folders".to_string(),
+        description,
+        solution: vec![
+            format!(
+                "Add the folders to `~/.claude/settings.json`, merging them into any \
+                 `permissions` already there: `{}`",
+                findings.paste_json
+            ),
+            "Running Claude Code sessions pick up the change without a restart.".to_string(),
+        ],
+        reference_url: Some("https://code.claude.com/docs/en/permissions.md".to_string()),
+        agents: vec![CLAUDE_CODE_LABEL.to_string()],
+        resources: findings.uncovered.clone(),
+    })
+}
+
+/// Information about the folders Claude Code may edit, one line each.
+fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Vec<String> {
+    use crate::core::{DirsTarget, FolderSource};
+    let mut notes = Vec::new();
+    if let DirsTarget::User(reason) = findings.target {
+        if !findings.wanted.is_empty() {
+            notes.push(format!(
+                "Claude Code may edit {} outside this project. They are saved in your user \
+                 settings, `~/.claude/settings.json`, so every Claude Code session on this \
+                 machine may edit them. {}",
+                folder_count(findings.wanted.len()),
+                user_settings_reason(reason)
+            ));
+        }
+    }
+    for missing in &findings.missing {
+        notes.push(match &missing.source {
+            FolderSource::GroupMember { group, project } => format!(
+                "Claude Code cannot edit {}'s folder from here: `{}` is not on this machine. \
+                 It is a member of the group {}.",
+                project, missing.path, group
+            ),
+            FolderSource::Extra | FolderSource::MainCheckout => format!(
+                "Claude Code cannot edit `{}` from here, because the folder does not exist.",
+                missing.path
+            ),
+        });
+    }
+    if let Some(blocked_by) = &findings.blocked_by {
+        if !findings.groups_switched_off.is_empty() {
+            notes.push(format!(
+                "Claude Code blocks edits outside this project's folder, because `{}` turns the \
+                 block on. To let agents here edit the other projects in {}, turn on \
+                 \"Let agents edit across this group\" for it.",
+                blocked_by,
+                join_words(&findings.groups_switched_off)
+            ));
+        }
+    }
+    for unreadable in &findings.unreadable {
+        notes.push(format!("Automatic could not read a Claude Code settings file. {unreadable}"));
+    }
+    for error in &findings.last_sync_errors {
+        notes.push(format!(
+            "The last sync could not update the folders Claude Code may edit: {error}"
+        ));
+    }
+    notes
+}
+
+fn writable_folders_target_notice(
+    findings: &crate::core::WritableFoldersFindings,
+) -> Option<WritableFoldersTargetNotice> {
+    let crate::core::DirsTarget::NeedsConsent(reason) = findings.target else {
+        return None;
+    };
+    if !findings.ask_for_user_settings {
+        return None;
+    }
+    let folders: Vec<String> = findings.wanted.iter().map(|w| w.path.clone()).collect();
+    Some(WritableFoldersTargetNotice {
+        paste_json: crate::core::writable_folders_paste_json(&folders),
+        folders,
+        reason,
     })
 }
 

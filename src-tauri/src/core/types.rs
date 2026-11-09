@@ -492,6 +492,18 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_ignored_contexts: Vec<String>,
 
+    /// "Other folders Claude can edit": absolute folders Claude Code may edit
+    /// from this checkout, besides group members. Machine-specific paths, so
+    /// stored only in the registry pointer. See `core::claude_dirs`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_writable_folders: Vec<String>,
+
+    /// Set when the user chose "Not now" on the notice that asks whether
+    /// Claude Code's user settings may hold this checkout's folders. Hides
+    /// the notice for this checkout only. Stored only in the registry pointer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub local_writable_folders_notice_hidden: bool,
+
     /// Set when an agent registered this project over MCP, until the user keeps
     /// it in the app. Until then agents cannot read its contexts or project
     /// details, and it is nobody's peer, or an agent could make any folder a
@@ -636,6 +648,12 @@ pub struct ProjectGroup {
     /// `core::reconcile_group_profiles`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
+    /// "Let agents edit across this group". When on, Claude Code in each
+    /// member checkout may edit the folders of the other members, through
+    /// `permissions.additionalDirectories` (see `core::claude_dirs`). Off by
+    /// default, because it widens every member's write boundary.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub agents_edit_across_group: bool,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]

@@ -94,6 +94,8 @@ const TRANSIENT_FIELDS: &[&str] = &[
     "local_ignored_contexts",
     "local_ignored_profiles",
     "local_read_only",
+    "local_writable_folders",
+    "local_writable_folders_notice_hidden",
     "pending_contexts",
     "pending_profiles",
     "read_only_owner",

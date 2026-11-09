@@ -15,7 +15,7 @@ pub use drift::{
     check_project_drift, check_project_problems, collect_instruction_conflicts_pub,
     mcp_config_sync_notes, project_sync_warnings, AgentDrift, ProjectSyncWarnings,
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
-    ProjectProblemsReport,
+    ProjectProblemsReport, WritableFoldersTargetNotice,
 };
 pub use helpers::{CustomAssetConflict, CustomAssetKind, McpConfigSyncNotes, McpServerNote};
 // Contained project reads and writes, shared with the agent writers and the
@@ -51,6 +51,7 @@ pub use engine::{
     sync_project_without_autodetect, sync_to_directory,
 };
 pub use worktrees::{sync_linked_worktree, WorktreeSync};
+pub(crate) use worktrees::main_checkout_of;
 pub use rebuild::{
     rebuild_instruction_snapshots, rebuild_project_state, rebuild_project_with_refusals,
 };

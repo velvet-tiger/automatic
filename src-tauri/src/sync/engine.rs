@@ -319,8 +319,35 @@ fn sync_to_directory_inner(
     }
 
     sync_gitignore_step(&dir, project)?;
+    sync_writable_folders_step(project);
 
     Ok(written_files)
+}
+
+/// Keep the folders Claude Code may edit for this project in its settings
+/// (see `core::claude_dirs`). Runs last and never fails the sync: the agent
+/// files are already written, and the folders live in settings files sync
+/// does not own. A failure is logged here, and the step records it for the
+/// problems check to show.
+///
+/// The local settings file is kept out of `written_files` for the same reason
+/// as `.gitignore`: Automatic owns only some entries in it, so stale-file
+/// cleanup and drift must never treat it as an Automatic file.
+fn sync_writable_folders_step(project: &Project) {
+    match core::sync_writable_folders(project) {
+        Ok(outcome) => {
+            for error in outcome.errors {
+                eprintln!(
+                    "[automatic] sync: folders Claude Code may edit for '{}': {}",
+                    project.name, error
+                );
+            }
+        }
+        Err(e) => eprintln!(
+            "[automatic] sync: could not update the folders Claude Code may edit for '{}': {}",
+            project.name, e
+        ),
+    }
 }
 
 /// Every path sync writes or reads at a fixed location.  Files sync writes

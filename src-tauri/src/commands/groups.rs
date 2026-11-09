@@ -4,6 +4,7 @@ use super::project_sweeps::{
     ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
 };
 use super::projects::reconcile_group_profiles_for_projects;
+use super::writable_folders::refresh_writable_folders;
 
 // ── Project Groups ────────────────────────────────────────────────────────────
 
@@ -31,7 +32,10 @@ pub fn read_group(name: &str) -> Result<String, String> {
 /// own old and new members, and merging two would drop one set.
 fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
     queue_sweep(None, format!("group {group_name}"), move |progress| {
-        reconcile_group_profiles_for_projects(&members, progress)
+        reconcile_group_profiles_for_projects(&members, progress);
+        // Joining, leaving or changing a group changes the folders Claude
+        // Code may edit in every member, whether or not its profiles changed.
+        refresh_writable_folders(&members, progress);
     });
 }
 
@@ -66,6 +70,7 @@ pub fn delete_group(name: &str) -> Result<(), String> {
             for (project, error) in core::settle_all_group_joins() {
                 progress.report_failure(&project, error);
             }
+            refresh_writable_folders(&members, progress);
             Ok(())
         },
     )

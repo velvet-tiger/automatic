@@ -8,8 +8,16 @@ pub fn read_settings() -> Result<core::Settings, String> {
     core::read_settings()
 }
 
+/// Write the settings the Settings page edits. Where the writable folders go,
+/// and the user's agreement to user settings, change only through
+/// `set_writable_folders_target` and `set_writable_folders_user_consent`, so
+/// a stale or partial object cannot grant or drop that agreement. A damaged
+/// file reads as defaults, which withhold the agreement, and is healed.
 #[tauri::command]
-pub fn write_settings(settings: core::Settings) -> Result<(), String> {
+pub fn write_settings(mut settings: core::Settings) -> Result<(), String> {
+    let stored = core::read_settings()?;
+    settings.writable_folders_target = stored.writable_folders_target;
+    settings.writable_folders_user_consent = stored.writable_folders_user_consent;
     core::write_settings(&settings)
 }
 
