@@ -128,17 +128,17 @@ fn a_path_another_record_wrote_is_shared_not_taken_for_the_users() {
 
 #[test]
 fn an_entry_the_user_deleted_is_not_added_back_until_it_stops_being_wanted() {
-    let deleted = merge(json!({}), &owned(&["/a"], &[]), &[], &["/a"]);
+    let deleted = merge(json!({"permissions": {"additionalDirectories": ["/other"]}}), &owned(&["/a"], &[]), &[], &["/a"]);
     assert!(!deleted.changed, "the deleted entry came back");
     assert_eq!(deleted.entries, owned(&[], &["/a"]));
 
-    let still = merge(json!({}), &deleted.entries, &[], &["/a"]);
+    let still = merge(json!({"permissions": {"additionalDirectories": ["/other"]}}), &deleted.entries, &[], &["/a"]);
     assert!(!still.changed);
 
-    let dropped = merge(json!({}), &still.entries, &[], &[]);
+    let dropped = merge(json!({"permissions": {"additionalDirectories": ["/other"]}}), &still.entries, &[], &[]);
     assert!(dropped.entries.is_empty());
 
-    let wanted_again = merge(json!({}), &dropped.entries, &[], &["/a"]);
+    let wanted_again = merge(json!({"permissions": {"additionalDirectories": ["/other"]}}), &dropped.entries, &[], &["/a"]);
     assert!(wanted_again.changed);
     assert_eq!(wanted_again.entries.written, set(&["/a"]));
 }
@@ -241,6 +241,7 @@ fn candidate(path: &str, resolved: Option<&str>, source: FolderSource) -> Candid
         source,
         path: path.to_string(),
         resolved: resolved.map(PathBuf::from),
+        expected: None,
     }
 }
 
@@ -254,7 +255,7 @@ fn the_own_folder_and_folders_inside_it_are_left_out_and_missing_ones_reported()
         candidate("/real/b", Some("/real/b"), FolderSource::MainCheckout),
     ];
 
-    let resolved = resolve_folders(Path::new("/own"), &candidates);
+    let resolved = resolve_folders(Path::new("/own"), &candidates, &denied());
 
     assert_eq!(
         resolved.wanted,
@@ -448,7 +449,7 @@ fn a_read_only_project_goes_to_user_settings_and_its_folder_is_untouched() {
 }
 
 #[test]
-fn a_local_file_git_tracks_moves_the_entries_to_user_settings() {
+fn a_local_file_git_tracks_moves_the_entries_to_user_settings_and_is_left_alone() {
     let _home = temp_test_home();
     let ws = workspace();
     let a_dir = repo(&ws.base, "a");
@@ -468,9 +469,12 @@ fn a_local_file_git_tracks_moves_the_entries_to_user_settings() {
 
     assert_eq!(outcome.target, Some(DirsTarget::User(UserSettingsReason::Tracked)));
     assert_eq!(directories_in(&user_file()), vec![canonical(Path::new(&b.directory))]);
-    assert!(directories_in(&local_file(&a_dir)).is_empty());
-    let local: Value = serde_json::from_str(&fs::read_to_string(local_file(&a_dir)).unwrap()).unwrap();
-    assert_eq!(local["model"], "opus", "other keys stay");
+    // A tracked file belongs to the repository: Automatic leaves it, and says
+    // which of its entries are still there.
+    let tracked = local.to_string();
+    assert_eq!(fs::read_to_string(local_file(&a_dir)).unwrap(), tracked);
+    let findings = writable_folders_findings(&reread(&a)).expect("check").expect("findings");
+    assert_eq!(findings.left_in_tracked_local, vec![canonical(Path::new(&b.directory))]);
 }
 
 fn write_claude_state(entries: Value) {
@@ -745,4 +749,252 @@ fn a_settings_page_save_keeps_the_consent_and_target() {
     let stored = read_settings().expect("read");
     assert!(stored.writable_folders_user_consent);
     assert_eq!(stored.writable_folders_target, WritableFoldersTarget::AlwaysUser);
+}
+
+// ── Fix round 1 ───────────────────────────────────────────────────────────────
+
+fn denied() -> DeniedPaths {
+    DeniedPaths {
+        home: PathBuf::from("/home/me"),
+        sensitive: vec![
+            PathBuf::from("/home/me/.claude"),
+            PathBuf::from("/home/me/.claude.json"),
+            PathBuf::from("/home/me/.automatic"),
+        ],
+    }
+}
+
+#[test]
+fn a_missing_list_is_a_fresh_start_not_a_deletion() {
+    for file in [json!({}), json!({"permissions": {}}), json!({"permissions": {"allow": []}})] {
+        let out = merge(file.clone(), &owned(&["/a"], &["/b"]), &[], &["/a", "/b"]);
+        assert_eq!(out.entries, owned(&["/a", "/b"], &[]), "{file}");
+    }
+}
+
+#[test]
+fn a_deleted_local_file_gets_its_entries_back() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    sync(&a);
+    fs::remove_file(local_file(Path::new(&a.directory))).expect("git clean");
+
+    sync(&a);
+
+    assert_eq!(directories_in(&local_file(Path::new(&a.directory))), vec![canonical(Path::new(&b.directory))]);
+}
+
+#[test]
+fn broad_and_sensitive_folders_are_refused_whatever_their_source() {
+    let refused = [
+        "/",
+        "/home",
+        "/home/me",
+        "/home/me/.claude",
+    ];
+    for folder in refused {
+        assert!(refusal_reason(Path::new(folder), &denied()).is_some(), "{folder}");
+    }
+    for allowed in ["/home/me/code/b", "/home/me/.claude/skills", "/srv/b"] {
+        assert!(refusal_reason(Path::new(allowed), &denied()).is_none(), "{allowed}");
+    }
+    let sources = [
+        FolderSource::Extra,
+        FolderSource::MainCheckout,
+        FolderSource::GroupMember { group: "g".into(), project: "p".into() },
+    ];
+    let candidates: Vec<Candidate> = sources
+        .iter()
+        .map(|source| candidate("/home/me", Some("/home/me"), source.clone()))
+        .collect();
+
+    let resolved = resolve_folders(Path::new("/srv/own"), &candidates, &denied());
+
+    assert!(resolved.wanted.is_empty());
+    assert_eq!(resolved.refused.len(), 3);
+}
+
+#[test]
+fn setting_the_home_folder_or_automatics_folder_is_refused() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let home = super::super::paths::home_dir().unwrap();
+    fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
+    for folder in [home.clone(), get_automatic_dir().unwrap(), PathBuf::from("/")] {
+        let err = set_project_writable_folders(&a.local_key, &[folder.display().to_string()])
+            .expect_err("refused");
+        assert!(err.contains("cannot be allowed"), "{err}");
+    }
+    assert!(reread(&a).local_writable_folders.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_extra_folder_whose_link_was_swapped_is_not_written() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let real = repo(&ws.base, "real");
+    let other = repo(&ws.base, "other");
+    let link = ws.base.join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    set_project_writable_folders(&a.local_key, &[link.display().to_string()]).expect("set");
+    assert_eq!(reread(&a).local_writable_folders, vec![canonical(&real)], "stored canonical");
+    sync(&a);
+    fs::remove_file(&link).unwrap();
+    // The stored path itself is swapped for a link to somewhere else.
+    fs::rename(&real, ws.base.join("real-moved")).unwrap();
+    std::os::unix::fs::symlink(&other, &real).unwrap();
+
+    sync(&a);
+
+    assert!(directories_in(&local_file(Path::new(&a.directory))).is_empty());
+    let findings = writable_folders_findings(&reread(&a)).expect("check").expect("findings");
+    assert_eq!(findings.refused.len(), 1);
+    assert!(findings.refused[0].reason.contains("now leads to"), "{:?}", findings.refused);
+}
+
+#[test]
+fn deleting_a_member_removes_it_from_the_others_and_its_own_local_file() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    sync(&a);
+    sync(&b);
+
+    crate::commands::delete_project(&b.local_key).expect("delete");
+
+    assert!(directories_in(&local_file(Path::new(&a.directory))).is_empty(), "a still lists b");
+    assert!(directories_in(&local_file(Path::new(&b.directory))).is_empty(), "b's file kept a");
+}
+
+#[test]
+fn joining_a_group_refreshes_every_member() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    let c = register(&repo(&ws.base, "c"), "c", |_| {});
+    group("team", &[&a, &b], true);
+    sync(&a);
+    sync(&b);
+    // The group lists c, through a teammate's save, before c joins here.
+    let data = json!({
+        "name": "team",
+        "projects": [a.local_key, b.local_key, c.local_key],
+        "agents_edit_across_group": true
+    });
+    save_group("team", &data.to_string()).expect("list c");
+
+    crate::commands::join_group("team", &c.local_key).expect("join");
+
+    let c_path = canonical(Path::new(&c.directory));
+    assert!(directories_in(&local_file(Path::new(&a.directory))).contains(&c_path));
+    assert!(directories_in(&local_file(Path::new(&b.directory))).contains(&c_path));
+}
+
+#[test]
+fn a_record_another_process_changed_is_merged_not_overwritten() {
+    let _home = temp_test_home();
+    let (base, seen) = read_records_seen().expect("read");
+    let mut ours = base.clone();
+    set_record(&mut ours.user_settings, "mine", "/a", owned(&["/x"], &[]));
+    let mut theirs = DirectoryRecords::default();
+    set_record(&mut theirs.user_settings, "theirs", "/b", owned(&["/y"], &[]));
+    fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
+    fs::write(records_path().unwrap(), serde_json::to_string(&theirs).unwrap()).unwrap();
+
+    commit_records("mine", &ours, base, seen).expect("commit");
+
+    let stored = read_records().expect("read");
+    assert_eq!(record_of(&stored.user_settings, "mine", "/a"), owned(&["/x"], &[]));
+    assert_eq!(record_of(&stored.user_settings, "theirs", "/b"), owned(&["/y"], &[]));
+}
+
+#[test]
+fn a_stale_settings_save_cannot_bring_back_withdrawn_consent() {
+    let _home = temp_test_home();
+    consent();
+    let stale = read_settings().expect("read");
+    assert!(stale.writable_folders_user_consent);
+
+    set_writable_folders_user_consent(false).expect("withdraw");
+    write_settings(&stale).expect("stale save");
+
+    assert!(!read_settings().unwrap().writable_folders_user_consent);
+}
+
+#[test]
+fn a_moved_project_drops_the_old_folders_user_entries() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let old_dir = repo(&ws.base, "a");
+    let a = register(&old_dir, "a", |p| p.mode = ProjectMode::Silent);
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    consent();
+    sync(&a);
+    let b_path = canonical(Path::new(&b.directory));
+    assert_eq!(directories_in(&user_file()), vec![b_path.clone()]);
+    // The folder moves, and a new folder appears at the old path.
+    let new_dir = ws.base.join("a-moved");
+    fs::rename(&old_dir, &new_dir).unwrap();
+    fs::create_dir_all(&old_dir).unwrap();
+    let mut moved = reread(&a);
+    moved.directory = new_dir.display().to_string();
+    save_project(&moved.local_key, &serde_json::to_string(&moved).unwrap()).unwrap();
+    group("team", &[&b], true);
+
+    sync(&moved);
+
+    assert!(directories_in(&user_file()).is_empty(), "the old folder's entry is still there");
+    let records = read_records().unwrap();
+    assert!(records
+        .user_settings
+        .get(&moved.local_key)
+        .is_none_or(|folders| !folders.contains_key(&canonical(&old_dir))));
+}
+
+#[test]
+fn an_unparsable_claude_state_counts_as_flagged() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    fs::write(claude_state_path().unwrap(), "{ not json").unwrap();
+
+    let outcome = sync(&a);
+
+    assert_eq!(
+        outcome.target,
+        Some(DirsTarget::NeedsConsent(UserSettingsReason::TrustUnknown))
+    );
+    assert!(!local_file(Path::new(&a.directory)).exists());
+    let findings = writable_folders_findings(&reread(&a)).expect("check").expect("findings");
+    assert!(findings.unreadable.iter().any(|u| u.contains(".claude.json")), "{:?}", findings.unreadable);
+}
+
+#[test]
+fn a_project_awaiting_confirmation_is_left_alone() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    let mut awaiting = reread(&a);
+    awaiting.local_awaiting_confirmation = true;
+
+    let outcome = sync_writable_folders(&awaiting).expect("sync");
+
+    assert_eq!(outcome, WritableFoldersSync::default());
+    assert!(!local_file(Path::new(&a.directory)).exists());
+    let report = crate::sync::check_project_problems(&awaiting).expect("problems");
+    assert!(report.notes.iter().any(|n| n.contains("until you keep it")), "{:?}", report.notes);
 }

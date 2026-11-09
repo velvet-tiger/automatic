@@ -39,7 +39,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::claude_settings_file::{
-    followed, hold_settings_writes, load, parse_root, user_settings_path, write_root, Permissions,
+    followed, hold_settings_writes, load, parse_root, replace_text_unless_changed,
+    user_settings_path, write_root, Permissions,
 };
 use super::git_guard;
 use super::*;
@@ -155,33 +156,81 @@ fn records_path() -> Result<PathBuf, String> {
     Ok(get_automatic_dir()?.join(RECORD_FILE))
 }
 
-/// Read the records. A file that cannot be parsed is an error: without the
-/// record, Automatic cannot tell its entries from the user's.
-fn read_records() -> Result<DirectoryRecords, String> {
+/// Read the records, and the text they were read from (`None`: no file). A
+/// file that cannot be parsed is an error: without the record, Automatic
+/// cannot tell its entries from the user's.
+fn read_records_seen() -> Result<(DirectoryRecords, Option<String>), String> {
     let path = records_path()?;
     let raw = match fs::read_to_string(&path) {
         Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DirectoryRecords::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((DirectoryRecords::default(), None))
+        }
         Err(e) => return Err(format!("Could not read {}: {}", path.display(), e)),
     };
-    serde_json::from_str(&raw).map_err(|e| {
+    let records = serde_json::from_str(&raw).map_err(|e| {
         format!(
             "{} could not be parsed (line {}). Nothing was changed.",
             path.display(),
             e.line()
         )
-    })
+    })?;
+    Ok((records, Some(raw)))
 }
 
-fn write_records(records: &DirectoryRecords) -> Result<(), String> {
-    let path = records_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
+fn read_records() -> Result<DirectoryRecords, String> {
+    read_records_seen().map(|(records, _)| records)
+}
+
+/// How many times [`commit_records`] reads again after another process
+/// changed the record file between its read and its write.
+const RECORD_WRITE_TRIES: usize = 3;
+
+/// Copy the records of the checkout `key` from `ours` into `base`.
+fn with_checkout_records(mut base: DirectoryRecords, ours: &DirectoryRecords, key: &str) -> DirectoryRecords {
+    fn copy<T: Clone>(to: &mut BTreeMap<String, T>, from: &BTreeMap<String, T>, key: &str) {
+        match from.get(key) {
+            Some(value) => {
+                to.insert(key.to_string(), value.clone());
+            }
+            None => {
+                to.remove(key);
+            }
+        }
     }
-    let text = serde_json::to_string_pretty(records)
-        .map_err(|e| format!("Could not serialise {}: {}", path.display(), e))?;
-    write_registry_file(&path, &text)
+    copy(&mut base.user_settings, &ours.user_settings, key);
+    copy(&mut base.local_settings, &ours.local_settings, key);
+    copy(&mut base.last_errors, &ours.last_errors, key);
+    base
+}
+
+/// Write the records of the checkout `key` from `ours`. `base` and `seen` are
+/// the records and text this process read. When another process changed the
+/// file since, it is read again and only this checkout's records are put on
+/// top of the new version, so that process's records survive.
+fn commit_records(
+    key: &str,
+    ours: &DirectoryRecords,
+    mut base: DirectoryRecords,
+    mut seen: Option<String>,
+) -> Result<(), String> {
+    let path = records_path()?;
+    for _ in 0..RECORD_WRITE_TRIES {
+        let next = with_checkout_records(base.clone(), ours, key);
+        if seen.is_some() && next == base {
+            return Ok(());
+        }
+        let text = serde_json::to_string_pretty(&next)
+            .map_err(|e| format!("Could not serialise {}: {}", path.display(), e))?;
+        if replace_text_unless_changed(&path, &text, seen.as_deref())? {
+            return Ok(());
+        }
+        (base, seen) = read_records_seen()?;
+    }
+    Err(format!(
+        "{} kept changing while Automatic was writing it",
+        path.display()
+    ))
 }
 
 // ── Merge (pure) ──────────────────────────────────────────────────────────────
@@ -195,10 +244,10 @@ pub(crate) struct DirsMerge {
     pub changed: bool,
 }
 
-/// The `additionalDirectories` list in `root`, or an empty one. A
+/// The `additionalDirectories` list in `root`, or `None` when there is none. A
 /// `permissions` that is not an object, or a list that is not an array, is an
 /// error, so the file is left as it is.
-fn directory_list(root: &Map<String, Value>, path: &Path) -> Result<Vec<Value>, String> {
+fn directory_list(root: &Map<String, Value>, path: &Path) -> Result<Option<Vec<Value>>, String> {
     let not_shaped = |what: &str| {
         format!(
             "{} in {} is not {}. Fix the file, then sync again. Nothing was changed.",
@@ -212,10 +261,10 @@ fn directory_list(root: &Map<String, Value>, path: &Path) -> Result<Vec<Value>, 
         )
     };
     match root.get(PERMISSIONS_KEY) {
-        None => Ok(Vec::new()),
+        None => Ok(None),
         Some(Value::Object(permissions)) => match permissions.get(DIRECTORIES_KEY) {
-            None => Ok(Vec::new()),
-            Some(Value::Array(list)) => Ok(list.clone()),
+            None => Ok(None),
+            Some(Value::Array(list)) => Ok(Some(list.clone())),
             Some(_) => Err(not_shaped(&format!("{PERMISSIONS_KEY}.{DIRECTORIES_KEY}"))),
         },
         Some(_) => Err(not_shaped(PERMISSIONS_KEY)),
@@ -232,9 +281,11 @@ fn string_entries(list: &[Value]) -> BTreeSet<String> {
 /// Bring the `additionalDirectories` entries one record owns in `root` in line
 /// with `desired`.
 ///
-/// - `before` is the record from the last write. A path it lists that the file
-///   no longer holds was deleted by the user. While it stays wanted it is
-///   declined, and not added back.
+/// - `before` is the record from the last write. A path it lists that the
+///   list no longer holds was deleted by the user. While it stays wanted it is
+///   declined, and not added back. When the list itself is gone (the file was
+///   deleted, or a fresh clone sits at the same path) nothing was declined:
+///   the merge starts as if there were no record.
 /// - `shared` holds the paths other records own in the same file. They are
 ///   never removed here, and a wanted path one of them already wrote is
 ///   shared rather than taken for the user's.
@@ -250,7 +301,11 @@ pub(crate) fn merge_directories(
     desired: &BTreeSet<String>,
     path: &Path,
 ) -> Result<DirsMerge, String> {
-    let current = directory_list(&root, path)?;
+    let (current, before) = match directory_list(&root, path)? {
+        Some(list) => (list, before.clone()),
+        None => (Vec::new(), OwnedEntries::default()),
+    };
+    let before = &before;
     let present = string_entries(&current);
 
     let mut declined: BTreeSet<String> = before.declined.intersection(desired).cloned().collect();
@@ -335,6 +390,9 @@ pub(crate) enum TrustFlag {
     /// Claude Code once saw the local file tracked and the folder is not
     /// trusted, so it ignores the file's directories even when untracked.
     SeenTracked,
+    /// `~/.claude.json` could not be read, so the flag is unknown. Treated
+    /// as flagged.
+    Unknown,
 }
 
 /// Why the entries need user settings rather than the local file.
@@ -355,6 +413,8 @@ pub enum UserSettingsReason {
     SeenTracked,
     /// See [`LocalFileState::Unknown`].
     GitUnavailable,
+    /// See [`TrustFlag::Unknown`].
+    TrustUnknown,
 }
 
 /// Where the entries go.
@@ -405,6 +465,7 @@ pub(crate) fn choose_target(facts: &TargetFacts) -> DirsTarget {
             Some(LocalFileState::Untracked) => match facts.trust {
                 TrustFlag::Clear => return DirsTarget::Local,
                 TrustFlag::SeenTracked => UserSettingsReason::SeenTracked,
+                TrustFlag::Unknown => UserSettingsReason::TrustUnknown,
             },
             Some(LocalFileState::Tracked) => UserSettingsReason::Tracked,
             Some(LocalFileState::NotRepositoryRoot) => UserSettingsReason::NotRepositoryRoot,
@@ -440,6 +501,48 @@ pub(crate) struct Candidate {
     pub path: String,
     /// The canonical path, or `None` when the folder does not exist.
     pub resolved: Option<PathBuf>,
+    /// The canonical path stored when the folder was chosen. A folder that
+    /// now resolves elsewhere (a link was swapped) is refused.
+    pub expected: Option<PathBuf>,
+}
+
+/// A folder Automatic will not let Claude Code edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RefusedFolder {
+    pub path: String,
+    pub source: FolderSource,
+    /// Why, as the end of a sentence.
+    pub reason: String,
+}
+
+/// Folders too broad or too sensitive to hand to an agent, as normalised
+/// paths. See [`refusal_reason`].
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DeniedPaths {
+    pub home: PathBuf,
+    /// `~/.claude`, `~/.claude.json` and Automatic's own folder.
+    pub sensitive: Vec<PathBuf>,
+}
+
+/// Why `folder` (canonical) must not become a working folder, or `None`. The
+/// filesystem root, the home folder and its ancestors are refused, and so is
+/// any folder that is or holds Claude Code's settings or Automatic's data: an
+/// agent that can edit those can lift its own limits.
+pub(crate) fn refusal_reason(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    if folder.parent().is_none() {
+        return Some("it is the root of the file system".to_string());
+    }
+    if folder == denied.home {
+        return Some("it is your home folder".to_string());
+    }
+    if denied.home.starts_with(folder) {
+        return Some("it holds your home folder".to_string());
+    }
+    denied
+        .sensitive
+        .iter()
+        .find(|sensitive| sensitive.starts_with(folder))
+        .map(|sensitive| format!("it holds {}", sensitive.display()))
 }
 
 /// A wanted folder.
@@ -462,6 +565,7 @@ pub(crate) struct ResolvedFolders {
     /// Canonical paths, first source kept, in path order.
     pub wanted: Vec<WantedFolder>,
     pub missing: Vec<MissingFolder>,
+    pub refused: Vec<RefusedFolder>,
 }
 
 impl ResolvedFolders {
@@ -471,12 +575,19 @@ impl ResolvedFolders {
 }
 
 /// The folders a project at the canonical folder `own` wants. A folder that
-/// does not exist is reported as missing. The project's own folder, and any
-/// folder inside it, is already a working folder and is left out. A path that
-/// is not UTF-8 cannot be written to JSON and is left out too.
-pub(crate) fn resolve_folders(own: &Path, candidates: &[Candidate]) -> ResolvedFolders {
+/// does not exist is reported as missing. A folder [`refusal_reason`] refuses,
+/// or one that no longer resolves to the path stored for it, is reported as
+/// refused, whatever its source. The project's own folder, and any folder
+/// inside it, is already a working folder and is left out. A path that is not
+/// UTF-8 cannot be written to JSON and is left out too.
+pub(crate) fn resolve_folders(
+    own: &Path,
+    candidates: &[Candidate],
+    denied: &DeniedPaths,
+) -> ResolvedFolders {
     let mut by_path: BTreeMap<String, FolderSource> = BTreeMap::new();
     let mut missing = Vec::new();
+    let mut refused = Vec::new();
     for candidate in candidates {
         let Some(resolved) = &candidate.resolved else {
             missing.push(MissingFolder {
@@ -485,6 +596,21 @@ pub(crate) fn resolve_folders(own: &Path, candidates: &[Candidate]) -> ResolvedF
             });
             continue;
         };
+        let reason = match &candidate.expected {
+            Some(expected) if expected != resolved => Some(format!(
+                "it now leads to {}. Choose the folder again if that is right",
+                resolved.display()
+            )),
+            _ => refusal_reason(resolved, denied),
+        };
+        if let Some(reason) = reason {
+            refused.push(RefusedFolder {
+                path: candidate.path.clone(),
+                source: candidate.source.clone(),
+                reason,
+            });
+            continue;
+        }
         if resolved.starts_with(own) {
             continue;
         }
@@ -505,6 +631,7 @@ pub(crate) fn resolve_folders(own: &Path, candidates: &[Candidate]) -> ResolvedF
             .map(|(path, source)| WantedFolder { path, source })
             .collect(),
         missing,
+        refused,
     }
 }
 
@@ -538,6 +665,11 @@ pub(crate) struct AssessFacts {
     /// Joined groups whose switch is off.
     pub groups_switched_off: Vec<String>,
     pub last_sync_errors: Vec<String>,
+    /// Why `~/.claude.json` could not be read, when it could not.
+    pub trust_unreadable: Option<String>,
+    /// Entries Automatic wrote to the local file before git began tracking
+    /// it. Automatic leaves a tracked file alone, so they stay there.
+    pub left_in_tracked_local: Vec<String>,
 }
 
 /// What the problems check reports about a project's writable folders.
@@ -562,6 +694,10 @@ pub struct WritableFoldersFindings {
     pub groups_switched_off: Vec<String>,
     /// Writes the last sync could not make.
     pub last_sync_errors: Vec<String>,
+    /// Folders refused because they are too broad, too sensitive, or changed.
+    pub refused: Vec<RefusedFolder>,
+    /// See [`AssessFacts::left_in_tracked_local`].
+    pub left_in_tracked_local: Vec<String>,
 }
 
 /// The settings fragment that adds `paths` as working folders.
@@ -590,7 +726,7 @@ pub(crate) fn assess(facts: &AssessFacts) -> WritableFoldersFindings {
     let ask_for_user_settings = matches!(facts.target, DirsTarget::NeedsConsent(_))
         && !facts.notice_hidden
         && !facts.folders.wanted.is_empty();
-    let unreadable = files
+    let mut unreadable: Vec<String> = files
         .iter()
         .filter_map(|file| {
             file.unreadable
@@ -598,6 +734,7 @@ pub(crate) fn assess(facts: &AssessFacts) -> WritableFoldersFindings {
                 .map(|why| format!("{}: {}", file.shown, why))
         })
         .collect();
+    unreadable.extend(facts.trust_unreadable.iter().map(|why| format!("~/.claude.json: {why}")));
     WritableFoldersFindings {
         wanted: facts.folders.wanted.clone(),
         paste_json: paste_json(&uncovered),
@@ -609,6 +746,8 @@ pub(crate) fn assess(facts: &AssessFacts) -> WritableFoldersFindings {
         unreadable,
         groups_switched_off: facts.groups_switched_off.clone(),
         last_sync_errors: facts.last_sync_errors.clone(),
+        refused: facts.folders.refused.clone(),
+        left_in_tracked_local: facts.left_in_tracked_local.clone(),
     }
 }
 
@@ -665,7 +804,7 @@ fn settings_file_facts(path: &Path, shown: &str, contained_in: Option<&Path>) ->
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             match directory_list(&root, path) {
-                Ok(list) => facts.directories = string_entries(&list),
+                Ok(list) => facts.directories = string_entries(&list.unwrap_or_default()),
                 Err(e) => facts.unreadable = Some(e),
             }
         }
@@ -711,24 +850,26 @@ fn local_file_state(dir: &Path) -> LocalFileState {
 }
 
 /// Whether `~/.claude.json` flags any of `folders` as having had a tracked
-/// local file, without the trust that lifts it.
-fn trust_flag(folders: &[String]) -> TrustFlag {
-    let Ok(path) = claude_state_path() else {
-        return TrustFlag::Clear;
+/// local file, without the trust that lifts it. A file that cannot be read
+/// or parsed gives [`TrustFlag::Unknown`] and the reason. A missing file
+/// flags nothing.
+fn trust_flag(folders: &[String]) -> (TrustFlag, Option<String>) {
+    let path = match claude_state_path() {
+        Ok(path) => path,
+        Err(e) => return (TrustFlag::Unknown, Some(e)),
     };
     let state: Value = match fs::read_to_string(&path) {
         Ok(raw) => match serde_json::from_str(&raw) {
             Ok(state) => state,
             Err(e) => {
-                eprintln!(
-                    "[automatic] writable folders: {} could not be parsed (line {})",
-                    path.display(),
-                    e.line()
-                );
-                return TrustFlag::Clear;
+                return (
+                    TrustFlag::Unknown,
+                    Some(format!("could not be parsed (line {})", e.line())),
+                )
             }
         },
-        Err(_) => return TrustFlag::Clear,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (TrustFlag::Clear, None),
+        Err(e) => return (TrustFlag::Unknown, Some(format!("could not be read: {e}"))),
     };
     let flagged = folders.iter().any(|folder| {
         let Some(entry) = state.get("projects").and_then(|p| p.get(folder)) else {
@@ -739,9 +880,9 @@ fn trust_flag(folders: &[String]) -> TrustFlag {
         seen && !trusted
     });
     if flagged {
-        TrustFlag::SeenTracked
+        (TrustFlag::SeenTracked, None)
     } else {
-        TrustFlag::Clear
+        (TrustFlag::Clear, None)
     }
 }
 
@@ -802,6 +943,7 @@ fn gather_candidates(
                         project: entry.name.clone(),
                     },
                     resolved: resolve(&directory),
+                    expected: None,
                     path: directory,
                 });
             }
@@ -811,6 +953,8 @@ fn gather_candidates(
         candidates.push(Candidate {
             source: FolderSource::Extra,
             resolved: resolve(folder),
+            // Stored canonical by `set_project_writable_folders`.
+            expected: Some(PathBuf::from(folder)),
             path: folder.clone(),
         });
     }
@@ -818,10 +962,38 @@ fn gather_candidates(
         candidates.push(Candidate {
             source: FolderSource::MainCheckout,
             resolved: Some(main.to_path_buf()),
+            expected: None,
             path: main.display().to_string(),
         });
     }
     Ok(candidates)
+}
+
+/// The folders [`refusal_reason`] guards, on this machine.
+fn denied_paths() -> Result<DeniedPaths, String> {
+    let home = super::paths::home_dir()?;
+    let normal = |path: &Path| normalised(&path.to_string_lossy());
+    Ok(DeniedPaths {
+        home: normal(&home),
+        sensitive: vec![
+            normal(&home.join(".claude")),
+            normal(&home.join(".claude.json")),
+            normal(&get_automatic_dir()?),
+        ],
+    })
+}
+
+/// The folders whose records belong to a checkout that is at `own` now: its
+/// main checkout (`own`, or the main checkout of the worktree `own`) and that
+/// checkout's live linked worktrees. A record for any other folder is left
+/// from a folder that moved or a worktree that was removed.
+fn live_folders(own: &Path) -> BTreeSet<String> {
+    let base = main_checkout(own).unwrap_or_else(|| own.to_path_buf());
+    std::iter::once(base.clone())
+        .chain(crate::sync::linked_worktrees(&base))
+        .chain(std::iter::once(own.to_path_buf()))
+        .filter_map(|path| path.to_str().map(str::to_string))
+        .collect()
 }
 
 /// Whether the group stores the entry's project as a member, by its `id` or,
@@ -848,6 +1020,7 @@ struct Gathered {
     target: DirsTarget,
     local_state: Option<LocalFileState>,
     trust: TrustFlag,
+    trust_unreadable: Option<String>,
     groups_off: Vec<String>,
 }
 
@@ -861,7 +1034,7 @@ fn gather(project: &Project) -> Result<Gathered, String> {
     let main = main_checkout(&own);
     let (groups_on, groups_off) = joined_groups_by_switch(project)?;
     let candidates = gather_candidates(project, &groups_on, main.as_deref())?;
-    let folders = resolve_folders(&own, &candidates);
+    let folders = resolve_folders(&own, &candidates, &denied_paths()?);
 
     let settings = read_settings()?;
     let silent = project.mode == ProjectMode::Silent;
@@ -870,7 +1043,7 @@ fn gather(project: &Project) -> Result<Gathered, String> {
     // the target, so the problems check can tell whether entries the user put
     // in the local file count.
     let local_state = (!folders.wanted.is_empty()).then(|| local_file_state(&own));
-    let trust = trust_flag(&trust_keys(project, &own, main.as_deref()));
+    let (trust, trust_unreadable) = trust_flag(&trust_keys(project, &own, main.as_deref()));
     let facts = TargetFacts {
         silent,
         read_only,
@@ -890,6 +1063,7 @@ fn gather(project: &Project) -> Result<Gathered, String> {
         target: choose_target(&facts),
         local_state,
         trust,
+        trust_unreadable,
         groups_off,
     })
 }
@@ -903,7 +1077,11 @@ fn uses_claude(project: &Project) -> bool {
 /// The writable-folder findings for `project`, or `None` when it does not use
 /// Claude Code or has no folder. Reads only.
 pub fn writable_folders_findings(project: &Project) -> Result<Option<WritableFoldersFindings>, String> {
-    if !uses_claude(project) || project.directory.is_empty() || project.local_key.is_empty() {
+    if !uses_claude(project)
+        || project.directory.is_empty()
+        || project.local_key.is_empty()
+        || project.local_awaiting_confirmation
+    {
         return Ok(None);
     }
     if !Path::new(&project.directory).is_dir() {
@@ -911,18 +1089,31 @@ pub fn writable_folders_findings(project: &Project) -> Result<Option<WritableFol
     }
     let gathered = gather(project)?;
     let own = &gathered.own;
-    let last_sync_errors = read_records()
-        .map(|records| {
+    let (last_sync_errors, local_record) = match read_records() {
+        Ok(records) => (
             records
                 .last_errors
                 .get(&project.local_key)
                 .and_then(|folders| folders.get(&gathered.folder_key))
                 .cloned()
-                .unwrap_or_default()
-        })
-        .unwrap_or_else(|e| vec![e]);
+                .unwrap_or_default(),
+            record_of(&records.local_settings, &project.local_key, &gathered.folder_key),
+        ),
+        Err(e) => (vec![e], OwnedEntries::default()),
+    };
+    let local_tracked = !local_record.written.is_empty()
+        && gathered
+            .local_state
+            .unwrap_or_else(|| local_file_state(own))
+            == LocalFileState::Tracked;
     let facts = AssessFacts {
         last_sync_errors,
+        trust_unreadable: gathered.trust_unreadable.clone(),
+        left_in_tracked_local: if local_tracked {
+            local_record.written.into_iter().collect()
+        } else {
+            Vec::new()
+        },
         user: settings_file_facts(&user_settings_path()?, "~/.claude/settings.json", None),
         managed: {
             let path = managed_settings_path()?;
@@ -993,16 +1184,21 @@ fn apply_to_file(
 /// folders it wants. Runs for a project that lists Claude Code, and for one
 /// that stopped listing it while records remain, so its entries are removed.
 ///
-/// A Silent or read-only project never gets a write into its folder. A
-/// failed write is reported in `errors` and the other target still runs. An
-/// error is returned only when nothing could be decided, and then nothing
-/// was changed.
+/// A Silent or read-only project never gets a write into its folder, and a
+/// local file git tracks is left as it is. A project an agent registered,
+/// which the user has not kept, is left alone. A failed write is reported in
+/// `errors` and the other target still runs. An error is returned only when
+/// nothing could be decided, and then nothing was changed.
 pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, String> {
-    if project.local_key.is_empty() || project.directory.is_empty() {
+    if project.local_key.is_empty()
+        || project.directory.is_empty()
+        || project.local_awaiting_confirmation
+    {
         return Ok(WritableFoldersSync::default());
     }
     let _writes = hold_settings_writes();
-    let mut records = read_records()?;
+    let (base, seen) = read_records_seen()?;
+    let mut records = base.clone();
     let key = project.local_key.as_str();
     let gathered = if uses_claude(project) {
         Some(gather(project)?)
@@ -1016,9 +1212,7 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
             .and_then(|p| p.to_str().map(str::to_string))
             .unwrap_or_else(|| project.directory.clone()),
     };
-    let had_records = !record_of(&records.user_settings, key, &folder_key).is_empty()
-        || !record_of(&records.local_settings, key, &folder_key).is_empty();
-    if gathered.is_none() && !had_records {
+    if gathered.is_none() && !records.user_settings.contains_key(key) && !records.local_settings.contains_key(key) {
         return Ok(WritableFoldersSync::default());
     }
 
@@ -1030,38 +1224,32 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
         Some(DirsTarget::User(_)) => (&empty, &wanted),
         Some(DirsTarget::NeedsConsent(_)) | None => (&empty, &empty),
     };
-
     let mut outcome = WritableFoldersSync {
         target,
         wanted: wanted.iter().cloned().collect(),
         errors: Vec::new(),
     };
-    let original = records.clone();
 
-    let local_before = record_of(&records.local_settings, key, &folder_key);
     let own = PathBuf::from(&folder_key);
-    if folder_writable(project)
-        && (!local_desired.is_empty() || !local_before.written.is_empty())
-        && !tracked_on_a_worktree_branch(&own, gathered.as_ref().and_then(|g| g.local_state))
-    {
-        let path = local_settings_path(&own);
-        match apply_to_file(&path, Some(&own), &local_before, &empty, local_desired) {
-            Ok(entries) => set_record(&mut records.local_settings, key, &folder_key, entries),
-            Err(e) => outcome.errors.push(e),
-        }
+    let known_state = gathered.as_ref().and_then(|g| g.local_state);
+    if let Err(e) = apply_local(project, &own, &mut records, local_desired, known_state) {
+        outcome.errors.push(e);
     }
 
     let user_path = user_settings_path()?;
+    let live = live_folders(&own);
     let mut user_jobs: Vec<(String, BTreeSet<String>)> = vec![(folder_key.clone(), user_desired.clone())];
-    // A worktree that is gone keeps its record until its entries are removed.
-    if let Some(folders) = records.user_settings.get(key) {
-        user_jobs.extend(
-            folders
-                .keys()
-                .filter(|folder| **folder != folder_key && !Path::new(folder).exists())
-                .map(|folder| (folder.clone(), BTreeSet::new())),
-        );
-    }
+    // A folder the checkout left (it moved, or a worktree was removed) keeps
+    // its record until its user-settings entries are removed.
+    let stale: Vec<String> = records
+        .user_settings
+        .get(key)
+        .into_iter()
+        .chain(records.local_settings.get(key))
+        .flat_map(|folders| folders.keys().cloned())
+        .filter(|folder| !live.contains(folder))
+        .collect();
+    user_jobs.extend(stale.iter().map(|folder| (folder.clone(), BTreeSet::new())));
     for (folder, desired) in user_jobs {
         let before = record_of(&records.user_settings, key, &folder);
         if desired.is_empty() && before.written.is_empty() {
@@ -1074,33 +1262,46 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
             Err(e) => outcome.errors.push(e),
         }
     }
-    if let Some(folders) = records.local_settings.get_mut(key) {
-        folders.retain(|folder, _| *folder == folder_key || Path::new(folder).exists());
-        if folders.is_empty() {
-            records.local_settings.remove(key);
-        }
+    for folder in &stale {
+        set_record(&mut records.local_settings, key, folder, OwnedEntries::default());
+        set_last_errors(&mut records, key, folder, &[]);
     }
 
     set_last_errors(&mut records, key, &folder_key, &outcome.errors);
-    if records != original {
-        if let Err(e) = write_records(&records) {
-            outcome.errors.push(format!(
-                "Automatic changed Claude Code's settings but could not record it: {e}"
-            ));
-        }
+    if let Err(e) = commit_records(key, &records, base, seen) {
+        outcome.errors.push(format!(
+            "Automatic changed Claude Code's settings but could not record it: {e}"
+        ));
     }
     Ok(outcome)
 }
 
-/// Whether `own` is a linked worktree whose branch tracks the local settings
-/// file. A worktree's tracked files belong to its branch, and sync must not
-/// change them (see `sync::worktrees`), so Automatic leaves such a file as it
-/// is, even to remove its own entries. `known` is the state already read.
-fn tracked_on_a_worktree_branch(own: &Path, known: Option<LocalFileState>) -> bool {
-    if main_checkout(own).is_none() {
-        return false;
+/// Bring the checkout's entries in its own local settings file at `own` in
+/// line with `desired`, and update `records`. Writes nothing when the folder
+/// must not be written (Silent, read-only) or git tracks the file: a tracked
+/// file belongs to the repository, so Automatic leaves its entries there and
+/// keeps the record, and the problems check names them. `known` is the
+/// file's state when it was already read.
+fn apply_local(
+    project: &Project,
+    own: &Path,
+    records: &mut DirectoryRecords,
+    desired: &BTreeSet<String>,
+    known: Option<LocalFileState>,
+) -> Result<(), String> {
+    let key = project.local_key.as_str();
+    let folder_key = own.to_str().unwrap_or_default();
+    let before = record_of(&records.local_settings, key, folder_key);
+    if !folder_writable(project) || (desired.is_empty() && before.written.is_empty()) {
+        return Ok(());
     }
-    known.unwrap_or_else(|| local_file_state(own)) == LocalFileState::Tracked
+    if known.unwrap_or_else(|| local_file_state(own)) == LocalFileState::Tracked {
+        return Ok(());
+    }
+    let path = local_settings_path(own);
+    let entries = apply_to_file(&path, Some(own), &before, &BTreeSet::new(), desired)?;
+    set_record(&mut records.local_settings, key, folder_key, entries);
+    Ok(())
 }
 
 /// Whether `project` has anything for [`sync_writable_folders`] to do: it
@@ -1116,16 +1317,43 @@ pub fn writable_folders_apply(project: &Project) -> bool {
         })
 }
 
+/// Remove the entries Automatic wrote for `project`, which is about to be
+/// deleted: from its own local file while that folder may still be written,
+/// and from user settings. Then drop its records.
+pub fn release_writable_folders(project: &Project) -> Result<(), String> {
+    if project.local_key.is_empty() {
+        return Ok(());
+    }
+    let mut errors = Vec::new();
+    if let Some(own) = fs::canonicalize(&project.directory).ok().filter(|_| !project.directory.is_empty()) {
+        let _writes = hold_settings_writes();
+        let (base, seen) = read_records_seen()?;
+        let mut records = base.clone();
+        match apply_local(project, &own, &mut records, &BTreeSet::new(), None) {
+            Ok(()) => commit_records(&project.local_key, &records, base, seen)?,
+            Err(e) => errors.push(e),
+        }
+    }
+    if let Err(e) = forget_writable_folders(&project.local_key) {
+        errors.push(e);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
 /// Remove every entry Automatic wrote to user settings for the checkout
-/// `local_key`, and drop its records. For a project being deleted. Its local
-/// files are left: the folder is no longer Automatic's to change.
+/// `local_key`, and drop its records. Its local files are left: use
+/// [`release_writable_folders`] while the project is still registered.
 pub fn forget_writable_folders(local_key: &str) -> Result<(), String> {
     if local_key.is_empty() {
         return Ok(());
     }
     let _writes = hold_settings_writes();
-    let mut records = read_records()?;
-    let original = records.clone();
+    let (base, seen) = read_records_seen()?;
+    let mut records = base.clone();
     let folders: Vec<String> = records
         .user_settings
         .get(local_key)
@@ -1143,9 +1371,7 @@ pub fn forget_writable_folders(local_key: &str) -> Result<(), String> {
     }
     records.local_settings.remove(local_key);
     records.last_errors.remove(local_key);
-    if records != original {
-        write_records(&records)?;
-    }
+    commit_records(local_key, &records, base, seen)?;
     if errors.is_empty() {
         Ok(())
     } else {
@@ -1153,29 +1379,62 @@ pub fn forget_writable_folders(local_key: &str) -> Result<(), String> {
     }
 }
 
+/// Replace the checkout's "Other folders Claude can edit". Each folder must
+/// exist, and is stored as its canonical path, so a link swapped later is
+/// noticed. A folder [`refusal_reason`] refuses is an error, and nothing is
+/// stored.
+pub fn set_project_writable_folders(ident: &str, folders: &[String]) -> Result<(), String> {
+    let denied = denied_paths()?;
+    let mut canonical = Vec::new();
+    for folder in folders {
+        if !Path::new(folder).is_absolute() {
+            return Err(format!("'{}' is not an absolute folder path", folder));
+        }
+        let real = fs::canonicalize(folder)
+            .map_err(|e| format!("'{}' cannot be used: {}", folder, e))?;
+        if !real.is_dir() {
+            return Err(format!("'{}' is not a folder", folder));
+        }
+        if let Some(reason) = refusal_reason(&real, &denied) {
+            return Err(format!(
+                "Claude Code cannot be allowed to edit '{}', because {}.",
+                folder, reason
+            ));
+        }
+        let real = real
+            .to_str()
+            .ok_or_else(|| format!("'{}' is not a UTF-8 path", folder))?
+            .to_string();
+        canonical.push(real);
+    }
+    store_project_writable_folders(ident, &canonical)
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 /// Set where entries go. Choosing user settings is the user's agreement to
 /// them, so it records consent too.
 pub fn set_writable_folders_target(target: WritableFoldersTarget) -> Result<(), String> {
-    let mut settings = read_settings_to_update()?;
-    settings.writable_folders_target = target;
-    if target == WritableFoldersTarget::AlwaysUser {
-        settings.writable_folders_user_consent = true;
-    }
-    write_settings(&settings)
+    update_settings(SettingsRead::Strict, |mut settings| {
+        settings.writable_folders_target = target;
+        if target == WritableFoldersTarget::AlwaysUser {
+            settings.writable_folders_user_consent = true;
+        }
+        settings
+    })
 }
 
 /// Record whether user settings may hold project folders. Withdrawing it
 /// makes the next sync of each project remove the entries Automatic wrote
 /// there, and moves the target back to the local file.
 pub fn set_writable_folders_user_consent(consent: bool) -> Result<(), String> {
-    let mut settings = read_settings_to_update()?;
-    settings.writable_folders_user_consent = consent;
-    if !consent {
-        settings.writable_folders_target = WritableFoldersTarget::PreferLocal;
-    }
-    write_settings(&settings)
+    update_settings(SettingsRead::Strict, |mut settings| {
+        settings.writable_folders_user_consent = consent;
+        if !consent {
+            settings.writable_folders_target = WritableFoldersTarget::PreferLocal;
+        }
+        settings
+    })
 }
 
 /// Turn "Let agents edit across this group" on or off. Returns whether the

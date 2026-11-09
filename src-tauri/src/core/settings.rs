@@ -214,11 +214,72 @@ pub fn read_settings_to_update() -> Result<Settings, String> {
 /// Write settings. A file that cannot be parsed is replaced, so it heals, and a
 /// copy stays beside it as `settings.json.damaged` for anyone who wants what
 /// was in it.
+///
+/// Where writable folders go, and the user's agreement to user settings, keep
+/// the values on disk: only [`update_settings`] with an explicit edit changes
+/// them (see `core::claude_dirs`). A caller holding settings it read earlier
+/// therefore cannot bring back an agreement the user has since withdrawn.
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
+    update_settings(SettingsRead::Lenient, |stored| Settings {
+        writable_folders_target: stored.writable_folders_target,
+        writable_folders_user_consent: stored.writable_folders_user_consent,
+        ..settings.clone()
+    })
+}
+
+/// Write `settings` whole, including the writable-folders choices. For a reset
+/// back to defaults.
+fn replace_settings(settings: &Settings) -> Result<(), String> {
+    update_settings(SettingsRead::Lenient, |_| settings.clone())
+}
+
+/// How [`update_settings`] treats a file that cannot be parsed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SettingsRead {
+    /// Start from defaults, and keep a copy of the damaged file.
+    Lenient,
+    /// Refuse, because the edit would write defaults over every setting.
+    Strict,
+}
+
+/// How many times [`update_settings`] starts again after another writer
+/// changed the file between its read and its write.
+const SETTINGS_WRITE_TRIES: usize = 3;
+
+/// Read the settings, apply `edit`, and write the result, unless the file
+/// changed since it was read. Then it reads again and retries, a few times.
+pub fn update_settings(read: SettingsRead, edit: impl Fn(Settings) -> Settings) -> Result<(), String> {
     let path = get_automatic_dir()?.join("settings.json");
-    keep_damaged_copy(&path)?;
-    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    write_atomically(&path, &raw)
+    for _ in 0..SETTINGS_WRITE_TRIES {
+        let seen = match fs::read_to_string(&path) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("Could not read {}: {}", path.display(), e)),
+        };
+        let stored = match seen.as_deref().map(serde_json::from_str::<Settings>) {
+            None => Settings::default(),
+            Some(Ok(stored)) => stored,
+            Some(Err(e)) if read == SettingsRead::Strict => {
+                return Err(format!(
+                    "{} could not be parsed (line {}, column {})",
+                    path.display(),
+                    e.line(),
+                    e.column()
+                ))
+            }
+            Some(Err(_)) => Settings::default(),
+        };
+        keep_damaged_copy(&path)?;
+        let raw = serde_json::to_string_pretty(&edit(stored)).map_err(|e| e.to_string())?;
+        match write_unless_changed(&path, &raw, seen.as_deref())? {
+            Written::Yes => return Ok(()),
+            Written::Changed => continue,
+        }
+    }
+    Err(format!(
+        "{} kept changing while Automatic was writing it. Try again.",
+        path.display()
+    ))
 }
 
 /// Copy a settings file that cannot be parsed, replacing any earlier copy.
@@ -261,6 +322,44 @@ fn followed_link(path: &Path) -> Result<PathBuf, String> {
     Ok(path.parent().map_or(link.clone(), |parent| parent.join(&link)))
 }
 
+/// Whether [`write_unless_changed`] replaced the file.
+enum Written {
+    Yes,
+    /// The file no longer held what the caller read. Nothing was written.
+    Changed,
+}
+
+/// [`write_atomically`], unless the file no longer holds `seen` (`None`: no
+/// file) just before the rename.
+fn write_unless_changed(path: &Path, text: &str, seen: Option<&str>) -> Result<Written, String> {
+    let target = followed_link(path)?;
+    let temp = prepare_temp(&target, text)?;
+    let current = match fs::read_to_string(&target) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("Could not read {}: {}", target.display(), e)),
+    };
+    if current.as_deref() != seen {
+        return Ok(Written::Changed);
+    }
+    temp.persist(&target).map_err(|e| e.error.to_string())?;
+    Ok(Written::Yes)
+}
+
+/// A temporary file beside `target` holding `text`, with `target`'s
+/// permissions when it exists.
+fn prepare_temp(target: &Path, text: &str) -> Result<tempfile::NamedTempFile, String> {
+    let parent = target.parent().ok_or("The file has no parent folder")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    temp.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    if let Ok(existing) = fs::metadata(target) {
+        fs::set_permissions(temp.path(), existing.permissions()).map_err(|e| e.to_string())?;
+    }
+    Ok(temp)
+}
+
 /// Replace a file in one step, so a crash cannot leave half of it. An existing
 /// file keeps its permissions. A new file is readable only by its owner.
 pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
@@ -280,7 +379,7 @@ pub(super) fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
 
 pub fn reset_settings() -> Result<(), String> {
     delete_all_gateway_tokens()?;
-    write_settings(&Settings::default())
+    replace_settings(&Settings::default())
 }
 
 /// Remove the secret store token of every configured gateway. Runs before a

@@ -139,19 +139,33 @@ fn replace_unless_changed(
     target: &Path,
     seen: Option<&str>,
 ) -> Result<(), String> {
+    if persist_unless_changed(temp, target, seen)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} changed while Automatic was writing it. Nothing was changed. Try again.",
+            target.display()
+        ))
+    }
+}
+
+/// [`replace_unless_changed`], reporting a change as `false` instead of an
+/// error, for a caller that reads again and retries.
+fn persist_unless_changed(
+    temp: tempfile::NamedTempFile,
+    target: &Path,
+    seen: Option<&str>,
+) -> Result<bool, String> {
     let current = match fs::read_to_string(target) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(format!("Could not read {}: {}", target.display(), e)),
     };
     if current.as_deref() != seen {
-        return Err(format!(
-            "{} changed while Automatic was writing it. Nothing was changed. Try again.",
-            target.display()
-        ));
+        return Ok(false);
     }
     temp.persist(target)
-        .map(|_| ())
+        .map(|_| true)
         .map_err(|e| format!("Could not write {}: {}", target.display(), e.error))
 }
 
@@ -167,15 +181,35 @@ pub(super) fn write_root(
     permissions: Permissions,
 ) -> Result<(), String> {
     let failed = |e: &dyn std::fmt::Display| format!("Could not write {}: {}", target.display(), e);
+    let mut text = serde_json::to_string_pretty(root).map_err(|e| failed(&e))?;
+    text.push('\n');
+    let temp = temp_beside(target, &text, permissions)?;
+    replace_unless_changed(temp, target, seen)
+}
 
+/// Replace `target` with `text` in one step, unless it no longer holds `seen`
+/// (`None`: no file). Returns `false`, and writes nothing, when it changed.
+pub(super) fn replace_text_unless_changed(
+    target: &Path,
+    text: &str,
+    seen: Option<&str>,
+) -> Result<bool, String> {
+    let temp = temp_beside(target, text, Permissions::Keep)?;
+    persist_unless_changed(temp, target, seen)
+}
+
+/// A finished temporary file beside `target` holding `text`, with the
+/// permissions `target` should end up with.
+fn temp_beside(
+    target: &Path,
+    text: &str,
+    permissions: Permissions,
+) -> Result<tempfile::NamedTempFile, String> {
+    let failed = |e: &dyn std::fmt::Display| format!("Could not write {}: {}", target.display(), e);
     let parent = target
         .parent()
         .ok_or_else(|| failed(&"the path has no parent folder"))?;
     fs::create_dir_all(parent).map_err(|e| failed(&e))?;
-
-    let mut text = serde_json::to_string_pretty(root).map_err(|e| failed(&e))?;
-    text.push('\n');
-
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| failed(&e))?;
     temp.write_all(text.as_bytes()).map_err(|e| failed(&e))?;
     temp.as_file().sync_all().map_err(|e| failed(&e))?;
@@ -187,7 +221,7 @@ pub(super) fn write_root(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(failed(&e)),
     }
-    replace_unless_changed(temp, target, seen)
+    Ok(temp)
 }
 
 #[cfg(test)]

@@ -31,11 +31,16 @@ pub fn read_group(name: &str) -> Result<String, String> {
 /// Queue a reconcile of `members`. It has no merge key: each save names its
 /// own old and new members, and merging two would drop one set.
 fn queue_group_reconcile(group_name: &str, members: Vec<String>) {
+    queue_group_reconcile_and_refresh(group_name, members.clone(), members);
+}
+
+/// [`queue_group_reconcile`] of `members`, then a refresh of the folders
+/// Claude Code may edit in `refresh`. Joining, leaving or changing a group
+/// changes those folders in every member, whether or not its profiles changed.
+fn queue_group_reconcile_and_refresh(group_name: &str, members: Vec<String>, refresh: Vec<String>) {
     queue_sweep(None, format!("group {group_name}"), move |progress| {
         reconcile_group_profiles_for_projects(&members, progress);
-        // Joining, leaving or changing a group changes the folders Claude
-        // Code may edit in every member, whether or not its profiles changed.
-        refresh_writable_folders(&members, progress);
+        refresh_writable_folders(&refresh, progress);
     });
 }
 
@@ -85,7 +90,9 @@ pub fn join_group(group_name: &str, project_name: &str) -> Result<(), String> {
     core::join_listed_group(&ident, group_name)?;
     core::reconcile_group_contexts_for_projects(std::slice::from_ref(&ident))?;
     drop(writes);
-    queue_group_reconcile(group_name, vec![ident]);
+    // Only the joiner's profiles change, but every member gains its folder.
+    let members = core::group_member_idents(group_name);
+    queue_group_reconcile_and_refresh(group_name, vec![ident], members);
     Ok(())
 }
 

@@ -51,7 +51,7 @@ pub use engine::{
     sync_project_without_autodetect, sync_to_directory,
 };
 pub use worktrees::{sync_linked_worktree, WorktreeSync};
-pub(crate) use worktrees::main_checkout_of;
+pub(crate) use worktrees::{linked_worktrees, main_checkout_of};
 pub use rebuild::{
     rebuild_instruction_snapshots, rebuild_project_state, rebuild_project_with_refusals,
 };

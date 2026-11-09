@@ -129,6 +129,15 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
     }
 
     let mut writable_folders_target = None;
+    if project.local_awaiting_confirmation
+        && (!project.local_writable_folders.is_empty() || !project.local_confirmed_groups.is_empty())
+    {
+        notes.push(
+            "Automatic does not change which other folders Claude Code may edit for this \
+             project until you keep it in the app."
+                .to_string(),
+        );
+    }
     match crate::core::writable_folders_findings(project) {
         Ok(Some(findings)) => {
             problems.extend(writable_folders_problem(&findings));
@@ -178,6 +187,10 @@ fn user_settings_reason(reason: crate::core::UserSettingsReason) -> &'static str
         }
         R::GitUnavailable => {
             "Automatic could not ask git whether it tracks this project's local settings file."
+        }
+        R::TrustUnknown => {
+            "Automatic could not read `~/.claude.json`, so it cannot tell whether Claude Code \
+             honours this project's local settings file."
         }
     }
 }
@@ -263,6 +276,19 @@ fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Ve
                 join_words(&findings.groups_switched_off)
             ));
         }
+    }
+    for refused in &findings.refused {
+        notes.push(format!(
+            "Automatic will not let Claude Code edit `{}`, because {}.",
+            refused.path, refused.reason
+        ));
+    }
+    if !findings.left_in_tracked_local.is_empty() {
+        notes.push(format!(
+            "Git tracks this project's `.claude/settings.local.json`, so Automatic no longer \
+             changes it. Entries Automatic wrote there earlier stay until you remove them: {}.",
+            code_list(&findings.left_in_tracked_local)
+        ));
     }
     for unreadable in &findings.unreadable {
         notes.push(format!("Automatic could not read a Claude Code settings file. {unreadable}"));

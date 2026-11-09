@@ -502,15 +502,12 @@ pub fn confirm_project_registration(ident: &str) -> Result<(), String> {
     edit_decisions(ident, |decisions| decisions.awaiting_confirmation = false)
 }
 
-/// Replace the folders, besides group members, that Claude Code may edit from
+/// Store the folders, besides group members, that Claude Code may edit from
 /// the project with identifier `ident`. Writes only the registry pointer.
-/// Each folder must be an absolute path; it is stored as given.
-pub fn set_project_writable_folders(ident: &str, folders: &[String]) -> Result<(), String> {
+/// `core::claude_dirs::set_project_writable_folders` checks them first.
+pub(crate) fn store_project_writable_folders(ident: &str, folders: &[String]) -> Result<(), String> {
     let mut unique: Vec<String> = Vec::new();
     for folder in folders {
-        if !std::path::Path::new(folder).is_absolute() {
-            return Err(format!("'{}' is not an absolute folder path", folder));
-        }
         add_name(&mut unique, folder);
     }
     edit_decisions(ident, |decisions| decisions.writable_folders = unique)

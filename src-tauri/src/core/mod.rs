@@ -108,7 +108,8 @@ pub use paths::*;
 pub use plugins::*;
 pub use profile::*;
 pub use claude_dirs::{
-    forget_writable_folders, set_group_agents_edit, set_writable_folders_target,
+    forget_writable_folders, release_writable_folders, set_group_agents_edit,
+    set_project_writable_folders, RefusedFolder, set_writable_folders_target,
     set_writable_folders_user_consent, sync_writable_folders, writable_folders_apply,
     writable_folders_findings, paste_json as writable_folders_paste_json, DirsTarget, FolderSource, LocalFileState, MissingFolder,
     UserSettingsReason, WantedFolder, WritableFoldersFindings, WritableFoldersSync,

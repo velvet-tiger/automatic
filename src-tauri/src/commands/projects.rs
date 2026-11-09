@@ -797,6 +797,39 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove what Automatic wrote to the local settings file of the project
+/// `ident`, which is about to be deleted, and return the other members of the
+/// groups it joined. Failures are logged: the delete goes ahead.
+fn release_writable_folders_before_delete(ident: &str) -> Vec<String> {
+    let project: core::Project = match core::read_project(ident)
+        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| e.to_string()))
+    {
+        Ok(project) => project,
+        Err(e) => {
+            eprintln!("delete_project: could not read '{}' to release its folders: {}", ident, e);
+            return Vec::new();
+        }
+    };
+    if let Err(e) = core::release_writable_folders(&project) {
+        eprintln!(
+            "delete_project: could not remove the folders Claude Code may edit for '{}': {}",
+            ident, e
+        );
+    }
+    let groups = core::joined_groups(&project).unwrap_or_else(|e| {
+        eprintln!("delete_project: could not read the groups of '{}': {}", ident, e);
+        Vec::new()
+    });
+    let mut members: Vec<String> = groups
+        .iter()
+        .flat_map(|group| core::group_member_idents(&group.name))
+        .filter(|member| *member != project.local_key)
+        .collect();
+    members.sort();
+    members.dedup();
+    members
+}
+
 #[tauri::command(async)]
 pub fn delete_project(name: &str) -> Result<(), String> {
     let _writes = hold_library_writes();
@@ -805,13 +838,24 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     let name = &core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string());
     // Resolve the store keys before the registry entry goes.
     let keys = core::project_store_keys(name)?;
+    // While the project is still registered: take the entries Automatic wrote
+    // out of its own local file, and note the members of its groups, whose
+    // folders list this one. Best-effort, like the clean-up below.
+    let group_members = release_writable_folders_before_delete(name);
     core::delete_project(name)?;
     // The folders this checkout let Claude Code edit stay in user settings
-    // otherwise, for every session. Best-effort: the delete has happened.
+    // otherwise, for every session.
     if let Err(e) = core::forget_writable_folders(&keys.local_key) {
         eprintln!(
             "delete_project: could not remove the folders Claude Code may edit for '{}': {}",
             name, e
+        );
+    }
+    if !group_members.is_empty() {
+        crate::commands::project_sweeps::queue_sweep(
+            None,
+            format!("deleted project {name}"),
+            move |progress| crate::commands::refresh_writable_folders(&group_members, progress),
         );
     }
 
