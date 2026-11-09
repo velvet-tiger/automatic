@@ -4,6 +4,19 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-11-10
+
+### Added
+
+- The project editor shows problems, warnings and notices in one list under the project title, sorted by severity, with counts in its header. Before, up to nine separate banners stacked up. You can hide the list per project on this machine. It opens again when a new problem appears.
+- Fly.io is a featured MCP server in Discover.
+
+### Fixed
+
+- Selecting Claude Code now adds `CLAUDE.local.md` to the managed `.gitignore` block. The file is yours, so git activity does not count it as agent config.
+- The notice list ignores the previous project's checks when you switch projects. Fixing one problem no longer reopens a hidden list.
+- Pending profile and context notices use plainer wording and readable buttons. Warning and problem text is darker in light themes.
+
 ## [1.40.2] - 2026-11-06
 
 ### Fixed
