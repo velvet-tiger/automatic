@@ -186,37 +186,72 @@ fn read_records() -> Result<DirectoryRecords, String> {
 /// changed the record file between its read and its write.
 const RECORD_WRITE_TRIES: usize = 3;
 
-/// Copy the records of the checkout `key` from `ours` into `base`.
-fn with_checkout_records(mut base: DirectoryRecords, ours: &DirectoryRecords, key: &str) -> DirectoryRecords {
-    fn copy<T: Clone>(to: &mut BTreeMap<String, T>, from: &BTreeMap<String, T>, key: &str) {
-        match from.get(key) {
-            Some(value) => {
-                to.insert(key.to_string(), value.clone());
-            }
-            None => {
-                to.remove(key);
+/// Which records a commit owns.
+pub(crate) enum RecordScope<'a> {
+    /// These folders of the checkout. A linked worktree shares its main
+    /// checkout's `local_key` and syncs on its own, so a sync owns only the
+    /// folders it touched.
+    Folders(&'a [String]),
+    /// Every folder of the checkout, for forgetting it whole.
+    Checkout,
+}
+
+/// Copy the records `scope` names, for the checkout `key`, from `ours` into
+/// `base`. A key left with no folders is dropped.
+fn with_checkout_records(
+    mut base: DirectoryRecords,
+    ours: &DirectoryRecords,
+    key: &str,
+    scope: &RecordScope,
+) -> DirectoryRecords {
+    fn copy<T: Clone>(
+        to: &mut BTreeMap<String, BTreeMap<String, T>>,
+        from: &BTreeMap<String, BTreeMap<String, T>>,
+        key: &str,
+        scope: &RecordScope,
+    ) {
+        let RecordScope::Folders(folders) = scope else {
+            match from.get(key) {
+                Some(value) => to.insert(key.to_string(), value.clone()),
+                None => to.remove(key),
+            };
+            return;
+        };
+        let target = to.entry(key.to_string()).or_default();
+        for folder in *folders {
+            match from.get(key).and_then(|f| f.get(folder)) {
+                Some(value) => {
+                    target.insert(folder.clone(), value.clone());
+                }
+                None => {
+                    target.remove(folder);
+                }
             }
         }
+        if target.is_empty() {
+            to.remove(key);
+        }
     }
-    copy(&mut base.user_settings, &ours.user_settings, key);
-    copy(&mut base.local_settings, &ours.local_settings, key);
-    copy(&mut base.last_errors, &ours.last_errors, key);
+    copy(&mut base.user_settings, &ours.user_settings, key, scope);
+    copy(&mut base.local_settings, &ours.local_settings, key, scope);
+    copy(&mut base.last_errors, &ours.last_errors, key, scope);
     base
 }
 
-/// Write the records of the checkout `key` from `ours`. `base` and `seen` are
-/// the records and text this process read. When another process changed the
-/// file since, it is read again and only this checkout's records are put on
-/// top of the new version, so that process's records survive.
+/// Write the records `scope` names, for the checkout `key`, from `ours`.
+/// `base` and `seen` are the records and text this process read. When another
+/// process changed the file since, it is read again and only those records
+/// are put on top of the new version, so that process's records survive.
 fn commit_records(
     key: &str,
+    scope: &RecordScope,
     ours: &DirectoryRecords,
     mut base: DirectoryRecords,
     mut seen: Option<String>,
 ) -> Result<(), String> {
     let path = records_path()?;
     for _ in 0..RECORD_WRITE_TRIES {
-        let next = with_checkout_records(base.clone(), ours, key);
+        let next = with_checkout_records(base.clone(), ours, key, scope);
         if seen.is_some() && next == base {
             return Ok(());
         }
@@ -515,25 +550,140 @@ pub struct RefusedFolder {
     pub reason: String,
 }
 
-/// Folders too broad or too sensitive to hand to an agent, as normalised
-/// paths. See [`refusal_reason`].
+/// Folders too broad or too sensitive to hand to an agent. See
+/// [`refusal_reason`].
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DeniedPaths {
+    /// The home folder, normalised.
     pub home: PathBuf,
-    /// `~/.claude.json`, and `~/.claude` and Automatic's own folder.
+    /// Every guarded path, normalised: `~/.claude.json`, and the folders in
+    /// `sensitive_folders`. A folder that holds one is refused.
     pub sensitive: Vec<PathBuf>,
-    /// The folders among `sensitive`: `~/.claude` and Automatic's own folder.
-    /// Nothing inside them may be granted either.
+    /// The guarded folders: Claude Code's settings folder and Automatic's
+    /// data folders. Nothing inside them may be granted either.
     pub sensitive_folders: Vec<PathBuf>,
+    /// The same paths by file identity, so another name for one of them is
+    /// caught too (a macOS firmlink such as `/System/Volumes/Data/Users`, a
+    /// bind mount, a hard-linked folder).
+    #[cfg(unix)]
+    ids: DeniedIds,
+}
+
+/// A file's identity: its device and inode numbers.
+#[cfg(unix)]
+type FileId = (u64, u64);
+
+#[cfg(unix)]
+fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).ok().map(|meta| (meta.dev(), meta.ino()))
+}
+
+/// [`DeniedPaths`] by identity. Paths that do not exist have none, and are
+/// guarded by the string checks alone.
+#[cfg(unix)]
+#[derive(Debug, Clone, Default)]
+struct DeniedIds {
+    root: Option<FileId>,
+    home: Option<FileId>,
+    /// The home folder and every folder above it.
+    home_chain: Vec<FileId>,
+    /// Each guarded path, and every folder above it, with the guarded path.
+    holds: Vec<(FileId, PathBuf)>,
+    /// The guarded folders.
+    inside: Vec<(FileId, PathBuf)>,
+}
+
+impl DeniedPaths {
+    /// Guard `home`, the paths in `sensitive` and the folders in
+    /// `sensitive_folders` (which `sensitive` need not repeat).
+    pub(crate) fn new(home: PathBuf, sensitive: Vec<PathBuf>, sensitive_folders: Vec<PathBuf>) -> Self {
+        let mut all = sensitive;
+        for folder in &sensitive_folders {
+            if !all.contains(folder) {
+                all.push(folder.clone());
+            }
+        }
+        #[cfg(unix)]
+        let ids = DeniedIds {
+            root: file_id(Path::new("/")),
+            home: file_id(&home),
+            home_chain: home.ancestors().filter_map(file_id).collect(),
+            holds: all
+                .iter()
+                .flat_map(|path| {
+                    path.ancestors()
+                        .filter_map(file_id)
+                        .map(move |id| (id, path.clone()))
+                })
+                .collect(),
+            inside: sensitive_folders
+                .iter()
+                .filter_map(|folder| file_id(folder).map(|id| (id, folder.clone())))
+                .collect(),
+        };
+        Self {
+            home,
+            sensitive: all,
+            sensitive_folders,
+            #[cfg(unix)]
+            ids,
+        }
+    }
 }
 
 /// Why `folder` (canonical) must not become a working folder, or `None`. The
 /// filesystem root, the home folder and its ancestors are refused. So is any
 /// folder that is or holds Claude Code's settings or Automatic's data, and
-/// any folder inside `~/.claude` or Automatic's folder: an agent that can
-/// edit those can rewrite its own grants (the registry pointers hold them)
-/// or lift Claude Code's limits.
+/// any folder inside Claude Code's settings folder or Automatic's data
+/// folders: an agent that can edit those can rewrite its own grants (the
+/// registry pointers hold them) or lift Claude Code's limits.
+///
+/// Both checks run: by file identity on unix, which catches other names for
+/// the same folder, and by path, which covers paths that do not exist yet.
 pub(crate) fn refusal_reason(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    #[cfg(unix)]
+    if let Some(reason) = identity_refusal(folder, denied) {
+        return Some(reason);
+    }
+    #[cfg(target_os = "macos")]
+    if folder.starts_with("/System/Volumes/Data") {
+        // Another name for the whole data volume, through firmlinks.
+        return Some("it is under /System/Volumes/Data, another name for your disk".to_string());
+    }
+    path_refusal(folder, denied)
+}
+
+/// [`refusal_reason`] by file identity.
+#[cfg(unix)]
+fn identity_refusal(folder: &Path, denied: &DeniedPaths) -> Option<String> {
+    let ids = &denied.ids;
+    for ancestor in folder.ancestors() {
+        let Some(id) = file_id(ancestor) else {
+            continue;
+        };
+        if let Some((_, inside)) = ids.inside.iter().find(|(guarded, _)| *guarded == id) {
+            return Some(format!("it is inside {}", inside.display()));
+        }
+    }
+    let id = file_id(folder)?;
+    if ids.root == Some(id) {
+        return Some("it is the root of the file system".to_string());
+    }
+    if ids.home == Some(id) {
+        return Some("it is your home folder".to_string());
+    }
+    if ids.home_chain.contains(&id) {
+        return Some("it holds your home folder".to_string());
+    }
+    ids.holds
+        .iter()
+        .find(|(guarded, _)| *guarded == id)
+        .map(|(_, path)| format!("it holds {}", path.display()))
+}
+
+/// [`refusal_reason`] by comparing paths.
+fn path_refusal(folder: &Path, denied: &DeniedPaths) -> Option<String> {
     if let Some(inside) = denied
         .sensitive_folders
         .iter()
@@ -981,19 +1131,28 @@ fn gather_candidates(
     Ok(candidates)
 }
 
-/// The folders [`refusal_reason`] guards, on this machine.
+/// The folders [`refusal_reason`] guards, on this machine: the home folder,
+/// `~/.claude.json`, `~/.claude`, the folder `CLAUDE_CONFIG_DIR` names when
+/// set, and the data folders of both the release and the development build,
+/// whichever one is running.
 fn denied_paths() -> Result<DeniedPaths, String> {
     let home = super::paths::home_dir()?;
     let normal = |path: &Path| normalised(&path.to_string_lossy());
-    Ok(DeniedPaths {
-        home: normal(&home),
-        sensitive: vec![
-            normal(&home.join(".claude")),
-            normal(&home.join(".claude.json")),
-            normal(&get_automatic_dir()?),
-        ],
-        sensitive_folders: vec![normal(&home.join(".claude")), normal(&get_automatic_dir()?)],
-    })
+    let mut folders = vec![
+        normal(&home.join(".claude")),
+        normal(&home.join(".automatic")),
+        normal(&home.join(".automatic-dev")),
+        normal(&get_automatic_dir()?),
+    ];
+    if let Some(config) = super::paths::claude_config_dir_override() {
+        folders.push(normal(&config));
+    }
+    folders.dedup();
+    Ok(DeniedPaths::new(
+        normal(&home),
+        vec![normal(&home.join(".claude.json"))],
+        folders,
+    ))
 }
 
 /// The folders whose records belong to a checkout that is at `own` now: its
@@ -1244,13 +1403,14 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
     };
 
     let own = PathBuf::from(&folder_key);
+    let live = live_folders(&own);
+    let moved_from = adopt_moved_local_record(&mut records, key, &own, &live);
     let known_state = gathered.as_ref().and_then(|g| g.local_state);
     if let Err(e) = apply_local(project, &own, &mut records, local_desired, known_state) {
         outcome.errors.push(e);
     }
 
     let user_path = user_settings_path()?;
-    let live = live_folders(&own);
     let mut user_jobs: Vec<(String, BTreeSet<String>)> = vec![(folder_key.clone(), user_desired.clone())];
     // A folder the checkout left (it moved, or a worktree was removed) keeps
     // its record until its user-settings entries are removed.
@@ -1281,12 +1441,47 @@ pub fn sync_writable_folders(project: &Project) -> Result<WritableFoldersSync, S
     }
 
     set_last_errors(&mut records, key, &folder_key, &outcome.errors);
-    if let Err(e) = commit_records(key, &records, base, seen) {
+    let touched: Vec<String> = std::iter::once(folder_key.clone())
+        .chain(stale)
+        .chain(moved_from)
+        .collect();
+    if let Err(e) = commit_records(key, &RecordScope::Folders(&touched), &records, base, seen) {
         outcome.errors.push(format!(
             "Automatic changed Claude Code's settings but could not record it: {e}"
         ));
     }
     Ok(outcome)
+}
+
+/// When the checkout's folder was renamed, its local-file record is still
+/// keyed by the old folder, and the entries it lists moved with the file.
+/// Move that record to `own`, so the entries stay Automatic's rather than
+/// look like the user's. Only a record whose old folder is gone and is not a
+/// live folder of the checkout is moved, only while `own` has no record, and
+/// only when every entry it lists is in `own`'s local file. Returns the old
+/// folder, whose record the commit must now remove.
+fn adopt_moved_local_record(
+    records: &mut DirectoryRecords,
+    key: &str,
+    own: &Path,
+    live: &BTreeSet<String>,
+) -> Option<String> {
+    let folder_key = own.to_str()?;
+    let folders = records.local_settings.get(key)?;
+    if folders.contains_key(folder_key) {
+        return None;
+    }
+    let present = settings_file_facts(&local_settings_path(own), "", Some(own)).directories;
+    let (old, entries) = folders.iter().find(|(folder, entries)| {
+        !live.contains(*folder)
+            && !Path::new(folder).exists()
+            && !entries.written.is_empty()
+            && entries.written.is_subset(&present)
+    })?;
+    let (old, entries) = (old.clone(), entries.clone());
+    set_record(&mut records.local_settings, key, &old, OwnedEntries::default());
+    set_record(&mut records.local_settings, key, folder_key, entries);
+    Some(old)
 }
 
 /// Bring the checkout's entries in its own local settings file at `own` in
@@ -1343,7 +1538,10 @@ pub fn release_writable_folders(project: &Project) -> Result<(), String> {
         let (base, seen) = read_records_seen()?;
         let mut records = base.clone();
         match apply_local(project, &own, &mut records, &BTreeSet::new(), None) {
-            Ok(()) => commit_records(&project.local_key, &records, base, seen)?,
+            Ok(()) => {
+                let touched = [own.to_string_lossy().to_string()];
+                commit_records(&project.local_key, &RecordScope::Folders(&touched), &records, base, seen)?
+            }
             Err(e) => errors.push(e),
         }
     }
@@ -1384,7 +1582,7 @@ pub fn forget_writable_folders(local_key: &str) -> Result<(), String> {
     }
     records.local_settings.remove(local_key);
     records.last_errors.remove(local_key);
-    commit_records(local_key, &records, base, seen)?;
+    commit_records(local_key, &RecordScope::Checkout, &records, base, seen)?;
     if errors.is_empty() {
         Ok(())
     } else {
@@ -1392,14 +1590,24 @@ pub fn forget_writable_folders(local_key: &str) -> Result<(), String> {
     }
 }
 
-/// Replace the checkout's "Other folders Claude can edit". Each folder must
-/// exist, and is stored as its canonical path, so a link swapped later is
+/// Replace the checkout's "Other folders Claude can edit". Each new folder
+/// must exist, and is stored as its canonical path, so a link swapped later is
 /// noticed. A folder [`refusal_reason`] refuses is an error, and nothing is
 /// stored.
 pub fn set_project_writable_folders(ident: &str, folders: &[String]) -> Result<(), String> {
     let denied = denied_paths()?;
+    // An entry already stored was checked when it was set. It is kept as it is,
+    // so a folder on a drive that is not mounted now does not block the edit.
+    // Sync checks every entry again before writing it.
+    let stored: Vec<String> = serde_json::from_str::<Project>(&read_project(ident)?)
+        .map_err(|e| format!("Invalid project data: {}", e))?
+        .local_writable_folders;
     let mut canonical = Vec::new();
     for folder in folders {
+        if stored.contains(folder) {
+            canonical.push(folder.clone());
+            continue;
+        }
         if !Path::new(folder).is_absolute() {
             return Err(format!("'{}' is not an absolute folder path", folder));
         }

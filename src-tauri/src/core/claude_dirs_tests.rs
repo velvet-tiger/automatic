@@ -754,18 +754,11 @@ fn a_settings_page_save_keeps_the_consent_and_target() {
 // ── Fix round 1 ───────────────────────────────────────────────────────────────
 
 fn denied() -> DeniedPaths {
-    DeniedPaths {
-        home: PathBuf::from("/home/me"),
-        sensitive: vec![
-            PathBuf::from("/home/me/.claude"),
-            PathBuf::from("/home/me/.claude.json"),
-            PathBuf::from("/home/me/.automatic"),
-        ],
-        sensitive_folders: vec![
-            PathBuf::from("/home/me/.claude"),
-            PathBuf::from("/home/me/.automatic"),
-        ],
-    }
+    DeniedPaths::new(
+        PathBuf::from("/home/me"),
+        vec![PathBuf::from("/home/me/.claude.json")],
+        vec![PathBuf::from("/home/me/.claude"), PathBuf::from("/home/me/.automatic")],
+    )
 }
 
 #[test]
@@ -928,7 +921,8 @@ fn a_record_another_process_changed_is_merged_not_overwritten() {
     fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
     fs::write(records_path().unwrap(), serde_json::to_string(&theirs).unwrap()).unwrap();
 
-    commit_records("mine", &ours, base, seen).expect("commit");
+    commit_records("mine", &RecordScope::Folders(&["/a".to_string()]), &ours, base, seen)
+        .expect("commit");
 
     let stored = read_records().expect("read");
     assert_eq!(record_of(&stored.user_settings, "mine", "/a"), owned(&["/x"], &[]));
@@ -1015,4 +1009,131 @@ fn a_project_awaiting_confirmation_is_left_alone() {
     assert!(!local_file(Path::new(&a.directory)).exists());
     let report = crate::sync::check_project_problems(&awaiting).expect("problems");
     assert!(report.notes.iter().any(|n| n.contains("until you keep it")), "{:?}", report.notes);
+}
+
+// ── Fix round 2 ───────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+#[test]
+fn firmlink_names_for_guarded_folders_are_refused() {
+    let _home = temp_test_home();
+    let registry = get_automatic_dir().unwrap().join("projects");
+    fs::create_dir_all(&registry).unwrap();
+    let home = fs::canonicalize(super::super::paths::home_dir().unwrap()).unwrap();
+    let denied = denied_paths().unwrap();
+    let data = Path::new("/System/Volumes/Data");
+    if !data.is_dir() {
+        return;
+    }
+    assert!(refusal_reason(data, &denied).is_some(), "the data volume itself");
+    for real in [fs::canonicalize(&registry).unwrap(), home] {
+        let alias = data.join(real.strip_prefix("/").unwrap());
+        if !alias.exists() {
+            continue;
+        }
+        assert!(identity_refusal(&alias, &denied).is_some(), "by identity: {}", alias.display());
+        assert!(refusal_reason(&alias, &denied).is_some(), "{}", alias.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_claudes_folder_and_both_data_folders_are_refused() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let home = super::super::paths::home_dir().unwrap();
+    let claude = home.join(".claude");
+    let link = ws.base.join("claude-link");
+    for folder in [&claude, &home.join(".automatic"), &home.join(".automatic-dev")] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    std::os::unix::fs::symlink(&claude, &link).unwrap();
+    for folder in [link, home.join(".automatic"), home.join(".automatic-dev").join("x")] {
+        fs::create_dir_all(&folder).ok();
+        let err = set_project_writable_folders(&a.local_key, &[folder.display().to_string()])
+            .expect_err("refused");
+        assert!(err.contains("cannot be allowed"), "{}: {err}", folder.display());
+    }
+}
+
+#[test]
+fn a_worktree_record_survives_a_commit_from_a_stale_read_of_the_main_checkout() {
+    let _home = temp_test_home();
+    let mut first = DirectoryRecords::default();
+    set_record(&mut first.user_settings, "k", "/main", owned(&["/x"], &[]));
+    fs::create_dir_all(get_automatic_dir().unwrap()).unwrap();
+    fs::write(records_path().unwrap(), serde_json::to_string(&first).unwrap()).unwrap();
+    let (base, seen) = read_records_seen().unwrap();
+    // Another process syncs the worktree, which shares the key.
+    let mut other = first.clone();
+    set_record(&mut other.user_settings, "k", "/wt", owned(&["/main"], &[]));
+    fs::write(records_path().unwrap(), serde_json::to_string(&other).unwrap()).unwrap();
+    let mut ours = base.clone();
+    set_record(&mut ours.user_settings, "k", "/main", owned(&["/x", "/y"], &[]));
+
+    let touched = ["/main".to_string()];
+    commit_records("k", &RecordScope::Folders(&touched), &ours, base, seen).unwrap();
+
+    let stored = read_records().unwrap();
+    assert_eq!(record_of(&stored.user_settings, "k", "/main"), owned(&["/x", "/y"], &[]));
+    assert_eq!(record_of(&stored.user_settings, "k", "/wt"), owned(&["/main"], &[]));
+}
+
+#[test]
+fn settings_that_are_not_utf8_are_replaced_by_a_save_and_a_reset() {
+    let _home = temp_test_home();
+    let path = get_automatic_dir().unwrap().join("settings.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, [0xff, 0xfe, 0x00, 0x7b]).unwrap();
+
+    write_settings(&Settings::default()).expect("save");
+    fs::write(&path, [0xff, 0xfe, 0x00, 0x7b]).unwrap();
+    reset_settings().expect("reset");
+
+    assert!(serde_json::from_slice::<Settings>(&fs::read(&path).unwrap()).is_ok());
+}
+
+#[test]
+fn a_renamed_folder_keeps_its_local_entries_as_automatics() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let old_dir = repo(&ws.base, "a");
+    let a = register(&old_dir, "a", |_| {});
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    sync(&a);
+    let new_dir = ws.base.join("a-renamed");
+    fs::rename(&old_dir, &new_dir).unwrap();
+    let mut moved = reread(&a);
+    moved.directory = new_dir.display().to_string();
+    save_project(&moved.local_key, &serde_json::to_string(&moved).unwrap()).unwrap();
+    sync(&moved);
+
+    group("team", &[&a, &b], false);
+    sync(&moved);
+
+    assert!(directories_in(&local_file(&new_dir)).is_empty(), "the moved entry became the user's");
+}
+
+#[test]
+fn a_stored_folder_that_is_missing_now_does_not_block_an_edit() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
+    let drive = repo(&ws.base, "drive");
+    let other = repo(&ws.base, "other");
+    set_project_writable_folders(&a.local_key, &[drive.display().to_string()]).unwrap();
+    fs::remove_dir_all(&drive).unwrap();
+
+    set_project_writable_folders(
+        &a.local_key,
+        &[drive.display().to_string(), other.display().to_string()],
+    )
+    .expect("edit with an unmounted folder");
+
+    assert_eq!(
+        reread(&a).local_writable_folders,
+        vec![drive.display().to_string(), canonical(&other)]
+    );
 }

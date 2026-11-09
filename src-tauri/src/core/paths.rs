@@ -30,6 +30,15 @@ pub fn get_automatic_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// The folder `CLAUDE_CONFIG_DIR` names, when it is set to an absolute path.
+/// Claude Code keeps its settings there instead of `~/.claude`, so Automatic
+/// must guard it the same way.
+pub(crate) fn claude_config_dir_override() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
 /// True when `make fresh` started this process in a throwaway home folder.
 ///
 /// A fresh run must not reach real services or find the developer's tools.
