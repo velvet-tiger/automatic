@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SettingSwitch } from "./editor/SettingSwitch";
 
@@ -17,14 +17,21 @@ interface GroupEditAcrossSectionProps {
 export function GroupEditAcrossSection({ groupName, enabled, onChanged }: GroupEditAcrossSectionProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Shown at once, so a quick second click flips the new value, not the
+  // value from before the group reloads.
+  const [shown, setShown] = useState(enabled);
+  useEffect(() => setShown(enabled), [enabled]);
 
   const toggle = async () => {
+    const next = !shown;
     setBusy(true);
     setError(null);
+    setShown(next);
     try {
-      await invoke("set_group_agents_edit_across_group", { groupName, enabled: !enabled });
+      await invoke("set_group_agents_edit_across_group", { groupName, enabled: next });
       onChanged();
     } catch (err) {
+      setShown(!next);
       setError(`Could not change "Let agents edit across this group": ${err}`);
     } finally {
       setBusy(false);
@@ -42,7 +49,7 @@ export function GroupEditAcrossSection({ groupName, enabled, onChanged }: GroupE
           {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
         </div>
         <SettingSwitch
-          checked={enabled}
+          checked={shown}
           disabled={busy}
           label="Let agents edit across this group"
           onToggle={() => void toggle()}

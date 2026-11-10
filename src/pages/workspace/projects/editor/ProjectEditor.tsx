@@ -4696,6 +4696,7 @@ export function ProjectEditor({
                       await refreshProblemsReport(selectedKey);
                     }}
                     onNavigateToGroup={onNavigateToGroup}
+                    checksVersion={problemsReport}
                   />
                 )}
 

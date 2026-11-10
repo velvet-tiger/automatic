@@ -54,6 +54,16 @@ async function withLatestGroupSettings(updated: ProjectGroup): Promise<ProjectGr
   }
 }
 
+/**
+ * The group as `save_group` should receive it. The edit-across switch is left
+ * out, so the backend keeps the stored value while it holds the file, rather
+ * than taking a copy this page read earlier.
+ */
+export function groupSavePayload(group: ProjectGroup): string {
+  const { agents_edit_across_group: _omitted, ...rest } = group;
+  return JSON.stringify(rest);
+}
+
 /** What deleting a group does, including the profiles its projects lose. */
 function deleteGroupWarning(profiles: string[]): string {
   const base = "This will not delete the projects themselves.";
@@ -108,7 +118,9 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   // Reload when any component signals a group change
   useEffect(() => {
-    const handler = () => { loadGroups(); if (selectedName) loadGroup(selectedName); };
+    // Keep a description being edited: a switch or attach elsewhere on the
+    // page fires this too.
+    const handler = () => { loadGroups(); if (selectedName) loadGroup(selectedName, true); };
     window.addEventListener("groups-updated", handler);
     return () => window.removeEventListener("groups-updated", handler);
   }, [selectedName]);
@@ -140,14 +152,16 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     }
   };
 
-  const loadGroup = async (name: string) => {
+  const loadGroup = async (name: string, keepEdit = false) => {
     try {
       const raw: string = await invoke("read_group", { name });
       const g: ProjectGroup = JSON.parse(raw);
       setGroup(g);
-      setEditDescription(g.description);
       setSelectedName(name);
-      setIsEditing(false);
+      if (!keepEdit) {
+        setEditDescription(g.description);
+        setIsEditing(false);
+      }
       setError(null);
     } catch (err: any) {
       // Stay on the group: the panel offers Delete, the one way to clear a
@@ -179,7 +193,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       });
       await invoke("save_group", {
         name: group.name,
-        data: JSON.stringify(updated),
+        data: groupSavePayload(updated),
       });
       setGroup(updated);
       setIsEditing(false);
@@ -306,7 +320,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       const updated = await withLatestGroupSettings(changed);
       await invoke("save_group", {
         name: updated.name,
-        data: JSON.stringify(updated),
+        data: groupSavePayload(updated),
         joining,
       });
       setGroup(updated);

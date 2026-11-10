@@ -36,7 +36,25 @@ describe("ClaudeFoldersSettings", () => {
     vi.mocked(ask).mockReset();
   });
 
+  it("asks before choosing user settings without consent, and does nothing on Cancel", async () => {
+    vi.mocked(ask).mockResolvedValue(false);
+    withSettings({});
+    render(<ClaudeFoldersSettings />);
+    fireEvent.click(await screen.findByRole("radio", { name: /For all my Claude Code sessions/ }));
+    await waitFor(() => expect(ask).toHaveBeenCalled());
+    expect(invokeMock).not.toHaveBeenCalledWith("set_writable_folders_target", expect.anything());
+  });
+
+  it("does not ask again when consent is already given", async () => {
+    withSettings({ writable_folders_user_consent: true });
+    render(<ClaudeFoldersSettings />);
+    fireEvent.click(await screen.findByRole("radio", { name: /For all my Claude Code sessions/ }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("set_writable_folders_target", { target: "always_user" }));
+    expect(ask).not.toHaveBeenCalled();
+  });
+
   it("chooses user settings for every project, which also turns consent on", async () => {
+    vi.mocked(ask).mockResolvedValue(true);
     withSettings({});
     render(<ClaudeFoldersSettings />);
     fireEvent.click(await screen.findByRole("radio", { name: /For all my Claude Code sessions/ }));

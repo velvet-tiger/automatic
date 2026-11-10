@@ -66,8 +66,9 @@ export function WritableFoldersTargetNotice({
   const save = () =>
     run("save the folders for all your sessions", async () => {
       await invoke("set_writable_folders_user_consent", { consent: true });
-      await invoke("sync_project_writable_folders", { name: selectedKey });
+      const sync = await invoke<{ errors: string[] } | null>("sync_project_writable_folders", { name: selectedKey });
       await refreshProblems();
+      if (sync && sync.errors.length > 0) throw sync.errors.join(" ");
     });
 
   const notNow = () =>
@@ -97,7 +98,9 @@ export function WritableFoldersTargetNotice({
       >
         This project&apos;s own Claude Code settings can&apos;t be used, {targetReasonText(notice.reason)}{" "}
         Automatic can save {count === 1 ? "the folder" : `the ${count} folders`} for all your Claude Code
-        sessions instead. Every session on this computer could then edit {count === 1 ? "it" : "them"}.
+        sessions instead. Every session on this computer could then edit {count === 1 ? "it" : "them"}. This
+        also lets Automatic do the same for any other project whose own settings can&apos;t be used, without asking
+        again. You can turn this off in Settings, under Sync.
       </NoticeRow>
     </div>
   );

@@ -25,6 +25,8 @@ interface SettingsPanelProps {
   /** Reload this checkout's own settings and the notices, after a change saved at once. */
   onCheckoutChanged?: () => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
+  /** Changes whenever the problems check reports again. */
+  checksVersion?: unknown;
 }
 
 export function SettingsPanel({
@@ -36,6 +38,7 @@ export function SettingsPanel({
   projectKey = null,
   onCheckoutChanged,
   onNavigateToGroup,
+  checksVersion,
 }: SettingsPanelProps) {
   const ownReadOnly = project.local_read_only === true;
   const inheritedFrom = project.read_only_owner;
@@ -233,6 +236,7 @@ export function SettingsPanel({
             projectKey={projectKey}
             onChanged={onCheckoutChanged}
             onNavigateToGroup={onNavigateToGroup}
+            checksVersion={checksVersion}
           />
         )}
       </div>

@@ -88,6 +88,9 @@ export function savedStatus(findings: WritableFoldersFindings): SavedStatus {
     case "user":
       return { text: "Saved for all your Claude Code sessions", ok: true };
     case "needs_consent":
-      return { text: "Not saved. Waiting for your OK (see the notices above)", ok: false };
+      // After "Not now" the notice is gone, so point at the setting instead.
+      return findings.ask_for_user_settings
+        ? { text: "Not saved. Waiting for your OK (see the notices above)", ok: false }
+        : { text: "Not saved. Allow it in Settings, under Sync", ok: false };
   }
 }

@@ -106,3 +106,26 @@ describe("WritableFoldersCard", () => {
     expect(onChanged).not.toHaveBeenCalled();
   });
 });
+
+describe("WritableFoldersCard refresh", () => {
+  beforeEach(() => {
+    resetInvokeMock();
+    mockInvoke({ read_project_writable_folders: findings });
+  });
+
+  it("reads the findings again when the problems check reports", async () => {
+    const { rerender } = render(<WritableFoldersCard project={project()} projectKey="app" onChanged={vi.fn()} checksVersion={1} />);
+    await screen.findByText("Saved for this project only");
+    rerender(<WritableFoldersCard project={project()} projectKey="app" onChanged={vi.fn()} checksVersion={2} />);
+    await waitFor(() =>
+      expect(invokeMock.mock.calls.filter((call) => call[0] === "read_project_writable_folders")).toHaveLength(2),
+    );
+  });
+
+  it("reports a folder picker that fails", async () => {
+    vi.mocked(openDialog).mockRejectedValue(new Error("no window"));
+    render(<WritableFoldersCard project={project()} projectKey="app" onChanged={vi.fn()} />);
+    fireEvent.click(screen.getByText("Add folder…"));
+    expect(await screen.findByText(/Could not open the folder picker: Error: no window/)).toBeInTheDocument();
+  });
+});

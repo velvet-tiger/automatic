@@ -21,6 +21,12 @@ interface WritableFoldersCardProps {
   /** Reload the per-checkout fields and the notices after a change. */
   onChanged: () => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
+  /**
+   * Changes whenever the editor's problems check reports again. The card
+   * reads its findings again then, so a decision made in the notice list,
+   * or a group change, shows here too.
+   */
+  checksVersion?: unknown;
 }
 
 /**
@@ -29,7 +35,13 @@ interface WritableFoldersCardProps {
  * is saved at once, because the list is stored only on this computer.
  * Findings that need action go to the notice list, not here.
  */
-export function WritableFoldersCard({ project, projectKey, onChanged, onNavigateToGroup }: WritableFoldersCardProps) {
+export function WritableFoldersCard({
+  project,
+  projectKey,
+  onChanged,
+  onNavigateToGroup,
+  checksVersion,
+}: WritableFoldersCardProps) {
   const usesClaude = project.agents.includes(CLAUDE_AGENT);
   const extras = project.local_writable_folders ?? [];
   const extrasKey = extras.join("\n");
@@ -50,7 +62,7 @@ export function WritableFoldersCard({ project, projectKey, onChanged, onNavigate
 
   useEffect(() => {
     if (usesClaude) void loadFindings();
-  }, [usesClaude, loadFindings, extrasKey]);
+  }, [usesClaude, loadFindings, extrasKey, checksVersion]);
 
   useEffect(() => {
     homeDir()
@@ -76,7 +88,13 @@ export function WritableFoldersCard({ project, projectKey, onChanged, onNavigate
   };
 
   const addFolder = async () => {
-    const picked = await openDialog({ multiple: false, directory: true });
+    let picked: string | string[] | null;
+    try {
+      picked = await openDialog({ multiple: false, directory: true });
+    } catch (err) {
+      setError(`Could not open the folder picker: ${err}`);
+      return;
+    }
     if (typeof picked !== "string" || extras.includes(picked)) return;
     await save([...extras, picked]);
   };

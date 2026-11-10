@@ -19,6 +19,20 @@ export function parseFolderSettings(raw: Record<string, unknown>): FolderSetting
   };
 }
 
+/** `ask`, with a failure reported as "not confirmed" plus the message. */
+async function askSafely(
+  text: string,
+  options: Parameters<typeof ask>[1],
+  onError: (message: string) => void,
+): Promise<boolean> {
+  try {
+    return await ask(text, options);
+  } catch (err) {
+    onError(`Could not show the confirmation: ${err}`);
+    return false;
+  }
+}
+
 const TARGETS: { value: WritableFoldersTarget; label: string; description: string }[] = [
   {
     value: "prefer_local",
@@ -66,17 +80,29 @@ export function ClaudeFoldersSettings() {
     }
   };
 
-  const chooseTarget = (target: WritableFoldersTarget) =>
-    change("change where the folders are saved", () => invoke("set_writable_folders_target", { target }));
+  // Choosing user settings also records consent, which reaches every
+  // session, so it asks first when consent is not given yet.
+  const chooseTarget = async (target: WritableFoldersTarget) => {
+    if (target === "always_user" && current && !current.consent) {
+      const confirmed = await askSafely(
+        "Every Claude Code session on this computer will be able to edit every folder you have allowed in any project. This also lets Automatic change your Claude Code settings.",
+        { title: "Save the folders for all your Claude Code sessions?", kind: "warning", okLabel: "Save for all sessions", cancelLabel: "Cancel" },
+        setError,
+      );
+      if (!confirmed) return;
+    }
+    await change("change where the folders are saved", () => invoke("set_writable_folders_target", { target }));
+  };
 
   // Withdrawing removes Automatic's folders from every session at once, so it
   // asks first. The backend also moves the choice back to "In each project".
   const toggleConsent = async () => {
     if (!current) return;
     if (current.consent) {
-      const confirmed = await ask(
+      const confirmed = await askSafely(
         "Automatic will remove the folders it saved for all your Claude Code sessions. Projects whose own settings can't be used will ask you again.",
         { title: "Remove the folders Automatic saved for all your sessions?", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
+        setError,
       );
       if (!confirmed) return;
     }

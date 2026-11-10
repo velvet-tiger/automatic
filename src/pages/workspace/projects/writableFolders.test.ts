@@ -87,7 +87,15 @@ describe("savedStatus", () => {
     expect(savedStatus(findings({ wanted, target: { kind: "user", reason: "silent" } }))?.text).toBe(
       "Saved for all your Claude Code sessions",
     );
-    expect(savedStatus(findings({ wanted, target: { kind: "needs_consent", reason: "tracked" } }))?.ok).toBe(false);
+    expect(
+      savedStatus(findings({ wanted, ask_for_user_settings: true, target: { kind: "needs_consent", reason: "tracked" } })),
+    ).toEqual({ text: "Not saved. Waiting for your OK (see the notices above)", ok: false });
+  });
+
+  it("points at Settings once the notice was hidden", () => {
+    expect(savedStatus(findings({ wanted, target: { kind: "needs_consent", reason: "tracked" } }))?.text).toBe(
+      "Not saved. Allow it in Settings, under Sync",
+    );
   });
 
   it("reports a failed sync first", () => {

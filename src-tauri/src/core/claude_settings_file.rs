@@ -16,6 +16,7 @@ use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -206,12 +207,17 @@ impl<'de> Deserialize<'de> for KeyOrder {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<KeyOrder, A::Error> {
                 let mut keys: Vec<(String, KeyOrder)> = Vec::new();
+                // Positions by key, so a large object stays linear.
+                let mut at: HashMap<String, usize> = HashMap::new();
                 while let Some((key, order)) = map.next_entry::<String, KeyOrder>()? {
                     // A repeated key keeps its first place. serde_json keeps
                     // the last value, which is written there.
-                    match keys.iter_mut().find(|(k, _)| *k == key) {
-                        Some(slot) => slot.1 = order,
-                        None => keys.push((key, order)),
+                    match at.get(&key) {
+                        Some(&i) => keys[i].1 = order,
+                        None => {
+                            at.insert(key.clone(), keys.len());
+                            keys.push((key, order));
+                        }
                     }
                 }
                 Ok(KeyOrder { keys, items: Vec::new() })
@@ -268,8 +274,9 @@ impl Serialize for Ordered<'_> {
                         out.serialize_entry(key, &Ordered { value, order: Some(order) })?;
                     }
                 }
+                let named: HashSet<&str> = known.iter().map(|(k, _)| k.as_str()).collect();
                 for (key, value) in map {
-                    if !known.iter().any(|(k, _)| k == key) {
+                    if !named.contains(key.as_str()) {
                         out.serialize_entry(key, &Ordered { value, order: None })?;
                     }
                 }
@@ -422,6 +429,15 @@ mod tests {
         let text = render_root(&root, None).expect("render");
 
         assert_eq!(text, "{\n  \"a\": {\n    \"c\": 2,\n    \"d\": 1\n  },\n  \"b\": 1\n}\n");
+    }
+
+    #[test]
+    fn unparsable_seen_text_comes_out_sorted() {
+        let root = parse_root(r#"{"b":1,"a":1}"#, Path::new("s.json")).expect("parse");
+
+        let text = render_root(&root, Some("{ not json")).expect("render");
+
+        assert_eq!(text, "{\n  \"a\": 1,\n  \"b\": 1\n}\n");
     }
 
     #[test]

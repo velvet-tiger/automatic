@@ -27,6 +27,17 @@ describe("GroupEditAcrossSection", () => {
     );
   });
 
+  it("sends the new value on a quick second click", async () => {
+    render(<GroupEditAcrossSection groupName="Team" enabled={false} onChanged={vi.fn()} />);
+    const toggle = screen.getByRole("switch");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(invokeMock).toHaveBeenLastCalledWith("set_group_agents_edit_across_group", { groupName: "Team", enabled: false }),
+    );
+  });
+
   it("shows a failure without reloading", async () => {
     mockInvoke({
       set_group_agents_edit_across_group: () => {
@@ -38,5 +49,6 @@ describe("GroupEditAcrossSection", () => {
     fireEvent.click(screen.getByRole("switch"));
     expect(await screen.findByText(/group not found/)).toBeInTheDocument();
     expect(onChanged).not.toHaveBeenCalled();
+    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "false");
   });
 });
