@@ -497,7 +497,11 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                 <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Description</span>
                 {!isEditing && (
                   <button
-                    onClick={() => setIsEditing(true)}
+                    onClick={() => {
+                      // A background reload keeps the draft, so start from the latest text.
+                      setEditDescription(group.description);
+                      setIsEditing(true);
+                    }}
                     className="text-text-muted hover:text-text-base transition-colors"
                     title="Edit description"
                   >
