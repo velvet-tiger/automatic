@@ -20,6 +20,7 @@ import {
 import { PendingProfilesNotice } from "./PendingProfilesNotice";
 import { PendingContextsNotice } from "./PendingContextsNotice";
 import { PendingRegistrationNotice } from "./PendingRegistrationNotice";
+import { WritableFoldersTargetNotice } from "./WritableFoldersTargetNotice";
 
 /**
  * Render backend problem text, where `backtick-wrapped` spans are commands or
@@ -69,6 +70,8 @@ export interface ProjectNoticeActions {
   onOpenInstructionConflict: (conflict: InstructionFileConflict) => void;
   onOpenCustomConflict: (conflict: CustomAssetConflict) => void;
   reloadProject: (projectKey: string) => Promise<void>;
+  /** Run the problems check again for the open project. */
+  refreshProblems: () => Promise<void>;
 }
 
 interface ProjectNoticeViewProps extends ProjectNoticeActions {
@@ -148,6 +151,15 @@ export function ProjectNoticeView({ notice, ...actions }: ProjectNoticeViewProps
           <code className="font-mono text-[10px] bg-bg-sidebar border border-border-strong/50 rounded px-1">.automatic/silent/</code>{" "}
           instead of the project root, leaving existing files untouched.
         </NoticeRow>
+      );
+    case "writable_folders_target":
+      return (
+        <WritableFoldersTargetNotice
+          notice={source.notice}
+          selectedKey={actions.selectedKey}
+          reloadProject={actions.reloadProject}
+          refreshProblems={actions.refreshProblems}
+        />
       );
     case "sync_notes":
       return (

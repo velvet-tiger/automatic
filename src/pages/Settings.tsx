@@ -21,6 +21,7 @@ import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, 
 import SettingsAgents from "./settings/Agents";
 import { leftInPlaceNotice } from "./settings/CustomGatewaySection";
 import SettingsCommandLine from "./settings/CommandLine";
+import { ClaudeFoldersSettings } from "./settings/ClaudeFoldersSettings";
 import OpenSourceLicences from "./settings/OpenSourceLicences";
 
 type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "cli" | "support";
@@ -629,6 +630,8 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   </button>
                 </div>
               </div>
+
+              <ClaudeFoldersSettings />
 
               {/* Default Skills */}
               <div className="mb-8">

@@ -205,7 +205,7 @@ describe("mergeContexts", () => {
 describe("withCheckoutDecisions", () => {
   it("takes the decisions and keeps the held edits", () => {
     const held = { description: "unsaved", pending_profiles: ["old"], local_confirmed_groups: [] };
-    const fresh = { description: "stored", local_confirmed_groups: ["team"] };
+    const fresh = { description: "stored", local_confirmed_groups: ["team"], local_writable_folders: ["/Users/me/docs"] };
 
     expect(withCheckoutDecisions(held, fresh)).toEqual({
       description: "unsaved",
@@ -217,6 +217,8 @@ describe("withCheckoutDecisions", () => {
       contexts: [],
       group_context_contributions: {},
       local_awaiting_confirmation: false,
+      local_writable_folders: ["/Users/me/docs"],
+      local_writable_folders_notice_hidden: false,
     });
   });
 

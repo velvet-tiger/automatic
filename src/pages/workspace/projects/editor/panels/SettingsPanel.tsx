@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Copy, Layers, Lock } from "lucide-react";
 import type { Project } from "../../types";
 import { SettingSwitch } from "../SettingSwitch";
+import { WritableFoldersCard } from "./WritableFoldersCard";
 
 interface SettingsPanelProps {
   project: Project;
@@ -19,6 +20,11 @@ interface SettingsPanelProps {
    * them, so it waits until they are saved.
    */
   hasUnsavedChanges?: boolean;
+  /** local_key of the open project, or null while it is being created. */
+  projectKey?: string | null;
+  /** Reload this checkout's own settings and the notices, after a change saved at once. */
+  onCheckoutChanged?: () => Promise<void>;
+  onNavigateToGroup?: (groupName: string) => void;
 }
 
 export function SettingsPanel({
@@ -27,6 +33,9 @@ export function SettingsPanel({
   setDirty,
   onReadOnlyChange,
   hasUnsavedChanges = false,
+  projectKey = null,
+  onCheckoutChanged,
+  onNavigateToGroup,
 }: SettingsPanelProps) {
   const ownReadOnly = project.local_read_only === true;
   const inheritedFrom = project.read_only_owner;
@@ -217,6 +226,15 @@ export function SettingsPanel({
             />
           </div>
         </div>
+
+        {projectKey && onCheckoutChanged && (
+          <WritableFoldersCard
+            project={project}
+            projectKey={projectKey}
+            onChanged={onCheckoutChanged}
+            onNavigateToGroup={onNavigateToGroup}
+          />
+        )}
       </div>
 
       {/* Help sidebar */}

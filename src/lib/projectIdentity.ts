@@ -86,6 +86,8 @@ interface CheckoutDecisions {
   contexts?: string[];
   group_context_contributions?: Record<string, string[]>;
   local_awaiting_confirmation?: boolean;
+  local_writable_folders?: string[];
+  local_writable_folders_notice_hidden?: boolean;
 }
 
 /** Whether an agent registered the project and the user has not kept it. */
@@ -124,6 +126,8 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(
     contexts: mergeContexts(held.contexts ?? [], fresh.contexts ?? [], base),
     group_context_contributions: fresh.group_context_contributions ?? {},
     local_awaiting_confirmation: fresh.local_awaiting_confirmation === true,
+    local_writable_folders: fresh.local_writable_folders ?? [],
+    local_writable_folders_notice_hidden: fresh.local_writable_folders_notice_hidden === true,
   };
 }
 

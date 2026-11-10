@@ -15,6 +15,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, Layers, FolderOpen } from "lucide-react";
 import { GroupContextsSection } from "./contexts/GroupContextsSection";
 import { GroupProfilesSection } from "./projects/GroupProfilesSection";
+import { GroupEditAcrossSection } from "./projects/GroupEditAcrossSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,20 +27,27 @@ interface ProjectGroup {
   contexts?: string[];
   /** Profile names attached to the group. Changed only through attach/detach_profile_to/from_group. */
   profiles?: string[];
+  /** "Let agents edit across this group". Changed only through set_group_agents_edit_across_group. */
+  agents_edit_across_group?: boolean;
   created_at: string;
   updated_at: string;
 }
 
 /**
- * Contexts and profiles change through their own attach and detach commands,
- * possibly from an agent over MCP while this page is open. Take both from
- * disk so a save of another field never writes back an old list.
+ * Contexts, profiles and the edit-across switch change through their own
+ * commands, possibly from an agent over MCP while this page is open. Take
+ * them from disk so a save of another field never writes back an old value.
  */
 async function withLatestGroupSettings(updated: ProjectGroup): Promise<ProjectGroup> {
   try {
     const raw: string = await invoke("read_group", { name: updated.name });
     const latest: ProjectGroup = JSON.parse(raw);
-    return { ...updated, contexts: latest.contexts ?? [], profiles: latest.profiles ?? [] };
+    return {
+      ...updated,
+      contexts: latest.contexts ?? [],
+      profiles: latest.profiles ?? [],
+      agents_edit_across_group: latest.agents_edit_across_group === true,
+    };
   } catch {
     // A new group has no file yet, so there is nothing to preserve.
     return updated;
@@ -610,6 +618,13 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
               <GroupContextsSection
                 groupName={group.name}
                 contexts={group.contexts ?? []}
+                // The groups-updated listener reloads this group from disk.
+                onChanged={() => window.dispatchEvent(new CustomEvent("groups-updated"))}
+              />
+
+              <GroupEditAcrossSection
+                groupName={group.name}
+                enabled={group.agents_edit_across_group === true}
                 // The groups-updated listener reloads this group from disk.
                 onChanged={() => window.dispatchEvent(new CustomEvent("groups-updated"))}
               />

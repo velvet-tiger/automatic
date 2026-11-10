@@ -133,6 +133,18 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
     });
   }
 
+  // The report already leaves this out once the user chose "Not now", and
+  // describes the saved project, so it waits for unsaved edits like problems.
+  const target = report?.writable_folders_target;
+  if (checked && !dirty && target) {
+    notices.push({
+      id: "writable_folders_target",
+      severity: "warning",
+      count: 1,
+      source: { kind: "writable_folders_target", notice: target },
+    });
+  }
+
   if (project.mode === "silent" && project.directory) {
     notices.push({ id: "silent_mode", severity: "notice", count: 1, source: { kind: "silent_mode", directory: project.directory } });
   }

@@ -139,6 +139,14 @@ export interface Project {
   /** Pending context slugs this checkout chose to ignore. Stored only on this machine. */
   local_ignored_contexts?: string[];
   /**
+   * Other folders Claude Code may edit from this checkout, besides group
+   * members. Absolute paths, stored only on this machine. Change them with
+   * the `set_project_writable_folders` command; saving the project keeps them.
+   */
+  local_writable_folders?: string[];
+  /** "Not now" on the notice asking to save folders in user settings. Stored only on this machine. */
+  local_writable_folders_notice_hidden?: boolean;
+  /**
    * Computed by backend at read-time: slugs in `contexts` agents are not
    * offered here, because this checkout has not confirmed them. Never saved.
    */
@@ -286,7 +294,8 @@ export type ProjectProblemKind =
   | "mcp_user_scope_conflict"
   | "silent_mode_stale_root_mcp"
   | "mcp_server_config_invalid"
-  | "agent_sync_limits";
+  | "agent_sync_limits"
+  | "writable_folders_blocked";
 
 export interface ProjectProblem {
   kind: ProjectProblemKind;
@@ -304,6 +313,56 @@ export interface ProjectProblemsReport {
   problems: ProjectProblem[];
   /** What sync narrowed or left out on purpose. Nothing needs fixing. */
   notes?: string[];
+  /** Set when the folders Claude Code may edit need the user's OK to go in user settings. */
+  writable_folders_target?: WritableFoldersTargetNotice;
+}
+
+/** Why a project's folders need Claude Code's user settings rather than its local file. */
+export type UserSettingsReason =
+  | "preferred"
+  | "silent"
+  | "read_only"
+  | "not_repository_root"
+  | "tracked"
+  | "seen_tracked"
+  | "git_unavailable"
+  | "trust_unknown";
+
+/** The decision the `writable_folders_target` notice asks for. */
+export interface WritableFoldersTargetNotice {
+  /** The folders that would be saved in user settings. */
+  folders: string[];
+  reason: UserSettingsReason;
+  /** What to add to Claude Code's user settings to do it by hand. */
+  paste_json: string;
+}
+
+/** Where a folder Claude Code may edit comes from. */
+export type FolderSource =
+  | { kind: "group_member"; group: string; project: string }
+  | { kind: "extra" }
+  | { kind: "main_checkout" };
+
+/** Where a project's folders are saved. */
+export type DirsTarget =
+  | { kind: "local" }
+  | { kind: "user"; reason: UserSettingsReason }
+  | { kind: "needs_consent"; reason: UserSettingsReason };
+
+/** What `read_project_writable_folders` reports. Paths are absolute. */
+export interface WritableFoldersFindings {
+  wanted: { path: string; source: FolderSource }[];
+  uncovered: string[];
+  missing: { path: string; source: FolderSource }[];
+  target: DirsTarget;
+  blocked_by: string | null;
+  ask_for_user_settings: boolean;
+  paste_json: string;
+  unreadable: string[];
+  groups_switched_off: string[];
+  last_sync_errors: string[];
+  refused: { path: string; source: FolderSource; reason: string }[];
+  left_in_tracked_local: string[];
 }
 
 export interface ProjectFileInfo {
@@ -493,7 +552,8 @@ export type ProjectNoticeSource =
   | { kind: "pending_profiles"; names: string[] }
   | { kind: "pending_contexts"; slugs: string[] }
   | { kind: "silent_mode"; directory: string }
-  | { kind: "sync_notes"; notes: string[] };
+  | { kind: "sync_notes"; notes: string[] }
+  | { kind: "writable_folders_target"; notice: WritableFoldersTargetNotice };
 
 /**
  * One entry in the project editor's notice list. `id` is stable across

@@ -2379,6 +2379,8 @@ export function ProjectEditor({
         local_ignored_contexts: parsed.local_ignored_contexts || [],
         pending_contexts: parsed.pending_contexts || [],
         local_awaiting_confirmation: parsed.local_awaiting_confirmation === true,
+        local_writable_folders: parsed.local_writable_folders || [],
+        local_writable_folders_notice_hidden: parsed.local_writable_folders_notice_hidden === true,
         read_only_owner: typeof parsed.read_only_owner === "string" ? parsed.read_only_owner : undefined,
         directory_missing: parsed.directory_missing === true,
       };
@@ -3715,6 +3717,7 @@ export function ProjectEditor({
                     onOpenInstructionConflict={setInstructionConflict}
                     onOpenCustomConflict={setCustomAssetConflict}
                     reloadProject={refreshCheckoutDecisions}
+                    refreshProblems={() => refreshProblemsReport(selectedKey)}
                   />
                 )}
               />
@@ -4686,6 +4689,13 @@ export function ProjectEditor({
                     setDirty={markDirty}
                     onReadOnlyChange={handleReadOnlyChange}
                     hasUnsavedChanges={dirty || projectFileDirty}
+                    projectKey={selectedKey}
+                    onCheckoutChanged={async () => {
+                      if (!selectedKey) return;
+                      await refreshCheckoutDecisions(selectedKey);
+                      await refreshProblemsReport(selectedKey);
+                    }}
+                    onNavigateToGroup={onNavigateToGroup}
                   />
                 )}
 

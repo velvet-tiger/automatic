@@ -158,6 +158,43 @@ describe("collectProjectNotices", () => {
   });
 });
 
+describe("collectProjectNotices: writable folders target", () => {
+  const target = {
+    folders: ["/Users/me/work/cli"],
+    reason: "tracked" as const,
+    paste_json: '{"permissions":{"additionalDirectories":["/Users/me/work/cli"]}}',
+  };
+  const report = { has_problems: false, problems: [], writable_folders_target: target };
+
+  it("asks as a warning when the report carries the decision", () => {
+    const result = collectProjectNotices(inputs({ problemsReport: report }));
+    expect(result).toEqual([
+      {
+        id: "writable_folders_target",
+        severity: "warning",
+        count: 1,
+        source: { kind: "writable_folders_target", notice: target },
+      },
+    ]);
+  });
+
+  it("waits while there are unsaved edits", () => {
+    expect(ids(inputs({ dirty: true, problemsReport: report }))).toEqual([]);
+  });
+
+  it("is skipped for a project without agents", () => {
+    expect(ids(inputs({ project: project({ agents: [] }), problemsReport: report }))).toEqual([]);
+  });
+
+  it("ignores a decision from the previous project", () => {
+    expect(ids(inputs({ checksKey: "other", problemsReport: report }))).toEqual([]);
+  });
+
+  it("is absent when the report carries no decision", () => {
+    expect(ids(inputs({ problemsReport: { has_problems: false, problems: [] } }))).toEqual([]);
+  });
+});
+
 describe("countNotices", () => {
   it("adds up rows by severity", () => {
     const notices = collectProjectNotices(
