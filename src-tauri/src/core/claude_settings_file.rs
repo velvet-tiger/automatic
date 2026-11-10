@@ -6,10 +6,15 @@
 //! and write path, and hold [`hold_settings_writes`] across it, so that one
 //! writer in this process never overwrites the other's change.
 //!
-//! The write re-serialises the whole file. Whitespace changes, and keys come
-//! out in sorted order, because this crate builds `serde_json` without its
-//! `preserve_order` feature.
+//! The write re-serialises the whole file, so whitespace changes. Keys keep
+//! the order they had in the text that was read ([`KeyOrder`]), and new keys
+//! follow them. This crate builds `serde_json` without its `preserve_order`
+//! feature, because turning it on would reorder every agent config file sync
+//! writes, so the order is carried here instead.
 
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs;
 use std::io::Write;
@@ -170,8 +175,135 @@ fn persist_unless_changed(
         .map_err(|e| format!("Could not write {}: {}", target.display(), e.error))
 }
 
+/// The key order of a JSON text: each object's keys in the order the text
+/// gives them, and the same for the values under them. Scalars carry nothing.
+#[derive(Debug, Default, PartialEq)]
+struct KeyOrder {
+    /// An object's keys, first appearance only, with the order below each.
+    keys: Vec<(String, KeyOrder)>,
+    /// An array's items, by position.
+    items: Vec<KeyOrder>,
+}
+
+impl KeyOrder {
+    /// The order in `text`, or `None` when it cannot be parsed. The caller
+    /// parsed the same text already, so `None` only means "no order to keep".
+    fn of(text: &str) -> Option<KeyOrder> {
+        serde_json::from_str(text).ok()
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyOrder {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct OrderVisitor;
+
+        impl<'de> Visitor<'de> for OrderVisitor {
+            type Value = KeyOrder;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<KeyOrder, A::Error> {
+                let mut keys: Vec<(String, KeyOrder)> = Vec::new();
+                while let Some((key, order)) = map.next_entry::<String, KeyOrder>()? {
+                    // A repeated key keeps its first place. serde_json keeps
+                    // the last value, which is written there.
+                    match keys.iter_mut().find(|(k, _)| *k == key) {
+                        Some(slot) => slot.1 = order,
+                        None => keys.push((key, order)),
+                    }
+                }
+                Ok(KeyOrder { keys, items: Vec::new() })
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<KeyOrder, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element::<KeyOrder>()? {
+                    items.push(item);
+                }
+                Ok(KeyOrder { keys: Vec::new(), items })
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+            fn visit_i64<E>(self, _: i64) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+            fn visit_u64<E>(self, _: u64) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+            fn visit_f64<E>(self, _: f64) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+            fn visit_str<E>(self, _: &str) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+            fn visit_unit<E>(self) -> Result<KeyOrder, E> {
+                Ok(KeyOrder::default())
+            }
+        }
+
+        deserializer.deserialize_any(OrderVisitor)
+    }
+}
+
+/// A value serialised with its objects' keys in `order`: keys the order names
+/// come first, in its order, then the rest in sorted order. An array's items
+/// take the order of the item at the same position.
+struct Ordered<'a> {
+    value: &'a Value,
+    order: Option<&'a KeyOrder>,
+}
+
+impl Serialize for Ordered<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.value {
+            Value::Object(map) => {
+                let known = self.order.map(|o| o.keys.as_slice()).unwrap_or_default();
+                let mut out = serializer.serialize_map(Some(map.len()))?;
+                for (key, order) in known {
+                    if let Some(value) = map.get(key) {
+                        out.serialize_entry(key, &Ordered { value, order: Some(order) })?;
+                    }
+                }
+                for (key, value) in map {
+                    if !known.iter().any(|(k, _)| k == key) {
+                        out.serialize_entry(key, &Ordered { value, order: None })?;
+                    }
+                }
+                out.end()
+            }
+            Value::Array(items) => {
+                let mut out = serializer.serialize_seq(Some(items.len()))?;
+                for (i, value) in items.iter().enumerate() {
+                    let order = self.order.and_then(|o| o.items.get(i));
+                    out.serialize_element(&Ordered { value, order })?;
+                }
+                out.end()
+            }
+            scalar => scalar.serialize(serializer),
+        }
+    }
+}
+
+/// `root` as pretty JSON with a trailing newline, keeping the key order of
+/// `seen` (the text it was read from).
+fn render_root(root: &Map<String, Value>, seen: Option<&str>) -> Result<String, serde_json::Error> {
+    let order = seen.and_then(KeyOrder::of);
+    let root = Value::Object(root.clone());
+    let mut text = serde_json::to_string_pretty(&Ordered {
+        value: &root,
+        order: order.as_ref(),
+    })?;
+    text.push('\n');
+    Ok(text)
+}
+
 /// Replace `target` in one step, so that Claude Code never reads half a file.
-/// `seen` is the text the caller read, or `None` when there was no file.
+/// `seen` is the text the caller read, or `None` when there was no file. Keys
+/// keep the order `seen` gave them.
 ///
 /// The temporary file sits next to the target, because a rename only works
 /// within one filesystem. It starts with mode 0600, which a new file keeps.
@@ -182,8 +314,7 @@ pub(super) fn write_root(
     permissions: Permissions,
 ) -> Result<(), String> {
     let failed = |e: &dyn std::fmt::Display| format!("Could not write {}: {}", target.display(), e);
-    let mut text = serde_json::to_string_pretty(root).map_err(|e| failed(&e))?;
-    text.push('\n');
+    let text = render_root(root, seen).map_err(|e| failed(&e))?;
     let temp = temp_beside(target, &text, permissions)?;
     replace_unless_changed(temp, target, seen)
 }
@@ -255,6 +386,52 @@ mod tests {
         let temp = tempfile::NamedTempFile::new_in(dir.path()).expect("temp");
 
         assert!(replace_unless_changed(temp, &path, None).is_err());
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_key_order_of_the_file() {
+        let seen = r#"{
+  "model": "opus",
+  "permissions": { "deny": [], "allow": ["Bash"], "additionalDirectories": ["/a"] },
+  "hooks": { "Stop": [{ "matcher": "", "hooks": [] }] },
+  "env": { "Z": "1", "A": "2" }
+}"#;
+        let mut root = parse_root(seen, Path::new("settings.json")).expect("parse");
+        root["permissions"]["additionalDirectories"] = serde_json::json!(["/a", "/b"]);
+        root.insert("apiKeyHelper".into(), Value::String("x".into()));
+
+        let text = render_root(&root, Some(seen)).expect("render");
+
+        let at = |needle: &str| text.find(needle).unwrap_or_else(|| panic!("{needle} in {text}"));
+        assert!(at("\"model\"") < at("\"permissions\""));
+        assert!(at("\"permissions\"") < at("\"hooks\""));
+        assert!(at("\"hooks\"") < at("\"env\""));
+        assert!(at("\"env\"") < at("\"apiKeyHelper\""), "a new key comes last");
+        assert!(at("\"deny\"") < at("\"allow\""));
+        assert!(at("\"allow\"") < at("\"additionalDirectories\""));
+        assert!(at("\"matcher\"") < at("\"hooks\": []"));
+        assert!(at("\"Z\"") < at("\"A\""));
+        let reparsed: Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(reparsed, Value::Object(root), "only the order is kept, not values");
+    }
+
+    #[test]
+    fn a_new_file_comes_out_sorted() {
+        let root = parse_root(r#"{"b":1,"a":{"d":1,"c":2}}"#, Path::new("s.json")).expect("parse");
+
+        let text = render_root(&root, None).expect("render");
+
+        assert_eq!(text, "{\n  \"a\": {\n    \"c\": 2,\n    \"d\": 1\n  },\n  \"b\": 1\n}\n");
+    }
+
+    #[test]
+    fn a_repeated_key_keeps_its_first_place() {
+        let seen = r#"{"b":1,"a":1,"b":2}"#;
+        let root = parse_root(seen, Path::new("s.json")).expect("parse");
+
+        let text = render_root(&root, Some(seen)).expect("render");
+
+        assert_eq!(text, "{\n  \"b\": 2,\n  \"a\": 1\n}\n");
     }
 
     #[test]
