@@ -2486,5 +2486,25 @@
       "method": "oauth",
       "env_vars": []
     }
+  },
+  {
+    "slug": "context-dev",
+    "name": "dev.context/mcp",
+    "title": "Context.dev",
+    "description": "Search, scrape, crawl and extract structured data from the live web, including brand and company data, through the Context.dev API.",
+    "provider": "Context.dev",
+    "icon": "context.dev",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://docs.context.dev/install-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.context.dev/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
   }
 ]
