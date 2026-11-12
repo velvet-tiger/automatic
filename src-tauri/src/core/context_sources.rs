@@ -1050,6 +1050,7 @@ mod tests {
         assert_eq!(body, "secret");
     }
 
+    #[cfg(unix)]
     fn linked(path: &Path, added_by_agent: bool) -> Context {
         Context {
             slug: "c".into(),

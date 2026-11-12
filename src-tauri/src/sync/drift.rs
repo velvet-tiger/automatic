@@ -2731,6 +2731,7 @@ mod tests {
         assert!(problem.solution.iter().any(|s| s.contains("was not written")), "{problem:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_refused_copy_sync_cannot_remove_is_reported_and_sync_goes_on() {
         use std::os::unix::fs::PermissionsExt;
@@ -4266,6 +4267,7 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
     fn automatic_servers() -> Map<String, Value> {
         let mut servers = Map::new();
         servers.insert(

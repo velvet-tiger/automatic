@@ -4936,6 +4936,7 @@ mod tests {
             let outside_file = sandbox.outside.join(file_name);
             fs::write(&outside_file, content).expect("write outside file");
 
+            #[cfg_attr(not(unix), allow(unused_mut))]
             let mut paths = vec![
                 outside_file.to_string_lossy().to_string(),
                 format!("../outside/{}", file_name),
@@ -5030,6 +5031,7 @@ mod tests {
         let sandbox = sandbox();
         fs::write(sandbox.outside.join("SKILL.md"), "# Outside\n").expect("write skill");
 
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut paths = vec![
             sandbox.outside.to_string_lossy().to_string(),
             "../outside".to_string(),
@@ -5088,6 +5090,7 @@ mod tests {
         )
         .expect("write outside skill.json");
 
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut paths = vec![
             outside_file.to_string_lossy().to_string(),
             "../outside/skill.json".to_string(),
@@ -5157,6 +5160,7 @@ mod tests {
         let outside_file = sandbox.outside.join("collection.json");
         fs::write(&outside_file, r#"{"slug":"planted"}"#).expect("write outside collection");
 
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut paths = vec![
             outside_file.to_string_lossy().to_string(),
             "../outside/collection.json".to_string(),
@@ -9610,6 +9614,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_library_entry_is_never_replaced() {
         let sandbox = sandbox();
@@ -9620,10 +9625,7 @@ mod tests {
             fs::write(&target, "outside").expect("write target");
             let rule = library_path("rules", &names.rule);
             fs::remove_file(&rule).expect("remove rule");
-            #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &rule).expect("link rule");
-            #[cfg(not(unix))]
-            return;
             let manifest = write_every_kind(REPO, &names, MCP);
 
             let result = install_source(REPO, &manifest, None, None, &[]).expect("reinstall");
