@@ -4212,6 +4212,7 @@ fn install_collection(
         {
             return Err(lookalike_collection_reason(&slug, lookalike));
         }
+        ensure_discover_can_read(&collection, &slug)?;
         match collections.iter().position(slug_of) {
             Some(_) if !mode.replaces() => {
                 return Err(format!("collection '{}' already exists in Discover", slug));
@@ -4225,6 +4226,23 @@ fn install_collection(
         super::discover_data::write_collection_entries(&collections)
     })?;
     Ok(slug)
+}
+
+/// Refuse a collection that Discover cannot read. Discover parses every
+/// entry as a [`super::discover::Collection`], so one entry with a missing
+/// `id` or `name`, or a field of the wrong type, would stop the whole list
+/// from loading. It also means the identity check never sees a `name`,
+/// `id`, `icon` or `author.type` that is not a string.
+fn ensure_discover_can_read(collection: &serde_json::Value, slug: &str) -> Result<(), String> {
+    serde_json::from_value::<super::discover::Collection>(collection.clone())
+        .map(|_| ())
+        .map_err(|e| {
+            format!(
+                "The collection '{}' is not a valid Discover collection ({}), so it cannot be installed",
+                visible_slug(slug),
+                e
+            )
+        })
 }
 
 /// Remove an installed resource by type and name, from the library folder
@@ -5639,7 +5657,8 @@ mod tests {
         .expect("write agent");
         fs::write(
             clone.join("collection.json"),
-            serde_json::json!({ "slug": names.collection, "name": "Fixture" }).to_string(),
+            serde_json::json!({ "id": names.collection, "slug": names.collection, "name": "Fixture" })
+                .to_string(),
         )
         .expect("write collection");
 
@@ -6103,7 +6122,8 @@ mod tests {
             ] {
                 fs::write(
                     clone.join(file),
-                    serde_json::json!({ "slug": slug, "name": "From the source" }).to_string(),
+                    serde_json::json!({ "id": slug, "slug": slug, "name": "From the source" })
+                        .to_string(),
                 )
                 .expect("write collection");
                 manifest.collections.push(CollectionRef {
@@ -8941,6 +8961,39 @@ mod tests {
         assert_eq!(fold_collection_name("Automatic\u{200B}\u{00A0}Skills"), "automaticskills");
         assert_eq!(fold_collection_name("Ａｕｔｏｍａｔｉｃ Skills"), "automaticskills");
         assert_ne!(fold_collection_name("Automatic Skills Plus"), "automaticskills");
+    }
+
+    #[test]
+    fn install_collection_refuses_what_discover_cannot_read() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("unreadable-collection");
+            for collection in [
+                serde_json::json!({ "slug": "unreadable", "name": "No id" }),
+                serde_json::json!({ "id": "x", "slug": "unreadable" }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": "Icon", "icon": ["automatic.sh"] }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": 7 }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": "A", "author": { "type": { "provider": true } } }),
+            ] {
+                manifest_with_collection(&names, collection.clone());
+                let before = collections();
+
+                let error = install_collection(
+                    &source_clone_path(REPO).unwrap(),
+                    &CollectionRef {
+                        path: "identity.json".to_string(),
+                        ..Default::default()
+                    },
+                    WriteMode::ReplaceConfirmed,
+                )
+                .expect_err("refused");
+
+                assert!(error.contains("not a valid Discover collection"), "{}: {}", collection, error);
+                assert_eq!(collections(), before);
+                crate::core::discover::search_collections("").expect("Discover still loads");
+            }
+        });
     }
 
     #[test]
