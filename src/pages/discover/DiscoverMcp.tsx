@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { buildDiscoverMcpConfig, resolveLocalCommand } from "../../lib/discoverMcpConfig";
+import { buildDiscoverMcpConfig, discoverUrlTokens, resolveLocalCommand } from "../../lib/discoverMcpConfig";
+import { fillUrlTemplate } from "../../lib/urlTemplate";
+import { UrlTemplateFields } from "../../components/UrlTemplateFields";
 import { confirmMcpConfigSave } from "../../lib/mcpConfigValidation";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
@@ -236,6 +238,17 @@ function copyNameProblem(name: string, installed: Set<string>): string | null {
   return null;
 }
 
+/** The URL values to build `server` with, or `undefined` when its URL has no
+ *  placeholders. `buildDiscoverMcpConfig` refuses missing or invalid values. */
+function urlValuesFor(server: McpServer, values: Record<string, string>): Record<string, string> | undefined {
+  return discoverUrlTokens(server).length > 0 ? values : undefined;
+}
+
+/** True when `server` has URL placeholders that `values` cannot fill yet. */
+function urlValuesIncomplete(server: McpServer, values: Record<string, string>): boolean {
+  return !!server.remote && discoverUrlTokens(server).length > 0 && "problem" in fillUrlTemplate(server.remote.url, values);
+}
+
 type LocalConfig = NonNullable<McpServer["local"]>;
 
 /** Full command line for display/copy, reconstructed from command + resolved args. */
@@ -302,6 +315,9 @@ export default function DiscoverMcp({
   const [copyName, setCopyName] = useState("");
   const [copying, setCopying] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
+  // Values for the `<token>` placeholders in the selected server's URL, such
+  // as the Spacelift account name. Used by "Add" and "Add another copy".
+  const [urlValues, setUrlValues] = useState<Record<string, string>>({});
   const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
   const [installingSkill, setInstallingSkill] = useState(false);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
@@ -388,6 +404,7 @@ export default function DiscoverMcp({
       setCopyOpen(false);
       setCopyName("");
       setCopyError(null);
+      setUrlValues({});
       setSkillInstallError(null);
       setSkillInstallNotice(null);
     }
@@ -399,7 +416,7 @@ export default function DiscoverMcp({
     setInstallError(null);
     try {
       const name = configName(server);
-      const config = buildDiscoverMcpConfig(server);
+      const config = buildDiscoverMcpConfig(server, urlValuesFor(server, urlValues));
       if (!config) {
         setInstallError("This server needs manual setup. Follow its documentation.");
         return;
@@ -407,16 +424,18 @@ export default function DiscoverMcp({
       if (!(await confirmMcpConfigSave(name, config))) return;
       await invoke("save_mcp_server_config", { name, data: JSON.stringify(config) });
       setInstalledServers((prev) => new Set([...prev, name]));
-    } catch (err: any) {
-      setInstallError(`Failed to add server: ${err}`);
+    } catch (err: unknown) {
+      setInstallError(`Failed to add server: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setInstalling(false);
     }
-  }, []);
+  }, [urlValues]);
 
   const openCopyPrompt = useCallback((server: McpServer) => {
     setCopyName(nextAvailableName(configName(server), installedServers, { startAt: 2 }));
     setCopyError(null);
+    // A copy is usually for a second account, so its URL values start empty.
+    setUrlValues({});
     setCopyOpen(true);
   }, [installedServers]);
 
@@ -439,7 +458,7 @@ export default function DiscoverMcp({
     setCopying(true);
     setCopyError(null);
     try {
-      const config = buildDiscoverMcpConfig(server);
+      const config = buildDiscoverMcpConfig(server, urlValuesFor(server, urlValues));
       if (!config) {
         setCopying(false);
         setCopyError("This server needs manual setup. Follow its documentation.");
@@ -459,7 +478,7 @@ export default function DiscoverMcp({
     setInstalledServers((prev) => new Set([...prev, name]));
     closeCopyPrompt();
     onNavigateToMcpServer?.(name);
-  }, [copyName, installedServers, closeCopyPrompt, onNavigateToMcpServer]);
+  }, [copyName, installedServers, closeCopyPrompt, onNavigateToMcpServer, urlValues]);
 
   // Base list after applying the search query only (used for cross-filter counts)
   const queryFiltered = useMemo(() => {
@@ -519,6 +538,7 @@ export default function DiscoverMcp({
     setCopyOpen(false);
     setCopyName("");
     setCopyError(null);
+    setUrlValues({});
     if (hasRemote(server)) {
       setSetupTab("remote");
     } else if (hasLocal(server)) {
@@ -616,6 +636,25 @@ export default function DiscoverMcp({
                             Add this server again under a different name. Each copy keeps its own
                             credentials, so a second copy can connect to a second account.
                           </p>
+                          {selected.remote && discoverUrlTokens(selected).length > 0 && (
+                            <div className="mb-3">
+                              <UrlTemplateFields
+                                template={selected.remote.url}
+                                values={urlValues}
+                                onChange={(v) => {
+                                  setUrlValues(v);
+                                  setCopyError(null);
+                                }}
+                                onSubmit={() => {
+                                  if (!copying && copyName.trim() && !urlValuesIncomplete(selected, urlValues)) {
+                                    handleInstallCopy(selected);
+                                  }
+                                }}
+                                inputClassName={smallInputClass}
+                                autoFocus
+                              />
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <input
                               type="text"
@@ -632,13 +671,13 @@ export default function DiscoverMcp({
                               autoCapitalize="none"
                               autoCorrect="off"
                               spellCheck={false}
-                              autoFocus
+                              autoFocus={discoverUrlTokens(selected).length === 0}
                               aria-label="Name for the new copy"
                               className={smallInputClass}
                             />
                             <button
                               onClick={() => handleInstallCopy(selected)}
-                              disabled={copying || !copyName.trim()}
+                              disabled={copying || !copyName.trim() || urlValuesIncomplete(selected, urlValues)}
                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-icon-mcp hover:bg-icon-mcp-hover text-white text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {copying ? (
@@ -676,23 +715,44 @@ export default function DiscoverMcp({
                       documentation linked below, then create it under MCP Servers.
                     </p>
                   ) : (
-                    <button
-                      onClick={() => handleInstall(selected)}
-                      disabled={installing}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-white font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {installing ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          Adding...
-                        </>
-                      ) : (
-                        <>
-                          <Download size={14} />
-                          Add to MCP Servers
-                        </>
+                    <>
+                      {selected.remote && discoverUrlTokens(selected).length > 0 && (
+                        <div className="mb-3 rounded-lg border border-border-strong/40 bg-bg-input/40 p-3">
+                          <p className="text-[12px] text-text-muted leading-relaxed mb-2">
+                            This server's address is different for each account. Enter yours to add it.
+                          </p>
+                          <UrlTemplateFields
+                            template={selected.remote.url}
+                            values={urlValues}
+                            onChange={(v) => {
+                              setUrlValues(v);
+                              setInstallError(null);
+                            }}
+                            onSubmit={() => {
+                              if (!installing && !urlValuesIncomplete(selected, urlValues)) handleInstall(selected);
+                            }}
+                            inputClassName={smallInputClass}
+                          />
+                        </div>
                       )}
-                    </button>
+                      <button
+                        onClick={() => handleInstall(selected)}
+                        disabled={installing || urlValuesIncomplete(selected, urlValues)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-white font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {installing ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Adding...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={14} />
+                            Add to MCP Servers
+                          </>
+                        )}
+                      </button>
+                    </>
                   )}
                   {installError && (
                     <p className="mt-2 text-[12px] text-red-400">{installError}</p>

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildDiscoverMcpConfig, resolveLocalCommand, type DiscoverMcpSource } from "./discoverMcpConfig";
+import {
+  buildDiscoverMcpConfig,
+  discoverUrlTokens,
+  needsUrlValues,
+  resolveLocalCommand,
+  type DiscoverMcpSource,
+} from "./discoverMcpConfig";
 
 const base: DiscoverMcpSource = {
   provider: "Example",
@@ -75,6 +81,46 @@ describe("buildDiscoverMcpConfig", () => {
 
   it("returns null for an entry that needs manual setup", () => {
     expect(buildDiscoverMcpConfig(base)).toBeNull();
+  });
+
+  it("fills a URL template and records it", () => {
+    const server = {
+      ...base,
+      remote: { transport: "http", url: "https://<account-name>.app.spacelift.io/mcp" },
+    };
+    expect(discoverUrlTokens(server)).toEqual(["account-name"]);
+    const cfg = buildDiscoverMcpConfig(server, { "account-name": "acme" });
+    expect(cfg).toEqual({
+      type: "http",
+      url: "https://acme.app.spacelift.io/mcp",
+      _url_template: "https://<account-name>.app.spacelift.io/mcp",
+      _author: { name: "Example" },
+    });
+    expect(needsUrlValues(cfg!)).toBe(false);
+  });
+
+  it("leaves the template unfilled without values, and flags it as unsaveable", () => {
+    const cfg = buildDiscoverMcpConfig({
+      ...base,
+      remote: { transport: "http", url: "https://<account-name>.app.spacelift.io/mcp" },
+    });
+    expect(cfg?.url).toBe("https://<account-name>.app.spacelift.io/mcp");
+    expect(needsUrlValues(cfg!)).toBe(true);
+  });
+
+  it("throws when a value cannot fill the template", () => {
+    expect(() =>
+      buildDiscoverMcpConfig(
+        { ...base, remote: { transport: "http", url: "https://<account-name>.app.spacelift.io/mcp" } },
+        { "account-name": "evil.com/" },
+      ),
+    ).toThrow(/letters, digits and hyphens/);
+  });
+
+  it("adds no template key to an ordinary remote entry", () => {
+    const cfg = buildDiscoverMcpConfig({ ...base, remote: { transport: "http", url: "https://example.com/mcp" } });
+    expect(cfg).not.toHaveProperty("_url_template");
+    expect(needsUrlValues(cfg!)).toBe(false);
   });
 
   it("builds a stdio config for a local-only entry", () => {

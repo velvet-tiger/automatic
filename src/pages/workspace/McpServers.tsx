@@ -15,6 +15,14 @@ import { useBulkSelection } from "../../lib/useBulkSelection";
 import { nextAvailableName } from "../../lib/uniqueName";
 import { encryptedPrefixMessage, envKeysWithEncryptedPrefix } from "../../lib/encryptedEnvValues";
 import { McpConfigFindings } from "../../components/McpConfigFindings";
+import { UrlTemplateFields } from "../../components/UrlTemplateFields";
+import {
+  fillUrlTemplate,
+  knownUrlTemplates,
+  readUrlTemplateValues,
+  savedUrlTemplate,
+  urlTemplateTokens,
+} from "../../lib/urlTemplate";
 import {
   fixMcpDockerArgs,
   hasMcpConfigErrors,
@@ -57,6 +65,12 @@ interface DiscoverEntryMeta {
   auth?: { method?: string; env_vars?: DiscoverEnvVarMeta[] } | null;
 }
 const DISCOVER_ENTRIES = featuredMcpServers as DiscoverEntryMeta[];
+
+/** The bundled catalogue's templated URLs. The editor honours a server's
+ *  `_url_template` only when it is one of these. */
+const KNOWN_URL_TEMPLATES = knownUrlTemplates(
+  (featuredMcpServers as Array<{ remote?: { url?: string } | null }>).map((e) => e.remote?.url),
+);
 
 /** Find the Discover catalogue entry that matches a saved server name.
  *  Matches by slug first (the installer's default), then by title-derived key. */
@@ -145,6 +159,10 @@ interface McpServerConfig {
   _author?: McpAuthorMeta;
   /** Automatic-internal: true for built-in servers that cannot be deleted or reconfigured. */
   _builtin?: boolean;
+  /** Automatic-internal: the catalogue URL with `<token>` placeholders, such as
+   *  Spacelift's `https://<account-name>.app.spacelift.io/mcp`. The editor
+   *  asks for the token values and builds `url` from it. Stripped on sync. */
+  _url_template?: string;
 }
 
 function parseGitHubRepo(url?: string): string | null {
@@ -201,6 +219,7 @@ function normalizeConfig(data: Partial<McpServerConfig> & { oauth?: any }): McpS
     // Preserve author metadata if present (Automatic-internal field)
     _author: data._author,
     _builtin: data._builtin,
+    _url_template: typeof data._url_template === "string" ? data._url_template : undefined,
   };
 }
 
@@ -216,6 +235,8 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
   } else {
     if (config.url) out.url = config.url;
     if (config.headers && Object.keys(config.headers).length > 0) out.headers = config.headers;
+    // Kept so the editor can ask for the account name again after a save.
+    if (config._url_template) out._url_template = config._url_template;
 
     if (config.oauth) {
       const cleanOauth: Record<string, unknown> = {};
@@ -687,6 +708,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const recentIds = useRecentlyAdded("mcp_servers", recentRefresh);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [config, setConfig] = useState<McpServerConfig | null>(null);
+  // Typed values for the `<token>` placeholders of a templated URL. Kept apart
+  // from `config.url` so a half-typed value is not lost while it is invalid.
+  const [urlTemplateValues, setUrlTemplateValues] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   // Counts successful saves, so the OAuth section can re-check the stored token.
   const [savedRevision, setSavedRevision] = useState(0);
@@ -833,7 +857,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       const data = JSON.parse(raw);
       setSelectedName(name);
       setEditName(name);
-      setConfig(normalizeConfig(data));
+      const loaded = normalizeConfig(data);
+      setConfig(loaded);
+      const template = savedUrlTemplate(loaded._url_template, loaded.url || "", KNOWN_URL_TEMPLATES);
+      setUrlTemplateValues(template ? readUrlTemplateValues(template, loaded.url || "") : {});
       setDirty(false);
       setIsCreating(false);
       setError(null);
@@ -846,6 +873,17 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const resetInlineState = () => {
     setNewArg("");
+  };
+
+  /**
+   * Store new token values for a templated URL. An incomplete or invalid set
+   * leaves the template itself as the URL, which keeps Authenticate off and
+   * never sends a token to a half-typed host.
+   */
+  const updateUrlTemplateValues = (template: string, values: Record<string, string>) => {
+    setUrlTemplateValues(values);
+    const filled = fillUrlTemplate(template, values);
+    updateConfig({ url: "url" in filled ? filled.url : template, _url_template: template });
   };
 
   const closeDrawer = () => {
@@ -870,7 +908,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const trimmedEdit = editName.trim();
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
-    if (saveBlockedByErrors) return;
+    if (saveBlockedByErrors || urlTemplateProblem) return;
     if (envPrefixError) {
       setError(envPrefixError);
       return;
@@ -1049,6 +1087,30 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const isManaged = (!!config?._author && !githubRepo) || !!config?._builtin;
   /** Built-in server (e.g. Automatic itself) — lock everything including delete. */
   const isBuiltin = !!config?._builtin;
+  /** A catalogue server whose URL differs per account. Its URL is built from
+   *  the token fields, which stay editable although the server is managed. */
+  const urlTemplate = config && !isStdio && isManaged && !isBuiltin
+    ? savedUrlTemplate(config._url_template, config.url || "", KNOWN_URL_TEMPLATES)
+    : null;
+  /** Why the token values cannot be saved yet. A save would otherwise write
+   *  the raw template over a working URL. */
+  const urlTemplateProblem = (() => {
+    if (!urlTemplate) return null;
+    const filled = fillUrlTemplate(urlTemplate, urlTemplateValues);
+    return "problem" in filled ? filled.problem : null;
+  })();
+  /** True when a templated server's URL is not the one its token fields build,
+   *  for example after a hand edit or an edit from another source. The fields
+   *  cannot show that URL, so OAuth must not use it. */
+  const urlTemplateMismatch = (() => {
+    if (!urlTemplate) return false;
+    const filled = fillUrlTemplate(urlTemplate, urlTemplateValues);
+    return !("url" in filled && filled.url === config?.url);
+  })();
+  /** The URL OAuth may use: none while it holds a placeholder or does not
+   *  match the token fields. */
+  const authUrl =
+    urlTemplateMismatch || urlTemplateTokens(config?.url || "").length > 0 ? "" : config?.url || "";
 
   const searchLower = search.trim().toLowerCase();
   const filteredServers = servers.filter(name => !searchLower || name.toLowerCase().includes(searchLower));
@@ -1347,10 +1409,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       (isCreating && !newName.trim()) ||
                       (!isCreating && !editName.trim()) ||
                       saveBlockedByErrors ||
+                      !!urlTemplateProblem ||
                       envPrefixError !== null
                     }
                     title={
                       envPrefixError ??
+                      urlTemplateProblem ??
                       (saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined)
                     }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
@@ -1684,18 +1748,34 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           <Globe size={12} /> URL
                         </span>
                       </label>
-                      <input
-                        type="text"
-                        value={config.url || ""}
-                        onChange={(e) => !isManaged && updateConfig({ url: e.target.value })}
-                        readOnly={isManaged}
-                        placeholder={
-                          config.type === "sse"
-                            ? "https://example.com/sse"
-                            : "https://example.com/mcp"
-                        }
-                        className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
-                      />
+                      {urlTemplate ? (
+                        <UrlTemplateFields
+                          template={urlTemplate}
+                          values={urlTemplateValues}
+                          onChange={(values) => updateUrlTemplateValues(urlTemplate, values)}
+                          inputClassName={inputClass}
+                          showMissing
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={config.url || ""}
+                          onChange={(e) => !isManaged && updateConfig({ url: e.target.value })}
+                          readOnly={isManaged}
+                          placeholder={
+                            config.type === "sse"
+                              ? "https://example.com/sse"
+                              : "https://example.com/mcp"
+                          }
+                          className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                        />
+                      )}
+                      {urlTemplateMismatch && config.url && config.url !== urlTemplate && (
+                        <p className="mt-2 text-[11px] text-warning break-all">
+                          The saved address <code className="font-mono">{config.url}</code> does not match
+                          this server's catalogue address. Enter your account name to replace it.
+                        </p>
+                      )}
                     </section>
 
                     {(!isManaged || Object.keys(config.headers || {}).length > 0) && (
@@ -1732,7 +1812,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       <OAuthSection
                         key={selectedName || ""}
                         serverName={selectedName || ""}
-                        url={config.url || ""}
+                        url={authUrl}
                         offerSignIn={!hasAuthorizationHeader(config.headers || {})}
                         dirty={dirty}
                         savedRevision={savedRevision}

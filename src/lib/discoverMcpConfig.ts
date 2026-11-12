@@ -1,3 +1,5 @@
+import { fillUrlTemplate, urlTemplateTokens } from "./urlTemplate";
+
 /** The parts of a Discover catalogue entry needed to build a saved MCP config. */
 export interface DiscoverMcpSource {
   provider: string;
@@ -37,9 +39,20 @@ export function resolveLocalCommand(
  *  Embeds `_author` metadata so Automatic can display the provider in the MCP
  *  Servers view.
  *
+ *  A remote URL that holds `<token>` placeholders (see `urlTemplate.ts`) is
+ *  filled from `urlValues`, and the template is kept as `_url_template` so the
+ *  editor can ask for the values again. Without `urlValues` the URL keeps its
+ *  placeholders. That form is for display only: `needsUrlValues` reports it,
+ *  and a caller must not save it.
+ *
  *  Returns `null` for an entry with neither block: it needs manual setup, and
- *  there is no config Automatic could save that would run. */
-export function buildDiscoverMcpConfig(server: DiscoverMcpSource): Record<string, unknown> | null {
+ *  there is no config Automatic could save that would run. Throws when
+ *  `urlValues` is given but cannot fill the template.
+ */
+export function buildDiscoverMcpConfig(
+  server: DiscoverMcpSource,
+  urlValues?: Record<string, string>,
+): Record<string, unknown> | null {
   const _author: Record<string, string> = { name: server.provider };
   if (server.repository_url) _author.repository_url = server.repository_url;
 
@@ -51,6 +64,14 @@ export function buildDiscoverMcpConfig(server: DiscoverMcpSource): Record<string
   if (server.remote) {
     const type = server.remote.transport === "sse" ? "sse" : "http";
     const cfg: Record<string, unknown> = { type, url: server.remote.url, _author };
+    if (urlTemplateTokens(server.remote.url).length > 0) {
+      cfg._url_template = server.remote.url;
+      if (urlValues) {
+        const filled = fillUrlTemplate(server.remote.url, urlValues);
+        if ("problem" in filled) throw new Error(filled.problem);
+        cfg.url = filled.url;
+      }
+    }
     const headers = server.remote.headers ?? {};
     if (Object.keys(headers).length > 0) cfg.headers = { ...headers };
     if (!server.local && Object.keys(env).length > 0) cfg.env = env;
@@ -64,4 +85,14 @@ export function buildDiscoverMcpConfig(server: DiscoverMcpSource): Record<string
     return cfg;
   }
   return null;
+}
+
+/** The URL tokens a user must fill before `server` can be saved. Empty when none. */
+export function discoverUrlTokens(server: DiscoverMcpSource): string[] {
+  return server.remote ? urlTemplateTokens(server.remote.url) : [];
+}
+
+/** True when a built config still holds URL placeholders and must not be saved. */
+export function needsUrlValues(config: Record<string, unknown>): boolean {
+  return typeof config.url === "string" && urlTemplateTokens(config.url).length > 0;
 }
