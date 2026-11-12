@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import mcpServersData from "../../../../../src-tauri/assets/discover/featured-mcp-servers.json";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
 import type { ProjectRecommendation } from "../types";
-import { buildDiscoverMcpConfig } from "../../../../lib/discoverMcpConfig";
+import { buildDiscoverMcpConfig, needsUrlValues } from "../../../../lib/discoverMcpConfig";
 import { confirmMcpConfigSave } from "../../../../lib/mcpConfigValidation";
 
 /**
@@ -56,6 +56,11 @@ export function McpAddButton({
     if (!config) {
       setState("error");
       setErrorMsg("This server needs manual setup. Open it in Discover MCP Servers for its documentation.");
+      return;
+    }
+    if (needsUrlValues(config)) {
+      setState("error");
+      setErrorMsg("This server's address includes your account name. Add it from Discover MCP Servers.");
       return;
     }
 
