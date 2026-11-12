@@ -108,6 +108,16 @@ pub struct CollectionRef {
     /// dialog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The collection's `author.type`, read the same way, so the conflict
+    /// check can refuse a source collection that claims Automatic's author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_type: Option<String>,
+    /// The collection's `id`, read the same way, for the same check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The collection's `icon`, read the same way, for the same check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Skills section supporting both skill.json reference and inline entries.
@@ -1508,6 +1518,10 @@ fn resolve_manifest_collections(base_dir: &Path, manifest: &mut AutomaticManifes
                 .get("name")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            let identity = CollectionIdentity::of(&collection);
+            coll_ref.author_type = identity.author_type.map(str::to_string);
+            coll_ref.id = identity.id.map(str::to_string);
+            coll_ref.icon = identity.icon.map(str::to_string);
         }
     }
 }
@@ -1600,8 +1614,20 @@ pub fn check_conflicts(
     for (resource_type, names) in manifest_names(manifest) {
         let wanted = names_of_type(selected, resource_type);
         if resource_type == "collection" {
-            for slug in names.iter().filter(|slug| wanted.contains(slug)) {
-                if let Some(conflict) = collection_conflict(repo, slug)? {
+            for coll_ref in &manifest.collections {
+                let Some(slug) = coll_ref.slug.as_deref() else {
+                    continue;
+                };
+                if !wanted.iter().any(|w| w == slug) {
+                    continue;
+                }
+                let identity = CollectionIdentity {
+                    name: coll_ref.name.as_deref(),
+                    author_type: coll_ref.author_type.as_deref(),
+                    id: coll_ref.id.as_deref(),
+                    icon: coll_ref.icon.as_deref(),
+                };
+                if let Some(conflict) = collection_conflict(repo, slug, identity)? {
                     conflicts.push(conflict);
                 }
             }
@@ -1887,10 +1913,16 @@ fn entry_names(dir: &Path, extension: Option<&str>) -> Result<Vec<String>, Strin
 ///   Discover would show two collections a user cannot tell apart. This
 ///   holds even when `repo` installed the lookalike before this check
 ///   existed, so such a pair can be removed but not updated.
+/// - A collection whose card would pass for a bundled one, see
+///   [`collection_identity_reason`].
 ///
 /// A slug already in Discover is owned by the source whose entry lists it;
 /// with no such source it is the user's (`local`).
-fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, String> {
+fn collection_conflict(
+    repo: &str,
+    slug: &str,
+    identity: CollectionIdentity<'_>,
+) -> Result<Option<ConflictInfo>, String> {
     let conflict = |existing_name: &str, existing_source: String, blocked: bool, reason: String| {
         ConflictInfo {
             resource_type: "collection".to_string(),
@@ -1925,6 +1957,9 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
             true,
             lookalike_collection_reason(slug, lookalike),
         )));
+    }
+    if let Some((bundled_name, reason)) = collection_identity_reason(identity)? {
+        return Ok(Some(conflict(&bundled_name, "bundled".to_string(), true, reason)));
     }
     let entries = super::discover_data::read_collection_entries()?;
     let installed: Vec<&str> = entries
@@ -1964,6 +1999,19 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
             format!("Replaces your own collection '{}'", slug),
         ))),
     }
+}
+
+/// Each collection slug a source lists, with the repository of the first
+/// source that lists it. An older version could leave a slug on two sources;
+/// Discover then names the first, as either one installed it.
+pub(crate) fn collection_installers() -> Result<HashMap<String, String>, String> {
+    let mut installers = HashMap::new();
+    for source in list_sources()? {
+        for slug in source.collection_slugs {
+            installers.entry(slug).or_insert_with(|| source.repo.clone());
+        }
+    }
+    Ok(installers)
 }
 
 /// The source that owns the installed collection `slug`, or `None` when it
@@ -2031,6 +2079,171 @@ fn lookalike_collection_slug<'a>(
     slugs
         .into_iter()
         .find(|other| *other != slug && fold_collection_slug(other) == folded)
+}
+
+/// What a source collection shows on its Discover card besides its slug.
+#[derive(Debug, Clone, Copy, Default)]
+struct CollectionIdentity<'a> {
+    /// The collection's `name`.
+    name: Option<&'a str>,
+    /// The collection's `author.type`.
+    author_type: Option<&'a str>,
+    /// The collection's `id`.
+    id: Option<&'a str>,
+    /// The collection's `icon`: a domain Discover fetches a logo for.
+    icon: Option<&'a str>,
+}
+
+impl<'a> CollectionIdentity<'a> {
+    fn of(collection: &'a serde_json::Value) -> Self {
+        let text = |key: &str| collection.get(key).and_then(|v| v.as_str());
+        CollectionIdentity {
+            name: text("name"),
+            author_type: collection_author_type(collection),
+            id: text("id"),
+            icon: text("icon"),
+        }
+    }
+}
+
+fn collection_author_type(collection: &serde_json::Value) -> Option<&str> {
+    collection
+        .get("author")
+        .and_then(|author| author.get("type"))
+        .and_then(|v| v.as_str())
+}
+
+/// Reads one field of a bundled collection's identity.
+type BundledField = fn(&super::discover_data::BundledCollectionIdentity) -> Option<&str>;
+
+/// The bundled collection a source collection would pass for, and why it is
+/// refused, or `None` when its card cannot be mistaken for a bundled one.
+///
+/// Discover draws a collection's card from its `name`, its `icon` and its
+/// author, and keys it by its `id`. So a source may not use:
+/// - a name or id that matches a bundled collection's after
+///   [`fold_collection_name`],
+/// - an icon that is not a plain domain, or that is a bundled collection's
+///   icon domain or a subdomain of one, see [`icon_identity_reason`], or
+/// - the `provider` author type, which Discover draws as Automatic's own.
+///
+/// The fold cannot catch letters from other scripts, such as a Cyrillic `А`.
+/// Discover also badges each source collection with the source that
+/// installed it and shows that source as its author, so a name the fold
+/// misses, or an author `name` that claims to be Automatic, still shows
+/// where it came from.
+fn collection_identity_reason(
+    identity: CollectionIdentity<'_>,
+) -> Result<Option<(String, String)>, String> {
+    let bundled = super::discover_data::bundled_collection_identities()?;
+    let label = |b: &super::discover_data::BundledCollectionIdentity| {
+        b.name.clone().or_else(|| b.id.clone()).unwrap_or_else(|| "a bundled collection".to_string())
+    };
+    if let Some(icon) = identity.icon {
+        if let Some(reason) = icon_identity_reason(icon, &bundled, label) {
+            return Ok(Some(reason));
+        }
+    }
+    let fields: [(&str, Option<&str>, BundledField); 2] = [
+        ("name", identity.name, |b| b.name.as_deref()),
+        ("id", identity.id, |b| b.id.as_deref()),
+    ];
+    for (field, value, bundled_value) in fields {
+        let Some(value) = value else { continue };
+        let folded = fold_collection_name(value);
+        if folded.is_empty() {
+            continue;
+        }
+        if let Some(b) = bundled
+            .iter()
+            .find(|b| bundled_value(b).map(fold_collection_name).as_deref() == Some(folded.as_str()))
+        {
+            let bundled_label = label(b);
+            return Ok(Some((
+                bundled_label.clone(),
+                format!(
+                    "The collection {} '{}' matches the bundled collection '{}', so it cannot be installed",
+                    field,
+                    visible_slug(value),
+                    bundled_label
+                ),
+            )));
+        }
+    }
+    if let Some(author_type) = identity.author_type {
+        if fold_collection_name(author_type) == "provider" {
+            let bundled_label = bundled
+                .first()
+                .map(label)
+                .unwrap_or_else(|| "a bundled collection".to_string());
+            return Ok(Some((
+                bundled_label,
+                "The collection names Automatic as its author ('provider'), so it cannot be installed"
+                    .to_string(),
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// Why a source collection's `icon` is refused, or `None` when it is allowed.
+///
+/// Discover asks a logo service for the icon's domain. That service also
+/// answers for a URL, a host with a trailing dot and a subdomain, so a
+/// string compare would let `https://automatic.sh` or `www.automatic.sh`
+/// draw Automatic's logo. A source icon must be a plain domain, and it may
+/// not be a bundled icon's domain or a subdomain of one.
+fn icon_identity_reason(
+    icon: &str,
+    bundled: &[super::discover_data::BundledCollectionIdentity],
+    label: impl Fn(&super::discover_data::BundledCollectionIdentity) -> String,
+) -> Option<(String, String)> {
+    let Some(domain) = plain_icon_domain(icon) else {
+        let first = bundled.first().map(&label).unwrap_or_else(|| "a bundled collection".to_string());
+        return Some((
+            first,
+            format!(
+                "The collection icon '{}' must be a plain domain such as 'example.com', so it cannot be installed",
+                visible_slug(icon)
+            ),
+        ));
+    };
+    bundled.iter().find_map(|b| {
+        let bundled_domain = b.icon.as_deref().and_then(plain_icon_domain)?;
+        let same = domain == bundled_domain || domain.ends_with(&format!(".{}", bundled_domain));
+        same.then(|| {
+            let bundled_label = label(b);
+            (
+                bundled_label.clone(),
+                format!(
+                    "The collection icon '{}' is the logo of the bundled collection '{}', so it cannot be installed",
+                    visible_slug(icon),
+                    bundled_label
+                ),
+            )
+        })
+    })
+}
+
+/// `icon` as a lowercase domain without a trailing dot, or `None` when it is
+/// not a plain domain: ASCII letters, digits and `-` in dot-separated labels.
+fn plain_icon_domain(icon: &str) -> Option<String> {
+    let domain = icon.strip_suffix('.').unwrap_or(icon).to_ascii_lowercase();
+    let plain = !domain.is_empty()
+        && domain.split('.').all(|label| {
+            !label.is_empty() && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    plain.then_some(domain)
+}
+
+/// A collection name folded as [`fold_collection_slug`] does, then with only
+/// its letters and digits kept, so `Automatic-Skills` and `automatic skills!`
+/// both fold to `automaticskills`.
+fn fold_collection_name(name: &str) -> String {
+    fold_collection_slug(name)
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
 }
 
 fn lookalike_collection_reason(slug: &str, lookalike: &str) -> String {
@@ -3975,6 +4188,11 @@ fn install_collection(
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("Collection at '{}' missing 'slug' field", coll_ref.path))?
         .to_string();
+    // The conflict check blocks this already. It is checked again on the
+    // file as installed, as the manifest's copy may be stale.
+    if let Some((_, reason)) = collection_identity_reason(CollectionIdentity::of(&collection))? {
+        return Err(reason);
+    }
 
     let slug_of =
         |c: &serde_json::Value| c.get("slug").and_then(|v| v.as_str()) == Some(slug.as_str());
@@ -3994,6 +4212,7 @@ fn install_collection(
         {
             return Err(lookalike_collection_reason(&slug, lookalike));
         }
+        ensure_discover_can_read(&collection, &slug)?;
         match collections.iter().position(slug_of) {
             Some(_) if !mode.replaces() => {
                 return Err(format!("collection '{}' already exists in Discover", slug));
@@ -4007,6 +4226,23 @@ fn install_collection(
         super::discover_data::write_collection_entries(&collections)
     })?;
     Ok(slug)
+}
+
+/// Refuse a collection that Discover cannot read. Discover parses every
+/// entry as a [`super::discover::Collection`], so one entry with a missing
+/// `id` or `name`, or a field of the wrong type, would stop the whole list
+/// from loading. It also means the identity check never sees a `name`,
+/// `id`, `icon` or `author.type` that is not a string.
+fn ensure_discover_can_read(collection: &serde_json::Value, slug: &str) -> Result<(), String> {
+    serde_json::from_value::<super::discover::Collection>(collection.clone())
+        .map(|_| ())
+        .map_err(|e| {
+            format!(
+                "The collection '{}' is not a valid Discover collection ({}), so it cannot be installed",
+                visible_slug(slug),
+                e
+            )
+        })
 }
 
 /// Remove an installed resource by type and name, from the library folder
@@ -5421,7 +5657,8 @@ mod tests {
         .expect("write agent");
         fs::write(
             clone.join("collection.json"),
-            serde_json::json!({ "slug": names.collection, "name": "Fixture" }).to_string(),
+            serde_json::json!({ "id": names.collection, "slug": names.collection, "name": "Fixture" })
+                .to_string(),
         )
         .expect("write collection");
 
@@ -5885,7 +6122,8 @@ mod tests {
             ] {
                 fs::write(
                     clone.join(file),
-                    serde_json::json!({ "slug": slug, "name": "From the source" }).to_string(),
+                    serde_json::json!({ "id": slug, "slug": slug, "name": "From the source" })
+                        .to_string(),
                 )
                 .expect("write collection");
                 manifest.collections.push(CollectionRef {
@@ -8699,6 +8937,288 @@ mod tests {
 
             assert!(error.contains("automatic-skills"), "{}", error);
             assert_eq!(collections(), before);
+        });
+    }
+
+    /// A manifest whose one collection is `collection`, written to
+    /// `identity.json` in the source clone.
+    fn manifest_with_collection(names: &KindNames, collection: serde_json::Value) -> AutomaticManifest {
+        let mut manifest = write_every_kind(REPO, names, MCP);
+        let clone = source_clone_path(REPO).expect("clone path");
+        fs::write(clone.join("identity.json"), collection.to_string()).expect("write collection");
+        manifest.collections = vec![CollectionRef {
+            path: "identity.json".to_string(),
+            ..Default::default()
+        }];
+        resolve_manifest_collections(&clone, &mut manifest);
+        manifest
+    }
+
+    #[test]
+    fn fold_collection_name_ignores_case_spacing_and_punctuation() {
+        assert_eq!(fold_collection_name("Automatic Skills"), "automaticskills");
+        assert_eq!(fold_collection_name("  AUTOMATIC-skills! "), "automaticskills");
+        assert_eq!(fold_collection_name("Automatic\u{200B}\u{00A0}Skills"), "automaticskills");
+        assert_eq!(fold_collection_name("Ａｕｔｏｍａｔｉｃ Skills"), "automaticskills");
+        assert_ne!(fold_collection_name("Automatic Skills Plus"), "automaticskills");
+    }
+
+    #[test]
+    fn install_collection_refuses_what_discover_cannot_read() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("unreadable-collection");
+            for collection in [
+                serde_json::json!({ "slug": "unreadable", "name": "No id" }),
+                serde_json::json!({ "id": "x", "slug": "unreadable" }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": "Icon", "icon": ["automatic.sh"] }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": 7 }),
+                serde_json::json!({ "id": "x", "slug": "unreadable", "name": "A", "author": { "type": { "provider": true } } }),
+            ] {
+                manifest_with_collection(&names, collection.clone());
+                let before = collections();
+
+                let error = install_collection(
+                    &source_clone_path(REPO).unwrap(),
+                    &CollectionRef {
+                        path: "identity.json".to_string(),
+                        ..Default::default()
+                    },
+                    WriteMode::ReplaceConfirmed,
+                )
+                .expect_err("refused");
+
+                assert!(error.contains("not a valid Discover collection"), "{}: {}", collection, error);
+                assert_eq!(collections(), before);
+                crate::core::discover::search_collections("").expect("Discover still loads");
+            }
+        });
+    }
+
+    #[test]
+    fn plain_icon_domain_accepts_only_domains() {
+        assert_eq!(plain_icon_domain("Example.COM."), Some("example.com".to_string()));
+        assert_eq!(plain_icon_domain("my-vendor.io"), Some("my-vendor.io".to_string()));
+        for icon in ["", ".", "https://example.com", "example.com/x", "a..b", "ex ample.com", "exämple.com", "user@example.com", "example.com:443"] {
+            assert_eq!(plain_icon_domain(icon), None, "{:?}", icon);
+        }
+    }
+
+    #[test]
+    fn a_collection_with_another_vendors_icon_installs() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let reason = collection_identity_reason(CollectionIdentity {
+                name: Some("Vendor Tools"),
+                icon: Some("vendor.example"),
+                ..Default::default()
+            })
+            .expect("check");
+            assert!(reason.is_none(), "{:?}", reason);
+            // A domain that only ends with the bundled text is another domain.
+            let bundled = crate::core::discover_data::bundled_collection_identities()
+                .expect("bundled")
+                .into_iter()
+                .next()
+                .and_then(|b| b.icon)
+                .expect("bundled icon");
+            let lookalike = format!("not{}", bundled);
+            let reason = collection_identity_reason(CollectionIdentity {
+                icon: Some(&lookalike),
+                ..Default::default()
+            })
+            .expect("check");
+            assert!(reason.is_none(), "{:?}", reason);
+        });
+    }
+
+    #[test]
+    fn a_collection_named_like_a_bundled_one_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            for name in ["Automatic Skills", "automatic-skills", "AUTOMATIC  SKILLS!"] {
+                let names = KindNames::new("named-like-bundled");
+                let manifest = manifest_with_collection(
+                    &names,
+                    serde_json::json!({ "slug": "not-the-bundled-one", "name": name }),
+                );
+                let before = collections();
+                let key = "collection:not-the-bundled-one".to_string();
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| panic!("no conflict for {:?}: {:?}", name, result.conflicts));
+                assert!(conflict.blocked, "{:?}", name);
+                assert_eq!(conflict.existing_source, "bundled");
+                assert_eq!(conflict.existing_name, "Automatic Skills");
+                assert!(conflict.reason.contains("matches the bundled"), "{}", conflict.reason);
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_collection_with_a_bundled_icon_or_id_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let bundled = crate::core::discover_data::bundled_collection_identities()
+                .expect("bundled")
+                .into_iter()
+                .next()
+                .expect("a bundled collection");
+            let icon = bundled.icon.expect("bundled icon");
+            let id = bundled.id.expect("bundled id");
+            let with_icon = |icon: String| {
+                serde_json::json!({ "slug": "own-slug", "name": "Own", "icon": icon })
+            };
+            for (field, collection) in [
+                ("icon", with_icon(icon.to_uppercase())),
+                ("icon", with_icon(format!("{}.", icon))),
+                ("icon", with_icon(format!("www.{}", icon))),
+                ("icon", with_icon(format!("https://{}", icon))),
+                ("icon", with_icon(format!("{}/logo.png", icon))),
+                ("id", serde_json::json!({ "slug": "own-slug", "name": "Own", "id": id })),
+            ] {
+                let names = KindNames::new("bundled-icon-or-id");
+                let manifest = manifest_with_collection(&names, collection);
+                let before = collections();
+                let key = "collection:own-slug".to_string();
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| panic!("no conflict for {}: {:?}", field, result.conflicts));
+                assert!(conflict.blocked, "{}", field);
+                assert!(
+                    conflict.reason.contains(&format!("collection {} ", field)),
+                    "{}",
+                    conflict.reason
+                );
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_collection_that_names_automatic_as_its_author_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("provider-author");
+            let manifest = manifest_with_collection(
+                &names,
+                serde_json::json!({
+                    "slug": "helpful-tools",
+                    "name": "Helpful Tools",
+                    "author": { "type": "provider", "name": "Automatic" },
+                }),
+            );
+            let before = collections();
+            let key = "collection:helpful-tools".to_string();
+
+            let result = install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                .expect("install");
+
+            let conflict = result
+                .conflicts
+                .iter()
+                .find(|c| c.key() == key)
+                .unwrap_or_else(|| panic!("no conflict: {:?}", result.conflicts));
+            assert!(conflict.blocked);
+            assert_eq!(conflict.existing_source, "bundled");
+            assert!(conflict.reason.contains("'provider'"), "{}", conflict.reason);
+            assert_eq!(collections(), before, "nothing was written");
+        });
+    }
+
+    #[test]
+    fn install_collection_checks_the_file_not_the_manifest_copy() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("identity-direct");
+            for collection in [
+                serde_json::json!({ "slug": "stale-manifest", "name": "Automatic Skills" }),
+                serde_json::json!({
+                    "slug": "stale-manifest",
+                    "name": "Other",
+                    "author": { "type": "Provider" },
+                }),
+            ] {
+                manifest_with_collection(&names, collection.clone());
+                let before = collections();
+
+                let error = install_collection(
+                    &source_clone_path(REPO).unwrap(),
+                    &CollectionRef {
+                        path: "identity.json".to_string(),
+                        ..Default::default()
+                    },
+                    WriteMode::ReplaceConfirmed,
+                )
+                .expect_err("refused");
+
+                assert!(error.contains("cannot be installed"), "{}: {}", collection, error);
+                assert_eq!(collections(), before);
+            }
+        });
+    }
+
+    #[test]
+    fn discover_names_the_source_that_installed_a_collection() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("installed-by");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                collections: vec![names.collection.clone()],
+                ..Default::default()
+            };
+            let result = install_source(REPO, &manifest, Some(selected), None, &[])
+                .expect("install");
+            assert!(result.conflicts.is_empty(), "{:?}", result.conflicts);
+            // A collection the file says some other source installed is
+            // still labelled with the source that lists it.
+            let mut entries = collections();
+            for entry in &mut entries {
+                entry["installed_by"] = serde_json::json!("automatic/automatic-app");
+                if entry.get("id").is_none() {
+                    entry["id"] = entry["slug"].clone();
+                }
+            }
+            write_collections(&entries);
+
+            let listed: Vec<serde_json::Value> = serde_json::from_str(
+                &crate::core::discover::search_collections("").expect("search"),
+            )
+            .expect("parse");
+
+            let installed_by = |slug: &str| {
+                listed
+                    .iter()
+                    .find(|c| c["slug"] == slug)
+                    .unwrap_or_else(|| panic!("{} listed", slug))
+                    .get("installed_by")
+                    .cloned()
+            };
+            assert_eq!(installed_by(&names.collection), Some(serde_json::json!(REPO)));
+            assert_eq!(installed_by("automatic-skills"), None, "bundled has no source");
         });
     }
 

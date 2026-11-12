@@ -132,11 +132,24 @@ pub struct Collection {
     pub mcp_servers: Vec<CollectionMcpServer>,
     #[serde(default)]
     pub templates: Vec<CollectionTemplate>,
+    /// The repository of the source that installed this collection, or
+    /// `None` for a bundled or user collection. Discover badges the card with
+    /// it, so a source collection cannot pass for a bundled one. It is never
+    /// read from the collections file, where a source could set it.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub installed_by: Option<String>,
 }
 
+/// The Discover collections, each marked with the source that installed it.
 fn load_collections() -> Result<Vec<Collection>, String> {
     let json = read_collections_json()?;
-    serde_json::from_str(&json).map_err(|e| format!("Failed to parse collections: {}", e))
+    let mut collections: Vec<Collection> = serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to parse collections: {}", e))?;
+    let installers = super::remote_sources::collection_installers()?;
+    for collection in &mut collections {
+        collection.installed_by = installers.get(&collection.slug).cloned();
+    }
+    Ok(collections)
 }
 
 /// List all collections from the Discover catalogue.

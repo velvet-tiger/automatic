@@ -58,6 +58,33 @@ interface Collection {
   skills: CollectionSkill[];
   mcp_servers: CollectionMcpServer[];
   templates: CollectionTemplate[];
+  /** Repository of the source that installed this collection. Absent for bundled and user collections. */
+  installed_by?: string;
+}
+
+/**
+ * The author to show for a collection. A source collection always shows the
+ * source that installed it, whatever author its file claims, so it cannot
+ * present itself as Automatic or anyone else.
+ */
+function displayedAuthor(collection: Collection): AuthorDescriptor {
+  if (collection.installed_by) {
+    return { type: "github", repo: collection.installed_by };
+  }
+  return collection.author;
+}
+
+/** Names the source that installed a collection, so it cannot pass for a bundled one. */
+function SourceBadge({ repo }: { repo: string }) {
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] font-medium text-text-muted"
+      title={`Installed by the source ${repo}`}
+    >
+      <Github size={10} className="flex-shrink-0" />
+      <span className="truncate">From {repo}</span>
+    </span>
+  );
 }
 
 // collections is loaded asynchronously in the component via invoke("search_collections")
@@ -95,7 +122,7 @@ function CollectionIcon({
 
   // Bundled/provider collections have no meaningful remote logo — use SkillAvatar
   // which renders a letter fallback with the correct skill icon styling.
-  if (collection.author.type === "provider") {
+  if (collection.author.type === "provider" && !collection.installed_by) {
     return (
       <SkillAvatar name={collection.name} kind="bundled" size={size} />
     );
@@ -378,6 +405,7 @@ function CollectionDetail({
             <span className="text-[14px] font-semibold text-text-base">
               {collection.name}
             </span>
+            {collection.installed_by && <SourceBadge repo={collection.installed_by} />}
           </div>
         </div>
 
@@ -551,7 +579,7 @@ function CollectionDetail({
             <div className="space-y-6">
 
               {/* Author */}
-              <AuthorSection descriptor={collection.author} />
+              <AuthorSection descriptor={displayedAuthor(collection)} />
 
               {/* Stats */}
               <div>
@@ -693,6 +721,11 @@ function CollectionCard({
             <span className={`text-[10px] font-medium ${ACCENT_TEXT}`}>
               {total} item{total !== 1 ? "s" : ""}
             </span>
+            {collection.installed_by && (
+              <div className="mt-1">
+                <SourceBadge repo={collection.installed_by} />
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
