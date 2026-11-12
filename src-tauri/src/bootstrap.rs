@@ -76,9 +76,10 @@ pub fn run_startup_housekeeping() {
     // ~/.automatic/discover/. The MCP server and template catalogues are
     // refreshed whenever they differ from this binary's copy.
     // Bundled collections are merged in by slug at every start, keeping
-    // the entries remote sources added. `force_reinstall` only decides
-    // whether an unreadable collections file is replaced.
-    if let Err(e) = core::init_discover_files(force_reinstall) {
+    // the entries remote sources added. Startup never forces: a forced run
+    // replaces an unreadable collections file, and here that file may be
+    // mid-write by another process. Only Reinstall Defaults forces.
+    if let Err(e) = core::init_discover_files(false) {
         eprintln!("[automatic] discover init error: {}", e);
     }
 
