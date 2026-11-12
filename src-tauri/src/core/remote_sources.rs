@@ -1879,47 +1879,77 @@ fn entry_names(dir: &Path, extension: Option<&str>) -> Result<Vec<String>, Strin
 
 /// The conflict installing the collection `slug` from `repo` would cause.
 ///
-/// A bundled slug is blocked: the bundled collection is Automatic's. A slug
-/// already in Discover is owned by the source whose entry lists it; with no
-/// such source it is the user's (`local`).
+/// These are blocked:
+/// - A slug that is not plain ASCII, see [`is_plain_collection_slug`].
+/// - A bundled slug: the bundled collection is Automatic's.
+/// - A slug that differs from a bundled or installed slug only in case,
+///   Unicode form or invisible characters, see [`fold_collection_slug`]:
+///   Discover would show two collections a user cannot tell apart. This
+///   holds even when `repo` installed the lookalike before this check
+///   existed, so such a pair can be removed but not updated.
+///
+/// A slug already in Discover is owned by the source whose entry lists it;
+/// with no such source it is the user's (`local`).
 fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, String> {
-    let conflict = |existing_source: String, blocked: bool, reason: String| ConflictInfo {
-        resource_type: "collection".to_string(),
-        resource_name: slug.to_string(),
-        existing_source,
-        existing_name: slug.to_string(),
-        blocked,
-        reason,
+    let conflict = |existing_name: &str, existing_source: String, blocked: bool, reason: String| {
+        ConflictInfo {
+            resource_type: "collection".to_string(),
+            resource_name: slug.to_string(),
+            existing_source,
+            existing_name: existing_name.to_string(),
+            blocked,
+            reason,
+        }
     };
-    if super::discover_data::seed_collection(slug)?.is_some() {
+    if !is_plain_collection_slug(slug) {
         return Ok(Some(conflict(
+            slug,
+            "source".to_string(),
+            true,
+            plain_collection_slug_reason(slug),
+        )));
+    }
+    let bundled = super::discover_data::bundled_collection_slugs()?;
+    if bundled.contains(slug) {
+        return Ok(Some(conflict(
+            slug,
             "bundled".to_string(),
             true,
             format!("'{}' is a bundled collection and cannot be replaced", slug),
         )));
     }
-    let exists = super::discover_data::read_collection_entries()?
+    if let Some(lookalike) = lookalike_collection_slug(slug, bundled.iter().map(String::as_str)) {
+        return Ok(Some(conflict(
+            lookalike,
+            "bundled".to_string(),
+            true,
+            lookalike_collection_reason(slug, lookalike),
+        )));
+    }
+    let entries = super::discover_data::read_collection_entries()?;
+    let installed: Vec<&str> = entries
         .iter()
-        .any(|entry| entry.get("slug").and_then(|v| v.as_str()) == Some(slug));
-    if !exists {
+        .filter_map(|entry| entry.get("slug").and_then(|v| v.as_str()))
+        .collect();
+    if let Some(lookalike) = lookalike_collection_slug(slug, installed.iter().copied()) {
+        let source = match collection_owner(repo, lookalike)? {
+            Some(owner) => format!("source:{}", owner),
+            None => "local".to_string(),
+        };
+        return Ok(Some(conflict(
+            lookalike,
+            source,
+            true,
+            lookalike_collection_reason(slug, lookalike),
+        )));
+    }
+    if !installed.contains(&slug) {
         return Ok(None);
     }
-    // The source that lists the slug owns it. An older version could leave
-    // a slug listed on two sources; this source's own claim wins then, as
-    // the install replaces an entry it owns.
-    let listers: Vec<String> = list_sources()?
-        .into_iter()
-        .filter(|source| source.collection_slugs.iter().any(|s| s == slug))
-        .map(|source| source.repo)
-        .collect();
-    let owner = listers
-        .iter()
-        .find(|lister| lister.as_str() == repo)
-        .or_else(|| listers.first())
-        .cloned();
-    match owner {
+    match collection_owner(repo, slug)? {
         Some(owner) if owner == repo => Ok(None),
         Some(owner) => Ok(Some(conflict(
+            slug,
             format!("source:{}", owner),
             false,
             format!(
@@ -1928,11 +1958,119 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
             ),
         ))),
         None => Ok(Some(conflict(
+            slug,
             "local".to_string(),
             false,
             format!("Replaces your own collection '{}'", slug),
         ))),
     }
+}
+
+/// The source that owns the installed collection `slug`, or `None` when it
+/// is the user's. An older version could leave a slug listed on two sources;
+/// `repo`'s own claim wins then, as its install replaces an entry it owns.
+fn collection_owner(repo: &str, slug: &str) -> Result<Option<String>, String> {
+    let listers: Vec<String> = list_sources()?
+        .into_iter()
+        .filter(|source| source.collection_slugs.iter().any(|s| s == slug))
+        .map(|source| source.repo)
+        .collect();
+    Ok(listers
+        .iter()
+        .find(|lister| lister.as_str() == repo)
+        .or_else(|| listers.first())
+        .cloned())
+}
+
+/// A collection slug folded so that slugs a reader cannot tell apart are
+/// equal: [`fold_name`], then without whitespace and without the code points
+/// Unicode marks as default-ignorable, such as zero-width spaces, joiners,
+/// direction marks and variation selectors. Those render as nothing, so
+/// `automatic\u{200B}-skills` looks like `automatic-skills`.
+///
+/// Letters that only look alike across scripts, such as Cyrillic `а` and
+/// Latin `a`, are not folded.
+fn fold_collection_slug(slug: &str) -> String {
+    fold_name(slug)
+        .chars()
+        .filter(|c| !c.is_whitespace() && !is_default_ignorable(*c))
+        .collect()
+}
+
+/// Whether `c` is a Unicode Default_Ignorable_Code_Point (DerivedCoreProperties).
+fn is_default_ignorable(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x034F
+            | 0x061C
+            | 0x115F..=0x1160
+            | 0x17B4..=0x17B5
+            | 0x180B..=0x180F
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x206F
+            | 0x3164
+            | 0xFE00..=0xFE0F
+            | 0xFEFF
+            | 0xFFA0
+            | 0xFFF0..=0xFFF8
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0000..=0xE0FFF
+    )
+}
+
+/// The first of `slugs` that differs from `slug` but folds to the same
+/// value, see [`fold_collection_slug`].
+fn lookalike_collection_slug<'a>(
+    slug: &str,
+    slugs: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let folded = fold_collection_slug(slug);
+    slugs
+        .into_iter()
+        .find(|other| *other != slug && fold_collection_slug(other) == folded)
+}
+
+fn lookalike_collection_reason(slug: &str, lookalike: &str) -> String {
+    format!(
+        "'{}' differs from the collection '{}' only in case, Unicode form or invisible characters, so it cannot be installed",
+        visible_slug(slug),
+        visible_slug(lookalike)
+    )
+}
+
+/// Whether a source may install a collection with `slug`: ASCII letters,
+/// digits, `-`, `_` and `.` only. Outside ASCII, letters from other scripts
+/// (Cyrillic `а`) and dashes (U+2010) look like the bundled slugs, and no
+/// fold catches every one of them.
+fn is_plain_collection_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+fn plain_collection_slug_reason(slug: &str) -> String {
+    format!(
+        "The collection slug '{}' may only hold ASCII letters, digits, '-', '_' and '.', so it cannot be installed",
+        visible_slug(slug)
+    )
+}
+
+/// `slug` with each character that is not printable ASCII written as
+/// `\u{...}`, so an error shows what a lookalike slug really holds.
+fn visible_slug(slug: &str) -> String {
+    slug.chars()
+        .map(|c| {
+            if c.is_ascii_graphic() {
+                c.to_string()
+            } else {
+                format!("\\u{{{:X}}}", c as u32)
+            }
+        })
+        .collect()
 }
 
 /// The keys of `conflicts` an install may replace: each confirmed in
@@ -3803,7 +3941,8 @@ fn write_library_file(
     Ok(())
 }
 
-/// Read and parse a manifest's collection file.
+/// Read and parse a manifest's collection file. A file larger than
+/// [`super::discover_data::MAX_COLLECTIONS_FILE_BYTES`] is an error.
 fn read_collection_file(
     source_dir: &Path,
     coll_ref: &CollectionRef,
@@ -3813,8 +3952,10 @@ fn read_collection_file(
         &coll_ref.path,
         &format!("collection '{}'", coll_ref.path),
     )?;
-    let content = fs::read_to_string(&source_path)
-        .map_err(|e| format!("Failed to read collection file {}: {}", coll_ref.path, e))?;
+    let content = super::discover_data::read_capped_collection_text(
+        &source_path,
+        &format!("collection file {}", coll_ref.path),
+    )?;
     serde_json::from_str(&content)
         .map_err(|e| format!("Collection '{}' is not valid JSON: {}", coll_ref.path, e))
 }
@@ -3839,6 +3980,20 @@ fn install_collection(
         |c: &serde_json::Value| c.get("slug").and_then(|v| v.as_str()) == Some(slug.as_str());
     super::discover_data::with_collections_lock(|| {
         let mut collections = super::discover_data::read_collection_entries()?;
+        // The conflict check blocks these already. They are checked again
+        // under the lock, as the collections may have changed since.
+        if !is_plain_collection_slug(&slug) {
+            return Err(plain_collection_slug_reason(&slug));
+        }
+        let bundled = super::discover_data::bundled_collection_slugs()?;
+        let installed = collections
+            .iter()
+            .filter_map(|c| c.get("slug").and_then(|v| v.as_str()));
+        if let Some(lookalike) =
+            lookalike_collection_slug(&slug, bundled.iter().map(String::as_str).chain(installed))
+        {
+            return Err(lookalike_collection_reason(&slug, lookalike));
+        }
         match collections.iter().position(slug_of) {
             Some(_) if !mode.replaces() => {
                 return Err(format!("collection '{}' already exists in Discover", slug));
@@ -8323,6 +8478,250 @@ mod tests {
                 err
             );
             assert!(clone.join("keep").exists());
+        });
+    }
+
+    #[test]
+    fn collection_slugs_that_look_alike_fold_to_one_value() {
+        let bundled = ["automatic-skills"];
+        for lookalike in [
+            "Automatic-Skills",
+            "automatic\u{200B}-skills",
+            "\u{FEFF}automatic-skills",
+            "automatic-skills\u{FE0F}",
+            "automatic-skills ",
+            "\u{FF41}utomatic-skills",
+            "automatic-\u{17F}kills",
+        ] {
+            assert_eq!(
+                lookalike_collection_slug(lookalike, bundled),
+                Some("automatic-skills"),
+                "{:?}",
+                lookalike
+            );
+        }
+        assert_eq!(lookalike_collection_slug("automatic-skills", bundled), None);
+        assert_eq!(lookalike_collection_slug("automatic-skillz", bundled), None);
+    }
+
+    /// Point the fixture's collection file at `slug` and return the manifest.
+    fn manifest_with_collection_slug(names: &KindNames, slug: &str) -> AutomaticManifest {
+        let mut manifest = write_every_kind(REPO, names, MCP);
+        let clone = source_clone_path(REPO).expect("clone path");
+        fs::write(
+            clone.join("lookalike.json"),
+            serde_json::json!({ "slug": slug, "name": "Lookalike" }).to_string(),
+        )
+        .expect("write collection");
+        manifest.collections = vec![CollectionRef {
+            path: "lookalike.json".to_string(),
+            ..Default::default()
+        }];
+        resolve_manifest_collections(&clone, &mut manifest);
+        manifest
+    }
+
+    #[test]
+    fn a_slug_that_looks_like_a_bundled_collection_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            for slug in ["Automatic-Skills", "AUTOMATIC-skills"] {
+                let names = KindNames::new("lookalike-bundled");
+                let manifest = manifest_with_collection_slug(&names, slug);
+                let before = collections();
+                let key = format!("collection:{}", slug);
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| {
+                        panic!("no conflict for {:?}: {:?}", slug, result.conflicts)
+                    });
+                assert!(conflict.blocked);
+                assert_eq!(conflict.existing_name, "automatic-skills");
+                assert_eq!(conflict.existing_source, "bundled");
+                assert!(
+                    conflict.reason.contains("only in case"),
+                    "{}",
+                    conflict.reason
+                );
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_slug_outside_plain_ascii_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            for (slug, shown) in [
+                ("automatic\u{200B}-skills", "automatic\\u{200B}-skills"),
+                ("automatic\u{2010}skills", "automatic\\u{2010}skills"),
+                ("\u{430}utomatic-skills", "\\u{430}utomatic-skills"),
+                ("my collection", "my\\u{20}collection"),
+            ] {
+                let names = KindNames::new("non-ascii");
+                let manifest = manifest_with_collection_slug(&names, slug);
+                let before = collections();
+                let key = format!("collection:{}", slug);
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| {
+                        panic!("no conflict for {:?}: {:?}", slug, result.conflicts)
+                    });
+                assert!(conflict.blocked);
+                assert!(conflict.reason.contains(shown), "{}", conflict.reason);
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_lookalike_pair_from_before_the_check_is_blocked_on_update() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let mut entries = collections();
+            entries.push(serde_json::json!({ "slug": "foo", "name": "Mine" }));
+            entries.push(serde_json::json!({ "slug": "Foo", "name": "The source's" }));
+            write_collections(&entries);
+            register(REPO, &[], &["Foo"]);
+            let names = KindNames::new("legacy-pair");
+            let manifest = manifest_with_collection_slug(&names, "Foo");
+
+            let conflicts = check_conflicts(REPO, &manifest, None).expect("check");
+
+            let conflict = conflicts
+                .iter()
+                .find(|c| c.key() == "collection:Foo")
+                .expect("a blocked conflict, not an install error");
+            assert!(conflict.blocked);
+            assert_eq!(conflict.existing_name, "foo");
+            assert_eq!(conflict.existing_source, "local");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_a_source_with_a_linked_collections_file_fails_and_keeps_the_link() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let elsewhere = sandbox.home.join("elsewhere.json");
+            let original = r#"[{ "slug": "source-linked" }]"#;
+            fs::write(&elsewhere, original).expect("write link target");
+            fs::create_dir_all(collections_file().parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&elsewhere, collections_file()).expect("plant link");
+            register(REPO, &[], &["source-linked"]);
+
+            let result = remove_source(REPO).expect("remove");
+
+            assert!(
+                result
+                    .failed
+                    .iter()
+                    .any(|f| format!("{:?}", f).contains("not a regular file")),
+                "{:?}",
+                result.failed
+            );
+            assert_eq!(fs::read_to_string(&elsewhere).unwrap(), original);
+            assert!(fs::symlink_metadata(collections_file())
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        });
+    }
+
+    #[test]
+    fn a_slug_that_looks_like_an_installed_collection_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let mut entries = collections();
+            entries.push(serde_json::json!({ "slug": "my-collection", "name": "Mine" }));
+            write_collections(&entries);
+            let names = KindNames::new("lookalike-local");
+            let manifest = manifest_with_collection_slug(&names, "My-Collection");
+            let before = collections();
+
+            let result = install_source(
+                REPO,
+                &manifest,
+                None,
+                None,
+                &["collection:My-Collection".to_string()],
+            )
+            .expect("install");
+
+            let conflict = result
+                .conflicts
+                .iter()
+                .find(|c| c.key() == "collection:My-Collection")
+                .expect("conflict");
+            assert!(conflict.blocked);
+            assert_eq!(conflict.existing_name, "my-collection");
+            assert_eq!(conflict.existing_source, "local");
+            assert_eq!(collections(), before, "nothing was written");
+        });
+    }
+
+    #[test]
+    fn install_collection_refuses_a_lookalike_slug_even_when_replacing() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("lookalike-direct");
+            manifest_with_collection_slug(&names, "AUTOMATIC-SKILLS");
+            let before = collections();
+
+            let error = install_collection(
+                &source_clone_path(REPO).unwrap(),
+                &CollectionRef {
+                    path: "lookalike.json".to_string(),
+                    ..Default::default()
+                },
+                WriteMode::ReplaceConfirmed,
+            )
+            .expect_err("a lookalike slug is refused");
+
+            assert!(error.contains("automatic-skills"), "{}", error);
+            assert_eq!(collections(), before);
+        });
+    }
+
+    #[test]
+    fn an_oversized_collection_file_is_an_error() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            let names = KindNames::new("oversized-collection");
+            write_every_kind(REPO, &names, MCP);
+            let clone = source_clone_path(REPO).expect("clone path");
+            let limit = crate::core::discover_data::MAX_COLLECTIONS_FILE_BYTES as usize;
+            fs::write(clone.join("huge.json"), " ".repeat(limit + 1)).expect("write huge file");
+
+            let error = read_collection_file(
+                &clone,
+                &CollectionRef {
+                    path: "huge.json".to_string(),
+                    ..Default::default()
+                },
+            )
+            .expect_err("too large");
+
+            assert!(error.contains("larger than"), "{}", error);
         });
     }
 
