@@ -389,6 +389,13 @@ pub(crate) fn read_capped_collection_text(
     path: &std::path::Path,
     what: &str,
 ) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|e| format!("Failed to read {}: {}", what, e))?;
+    read_capped_text(file, what)
+}
+
+/// The text of the open `file`, capped as [`read_capped_collection_text`]
+/// describes.
+fn read_capped_text(file: fs::File, what: &str) -> Result<String, String> {
     use std::io::Read;
     let too_large = || {
         format!(
@@ -396,7 +403,6 @@ pub(crate) fn read_capped_collection_text(
             what, MAX_COLLECTIONS_FILE_BYTES
         )
     };
-    let file = fs::File::open(path).map_err(|e| format!("Failed to read {}: {}", what, e))?;
     let len = file
         .metadata()
         .map_err(|e| format!("Failed to inspect {}: {}", what, e))?
@@ -426,7 +432,21 @@ fn read_existing_collections(path: &PathBuf) -> Result<Option<Vec<serde_json::Va
     if !metadata.is_file() {
         return Err(format!("{} is not a regular file", path.display()));
     }
-    let raw = read_capped_collection_text(path, &path.display().to_string())?;
+    let what = path.display().to_string();
+    let file = fs::File::open(path).map_err(|e| format!("Failed to read {}: {}", what, e))?;
+    // A link swapped in after the check above would be followed by the
+    // open. The opened file must be the regular file that was checked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file
+            .metadata()
+            .map_err(|e| format!("Failed to inspect {}: {}", what, e))?;
+        if !opened.is_file() || opened.dev() != metadata.dev() || opened.ino() != metadata.ino() {
+            return Err(format!("{} changed while it was being read", what));
+        }
+    }
+    let raw = read_capped_text(file, &what)?;
     serde_json::from_str(&raw)
         .map(Some)
         .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
@@ -1167,6 +1187,7 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_linked_collections_file_is_refused_not_followed() {
         with_temp_home(|| {
