@@ -27,7 +27,7 @@ interface ProjectGroup {
   contexts?: string[];
   /** Profile names attached to the group. Changed only through attach/detach_profile_to/from_group. */
   profiles?: string[];
-  /** "Let agents edit across this group". Changed only through set_group_agents_edit_across_group. */
+  /** "Allow agents to edit across this group". Changed only through set_group_agents_edit_across_group. */
   agents_edit_across_group?: boolean;
   created_at: string;
   updated_at: string;

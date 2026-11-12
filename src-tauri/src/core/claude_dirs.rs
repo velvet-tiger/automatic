@@ -10,7 +10,7 @@
 //!
 //! A project wants three kinds of folder:
 //!
-//! - the other members of each group it joined whose "Let agents edit across
+//! - the other members of each group it joined whose "Allow agents to edit across
 //!   this group" switch is on (`ProjectGroup::agents_edit_across_group`), when
 //!   that member joined the group on this machine too;
 //! - the extra folders in its registry pointer (`local_writable_folders`);
@@ -1777,7 +1777,7 @@ pub fn set_writable_folders_user_consent(consent: bool) -> Result<(), String> {
     })
 }
 
-/// Turn "Let agents edit across this group" on or off. Returns whether the
+/// Turn "Allow agents to edit across this group" on or off. Returns whether the
 /// group changed.
 pub fn set_group_agents_edit(name: &str, enabled: bool) -> Result<bool, String> {
     if !is_valid_name(name) {

@@ -492,7 +492,7 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub local_ignored_contexts: Vec<String>,
 
-    /// "Other folders Claude can edit": absolute folders Claude Code may edit
+    /// "Allow agents to edit other folders": absolute folders Claude Code may edit
     /// from this checkout, besides group members. Machine-specific paths, so
     /// stored only in the registry pointer. See `core::claude_dirs`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -648,7 +648,7 @@ pub struct ProjectGroup {
     /// `core::reconcile_group_profiles`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
-    /// "Let agents edit across this group". When on, Claude Code in each
+    /// "Allow agents to edit across this group". When on, Claude Code in each
     /// member checkout may edit the folders of the other members, through
     /// `permissions.additionalDirectories` (see `core::claude_dirs`). Off by
     /// default, because it widens every member's write boundary.

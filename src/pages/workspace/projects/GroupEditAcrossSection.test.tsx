@@ -12,8 +12,9 @@ describe("GroupEditAcrossSection", () => {
   it("turns the switch on at once and reloads", async () => {
     const onChanged = vi.fn();
     render(<GroupEditAcrossSection groupName="Team" enabled={false} onChanged={onChanged} />);
-    const toggle = screen.getByRole("switch", { name: "Let agents edit across this group" });
+    const toggle = screen.getByRole("switch", { name: "Allow agents to edit across this group" });
     expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByText("Supported agents: Claude Code")).toBeInTheDocument();
     fireEvent.click(toggle);
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(invokeMock).toHaveBeenCalledWith("set_group_agents_edit_across_group", { groupName: "Team", enabled: true });

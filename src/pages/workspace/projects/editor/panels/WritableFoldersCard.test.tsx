@@ -51,11 +51,19 @@ describe("WritableFoldersCard", () => {
     });
   });
 
-  it("shows nothing for a project without Claude Code", () => {
-    const { container } = render(
-      <WritableFoldersCard project={project({ agents: ["codex"] })} projectKey="app" onChanged={vi.fn()} />,
-    );
-    expect(container).toBeEmptyDOMElement();
+  it("names the supported agents", async () => {
+    render(<WritableFoldersCard project={project()} projectKey="app" onChanged={vi.fn()} />);
+    expect(screen.getByText("Allow agents to edit other folders")).toBeInTheDocument();
+    expect(screen.getByText("Supported agents: Claude Code")).toBeInTheDocument();
+    await screen.findByText("Saved for this project only");
+  });
+
+  it("explains, and blocks adding, when no agent of the project is supported", () => {
+    render(<WritableFoldersCard project={project({ agents: ["codex"] })} projectKey="app" onChanged={vi.fn()} />);
+    expect(
+      screen.getByText("None of this project's agents support this yet. Supported agents: Claude Code"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Add folder…").closest("button")).toBeDisabled();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
