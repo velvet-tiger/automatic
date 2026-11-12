@@ -4,6 +4,25 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-11-12
+
+### Added
+
+- Agents can edit folders outside the project. Claude Code blocks writes outside its working folder, so Automatic now adds the folders a project needs to Claude Code's `permissions.additionalDirectories`. These are other members of a group with "Allow agents to edit across this group" turned on, the project's own extra folders, and a worktree's main checkout. Add extra folders in the project's Settings under "Allow agents to edit other folders". Claude Code is the supported agent.
+- Folders go to the project's untracked `.claude/settings.local.json` when Claude Code reads it there. Otherwise they go to your user settings, but only after you agree in Settings → Sync. Automatic changes only the entries it wrote, and it does not re-add one you deleted. Only folders inside your home folder are granted. Folders that hold Claude Code's or Automatic's own config are refused.
+- Context.dev is a remote MCP server in Discover.
+- Google Chrome's modern-web-guidance skill is featured in Discover in place of Code Review Excellence.
+
+### Fixed
+
+- Automatic keeps the key order of Claude Code settings files when it rewrites them.
+- Gateway settings follow Claude Code's settings when `CLAUDE_CONFIG_DIR` moves them. Automatic clears the live settings first, and checks a move before it clears the old file.
+- Editing a group description starts from the latest group text.
+
+### Security
+
+- rmcp is updated to 3.9 (RUSTSEC-2026-0457, RUSTSEC-2026-0462) and rusqlite to 0.41 (RUSTSEC-2026-0459).
+
 ## [1.41.0] - 2026-11-10
 
 ### Added
