@@ -113,6 +113,23 @@ describe("McpServers URL template", () => {
     expect(screen.queryByLabelText("Account name")).not.toBeInTheDocument();
   });
 
+  it("does not offer sign-in to a saved URL that the fields do not show", async () => {
+    mockInvoke(
+      routes({
+        type: "http",
+        url: "https://acme.app.spacelift.io.evil.example/mcp",
+        _url_template: TEMPLATE,
+        _author: { name: "Spacelift" },
+      }),
+    );
+    render(<McpServers initialServer="spacelift" />);
+
+    const field = (await screen.findByLabelText("Account name")) as HTMLInputElement;
+    expect(field.value).toBe("");
+    expect(screen.getByText("https://acme.app.spacelift.io.evil.example/mcp")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument();
+  });
+
   it("does not save the raw template over a working URL", async () => {
     mockInvoke(
       routes({

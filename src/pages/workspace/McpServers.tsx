@@ -1099,8 +1099,18 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const filled = fillUrlTemplate(urlTemplate, urlTemplateValues);
     return "problem" in filled ? filled.problem : null;
   })();
-  /** The URL OAuth may use: none while it still holds a placeholder. */
-  const authUrl = urlTemplateTokens(config?.url || "").length > 0 ? "" : config?.url || "";
+  /** True when a templated server's URL is not the one its token fields build,
+   *  for example after a hand edit or an edit from another source. The fields
+   *  cannot show that URL, so OAuth must not use it. */
+  const urlTemplateMismatch = (() => {
+    if (!urlTemplate) return false;
+    const filled = fillUrlTemplate(urlTemplate, urlTemplateValues);
+    return !("url" in filled && filled.url === config?.url);
+  })();
+  /** The URL OAuth may use: none while it holds a placeholder or does not
+   *  match the token fields. */
+  const authUrl =
+    urlTemplateMismatch || urlTemplateTokens(config?.url || "").length > 0 ? "" : config?.url || "";
 
   const searchLower = search.trim().toLowerCase();
   const filteredServers = servers.filter(name => !searchLower || name.toLowerCase().includes(searchLower));
@@ -1759,6 +1769,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           }
                           className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                         />
+                      )}
+                      {urlTemplateMismatch && config.url && config.url !== urlTemplate && (
+                        <p className="mt-2 text-[11px] text-warning break-all">
+                          The saved address <code className="font-mono">{config.url}</code> does not match
+                          this server's catalogue address. Enter your account name to replace it.
+                        </p>
                       )}
                     </section>
 

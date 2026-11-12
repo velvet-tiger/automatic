@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import catalogue from "../../src-tauri/assets/discover/featured-mcp-servers.json";
 import {
   fillUrlTemplate,
   knownUrlTemplates,
@@ -153,5 +154,15 @@ describe("knownUrlTemplates", () => {
     expect(knownUrlTemplates([SPACELIFT, "https://example.com/mcp", null, undefined, "https://<x>/mcp"])).toEqual([
       SPACELIFT,
     ]);
+  });
+});
+
+describe("bundled catalogue", () => {
+  it("has only valid templates, so Discover can always add them", () => {
+    const urls = (catalogue as Array<{ slug: string; remote?: { url?: string } | null }>)
+      .filter((e) => e.remote?.url && urlTemplateTokens(e.remote.url).length > 0)
+      .map((e) => [e.slug, e.remote!.url!, parseUrlTemplate(e.remote!.url!) !== null]);
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.filter(([, , valid]) => !valid)).toEqual([]);
   });
 });
