@@ -63,11 +63,12 @@ interface Collection {
 }
 
 /**
- * The author to show for a collection. A source collection never shows
- * Automatic as its author: it shows the source that installed it.
+ * The author to show for a collection. A source collection always shows the
+ * source that installed it, whatever author its file claims, so it cannot
+ * present itself as Automatic or anyone else.
  */
 function displayedAuthor(collection: Collection): AuthorDescriptor {
-  if (collection.installed_by && collection.author.type === "provider") {
+  if (collection.installed_by) {
     return { type: "github", repo: collection.installed_by };
   }
   return collection.author;

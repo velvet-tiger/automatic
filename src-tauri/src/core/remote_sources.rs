@@ -112,6 +112,12 @@ pub struct CollectionRef {
     /// check can refuse a source collection that claims Automatic's author.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_type: Option<String>,
+    /// The collection's `id`, read the same way, for the same check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The collection's `icon`, read the same way, for the same check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Skills section supporting both skill.json reference and inline entries.
@@ -1512,7 +1518,10 @@ fn resolve_manifest_collections(base_dir: &Path, manifest: &mut AutomaticManifes
                 .get("name")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            coll_ref.author_type = collection_author_type(&collection).map(str::to_string);
+            let identity = CollectionIdentity::of(&collection);
+            coll_ref.author_type = identity.author_type.map(str::to_string);
+            coll_ref.id = identity.id.map(str::to_string);
+            coll_ref.icon = identity.icon.map(str::to_string);
         }
     }
 }
@@ -1615,6 +1624,8 @@ pub fn check_conflicts(
                 let identity = CollectionIdentity {
                     name: coll_ref.name.as_deref(),
                     author_type: coll_ref.author_type.as_deref(),
+                    id: coll_ref.id.as_deref(),
+                    icon: coll_ref.icon.as_deref(),
                 };
                 if let Some(conflict) = collection_conflict(repo, slug, identity)? {
                     conflicts.push(conflict);
@@ -2077,13 +2088,20 @@ struct CollectionIdentity<'a> {
     name: Option<&'a str>,
     /// The collection's `author.type`.
     author_type: Option<&'a str>,
+    /// The collection's `id`.
+    id: Option<&'a str>,
+    /// The collection's `icon`: a domain Discover fetches a logo for.
+    icon: Option<&'a str>,
 }
 
 impl<'a> CollectionIdentity<'a> {
     fn of(collection: &'a serde_json::Value) -> Self {
+        let text = |key: &str| collection.get(key).and_then(|v| v.as_str());
         CollectionIdentity {
-            name: collection.get("name").and_then(|v| v.as_str()),
+            name: text("name"),
             author_type: collection_author_type(collection),
+            id: text("id"),
+            icon: text("icon"),
         }
     }
 }
@@ -2095,43 +2113,65 @@ fn collection_author_type(collection: &serde_json::Value) -> Option<&str> {
         .and_then(|v| v.as_str())
 }
 
+/// Reads one field of a bundled collection's identity.
+type BundledField = fn(&super::discover_data::BundledCollectionIdentity) -> Option<&str>;
+
 /// The bundled collection a source collection would pass for, and why it is
 /// refused, or `None` when its card cannot be mistaken for a bundled one.
 ///
-/// Discover draws a collection's card from its `name` and its author. So a
-/// source may not use:
-/// - a name that matches a bundled collection's name after
+/// Discover draws a collection's card from its `name`, its `icon` and its
+/// author, and keys it by its `id`. So a source may not use:
+/// - a name, id or icon that matches a bundled collection's after
 ///   [`fold_collection_name`], or
 /// - the `provider` author type, which Discover draws as Automatic's own.
 ///
 /// The fold cannot catch letters from other scripts, such as a Cyrillic `А`.
-/// Discover also badges each collection with the source that installed it,
-/// so a name the fold misses still shows where it came from.
+/// Discover also badges each source collection with the source that
+/// installed it and shows that source as its author, so a name the fold
+/// misses, or an author `name` that claims to be Automatic, still shows
+/// where it came from.
 fn collection_identity_reason(
     identity: CollectionIdentity<'_>,
 ) -> Result<Option<(String, String)>, String> {
-    let bundled = super::discover_data::bundled_collection_names()?;
-    if let Some(name) = identity.name {
-        let folded = fold_collection_name(name);
-        if let Some(bundled_name) = bundled
+    let bundled = super::discover_data::bundled_collection_identities()?;
+    let label = |b: &super::discover_data::BundledCollectionIdentity| {
+        b.name.clone().or_else(|| b.id.clone()).unwrap_or_else(|| "a bundled collection".to_string())
+    };
+    let fields: [(&str, Option<&str>, BundledField); 3] = [
+        ("name", identity.name, |b| b.name.as_deref()),
+        ("id", identity.id, |b| b.id.as_deref()),
+        ("icon", identity.icon, |b| b.icon.as_deref()),
+    ];
+    for (field, value, bundled_value) in fields {
+        let Some(value) = value else { continue };
+        let folded = fold_collection_name(value);
+        if folded.is_empty() {
+            continue;
+        }
+        if let Some(b) = bundled
             .iter()
-            .find(|bundled_name| fold_collection_name(bundled_name) == folded)
+            .find(|b| bundled_value(b).map(fold_collection_name).as_deref() == Some(folded.as_str()))
         {
+            let bundled_label = label(b);
             return Ok(Some((
-                bundled_name.clone(),
+                bundled_label.clone(),
                 format!(
-                    "The collection name '{}' matches the bundled collection '{}', so it cannot be installed",
-                    visible_slug(name),
-                    bundled_name
+                    "The collection {} '{}' matches the bundled collection '{}', so it cannot be installed",
+                    field,
+                    visible_slug(value),
+                    bundled_label
                 ),
             )));
         }
     }
     if let Some(author_type) = identity.author_type {
         if fold_collection_name(author_type) == "provider" {
-            let bundled_name = bundled.iter().next().cloned().unwrap_or_default();
+            let bundled_label = bundled
+                .first()
+                .map(label)
+                .unwrap_or_else(|| "a bundled collection".to_string());
             return Ok(Some((
-                bundled_name,
+                bundled_label,
                 "The collection names Automatic as its author ('provider'), so it cannot be installed"
                     .to_string(),
             )));
@@ -8874,6 +8914,47 @@ mod tests {
                 assert_eq!(conflict.existing_source, "bundled");
                 assert_eq!(conflict.existing_name, "Automatic Skills");
                 assert!(conflict.reason.contains("matches the bundled"), "{}", conflict.reason);
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_collection_with_a_bundled_icon_or_id_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let bundled = crate::core::discover_data::bundled_collection_identities()
+                .expect("bundled")
+                .into_iter()
+                .next()
+                .expect("a bundled collection");
+            let icon = bundled.icon.expect("bundled icon").to_uppercase();
+            let id = bundled.id.expect("bundled id");
+            for (field, collection) in [
+                ("icon", serde_json::json!({ "slug": "own-slug", "name": "Own", "icon": icon })),
+                ("id", serde_json::json!({ "slug": "own-slug", "name": "Own", "id": id })),
+            ] {
+                let names = KindNames::new("bundled-icon-or-id");
+                let manifest = manifest_with_collection(&names, collection);
+                let before = collections();
+                let key = "collection:own-slug".to_string();
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| panic!("no conflict for {}: {:?}", field, result.conflicts));
+                assert!(conflict.blocked, "{}", field);
+                assert!(
+                    conflict.reason.contains(&format!("collection {} ", field)),
+                    "{}",
+                    conflict.reason
+                );
                 assert_eq!(collections(), before, "nothing was written");
             }
         });

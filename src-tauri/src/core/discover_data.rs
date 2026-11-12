@@ -619,12 +619,26 @@ pub(crate) fn bundled_collection_slugs() -> Result<BTreeSet<String>, String> {
     Ok(collection_slugs(&bundled_collections()?))
 }
 
-/// The display names of the bundled collections.
-pub(crate) fn bundled_collection_names() -> Result<BTreeSet<String>, String> {
+/// What Discover shows of a bundled collection besides its slug.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BundledCollectionIdentity {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub icon: Option<String>,
+}
+
+/// The id, name and icon of each bundled collection.
+pub(crate) fn bundled_collection_identities() -> Result<Vec<BundledCollectionIdentity>, String> {
+    let text = |entry: &serde_json::Value, key: &str| {
+        entry.get(key).and_then(|v| v.as_str()).map(str::to_string)
+    };
     Ok(bundled_collections()?
         .iter()
-        .filter_map(|entry| entry.get("name").and_then(|v| v.as_str()))
-        .map(str::to_string)
+        .map(|entry| BundledCollectionIdentity {
+            id: text(entry, "id"),
+            name: text(entry, "name"),
+            icon: text(entry, "icon"),
+        })
         .collect())
 }
 
