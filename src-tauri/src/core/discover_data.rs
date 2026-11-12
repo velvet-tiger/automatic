@@ -21,7 +21,7 @@ const FEATURED_COMMUNITY_FILE: &str = "featured-community.json";
 // ── Compiled-in seed content ──────────────────────────────────────────────────
 //
 // These strings are embedded in the binary *only* so that `init_discover_files`
-// can write them to disk on first run or after a version upgrade.  They are
+// can write them to disk at startup (see that function for when each is written).  They are
 // never returned directly to callers — the on-disk files are the sole source of
 // truth at runtime.  Once the remote endpoint at tryautomatic.app is live,
 // `init_discover_files` can be updated to fetch from there instead, and
@@ -139,21 +139,72 @@ fn seed_file(path: &PathBuf, content: &str, force: bool) -> Result<(), String> {
 /// Write `content` to `path` unless the file already holds exactly that
 /// content. Only for files that are pure copies of bundled content: any other
 /// content in the file is replaced.
+///
+/// The existing file is read only when it is a regular file of the expected
+/// length, so a FIFO or a link to a huge file cannot stall startup. The new
+/// copy is renamed into place, which replaces a link instead of writing
+/// through it, and readers in other processes never see a half-written file.
 fn seed_file_if_changed(path: &PathBuf, content: &str) -> Result<(), String> {
-    match fs::read(path) {
-        Ok(existing) if existing == content.as_bytes() => return Ok(()),
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    if holds_exactly(path, content)? {
+        return Ok(());
+    }
+    replace_atomically(path, content)
+}
+
+/// Whether `path` is a regular file whose bytes equal `content`. Does not
+/// follow a link: a link is never a match, so it gets replaced.
+fn holds_exactly(path: &PathBuf, content: &str) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => {
             return Err(format!(
-                "Failed to read discover file {}: {}",
+                "Failed to inspect discover file {}: {}",
                 path.display(),
                 e
             ))
         }
+    };
+    if !metadata.is_file() || metadata.len() != content.len() as u64 {
+        return Ok(false);
     }
-    fs::write(path, content)
-        .map_err(|e| format!("Failed to write discover file {}: {}", path.display(), e))
+    let existing = fs::read(path)
+        .map_err(|e| format!("Failed to read discover file {}: {}", path.display(), e))?;
+    Ok(existing == content.as_bytes())
+}
+
+/// Write `content` to a temporary file beside `path`, then rename it over
+/// `path`.
+fn replace_atomically(path: &PathBuf, content: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Discover file {} has no parent folder", path.display()))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
+        format!(
+            "Failed to create a temporary file in {}: {}",
+            parent.display(),
+            e
+        )
+    })?;
+    temp.write_all(content.as_bytes())
+        .and_then(|()| temp.as_file().sync_all())
+        .map_err(|e| {
+            format!(
+                "Failed to write a temporary copy of {}: {}",
+                path.display(),
+                e
+            )
+        })?;
+    temp.persist(path).map_err(|e| {
+        format!(
+            "Failed to replace discover file {}: {}",
+            path.display(),
+            e.error
+        )
+    })?;
+    Ok(())
 }
 
 /// Aggregate the individual compiled-in template entries into a single JSON
@@ -301,6 +352,77 @@ mod tests {
                 .modified()
                 .expect("mtime");
             assert_eq!(modified, old);
+        });
+    }
+
+    #[test]
+    fn up_to_date_templates_are_not_rewritten() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = templates_path().expect("path");
+            let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_modified(old)
+                .expect("set mtime");
+
+            init_discover_files(false).expect("second seed");
+
+            let modified = fs::metadata(&path)
+                .expect("metadata")
+                .modified()
+                .expect("mtime");
+            assert_eq!(modified, old);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_place_of_the_catalogue_is_replaced_not_written_through() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = mcp_servers_path().expect("path");
+            let elsewhere = path.with_file_name("elsewhere.txt");
+            fs::write(&elsewhere, "keep me").expect("write link target");
+            fs::remove_file(&path).expect("remove catalogue");
+            std::os::unix::fs::symlink(&elsewhere, &path).expect("plant link");
+
+            init_discover_files(false).expect("second seed");
+
+            assert_eq!(fs::read_to_string(&elsewhere).expect("read"), "keep me");
+            let metadata = fs::symlink_metadata(&path).expect("metadata");
+            assert!(metadata.is_file());
+            assert_eq!(fs::read_to_string(&path).expect("read"), SEED_MCP_SERVERS);
+        });
+    }
+
+    #[test]
+    fn a_catalogue_that_cannot_be_replaced_is_an_error() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = mcp_servers_path().expect("path");
+            fs::remove_file(&path).expect("remove catalogue");
+            fs::create_dir(&path).expect("put a folder in its place");
+            fs::write(path.join("inside"), "x").expect("fill the folder");
+
+            let error = init_discover_files(false).expect_err("a folder cannot be replaced");
+
+            assert!(error.contains("mcp-servers.json"), "{}", error);
+        });
+    }
+
+    #[test]
+    fn reinstall_defaults_restores_a_stale_catalogue() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = mcp_servers_path().expect("path");
+            fs::write(&path, "[]").expect("write stale catalogue");
+
+            crate::core::reinstall_defaults().expect("reinstall defaults");
+
+            assert_eq!(fs::read_to_string(&path).expect("read"), SEED_MCP_SERVERS);
         });
     }
 

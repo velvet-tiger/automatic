@@ -414,9 +414,11 @@ fn delete_all_gateway_tokens() -> Result<(), String> {
 /// Discover catalogues, and the Automatic MCP server) without touching
 /// projects, memories, or app settings.
 ///
-/// Every bundled file is force-overwritten so the on-disk copies match the
-/// current binary — equivalent to what happens on a version upgrade but
-/// scoped only to the factory-supplied content.
+/// Every bundled file ends up matching the current binary. Most are
+/// force-overwritten. The Discover MCP and template catalogues are rewritten
+/// only when they differ, which gives the same result. This is equivalent to
+/// what happens on a version upgrade but scoped only to the factory-supplied
+/// content.
 pub fn reinstall_defaults() -> Result<(), String> {
     super::init_discover_files(true)?;
     super::install_default_rules_inner(true)?;
