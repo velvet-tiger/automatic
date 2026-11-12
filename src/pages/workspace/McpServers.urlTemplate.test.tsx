@@ -96,4 +96,38 @@ describe("McpServers URL template", () => {
     expect(screen.queryByText(/evil\.com/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument();
   });
+
+  it("keeps the URL locked when the stored template is not in the catalogue", async () => {
+    mockInvoke(
+      routes({
+        type: "http",
+        url: "https://acme.app.spacelift.io.evil.example/mcp",
+        _url_template: "https://<account-name>.app.spacelift.io.evil.example/mcp",
+        _author: { name: "Spacelift" },
+      }),
+    );
+    render(<McpServers initialServer="spacelift" />);
+
+    const url = (await screen.findByPlaceholderText("https://example.com/mcp")) as HTMLInputElement;
+    expect(url.readOnly).toBe(true);
+    expect(screen.queryByLabelText("Account name")).not.toBeInTheDocument();
+  });
+
+  it("does not save the raw template over a working URL", async () => {
+    mockInvoke(
+      routes({
+        type: "http",
+        url: "https://acme.app.spacelift.io/mcp",
+        _url_template: TEMPLATE,
+        _author: { name: "Spacelift" },
+      }),
+    );
+    render(<McpServers initialServer="spacelift" />);
+
+    fireEvent.change(await screen.findByLabelText("Account name"), { target: { value: "acme." } });
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.click(save);
+    expect(savedConfigs()).toHaveLength(0);
+  });
 });

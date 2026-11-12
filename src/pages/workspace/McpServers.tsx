@@ -16,7 +16,13 @@ import { nextAvailableName } from "../../lib/uniqueName";
 import { encryptedPrefixMessage, envKeysWithEncryptedPrefix } from "../../lib/encryptedEnvValues";
 import { McpConfigFindings } from "../../components/McpConfigFindings";
 import { UrlTemplateFields } from "../../components/UrlTemplateFields";
-import { fillUrlTemplate, readUrlTemplateValues, savedUrlTemplate, urlTemplateTokens } from "../../lib/urlTemplate";
+import {
+  fillUrlTemplate,
+  knownUrlTemplates,
+  readUrlTemplateValues,
+  savedUrlTemplate,
+  urlTemplateTokens,
+} from "../../lib/urlTemplate";
 import {
   fixMcpDockerArgs,
   hasMcpConfigErrors,
@@ -59,6 +65,12 @@ interface DiscoverEntryMeta {
   auth?: { method?: string; env_vars?: DiscoverEnvVarMeta[] } | null;
 }
 const DISCOVER_ENTRIES = featuredMcpServers as DiscoverEntryMeta[];
+
+/** The bundled catalogue's templated URLs. The editor honours a server's
+ *  `_url_template` only when it is one of these. */
+const KNOWN_URL_TEMPLATES = knownUrlTemplates(
+  (featuredMcpServers as Array<{ remote?: { url?: string } | null }>).map((e) => e.remote?.url),
+);
 
 /** Find the Discover catalogue entry that matches a saved server name.
  *  Matches by slug first (the installer's default), then by title-derived key. */
@@ -847,7 +859,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       setEditName(name);
       const loaded = normalizeConfig(data);
       setConfig(loaded);
-      const template = savedUrlTemplate(loaded._url_template, loaded.url || "");
+      const template = savedUrlTemplate(loaded._url_template, loaded.url || "", KNOWN_URL_TEMPLATES);
       setUrlTemplateValues(template ? readUrlTemplateValues(template, loaded.url || "") : {});
       setDirty(false);
       setIsCreating(false);
@@ -896,7 +908,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const trimmedEdit = editName.trim();
     const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
-    if (saveBlockedByErrors) return;
+    if (saveBlockedByErrors || urlTemplateProblem) return;
     if (envPrefixError) {
       setError(envPrefixError);
       return;
@@ -1078,8 +1090,15 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   /** A catalogue server whose URL differs per account. Its URL is built from
    *  the token fields, which stay editable although the server is managed. */
   const urlTemplate = config && !isStdio && isManaged && !isBuiltin
-    ? savedUrlTemplate(config._url_template, config.url || "")
+    ? savedUrlTemplate(config._url_template, config.url || "", KNOWN_URL_TEMPLATES)
     : null;
+  /** Why the token values cannot be saved yet. A save would otherwise write
+   *  the raw template over a working URL. */
+  const urlTemplateProblem = (() => {
+    if (!urlTemplate) return null;
+    const filled = fillUrlTemplate(urlTemplate, urlTemplateValues);
+    return "problem" in filled ? filled.problem : null;
+  })();
   /** The URL OAuth may use: none while it still holds a placeholder. */
   const authUrl = urlTemplateTokens(config?.url || "").length > 0 ? "" : config?.url || "";
 
@@ -1380,10 +1399,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       (isCreating && !newName.trim()) ||
                       (!isCreating && !editName.trim()) ||
                       saveBlockedByErrors ||
+                      !!urlTemplateProblem ||
                       envPrefixError !== null
                     }
                     title={
                       envPrefixError ??
+                      urlTemplateProblem ??
                       (saveBlockedByErrors ? "Fix the errors under Arguments, or tick \"Save anyway\"." : undefined)
                     }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
@@ -1726,18 +1747,18 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           showMissing
                         />
                       ) : (
-                      <input
-                        type="text"
-                        value={config.url || ""}
-                        onChange={(e) => !isManaged && updateConfig({ url: e.target.value })}
-                        readOnly={isManaged}
-                        placeholder={
-                          config.type === "sse"
-                            ? "https://example.com/sse"
-                            : "https://example.com/mcp"
-                        }
-                        className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
-                      />
+                        <input
+                          type="text"
+                          value={config.url || ""}
+                          onChange={(e) => !isManaged && updateConfig({ url: e.target.value })}
+                          readOnly={isManaged}
+                          placeholder={
+                            config.type === "sse"
+                              ? "https://example.com/sse"
+                              : "https://example.com/mcp"
+                          }
+                          className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                        />
                       )}
                     </section>
 

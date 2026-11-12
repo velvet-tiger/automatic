@@ -645,8 +645,13 @@ export default function DiscoverMcp({
                                   setUrlValues(v);
                                   setCopyError(null);
                                 }}
+                                onSubmit={() => {
+                                  if (!copying && copyName.trim() && !urlValuesIncomplete(selected, urlValues)) {
+                                    handleInstallCopy(selected);
+                                  }
+                                }}
                                 inputClassName={smallInputClass}
-                          autoFocus
+                                autoFocus
                               />
                             </div>
                           )}
@@ -711,42 +716,42 @@ export default function DiscoverMcp({
                     </p>
                   ) : (
                     <>
-                    {selected.remote && discoverUrlTokens(selected).length > 0 && (
-                      <div className="mb-3 rounded-lg border border-border-strong/40 bg-bg-input/40 p-3">
-                        <p className="text-[12px] text-text-muted leading-relaxed mb-2">
-                          This server's address is different for each account. Enter yours to add it.
-                        </p>
-                        <UrlTemplateFields
-                          template={selected.remote.url}
-                          values={urlValues}
-                          onChange={(v) => {
-                            setUrlValues(v);
-                            setInstallError(null);
-                          }}
-                          onSubmit={() => {
-                            if (!installing && !urlValuesIncomplete(selected, urlValues)) handleInstall(selected);
-                          }}
-                          inputClassName={smallInputClass}
-                        />
-                      </div>
-                    )}
-                    <button
-                      onClick={() => handleInstall(selected)}
-                      disabled={installing || urlValuesIncomplete(selected, urlValues)}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-white font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {installing ? (
-                        <>
-                          <Loader2 size={14} className="animate-spin" />
-                          Adding...
-                        </>
-                      ) : (
-                        <>
-                          <Download size={14} />
-                          Add to MCP Servers
-                        </>
+                      {selected.remote && discoverUrlTokens(selected).length > 0 && (
+                        <div className="mb-3 rounded-lg border border-border-strong/40 bg-bg-input/40 p-3">
+                          <p className="text-[12px] text-text-muted leading-relaxed mb-2">
+                            This server's address is different for each account. Enter yours to add it.
+                          </p>
+                          <UrlTemplateFields
+                            template={selected.remote.url}
+                            values={urlValues}
+                            onChange={(v) => {
+                              setUrlValues(v);
+                              setInstallError(null);
+                            }}
+                            onSubmit={() => {
+                              if (!installing && !urlValuesIncomplete(selected, urlValues)) handleInstall(selected);
+                            }}
+                            inputClassName={smallInputClass}
+                          />
+                        </div>
                       )}
-                    </button>
+                      <button
+                        onClick={() => handleInstall(selected)}
+                        disabled={installing || urlValuesIncomplete(selected, urlValues)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-white font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {installing ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Adding...
+                          </>
+                        ) : (
+                          <>
+                            <Download size={14} />
+                            Add to MCP Servers
+                          </>
+                        )}
+                      </button>
                     </>
                   )}
                   {installError && (
