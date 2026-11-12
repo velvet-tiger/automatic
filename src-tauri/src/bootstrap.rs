@@ -67,19 +67,19 @@ pub fn run_startup_housekeeping() {
     // Phase 3 background refresh) is left alone so we never roll back
     // to older bundled content on a subsequent boot.
     let library_version: &str = core::bundled_library::version();
-    let force_reinstall = match core::read_settings() {
-        Ok(settings) => needs_reinstall(settings.library_version.as_deref(), library_version),
-        Err(_) => true, // can't read settings → safe to overwrite
-    };
+    // `None` when settings cannot be read.
+    let library_upgrade = core::read_settings()
+        .ok()
+        .map(|settings| needs_reinstall(settings.library_version.as_deref(), library_version));
+    let force_reinstall = library_upgrade.unwrap_or(true); // can't read settings → safe to overwrite
 
     // Seed (or refresh) the Discover catalogue files in
     // ~/.automatic/discover/. The MCP server and template catalogues are
     // refreshed whenever they differ from this binary's copy.
     // Bundled collections are merged in by slug at every start, keeping
-    // the entries remote sources added. Startup never forces: a forced run
-    // replaces an unreadable collections file, and here that file may be
-    // mid-write by another process. Only Reinstall Defaults forces.
-    if let Err(e) = core::init_discover_files(false) {
+    // the entries remote sources added. See `discover_force` for when an
+    // unreadable collections file is replaced.
+    if let Err(e) = core::init_discover_files(discover_force(library_upgrade)) {
         eprintln!("[automatic] discover init error: {}", e);
     }
 
@@ -300,9 +300,27 @@ pub fn run_startup_housekeeping() {
     commands::reconcile_plugin_resources_in_projects();
 }
 
+/// Whether startup forces the Discover seeding. A forced run moves an
+/// unreadable collections file to a backup and restores the bundled copy.
+///
+/// Only a library upgrade forces. Unreadable settings (`None`) do not: that
+/// says nothing about the collections file, and the file holds entries that
+/// remote sources installed. The collections lock and atomic writes mean a
+/// forced run never sees a half-written file from another process.
+fn discover_force(library_upgrade: Option<bool>) -> bool {
+    library_upgrade.unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::needs_reinstall;
+    use super::{discover_force, needs_reinstall};
+
+    #[test]
+    fn only_a_library_upgrade_forces_discover_seeding() {
+        assert!(discover_force(Some(true)));
+        assert!(!discover_force(Some(false)));
+        assert!(!discover_force(None), "unreadable settings must not force");
+    }
 
     #[test]
     fn missing_installed_version_forces_reinstall() {

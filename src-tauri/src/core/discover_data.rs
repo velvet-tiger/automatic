@@ -80,11 +80,10 @@ pub fn featured_community_path() -> Result<PathBuf, String> {
 /// entries would never reach existing installs.
 ///
 /// The collections file also holds entries that remote sources add, so it is
-/// merged rather than replaced. See [`sync_bundled_collections`]. `force` is
-/// for Reinstall Defaults only: it restores bundled collections the user
-/// deleted, and replaces a collections file that cannot be read. Startup
-/// passes `false`, because a startup run can meet a file another process is
-/// writing.
+/// merged rather than replaced. See [`sync_bundled_collections`]. `force`
+/// only decides what happens to a collections file that cannot be read: a
+/// forced run (a bundled library upgrade, or Reinstall Defaults) moves it to a
+/// backup and restores the bundled copy.
 ///
 /// Either way the content written comes from the seed constants above; once the
 /// remote endpoint is live this is where the fetch will happen instead.
@@ -151,11 +150,10 @@ fn migrate_legacy_dir() -> Result<(), String> {
 /// slug without touching what remote sources or the user added.
 ///
 /// The record file in [`bundled_collections_record_path`] lists the bundled
-/// slugs of the last merge. Nothing else tells these cases apart:
-/// - A slug in the record that is no longer bundled was retired, and its
-///   entry is removed.
-/// - A slug in the record that is still bundled but missing from the file was
-///   deleted by the user, and stays deleted unless `force` is set.
+/// slugs of the last merge. A slug in the record that is no longer bundled was
+/// retired, and its entry is removed. Nothing else tells a retired bundled
+/// collection apart from a user's own. A bundled collection missing from the
+/// file is always added back.
 ///
 /// An absent file gets the bundled copy as shipped. A file that cannot be read
 /// or parsed is an error and is left alone, so entries that remote sources
@@ -175,22 +173,13 @@ fn sync_bundled_collections(force: bool) -> Result<(), String> {
                 .map(String::as_str)
                 .filter(|slug| !bundled_slugs.contains(*slug))
                 .collect();
-            let deleted: HashSet<&str> = if force {
-                HashSet::new()
-            } else {
-                previous
-                    .iter()
-                    .map(String::as_str)
-                    .filter(|slug| bundled_slugs.contains(*slug))
-                    .collect()
-            };
             for slug in displaced_slugs(&existing, &bundled, &previous) {
                 eprintln!(
                     "[automatic] the bundled collection '{}' replaces an entry with the same slug",
                     slug
                 );
             }
-            let merged = merge_bundled_collections(&existing, &bundled, &retired, &deleted);
+            let merged = merge_bundled_collections(&existing, &bundled, &retired);
             if merged != existing {
                 let json = serde_json::to_string_pretty(&merged)
                     .map_err(|e| format!("Failed to serialize collections: {}", e))?;
@@ -347,15 +336,14 @@ fn collection_slugs(entries: &[serde_json::Value]) -> BTreeSet<String> {
 }
 
 /// `existing` with each bundled entry replaced in place by its current copy,
-/// bundled entries it lacks appended unless their slug is in `deleted`, and
-/// entries whose slug is in `retired` dropped. Every other entry keeps its
+/// bundled entries it lacks appended, and entries whose slug is in `retired`
+/// dropped. Every other entry keeps its
 /// content and position. A bundled slug that appears more than once keeps
 /// only its first position.
 fn merge_bundled_collections(
     existing: &[serde_json::Value],
     bundled: &[serde_json::Value],
     retired: &HashSet<&str>,
-    deleted: &HashSet<&str>,
 ) -> Vec<serde_json::Value> {
     let bundled_by_slug: HashMap<&str, &serde_json::Value> = bundled
         .iter()
@@ -379,7 +367,7 @@ fn merge_bundled_collections(
     }
     for entry in bundled {
         if let Some(slug) = collection_slug(entry) {
-            if !deleted.contains(slug) && placed.insert(slug) {
+            if placed.insert(slug) {
                 merged.push(entry.clone());
             }
         }
@@ -807,8 +795,7 @@ mod tests {
             json!({ "slug": "bundled-b" }),
         ];
 
-        let merged =
-            merge_bundled_collections(&existing, &bundled, &HashSet::new(), &HashSet::new());
+        let merged = merge_bundled_collections(&existing, &bundled, &HashSet::new());
 
         assert_eq!(
             merged,
@@ -833,7 +820,7 @@ mod tests {
         let bundled = vec![json!({ "slug": "bundled-a", "name": "New" })];
         let retired: HashSet<&str> = ["retired"].into_iter().collect();
 
-        let merged = merge_bundled_collections(&existing, &bundled, &retired, &HashSet::new());
+        let merged = merge_bundled_collections(&existing, &bundled, &retired);
 
         assert_eq!(
             merged,
@@ -1030,18 +1017,17 @@ mod tests {
     }
 
     #[test]
-    fn a_bundled_collection_the_user_deleted_stays_deleted_until_reinstall() {
+    fn a_missing_bundled_collection_is_added_back_without_force() {
         with_temp_home(|| {
             init_discover_files(false).expect("first seed");
             let bundled_slug = a_bundled_slug();
+            // The record lists the slug, as it does after any earlier merge.
             let mut entries = read_collections_file();
             entries.retain(|entry| collection_slug(entry) != Some(bundled_slug.as_str()));
             write_collections_file(&entries);
 
             init_discover_files(false).expect("second seed");
-            assert!(!slugs_of(&read_collections_file()).contains(&bundled_slug.as_str()));
 
-            init_discover_files(true).expect("forced seed");
             assert!(slugs_of(&read_collections_file()).contains(&bundled_slug.as_str()));
         });
     }
