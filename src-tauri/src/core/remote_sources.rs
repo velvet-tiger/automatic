@@ -2121,8 +2121,10 @@ type BundledField = fn(&super::discover_data::BundledCollectionIdentity) -> Opti
 ///
 /// Discover draws a collection's card from its `name`, its `icon` and its
 /// author, and keys it by its `id`. So a source may not use:
-/// - a name, id or icon that matches a bundled collection's after
-///   [`fold_collection_name`], or
+/// - a name or id that matches a bundled collection's after
+///   [`fold_collection_name`],
+/// - an icon that is not a plain domain, or that is a bundled collection's
+///   icon domain or a subdomain of one, see [`icon_identity_reason`], or
 /// - the `provider` author type, which Discover draws as Automatic's own.
 ///
 /// The fold cannot catch letters from other scripts, such as a Cyrillic `А`.
@@ -2137,10 +2139,14 @@ fn collection_identity_reason(
     let label = |b: &super::discover_data::BundledCollectionIdentity| {
         b.name.clone().or_else(|| b.id.clone()).unwrap_or_else(|| "a bundled collection".to_string())
     };
-    let fields: [(&str, Option<&str>, BundledField); 3] = [
+    if let Some(icon) = identity.icon {
+        if let Some(reason) = icon_identity_reason(icon, &bundled, label) {
+            return Ok(Some(reason));
+        }
+    }
+    let fields: [(&str, Option<&str>, BundledField); 2] = [
         ("name", identity.name, |b| b.name.as_deref()),
         ("id", identity.id, |b| b.id.as_deref()),
-        ("icon", identity.icon, |b| b.icon.as_deref()),
     ];
     for (field, value, bundled_value) in fields {
         let Some(value) = value else { continue };
@@ -2178,6 +2184,56 @@ fn collection_identity_reason(
         }
     }
     Ok(None)
+}
+
+/// Why a source collection's `icon` is refused, or `None` when it is allowed.
+///
+/// Discover asks a logo service for the icon's domain. That service also
+/// answers for a URL, a host with a trailing dot and a subdomain, so a
+/// string compare would let `https://automatic.sh` or `www.automatic.sh`
+/// draw Automatic's logo. A source icon must be a plain domain, and it may
+/// not be a bundled icon's domain or a subdomain of one.
+fn icon_identity_reason(
+    icon: &str,
+    bundled: &[super::discover_data::BundledCollectionIdentity],
+    label: impl Fn(&super::discover_data::BundledCollectionIdentity) -> String,
+) -> Option<(String, String)> {
+    let Some(domain) = plain_icon_domain(icon) else {
+        let first = bundled.first().map(&label).unwrap_or_else(|| "a bundled collection".to_string());
+        return Some((
+            first,
+            format!(
+                "The collection icon '{}' must be a plain domain such as 'example.com', so it cannot be installed",
+                visible_slug(icon)
+            ),
+        ));
+    };
+    bundled.iter().find_map(|b| {
+        let bundled_domain = b.icon.as_deref().and_then(plain_icon_domain)?;
+        let same = domain == bundled_domain || domain.ends_with(&format!(".{}", bundled_domain));
+        same.then(|| {
+            let bundled_label = label(b);
+            (
+                bundled_label.clone(),
+                format!(
+                    "The collection icon '{}' is the logo of the bundled collection '{}', so it cannot be installed",
+                    visible_slug(icon),
+                    bundled_label
+                ),
+            )
+        })
+    })
+}
+
+/// `icon` as a lowercase domain without a trailing dot, or `None` when it is
+/// not a plain domain: ASCII letters, digits and `-` in dot-separated labels.
+fn plain_icon_domain(icon: &str) -> Option<String> {
+    let domain = icon.strip_suffix('.').unwrap_or(icon).to_ascii_lowercase();
+    let plain = !domain.is_empty()
+        && domain.split('.').all(|label| {
+            !label.is_empty() && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    plain.then_some(domain)
 }
 
 /// A collection name folded as [`fold_collection_slug`] does, then with only
@@ -8888,6 +8944,44 @@ mod tests {
     }
 
     #[test]
+    fn plain_icon_domain_accepts_only_domains() {
+        assert_eq!(plain_icon_domain("Example.COM."), Some("example.com".to_string()));
+        assert_eq!(plain_icon_domain("my-vendor.io"), Some("my-vendor.io".to_string()));
+        for icon in ["", ".", "https://example.com", "example.com/x", "a..b", "ex ample.com", "exämple.com", "user@example.com", "example.com:443"] {
+            assert_eq!(plain_icon_domain(icon), None, "{:?}", icon);
+        }
+    }
+
+    #[test]
+    fn a_collection_with_another_vendors_icon_installs() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let reason = collection_identity_reason(CollectionIdentity {
+                name: Some("Vendor Tools"),
+                icon: Some("vendor.example"),
+                ..Default::default()
+            })
+            .expect("check");
+            assert!(reason.is_none(), "{:?}", reason);
+            // A domain that only ends with the bundled text is another domain.
+            let bundled = crate::core::discover_data::bundled_collection_identities()
+                .expect("bundled")
+                .into_iter()
+                .next()
+                .and_then(|b| b.icon)
+                .expect("bundled icon");
+            let lookalike = format!("not{}", bundled);
+            let reason = collection_identity_reason(CollectionIdentity {
+                icon: Some(&lookalike),
+                ..Default::default()
+            })
+            .expect("check");
+            assert!(reason.is_none(), "{:?}", reason);
+        });
+    }
+
+    #[test]
     fn a_collection_named_like_a_bundled_one_is_blocked() {
         let sandbox = sandbox();
         crate::core::paths::with_test_home(sandbox.home.clone(), || {
@@ -8929,10 +9023,17 @@ mod tests {
                 .into_iter()
                 .next()
                 .expect("a bundled collection");
-            let icon = bundled.icon.expect("bundled icon").to_uppercase();
+            let icon = bundled.icon.expect("bundled icon");
             let id = bundled.id.expect("bundled id");
+            let with_icon = |icon: String| {
+                serde_json::json!({ "slug": "own-slug", "name": "Own", "icon": icon })
+            };
             for (field, collection) in [
-                ("icon", serde_json::json!({ "slug": "own-slug", "name": "Own", "icon": icon })),
+                ("icon", with_icon(icon.to_uppercase())),
+                ("icon", with_icon(format!("{}.", icon))),
+                ("icon", with_icon(format!("www.{}", icon))),
+                ("icon", with_icon(format!("https://{}", icon))),
+                ("icon", with_icon(format!("{}/logo.png", icon))),
                 ("id", serde_json::json!({ "slug": "own-slug", "name": "Own", "id": id })),
             ] {
                 let names = KindNames::new("bundled-icon-or-id");
