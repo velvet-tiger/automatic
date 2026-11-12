@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { extraFolderState, folderName, folderParent, groupFolders, savedStatus } from "./writableFolders";
+import {
+  extraFolderState,
+  folderName,
+  folderParent,
+  groupFolders,
+  savedStatus,
+  supportedAgentsText,
+  usesSupportedAgent,
+} from "./writableFolders";
 import type { WritableFoldersFindings } from "./types";
 
 function findings(overrides: Partial<WritableFoldersFindings> = {}): WritableFoldersFindings {
@@ -100,5 +108,14 @@ describe("savedStatus", () => {
 
   it("reports a failed sync first", () => {
     expect(savedStatus(findings({ wanted, last_sync_errors: ["disk full"] }))?.text).toMatch(/last sync failed/);
+  });
+});
+
+describe("supported agents", () => {
+  it("names the agents and checks a project against them", () => {
+    expect(supportedAgentsText()).toBe("Supported agents: Claude Code");
+    expect(usesSupportedAgent(["codex", "claude"])).toBe(true);
+    expect(usesSupportedAgent(["codex"])).toBe(false);
+    expect(usesSupportedAgent([])).toBe(false);
   });
 });

@@ -4,10 +4,15 @@ import { homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderPlus, X } from "lucide-react";
 import type { Project, WritableFoldersFindings } from "../../types";
-import { extraFolderState, folderName, folderParent, groupFolders, savedStatus } from "../../writableFolders";
-
-/** The agent id the folders apply to. Matches `CLAUDE_AGENT` in the backend. */
-const CLAUDE_AGENT = "claude";
+import {
+  extraFolderState,
+  folderName,
+  folderParent,
+  groupFolders,
+  savedStatus,
+  supportedAgentsText,
+  usesSupportedAgent,
+} from "../../writableFolders";
 
 /** What `set_project_writable_folders` returns. */
 interface WritableFoldersSync {
@@ -30,10 +35,12 @@ interface WritableFoldersCardProps {
 }
 
 /**
- * "Folders Claude can edit": the extra folders this checkout lets Claude
- * Code edit, the folders its groups add, and where they were saved. A change
- * is saved at once, because the list is stored only on this computer.
- * Findings that need action go to the notice list, not here.
+ * "Allow agents to edit other folders": the extra folders this checkout lets
+ * its agents edit, the folders its groups add, and where they were saved. A
+ * change is saved at once, because the list is stored only on this computer.
+ * Findings that need action go to the notice list, not here. Shown for every
+ * project, so the feature can be found. Adding a folder needs an agent from
+ * `WRITABLE_FOLDERS_AGENTS`.
  */
 export function WritableFoldersCard({
   project,
@@ -42,7 +49,7 @@ export function WritableFoldersCard({
   onNavigateToGroup,
   checksVersion,
 }: WritableFoldersCardProps) {
-  const usesClaude = project.agents.includes(CLAUDE_AGENT);
+  const supported = usesSupportedAgent(project.agents);
   const extras = project.local_writable_folders ?? [];
   const extrasKey = extras.join("\n");
   const [findings, setFindings] = useState<WritableFoldersFindings | null>(null);
@@ -56,21 +63,20 @@ export function WritableFoldersCard({
       setFindings(result);
     } catch (err) {
       setFindings(null);
-      setError(`Could not check the folders Claude can edit: ${err}`);
+      setError(`Could not check the folders agents can edit: ${err}`);
     }
   }, [projectKey]);
 
   useEffect(() => {
-    if (usesClaude) void loadFindings();
-  }, [usesClaude, loadFindings, extrasKey, checksVersion]);
+    if (supported) void loadFindings();
+    else setFindings(null);
+  }, [supported, loadFindings, extrasKey, checksVersion]);
 
   useEffect(() => {
     homeDir()
       .then(setHome)
       .catch((err: unknown) => console.warn("Could not read the home folder:", err));
   }, []);
-
-  if (!usesClaude) return null;
 
   const save = async (folders: string[]) => {
     setBusy(true);
@@ -99,17 +105,20 @@ export function WritableFoldersCard({
     await save([...extras, picked]);
   };
 
-  const status = findings ? savedStatus(findings) : null;
+  const status = supported && findings ? savedStatus(findings) : null;
   const groups = findings ? groupFolders(findings) : [];
 
   return (
     <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
       <div className="px-4 py-3 flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-[13px] font-medium text-text-base">Folders Claude can edit</div>
+          <div className="text-[13px] font-medium text-text-base">Allow agents to edit other folders</div>
           <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
-            Claude Code can refuse to edit anything outside this project&apos;s folder. Automatic tells it which other
-            folders it may edit. This applies on this computer only.
+            Agents can refuse to edit anything outside this project&apos;s folder. Automatic tells them which other
+            folders they may edit. This applies on this computer only.
+          </div>
+          <div className="text-[10px] text-text-muted opacity-75 mt-1">
+            {supported ? supportedAgentsText() : `None of this project's agents support this yet. ${supportedAgentsText()}`}
           </div>
         </div>
         {status && (
@@ -138,7 +147,7 @@ export function WritableFoldersCard({
                   )}
                   {state.kind === "refused" && (
                     <span
-                      title={`Claude Code may not edit this folder, because ${state.reason}.`}
+                      title={`Agents may not edit this folder, because ${state.reason}.`}
                       className="text-[10px] px-1.5 rounded border border-warning/40 text-warning"
                     >
                       Can&apos;t be shared
@@ -159,7 +168,7 @@ export function WritableFoldersCard({
           })}
         </ul>
         <button
-          disabled={busy}
+          disabled={busy || !supported}
           onClick={() => void addFolder()}
           className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-border-strong/40 bg-bg-sidebar text-text-muted hover:text-text-base hover:border-border-strong/60 transition-colors disabled:opacity-50"
         >
@@ -189,7 +198,7 @@ export function WritableFoldersCard({
                     ) : (
                       "Open the group"
                     )}{" "}
-                    to let agents edit across it.
+                    to allow agents to edit across it.
                   </>
                 )}
               </li>

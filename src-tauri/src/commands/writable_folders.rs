@@ -52,7 +52,7 @@ fn read_parsed(ident: &str) -> Result<core::Project, String> {
     serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))
 }
 
-/// Turn "Let agents edit across this group" on or off, then bring every
+/// Turn "Allow agents to edit across this group" on or off, then bring every
 /// member's folders in step.
 #[tauri::command(async)]
 pub fn set_group_agents_edit_across_group(group_name: &str, enabled: bool) -> Result<(), String> {

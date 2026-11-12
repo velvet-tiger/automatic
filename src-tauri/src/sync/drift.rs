@@ -277,7 +277,7 @@ fn writable_folders_notes(findings: &crate::core::WritableFoldersFindings) -> Ve
             notes.push(format!(
                 "Claude Code blocks edits outside this project's folder, because `{}` turns the \
                  block on. To let agents here edit the other projects in {}, turn on \
-                 \"Let agents edit across this group\" for it.",
+                 \"Allow agents to edit across this group\" for it.",
                 blocked_by,
                 join_words(&findings.groups_switched_off)
             ));

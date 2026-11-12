@@ -1,5 +1,24 @@
 import type { FolderSource, WritableFoldersFindings } from "./types";
 
+/**
+ * The agents Automatic can tell which other folders they may edit. The
+ * controls are worded for agents in general and list these by name. Add an
+ * agent here once the backend writes its folders.
+ */
+export const WRITABLE_FOLDERS_AGENTS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "claude", label: "Claude Code" },
+];
+
+/** "Supported agents: Claude Code", shown under both controls. */
+export function supportedAgentsText(): string {
+  return `Supported agents: ${WRITABLE_FOLDERS_AGENTS.map((agent) => agent.label).join(", ")}`;
+}
+
+/** Whether any of the project's agents can use the folders. */
+export function usesSupportedAgent(agents: readonly string[]): boolean {
+  return WRITABLE_FOLDERS_AGENTS.some((agent) => agents.includes(agent.id));
+}
+
 /** The last part of a folder path, which is how a folder is named on screen. */
 export function folderName(path: string): string {
   const parts = path.split(/[\\/]+/).filter((part) => part !== "");
