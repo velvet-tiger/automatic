@@ -24,8 +24,10 @@ const BUNDLED_COLLECTIONS_RECORD_FILE: &str = "bundled-collections.json";
 /// Advisory lock taken around every read-modify-write of the collections. See
 /// [`with_collections_lock`].
 const COLLECTIONS_LOCK_FILE: &str = "collections.json.lock";
-/// Where Reinstall Defaults moves a collections file it cannot read.
-const UNREADABLE_COLLECTIONS_BACKUP_FILE: &str = "collections.json.unreadable";
+/// Name prefix for where Reinstall Defaults moves a collections file it cannot
+/// read. A timestamp follows, so a later reinstall never overwrites an earlier
+/// backup.
+const UNREADABLE_COLLECTIONS_BACKUP_PREFIX: &str = "collections.json.unreadable-";
 
 // ── Compiled-in seed content ──────────────────────────────────────────────────
 //
@@ -196,7 +198,7 @@ fn sync_bundled_collections(force: bool) -> Result<(), String> {
             }
         }
         Err(e) if force => {
-            let backup = path.with_file_name(UNREADABLE_COLLECTIONS_BACKUP_FILE);
+            let backup = unreadable_collections_backup_path(&path)?;
             fs::rename(&path, &backup).map_err(|rename_error| {
                 format!(
                     "{}. Failed to move it aside to {}: {}",
@@ -223,6 +225,29 @@ fn sync_bundled_collections(force: bool) -> Result<(), String> {
     )
 }
 
+/// A backup path beside `path` that does not exist yet, named
+/// `collections.json.unreadable-<seconds since the Unix epoch>`, with a
+/// counter added if a backup from the same second exists.
+fn unreadable_collections_backup_path(path: &std::path::Path) -> Result<PathBuf, String> {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("The system clock is before 1970: {}", e))?
+        .as_secs();
+    let mut candidate = path.with_file_name(format!(
+        "{}{}",
+        UNREADABLE_COLLECTIONS_BACKUP_PREFIX, seconds
+    ));
+    let mut counter = 1;
+    while fs::symlink_metadata(&candidate).is_ok() {
+        candidate = path.with_file_name(format!(
+            "{}{}-{}",
+            UNREADABLE_COLLECTIONS_BACKUP_PREFIX, seconds, counter
+        ));
+        counter += 1;
+    }
+    Ok(candidate)
+}
+
 /// Run `body` while holding an exclusive lock on the collections file.
 ///
 /// Startup merges, remote-source installs and remote-source removals all read
@@ -230,11 +255,12 @@ fn sync_bundled_collections(force: bool) -> Result<(), String> {
 /// time, in one process or in several (the GUI and each `mcp-serve`). Without
 /// the lock, the last writer drops the other's change. The lock is advisory
 /// and lives on a separate file, because the collections file itself is
-/// replaced by rename on every write. Do not nest calls: a second lock in the
-/// same process waits on the first.
+/// replaced by rename on every write. A nested call on the same thread would
+/// wait on itself forever, so it is refused with an error instead.
 pub(crate) fn with_collections_lock<T>(
     body: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
+    let _held = CollectionsLockHeld::enter()?;
     let lock_path = get_discover_dir()?.join(COLLECTIONS_LOCK_FILE);
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent)
@@ -253,6 +279,28 @@ pub(crate) fn with_collections_lock<T>(
     // Closing the file releases the lock.
     drop(lock_file);
     result
+}
+
+thread_local! {
+    static COLLECTIONS_LOCK_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as holding the collections lock until dropped.
+struct CollectionsLockHeld;
+
+impl CollectionsLockHeld {
+    fn enter() -> Result<Self, String> {
+        if COLLECTIONS_LOCK_HELD.with(|held| held.replace(true)) {
+            return Err("The collections lock is already held on this thread".to_string());
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for CollectionsLockHeld {
+    fn drop(&mut self) {
+        COLLECTIONS_LOCK_HELD.with(|held| held.set(false));
+    }
 }
 
 /// Slugs of entries the merge is about to replace that the last merge did not
@@ -943,8 +991,24 @@ mod tests {
 
             init_discover_files(true).expect("forced seed");
             assert_eq!(fs::read_to_string(&path).expect("read"), SEED_COLLECTIONS);
-            let backup = path.with_file_name(UNREADABLE_COLLECTIONS_BACKUP_FILE);
-            assert_eq!(fs::read_to_string(&backup).expect("backup"), "not json");
+            fs::write(&path, "broken again").expect("break it again");
+            init_discover_files(true).expect("second forced seed");
+
+            let mut backups: Vec<String> = fs::read_dir(path.parent().expect("parent"))
+                .expect("list")
+                .map(|entry| entry.expect("entry").path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with(UNREADABLE_COLLECTIONS_BACKUP_PREFIX))
+                })
+                .map(|p| fs::read_to_string(p).expect("read backup"))
+                .collect();
+            backups.sort();
+            assert_eq!(
+                backups,
+                vec!["broken again".to_string(), "not json".to_string()]
+            );
         });
     }
 
@@ -1075,6 +1139,17 @@ mod tests {
                 fs::read_to_string(collections_path().expect("path")).expect("read"),
                 SEED_COLLECTIONS
             );
+        });
+    }
+
+    #[test]
+    fn a_nested_collections_lock_is_an_error_not_a_hang() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("seed");
+            let inner =
+                with_collections_lock(|| Ok(with_collections_lock(|| Ok(())))).expect("outer lock");
+            assert!(inner.is_err());
+            with_collections_lock(|| Ok(())).expect("released after the outer call");
         });
     }
 
