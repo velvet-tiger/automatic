@@ -45,20 +45,12 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-# AI agent configuration
-/.agents/
-/.claude/
-/.claude-flow/
-/.codex/
-/.cursor/
-/.mcp.json
-/.automatic/
 /tmp
 /.cargo/local.toml
 
-# OpenCode local config
-/opencode.json
+# Other AI
 /.opencode
+/.thinkrail
 
 # The broad "build" ignore pattern above matches plugin directories named
 # "build". Negate them so the build plugin source is tracked.
@@ -77,6 +69,7 @@ Thumbs.db
 /.mcp.json
 /.opencode/
 /AGENTS.md
+/CLAUDE.local.md
 /CLAUDE.md
 /opencode.json
 # END Automatic-managed
