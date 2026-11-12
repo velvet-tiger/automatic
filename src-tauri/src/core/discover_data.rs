@@ -619,6 +619,15 @@ pub(crate) fn bundled_collection_slugs() -> Result<BTreeSet<String>, String> {
     Ok(collection_slugs(&bundled_collections()?))
 }
 
+/// The display names of the bundled collections.
+pub(crate) fn bundled_collection_names() -> Result<BTreeSet<String>, String> {
+    Ok(bundled_collections()?
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect())
+}
+
 /// Replace the Discover collections with `entries`. Call it only while
 /// holding [`with_collections_lock`], after reading the entries under the same
 /// lock. The write is atomic, so a reader never sees a half-written file.

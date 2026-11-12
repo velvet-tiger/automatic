@@ -108,6 +108,10 @@ pub struct CollectionRef {
     /// dialog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The collection's `author.type`, read the same way, so the conflict
+    /// check can refuse a source collection that claims Automatic's author.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_type: Option<String>,
 }
 
 /// Skills section supporting both skill.json reference and inline entries.
@@ -1508,6 +1512,7 @@ fn resolve_manifest_collections(base_dir: &Path, manifest: &mut AutomaticManifes
                 .get("name")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            coll_ref.author_type = collection_author_type(&collection).map(str::to_string);
         }
     }
 }
@@ -1600,8 +1605,18 @@ pub fn check_conflicts(
     for (resource_type, names) in manifest_names(manifest) {
         let wanted = names_of_type(selected, resource_type);
         if resource_type == "collection" {
-            for slug in names.iter().filter(|slug| wanted.contains(slug)) {
-                if let Some(conflict) = collection_conflict(repo, slug)? {
+            for coll_ref in &manifest.collections {
+                let Some(slug) = coll_ref.slug.as_deref() else {
+                    continue;
+                };
+                if !wanted.iter().any(|w| w == slug) {
+                    continue;
+                }
+                let identity = CollectionIdentity {
+                    name: coll_ref.name.as_deref(),
+                    author_type: coll_ref.author_type.as_deref(),
+                };
+                if let Some(conflict) = collection_conflict(repo, slug, identity)? {
                     conflicts.push(conflict);
                 }
             }
@@ -1887,10 +1902,16 @@ fn entry_names(dir: &Path, extension: Option<&str>) -> Result<Vec<String>, Strin
 ///   Discover would show two collections a user cannot tell apart. This
 ///   holds even when `repo` installed the lookalike before this check
 ///   existed, so such a pair can be removed but not updated.
+/// - A collection whose card would pass for a bundled one, see
+///   [`collection_identity_reason`].
 ///
 /// A slug already in Discover is owned by the source whose entry lists it;
 /// with no such source it is the user's (`local`).
-fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, String> {
+fn collection_conflict(
+    repo: &str,
+    slug: &str,
+    identity: CollectionIdentity<'_>,
+) -> Result<Option<ConflictInfo>, String> {
     let conflict = |existing_name: &str, existing_source: String, blocked: bool, reason: String| {
         ConflictInfo {
             resource_type: "collection".to_string(),
@@ -1925,6 +1946,9 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
             true,
             lookalike_collection_reason(slug, lookalike),
         )));
+    }
+    if let Some((bundled_name, reason)) = collection_identity_reason(identity)? {
+        return Ok(Some(conflict(&bundled_name, "bundled".to_string(), true, reason)));
     }
     let entries = super::discover_data::read_collection_entries()?;
     let installed: Vec<&str> = entries
@@ -1964,6 +1988,19 @@ fn collection_conflict(repo: &str, slug: &str) -> Result<Option<ConflictInfo>, S
             format!("Replaces your own collection '{}'", slug),
         ))),
     }
+}
+
+/// Each collection slug a source lists, with the repository of the first
+/// source that lists it. An older version could leave a slug on two sources;
+/// Discover then names the first, as either one installed it.
+pub(crate) fn collection_installers() -> Result<HashMap<String, String>, String> {
+    let mut installers = HashMap::new();
+    for source in list_sources()? {
+        for slug in source.collection_slugs {
+            installers.entry(slug).or_insert_with(|| source.repo.clone());
+        }
+    }
+    Ok(installers)
 }
 
 /// The source that owns the installed collection `slug`, or `None` when it
@@ -2031,6 +2068,86 @@ fn lookalike_collection_slug<'a>(
     slugs
         .into_iter()
         .find(|other| *other != slug && fold_collection_slug(other) == folded)
+}
+
+/// What a source collection shows on its Discover card besides its slug.
+#[derive(Debug, Clone, Copy, Default)]
+struct CollectionIdentity<'a> {
+    /// The collection's `name`.
+    name: Option<&'a str>,
+    /// The collection's `author.type`.
+    author_type: Option<&'a str>,
+}
+
+impl<'a> CollectionIdentity<'a> {
+    fn of(collection: &'a serde_json::Value) -> Self {
+        CollectionIdentity {
+            name: collection.get("name").and_then(|v| v.as_str()),
+            author_type: collection_author_type(collection),
+        }
+    }
+}
+
+fn collection_author_type(collection: &serde_json::Value) -> Option<&str> {
+    collection
+        .get("author")
+        .and_then(|author| author.get("type"))
+        .and_then(|v| v.as_str())
+}
+
+/// The bundled collection a source collection would pass for, and why it is
+/// refused, or `None` when its card cannot be mistaken for a bundled one.
+///
+/// Discover draws a collection's card from its `name` and its author. So a
+/// source may not use:
+/// - a name that matches a bundled collection's name after
+///   [`fold_collection_name`], or
+/// - the `provider` author type, which Discover draws as Automatic's own.
+///
+/// The fold cannot catch letters from other scripts, such as a Cyrillic `А`.
+/// Discover also badges each collection with the source that installed it,
+/// so a name the fold misses still shows where it came from.
+fn collection_identity_reason(
+    identity: CollectionIdentity<'_>,
+) -> Result<Option<(String, String)>, String> {
+    let bundled = super::discover_data::bundled_collection_names()?;
+    if let Some(name) = identity.name {
+        let folded = fold_collection_name(name);
+        if let Some(bundled_name) = bundled
+            .iter()
+            .find(|bundled_name| fold_collection_name(bundled_name) == folded)
+        {
+            return Ok(Some((
+                bundled_name.clone(),
+                format!(
+                    "The collection name '{}' matches the bundled collection '{}', so it cannot be installed",
+                    visible_slug(name),
+                    bundled_name
+                ),
+            )));
+        }
+    }
+    if let Some(author_type) = identity.author_type {
+        if fold_collection_name(author_type) == "provider" {
+            let bundled_name = bundled.iter().next().cloned().unwrap_or_default();
+            return Ok(Some((
+                bundled_name,
+                "The collection names Automatic as its author ('provider'), so it cannot be installed"
+                    .to_string(),
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// A collection name folded as [`fold_collection_slug`] does, then with only
+/// its letters and digits kept, so `Automatic-Skills` and `automatic skills!`
+/// both fold to `automaticskills`.
+fn fold_collection_name(name: &str) -> String {
+    fold_collection_slug(name)
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
 }
 
 fn lookalike_collection_reason(slug: &str, lookalike: &str) -> String {
@@ -3975,6 +4092,11 @@ fn install_collection(
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("Collection at '{}' missing 'slug' field", coll_ref.path))?
         .to_string();
+    // The conflict check blocks this already. It is checked again on the
+    // file as installed, as the manifest's copy may be stale.
+    if let Some((_, reason)) = collection_identity_reason(CollectionIdentity::of(&collection))? {
+        return Err(reason);
+    }
 
     let slug_of =
         |c: &serde_json::Value| c.get("slug").and_then(|v| v.as_str()) == Some(slug.as_str());
@@ -8699,6 +8821,169 @@ mod tests {
 
             assert!(error.contains("automatic-skills"), "{}", error);
             assert_eq!(collections(), before);
+        });
+    }
+
+    /// A manifest whose one collection is `collection`, written to
+    /// `identity.json` in the source clone.
+    fn manifest_with_collection(names: &KindNames, collection: serde_json::Value) -> AutomaticManifest {
+        let mut manifest = write_every_kind(REPO, names, MCP);
+        let clone = source_clone_path(REPO).expect("clone path");
+        fs::write(clone.join("identity.json"), collection.to_string()).expect("write collection");
+        manifest.collections = vec![CollectionRef {
+            path: "identity.json".to_string(),
+            ..Default::default()
+        }];
+        resolve_manifest_collections(&clone, &mut manifest);
+        manifest
+    }
+
+    #[test]
+    fn fold_collection_name_ignores_case_spacing_and_punctuation() {
+        assert_eq!(fold_collection_name("Automatic Skills"), "automaticskills");
+        assert_eq!(fold_collection_name("  AUTOMATIC-skills! "), "automaticskills");
+        assert_eq!(fold_collection_name("Automatic\u{200B}\u{00A0}Skills"), "automaticskills");
+        assert_eq!(fold_collection_name("Ａｕｔｏｍａｔｉｃ Skills"), "automaticskills");
+        assert_ne!(fold_collection_name("Automatic Skills Plus"), "automaticskills");
+    }
+
+    #[test]
+    fn a_collection_named_like_a_bundled_one_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            for name in ["Automatic Skills", "automatic-skills", "AUTOMATIC  SKILLS!"] {
+                let names = KindNames::new("named-like-bundled");
+                let manifest = manifest_with_collection(
+                    &names,
+                    serde_json::json!({ "slug": "not-the-bundled-one", "name": name }),
+                );
+                let before = collections();
+                let key = "collection:not-the-bundled-one".to_string();
+
+                let result =
+                    install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                        .expect("install");
+
+                let conflict = result
+                    .conflicts
+                    .iter()
+                    .find(|c| c.key() == key)
+                    .unwrap_or_else(|| panic!("no conflict for {:?}: {:?}", name, result.conflicts));
+                assert!(conflict.blocked, "{:?}", name);
+                assert_eq!(conflict.existing_source, "bundled");
+                assert_eq!(conflict.existing_name, "Automatic Skills");
+                assert!(conflict.reason.contains("matches the bundled"), "{}", conflict.reason);
+                assert_eq!(collections(), before, "nothing was written");
+            }
+        });
+    }
+
+    #[test]
+    fn a_collection_that_names_automatic_as_its_author_is_blocked() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("provider-author");
+            let manifest = manifest_with_collection(
+                &names,
+                serde_json::json!({
+                    "slug": "helpful-tools",
+                    "name": "Helpful Tools",
+                    "author": { "type": "provider", "name": "Automatic" },
+                }),
+            );
+            let before = collections();
+            let key = "collection:helpful-tools".to_string();
+
+            let result = install_source(REPO, &manifest, None, None, std::slice::from_ref(&key))
+                .expect("install");
+
+            let conflict = result
+                .conflicts
+                .iter()
+                .find(|c| c.key() == key)
+                .unwrap_or_else(|| panic!("no conflict: {:?}", result.conflicts));
+            assert!(conflict.blocked);
+            assert_eq!(conflict.existing_source, "bundled");
+            assert!(conflict.reason.contains("'provider'"), "{}", conflict.reason);
+            assert_eq!(collections(), before, "nothing was written");
+        });
+    }
+
+    #[test]
+    fn install_collection_checks_the_file_not_the_manifest_copy() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("identity-direct");
+            for collection in [
+                serde_json::json!({ "slug": "stale-manifest", "name": "Automatic Skills" }),
+                serde_json::json!({
+                    "slug": "stale-manifest",
+                    "name": "Other",
+                    "author": { "type": "Provider" },
+                }),
+            ] {
+                manifest_with_collection(&names, collection.clone());
+                let before = collections();
+
+                let error = install_collection(
+                    &source_clone_path(REPO).unwrap(),
+                    &CollectionRef {
+                        path: "identity.json".to_string(),
+                        ..Default::default()
+                    },
+                    WriteMode::ReplaceConfirmed,
+                )
+                .expect_err("refused");
+
+                assert!(error.contains("cannot be installed"), "{}: {}", collection, error);
+                assert_eq!(collections(), before);
+            }
+        });
+    }
+
+    #[test]
+    fn discover_names_the_source_that_installed_a_collection() {
+        let sandbox = sandbox();
+        crate::core::paths::with_test_home(sandbox.home.clone(), || {
+            crate::core::discover_data::init_discover_files(false).expect("seed discover");
+            let names = KindNames::new("installed-by");
+            let manifest = write_every_kind(REPO, &names, MCP);
+            let selected = SelectedResources {
+                collections: vec![names.collection.clone()],
+                ..Default::default()
+            };
+            let result = install_source(REPO, &manifest, Some(selected), None, &[])
+                .expect("install");
+            assert!(result.conflicts.is_empty(), "{:?}", result.conflicts);
+            // A collection the file says some other source installed is
+            // still labelled with the source that lists it.
+            let mut entries = collections();
+            for entry in &mut entries {
+                entry["installed_by"] = serde_json::json!("automatic/automatic-app");
+                if entry.get("id").is_none() {
+                    entry["id"] = entry["slug"].clone();
+                }
+            }
+            write_collections(&entries);
+
+            let listed: Vec<serde_json::Value> = serde_json::from_str(
+                &crate::core::discover::search_collections("").expect("search"),
+            )
+            .expect("parse");
+
+            let installed_by = |slug: &str| {
+                listed
+                    .iter()
+                    .find(|c| c["slug"] == slug)
+                    .unwrap_or_else(|| panic!("{} listed", slug))
+                    .get("installed_by")
+                    .cloned()
+            };
+            assert_eq!(installed_by(&names.collection), Some(serde_json::json!(REPO)));
+            assert_eq!(installed_by("automatic-skills"), None, "bundled has no source");
         });
     }
 
