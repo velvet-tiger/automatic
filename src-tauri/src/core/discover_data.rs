@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -17,6 +18,9 @@ const MCP_SERVERS_FILE: &str = "mcp-servers.json";
 const COLLECTIONS_FILE: &str = "collections.json";
 const TEMPLATES_FILE: &str = "templates.json";
 const FEATURED_COMMUNITY_FILE: &str = "featured-community.json";
+/// Automatic's record of the bundled collection slugs it last wrote. See
+/// [`sync_bundled_collections`].
+const BUNDLED_COLLECTIONS_RECORD_FILE: &str = "bundled-collections.json";
 
 // ── Compiled-in seed content ──────────────────────────────────────────────────
 //
@@ -68,11 +72,10 @@ pub fn featured_community_path() -> Result<PathBuf, String> {
 /// does not change when only the app's catalogue does, so new catalogue
 /// entries would never reach existing installs.
 ///
-/// The collections file also holds entries that remote sources add, so it
-/// follows `force`:
-/// - `force = true`  — overwrite it (a newer bundled library, or Reinstall
-///   Defaults).
-/// - `force = false` — only write it when it is absent (first run).
+/// The collections file also holds entries that remote sources add, so it is
+/// merged rather than replaced. See [`sync_bundled_collections`]. `force` only
+/// decides what happens when that file cannot be read: a forced run (a newer
+/// bundled library, or Reinstall Defaults) replaces it with the bundled copy.
 ///
 /// Either way the content written comes from the seed constants above; once the
 /// remote endpoint is live this is where the fetch will happen instead.
@@ -91,7 +94,7 @@ pub fn init_discover_files(force: bool) -> Result<(), String> {
     }
 
     seed_file_if_changed(&mcp_servers_path()?, SEED_MCP_SERVERS)?;
-    seed_file(&collections_path()?, SEED_COLLECTIONS, force)?;
+    sync_bundled_collections(force)?;
     // featured-community.json is not seeded — it is fetched from the remote
     // endpoint on demand and cached to disk.  If the file does not exist and
     // the network is unavailable, the UI shows an empty / "check back" state.
@@ -126,14 +129,189 @@ fn migrate_legacy_dir() -> Result<(), String> {
     })
 }
 
-/// Write `content` to `path`.  Skips if the file already exists and `force` is
-/// `false`.
-fn seed_file(path: &PathBuf, content: &str, force: bool) -> Result<(), String> {
-    if !force && path.exists() {
-        return Ok(());
+// ── Bundled collections ───────────────────────────────────────────────────────
+
+/// Bring the bundled collections in `collections.json` up to date with this
+/// binary, and keep every other entry.
+///
+/// A bundled slug always belongs to Automatic: remote sources may not install
+/// over one (`remote_sources::collection_conflict`), and removing a source
+/// puts the bundled copy back. So the merge can replace bundled entries by
+/// slug without touching what remote sources or the user added. Slugs that
+/// were bundled at the last run and are bundled no longer are removed; the
+/// record file in [`bundled_collections_record_path`] remembers them, because
+/// nothing else tells a retired bundled collection apart from a user's own.
+///
+/// An absent file gets the bundled copy as shipped. A file that cannot be read
+/// or parsed is an error and is left alone, so entries that remote sources
+/// wrote are never lost. With `force` it is replaced with the bundled copy
+/// instead, which is what Reinstall Defaults asks for.
+fn sync_bundled_collections(force: bool) -> Result<(), String> {
+    let bundled = bundled_collections()?;
+    let bundled_slugs = collection_slugs(&bundled);
+    let path = collections_path()?;
+
+    match read_existing_collections(&path) {
+        Ok(None) => replace_atomically(&path, SEED_COLLECTIONS)?,
+        Ok(Some(existing)) => {
+            let previous = read_bundled_collections_record()?;
+            let retired: HashSet<&str> = previous
+                .iter()
+                .map(String::as_str)
+                .filter(|slug| !bundled_slugs.contains(*slug))
+                .collect();
+            let merged = merge_bundled_collections(&existing, &bundled, &retired);
+            if merged != existing {
+                let json = serde_json::to_string_pretty(&merged)
+                    .map_err(|e| format!("Failed to serialize collections: {}", e))?;
+                replace_atomically(&path, &json)?;
+            }
+        }
+        Err(e) if force => {
+            eprintln!(
+                "[automatic] replacing unreadable collections with the bundled copy: {}",
+                e
+            );
+            replace_atomically(&path, SEED_COLLECTIONS)?;
+        }
+        Err(e) => return Err(e),
     }
-    fs::write(path, content)
-        .map_err(|e| format!("Failed to write discover file {}: {}", path.display(), e))
+
+    // Written after the collections, so a failed write above leaves the old
+    // record and the next run retries the same removals.
+    seed_file_if_changed(
+        &bundled_collections_record_path()?,
+        &bundled_collections_record(&bundled_slugs)?,
+    )
+}
+
+/// The bundled collections, parsed.
+fn bundled_collections() -> Result<Vec<serde_json::Value>, String> {
+    serde_json::from_str(SEED_COLLECTIONS)
+        .map_err(|e| format!("Failed to parse the bundled collections: {}", e))
+}
+
+fn collection_slug(entry: &serde_json::Value) -> Option<&str> {
+    entry.get("slug").and_then(|v| v.as_str())
+}
+
+fn collection_slugs(entries: &[serde_json::Value]) -> BTreeSet<String> {
+    entries
+        .iter()
+        .filter_map(collection_slug)
+        .map(str::to_string)
+        .collect()
+}
+
+/// `existing` with each bundled entry replaced in place by its current copy,
+/// bundled entries it lacks appended, and entries whose slug is in `retired`
+/// dropped. Every other entry keeps its content and position. A bundled slug
+/// that appears more than once keeps only its first position.
+fn merge_bundled_collections(
+    existing: &[serde_json::Value],
+    bundled: &[serde_json::Value],
+    retired: &HashSet<&str>,
+) -> Vec<serde_json::Value> {
+    let bundled_by_slug: HashMap<&str, &serde_json::Value> = bundled
+        .iter()
+        .filter_map(|entry| collection_slug(entry).map(|slug| (slug, entry)))
+        .collect();
+    let mut placed: HashSet<&str> = HashSet::new();
+    let mut merged = Vec::with_capacity(existing.len() + bundled.len());
+
+    for entry in existing {
+        match collection_slug(entry) {
+            Some(slug) if bundled_by_slug.contains_key(slug) => {
+                if let Some((slug, bundled_entry)) = bundled_by_slug.get_key_value(slug) {
+                    if placed.insert(slug) {
+                        merged.push((*bundled_entry).clone());
+                    }
+                }
+            }
+            Some(slug) if retired.contains(slug) => {}
+            _ => merged.push(entry.clone()),
+        }
+    }
+    for entry in bundled {
+        if let Some(slug) = collection_slug(entry) {
+            if placed.insert(slug) {
+                merged.push(entry.clone());
+            }
+        }
+    }
+    merged
+}
+
+/// The largest collections file the startup merge reads. A real file is a few
+/// hundred kilobytes at most; the cap keeps a stray huge file from stalling
+/// startup.
+const MAX_COLLECTIONS_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The entries in the collections file at `path`, or `None` when there is no
+/// file. A link, a folder, an oversized file or one that does not parse is an
+/// error. A link is not followed, so the merge never writes through one.
+fn read_existing_collections(path: &PathBuf) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("Failed to inspect {}: {}", path.display(), e)),
+    };
+    if !metadata.is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    if metadata.len() > MAX_COLLECTIONS_FILE_BYTES {
+        return Err(format!(
+            "{} is larger than {} bytes",
+            path.display(),
+            MAX_COLLECTIONS_FILE_BYTES
+        ));
+    }
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+}
+
+/// Where the slugs of the last bundled collections written are recorded.
+fn bundled_collections_record_path() -> Result<PathBuf, String> {
+    Ok(get_discover_dir()?.join(BUNDLED_COLLECTIONS_RECORD_FILE))
+}
+
+/// The record file's content for `slugs`: a sorted JSON array, so an
+/// unchanged set gives identical bytes and the file is not rewritten.
+fn bundled_collections_record(slugs: &BTreeSet<String>) -> Result<String, String> {
+    serde_json::to_string_pretty(slugs)
+        .map_err(|e| format!("Failed to serialize the bundled collection slugs: {}", e))
+}
+
+/// The slugs recorded at the last merge. A missing record is an empty set:
+/// installs from before the record existed remove nothing on their first
+/// merge. A record that cannot be read is also an empty set, with a warning.
+/// It is Automatic's own bookkeeping, so the merge rewrites it, and failing
+/// startup over it would stop bundled collections from ever updating.
+fn read_bundled_collections_record() -> Result<BTreeSet<String>, String> {
+    let path = bundled_collections_record_path()?;
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(e) => return Err(format!("Failed to inspect {}: {}", path.display(), e)),
+    };
+    let parsed = if metadata.is_file() && metadata.len() <= MAX_COLLECTIONS_FILE_BYTES {
+        fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|raw| serde_json::from_str(&raw).map_err(|e| e.to_string()))
+    } else {
+        Err("not a regular file of a sensible size".to_string())
+    };
+    Ok(parsed.unwrap_or_else(|e| {
+        eprintln!(
+            "[automatic] ignoring the bundled collections record {}: {}",
+            path.display(),
+            e
+        );
+        BTreeSet::new()
+    }))
 }
 
 /// Write `content` to `path` unless the file already holds exactly that
@@ -276,11 +454,9 @@ pub(crate) fn write_collection_entries(entries: &[serde_json::Value]) -> Result<
 /// The bundled collection with `slug`, as the first run writes it, or
 /// `None` when no bundled collection has that slug.
 pub(crate) fn seed_collection(slug: &str) -> Result<Option<serde_json::Value>, String> {
-    let seeds: Vec<serde_json::Value> = serde_json::from_str(SEED_COLLECTIONS)
-        .map_err(|e| format!("Failed to parse the bundled collections: {}", e))?;
-    Ok(seeds
+    Ok(bundled_collections()?
         .into_iter()
-        .find(|entry| entry.get("slug").and_then(|v| v.as_str()) == Some(slug)))
+        .find(|entry| collection_slug(entry) == Some(slug)))
 }
 
 fn read_json_file(path: &PathBuf) -> Result<String, String> {
@@ -426,18 +602,260 @@ mod tests {
         });
     }
 
+    // ── Bundled collections ──────────────────────────────────────────────────
+
+    use serde_json::json;
+
+    fn slugs_of(entries: &[serde_json::Value]) -> Vec<&str> {
+        entries.iter().filter_map(collection_slug).collect()
+    }
+
+    fn read_collections_file() -> Vec<serde_json::Value> {
+        let raw = fs::read_to_string(collections_path().expect("path")).expect("read");
+        serde_json::from_str(&raw).expect("parse")
+    }
+
+    fn write_collections_file(entries: &[serde_json::Value]) {
+        let path = collections_path().expect("path");
+        fs::write(&path, serde_json::to_string_pretty(entries).expect("json")).expect("write");
+    }
+
+    fn a_bundled_slug() -> String {
+        collection_slug(&bundled_collections().expect("bundled")[0])
+            .expect("slug")
+            .to_string()
+    }
+
     #[test]
-    fn collections_are_kept_without_force() {
+    fn the_bundled_collections_have_unique_slugs() {
+        let bundled = bundled_collections().expect("bundled");
+        let slugs = slugs_of(&bundled);
+        assert_eq!(slugs.len(), bundled.len(), "every bundled collection has a slug");
+        let unique: HashSet<&str> = slugs.iter().copied().collect();
+        assert_eq!(unique.len(), slugs.len());
+    }
+
+    #[test]
+    fn merge_replaces_bundled_entries_in_place_and_keeps_the_rest() {
+        let existing = vec![
+            json!({ "slug": "remote-first" }),
+            json!({ "slug": "bundled-a", "name": "Old" }),
+            json!({ "name": "no slug" }),
+            json!({ "slug": "remote-last" }),
+        ];
+        let bundled = vec![
+            json!({ "slug": "bundled-a", "name": "New" }),
+            json!({ "slug": "bundled-b" }),
+        ];
+
+        let merged = merge_bundled_collections(&existing, &bundled, &HashSet::new());
+
+        assert_eq!(
+            merged,
+            vec![
+                json!({ "slug": "remote-first" }),
+                json!({ "slug": "bundled-a", "name": "New" }),
+                json!({ "name": "no slug" }),
+                json!({ "slug": "remote-last" }),
+                json!({ "slug": "bundled-b" }),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_drops_retired_slugs_and_duplicate_bundled_entries() {
+        let existing = vec![
+            json!({ "slug": "bundled-a" }),
+            json!({ "slug": "retired" }),
+            json!({ "slug": "users-own" }),
+            json!({ "slug": "bundled-a", "name": "Duplicate" }),
+        ];
+        let bundled = vec![json!({ "slug": "bundled-a", "name": "New" })];
+        let retired: HashSet<&str> = ["retired"].into_iter().collect();
+
+        let merged = merge_bundled_collections(&existing, &bundled, &retired);
+
+        assert_eq!(
+            merged,
+            vec![
+                json!({ "slug": "bundled-a", "name": "New" }),
+                json!({ "slug": "users-own" }),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_first_run_writes_the_bundled_collections_and_the_record() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("seed");
+
+            let path = collections_path().expect("path");
+            assert_eq!(fs::read_to_string(&path).expect("read"), SEED_COLLECTIONS);
+            let record = read_bundled_collections_record().expect("record");
+            assert_eq!(record, collection_slugs(&bundled_collections().expect("bundled")));
+        });
+    }
+
+    #[test]
+    fn a_new_bundled_collection_reaches_an_existing_install_and_remote_entries_stay() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let bundled_slug = a_bundled_slug();
+            // An older install that lacks the bundled collection and holds one
+            // that a remote source added.
+            write_collections_file(&[json!({ "slug": "from-a-remote-source", "name": "Kept" })]);
+
+            init_discover_files(false).expect("second seed");
+
+            let entries = read_collections_file();
+            assert_eq!(entries[0], json!({ "slug": "from-a-remote-source", "name": "Kept" }));
+            assert!(slugs_of(&entries).contains(&bundled_slug.as_str()));
+        });
+    }
+
+    #[test]
+    fn a_changed_bundled_collection_is_updated_without_force() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let bundled_slug = a_bundled_slug();
+            write_collections_file(&[
+                json!({ "slug": "from-a-remote-source" }),
+                json!({ "slug": bundled_slug, "name": "Out of date" }),
+            ]);
+
+            init_discover_files(false).expect("second seed");
+
+            let entries = read_collections_file();
+            assert_eq!(entries[0], json!({ "slug": "from-a-remote-source" }));
+            assert_eq!(
+                Some(&entries[1]),
+                seed_collection(&bundled_slug).expect("seed").as_ref()
+            );
+        });
+    }
+
+    #[test]
+    fn a_retired_bundled_collection_is_removed_but_a_users_own_is_kept() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let mut recorded = read_bundled_collections_record().expect("record");
+            recorded.insert("retired-bundled".to_string());
+            fs::write(
+                bundled_collections_record_path().expect("path"),
+                bundled_collections_record(&recorded).expect("record json"),
+            )
+            .expect("write record");
+            let mut entries = read_collections_file();
+            entries.push(json!({ "slug": "retired-bundled" }));
+            entries.push(json!({ "slug": "users-own" }));
+            write_collections_file(&entries);
+
+            init_discover_files(false).expect("second seed");
+
+            let slugs: Vec<String> = slugs_of(&read_collections_file())
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            assert!(!slugs.contains(&"retired-bundled".to_string()));
+            assert!(slugs.contains(&"users-own".to_string()));
+            let record = read_bundled_collections_record().expect("record");
+            assert!(!record.contains("retired-bundled"));
+        });
+    }
+
+    #[test]
+    fn up_to_date_collections_are_not_rewritten() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let mut entries = read_collections_file();
+            entries.push(json!({ "slug": "from-a-remote-source" }));
+            write_collections_file(&entries);
+            let path = collections_path().expect("path");
+            let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_modified(old)
+                .expect("set mtime");
+
+            init_discover_files(false).expect("second seed");
+
+            let modified = fs::metadata(&path)
+                .expect("metadata")
+                .modified()
+                .expect("mtime");
+            assert_eq!(modified, old);
+        });
+    }
+
+    #[test]
+    fn reinstall_defaults_keeps_remote_collections() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let bundled_slug = a_bundled_slug();
+            write_collections_file(&[
+                json!({ "slug": bundled_slug, "name": "Edited" }),
+                json!({ "slug": "from-a-remote-source" }),
+            ]);
+
+            init_discover_files(true).expect("forced seed");
+
+            let entries = read_collections_file();
+            assert_eq!(
+                Some(&entries[0]),
+                seed_collection(&bundled_slug).expect("seed").as_ref()
+            );
+            assert_eq!(entries[1], json!({ "slug": "from-a-remote-source" }));
+        });
+    }
+
+    #[test]
+    fn unreadable_collections_are_an_error_without_force_and_replaced_with_force() {
         with_temp_home(|| {
             init_discover_files(false).expect("first seed");
             let path = collections_path().expect("path");
-            fs::write(&path, "[]").expect("write collections");
+            fs::write(&path, "not json").expect("write broken file");
 
-            init_discover_files(false).expect("second seed");
-            assert_eq!(fs::read_to_string(&path).expect("read"), "[]");
+            let error = init_discover_files(false).expect_err("a broken file is an error");
+            assert!(error.contains("collections.json"), "{}", error);
+            assert_eq!(fs::read_to_string(&path).expect("read"), "not json");
 
             init_discover_files(true).expect("forced seed");
             assert_eq!(fs::read_to_string(&path).expect("read"), SEED_COLLECTIONS);
+        });
+    }
+
+    #[test]
+    fn a_broken_record_is_ignored_and_rewritten() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let record_path = bundled_collections_record_path().expect("path");
+            fs::write(&record_path, "not json").expect("break record");
+
+            init_discover_files(false).expect("second seed");
+
+            let record = read_bundled_collections_record().expect("record");
+            assert_eq!(record, collection_slugs(&bundled_collections().expect("bundled")));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_place_of_the_collections_is_not_followed() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = collections_path().expect("path");
+            let elsewhere = path.with_file_name("elsewhere.json");
+            fs::write(&elsewhere, "[]").expect("write link target");
+            fs::remove_file(&path).expect("remove collections");
+            std::os::unix::fs::symlink(&elsewhere, &path).expect("plant link");
+
+            init_discover_files(false).expect_err("a link is not read");
+            init_discover_files(true).expect("forced seed");
+
+            assert_eq!(fs::read_to_string(&elsewhere).expect("read"), "[]");
+            assert!(fs::symlink_metadata(&path).expect("metadata").is_file());
         });
     }
 

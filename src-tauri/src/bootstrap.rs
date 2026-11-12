@@ -75,9 +75,9 @@ pub fn run_startup_housekeeping() {
     // Seed (or refresh) the Discover catalogue files in
     // ~/.automatic/discover/. The MCP server and template catalogues are
     // refreshed whenever they differ from this binary's copy.
-    // `force_reinstall` only governs collections, which remote sources
-    // also write. It follows the bundled library version, not the app
-    // version, so it does not fire on every app release.
+    // Bundled collections are merged in by slug at every start, keeping
+    // the entries remote sources added. `force_reinstall` only decides
+    // whether an unreadable collections file is replaced.
     if let Err(e) = core::init_discover_files(force_reinstall) {
         eprintln!("[automatic] discover init error: {}", e);
     }
