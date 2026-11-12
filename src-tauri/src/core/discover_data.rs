@@ -379,7 +379,46 @@ fn merge_bundled_collections(
 /// few hundred kilobytes at most. The cap keeps a stray huge file from
 /// stalling startup, and [`write_collection_entries`] enforces it so no
 /// remote source can grow the file past what the merge will read.
-const MAX_COLLECTIONS_FILE_BYTES: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_COLLECTIONS_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The text of the collections-sized file at `path`. A file larger than
+/// [`MAX_COLLECTIONS_FILE_BYTES`] is an error. The open file's size is
+/// checked, and at most one byte past the cap is read, so a file that grows
+/// after the check is refused too. `what` names the file in errors.
+pub(crate) fn read_capped_collection_text(
+    path: &std::path::Path,
+    what: &str,
+) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|e| format!("Failed to read {}: {}", what, e))?;
+    read_capped_text(file, what)
+}
+
+/// The text of the open `file`, capped as [`read_capped_collection_text`]
+/// describes.
+fn read_capped_text(file: fs::File, what: &str) -> Result<String, String> {
+    use std::io::Read;
+    let too_large = || {
+        format!(
+            "{} is larger than {} bytes",
+            what, MAX_COLLECTIONS_FILE_BYTES
+        )
+    };
+    let len = file
+        .metadata()
+        .map_err(|e| format!("Failed to inspect {}: {}", what, e))?
+        .len();
+    if len > MAX_COLLECTIONS_FILE_BYTES {
+        return Err(too_large());
+    }
+    let mut raw = String::new();
+    file.take(MAX_COLLECTIONS_FILE_BYTES + 1)
+        .read_to_string(&mut raw)
+        .map_err(|e| format!("Failed to read {}: {}", what, e))?;
+    if raw.len() as u64 > MAX_COLLECTIONS_FILE_BYTES {
+        return Err(too_large());
+    }
+    Ok(raw)
+}
 
 /// The entries in the collections file at `path`, or `None` when there is no
 /// file. A link, a folder, an oversized file or one that does not parse is an
@@ -393,15 +432,21 @@ fn read_existing_collections(path: &PathBuf) -> Result<Option<Vec<serde_json::Va
     if !metadata.is_file() {
         return Err(format!("{} is not a regular file", path.display()));
     }
-    if metadata.len() > MAX_COLLECTIONS_FILE_BYTES {
-        return Err(format!(
-            "{} is larger than {} bytes",
-            path.display(),
-            MAX_COLLECTIONS_FILE_BYTES
-        ));
+    let what = path.display().to_string();
+    let file = fs::File::open(path).map_err(|e| format!("Failed to read {}: {}", what, e))?;
+    // A link swapped in after the check above would be followed by the
+    // open. The opened file must be the regular file that was checked.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file
+            .metadata()
+            .map_err(|e| format!("Failed to inspect {}: {}", what, e))?;
+        if !opened.is_file() || opened.dev() != metadata.dev() || opened.ino() != metadata.ino() {
+            return Err(format!("{} changed while it was being read", what));
+        }
     }
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let raw = read_capped_text(file, &what)?;
     serde_json::from_str(&raw)
         .map(Some)
         .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
@@ -562,15 +607,16 @@ pub fn read_featured_community_json() -> Result<String, String> {
 
 /// Read the Discover collections as a list of entries. A missing file is an
 /// empty list. A file that does not parse is an error, so a caller that
-/// writes the list back never replaces entries it could not read.
+/// writes the list back never replaces entries it could not read. A link, a
+/// folder or a file larger than [`MAX_COLLECTIONS_FILE_BYTES`] is an error
+/// too, see [`read_existing_collections`].
 pub(crate) fn read_collection_entries() -> Result<Vec<serde_json::Value>, String> {
-    let path = collections_path()?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+    Ok(read_existing_collections(&collections_path()?)?.unwrap_or_default())
+}
+
+/// The slugs of the bundled collections.
+pub(crate) fn bundled_collection_slugs() -> Result<BTreeSet<String>, String> {
+    Ok(collection_slugs(&bundled_collections()?))
 }
 
 /// Replace the Discover collections with `entries`. Call it only while
@@ -1125,6 +1171,42 @@ mod tests {
                 fs::read_to_string(collections_path().expect("path")).expect("read"),
                 SEED_COLLECTIONS
             );
+        });
+    }
+
+    #[test]
+    fn oversized_collections_are_not_read() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = collections_path().expect("path");
+            let huge = "x".repeat(MAX_COLLECTIONS_FILE_BYTES as usize + 1);
+            fs::write(&path, huge).expect("write oversized file");
+
+            let error = read_collection_entries().expect_err("too large");
+            assert!(error.contains("larger than"), "{}", error);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_collections_file_is_refused_not_followed() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = collections_path().expect("path");
+            let elsewhere = path.with_file_name("elsewhere.json");
+            fs::write(&elsewhere, r#"[{ "slug": "elsewhere" }]"#).expect("write link target");
+            fs::remove_file(&path).expect("remove collections");
+            std::os::unix::fs::symlink(&elsewhere, &path).expect("plant link");
+
+            let error = read_collection_entries().expect_err("a link is refused");
+            assert!(error.contains("not a regular file"), "{}", error);
+        });
+    }
+
+    #[test]
+    fn a_missing_collections_file_reads_as_empty() {
+        with_temp_home(|| {
+            assert_eq!(read_collection_entries(), Ok(Vec::new()));
         });
     }
 
