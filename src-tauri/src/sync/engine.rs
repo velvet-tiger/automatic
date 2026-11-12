@@ -2333,6 +2333,7 @@ mod tests {
         assert!(status.success(), "mkfifo failed");
     }
 
+    #[cfg(unix)]
     fn claude_project(dir: &Path) -> Project {
         Project {
             name: "contained".into(),
@@ -2343,6 +2344,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn entry_names(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = fs::read_dir(dir)
             .expect("read dir")
@@ -2506,6 +2508,7 @@ mod tests {
 
     /// Every path below `root`, relative, paired with whether it is (or
     /// links to) a directory.  Links are listed but not descended into.
+    #[cfg(unix)]
     fn list_synced_paths(root: &Path) -> Vec<(PathBuf, bool)> {
         fn walk(root: &Path, dir: &Path, out: &mut Vec<(PathBuf, bool)>) {
             for entry in fs::read_dir(dir).expect("read dir") {

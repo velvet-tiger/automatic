@@ -566,6 +566,7 @@ mod tests {
     }
 
     /// A home with a `.claude` folder, and the settings path inside it.
+    #[cfg(unix)]
     fn claude_folder(dir: &tempfile::TempDir) -> PathBuf {
         let folder = dir.path().join(".claude");
         fs::create_dir_all(&folder).expect("mkdir");

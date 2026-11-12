@@ -1014,7 +1014,7 @@ fn windows_system_folders() -> Vec<PathBuf> {
         "ProgramData",
     ]
     .iter()
-    .filter_map(|var| std::env::var_os(var))
+    .filter_map(std::env::var_os)
     .map(PathBuf::from)
     .collect();
     folders.extend(

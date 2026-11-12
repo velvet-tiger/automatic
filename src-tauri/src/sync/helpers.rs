@@ -1954,6 +1954,7 @@ mod tests {
         assert!(entry_count(outside.path()) == 0, "nothing may reach outside");
     }
 
+    #[cfg(unix)]
     fn entry_count(dir: &Path) -> usize {
         fs::read_dir(dir).expect("read dir").count()
     }

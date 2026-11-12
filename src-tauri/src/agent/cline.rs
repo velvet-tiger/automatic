@@ -1,5 +1,4 @@
 use serde_json::{Map, Value};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, Agent};
@@ -401,6 +400,7 @@ fn shell_single_quote(s: &str) -> String {
 fn set_executable(path: &Path) {
     #[cfg(unix)]
     {
+        use std::fs;
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = fs::metadata(path) {
             let mut perms = meta.permissions();

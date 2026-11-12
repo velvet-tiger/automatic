@@ -1379,6 +1379,7 @@ mod tests {
     }
 
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
 
@@ -1614,6 +1615,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_rejects_symlink_pointing_outside_working_dir() {
         let project = TempDir::new().expect("project tempdir");
@@ -1635,6 +1637,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_allows_symlink_inside_working_dir() {
         let dir = TempDir::new().expect("tempdir");

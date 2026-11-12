@@ -896,16 +896,14 @@ mod tests {
         assert_eq!(checkout_key(&found), Some(KEY_B));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_symlinked_directory_matches_its_canonical_cwd() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let real = tmp.path().join("real");
         std::fs::create_dir_all(real.join("src")).expect("mkdir");
         let link = tmp.path().join("link");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        #[cfg(not(unix))]
-        return;
 
         let summaries = vec![summary("site", ID_A, KEY_A1, link.to_str().unwrap())];
         let cwd = std::fs::canonicalize(real.join("src")).expect("canonicalize");
