@@ -416,7 +416,9 @@ fn delete_all_gateway_tokens() -> Result<(), String> {
 ///
 /// Every bundled file ends up matching the current binary. Most are
 /// force-overwritten. The Discover MCP and template catalogues are rewritten
-/// only when they differ, which gives the same result. This is equivalent to
+/// only when they differ, which gives the same result. Bundled Discover
+/// collections are restored and collections from remote sources are kept.
+/// This is equivalent to
 /// what happens on a version upgrade but scoped only to the factory-supplied
 /// content.
 pub fn reinstall_defaults() -> Result<(), String> {

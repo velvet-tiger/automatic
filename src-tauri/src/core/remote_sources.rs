@@ -2809,6 +2809,10 @@ fn remove_collections(slugs: &[String], others: &[RemoteSource]) -> CollectionRe
 }
 
 fn rewrite_collections_without(slugs: &[String]) -> Result<(), String> {
+    super::discover_data::with_collections_lock(|| rewrite_collections_without_locked(slugs))
+}
+
+fn rewrite_collections_without_locked(slugs: &[String]) -> Result<(), String> {
     fn slug_of(entry: &serde_json::Value) -> Option<&str> {
         entry.get("slug").and_then(|v| v.as_str())
     }
@@ -2828,8 +2832,8 @@ fn rewrite_collections_without(slugs: &[String]) -> Result<(), String> {
         }
         changed = true;
     }
-    // Writing an unchanged list could create the file, and the first-run
-    // seeding skips a file that exists.
+    // Writing an unchanged list could create the file. An absent file must
+    // stay absent, so the next start seeds the full bundled set.
     if changed {
         super::discover_data::write_collection_entries(&entries)?;
     }
@@ -3833,18 +3837,20 @@ fn install_collection(
 
     let slug_of =
         |c: &serde_json::Value| c.get("slug").and_then(|v| v.as_str()) == Some(slug.as_str());
-    let mut collections = super::discover_data::read_collection_entries()?;
-    match collections.iter().position(slug_of) {
-        Some(_) if !mode.replaces() => {
-            return Err(format!("collection '{}' already exists in Discover", slug));
+    super::discover_data::with_collections_lock(|| {
+        let mut collections = super::discover_data::read_collection_entries()?;
+        match collections.iter().position(slug_of) {
+            Some(_) if !mode.replaces() => {
+                return Err(format!("collection '{}' already exists in Discover", slug));
+            }
+            Some(position) => {
+                collections.retain(|c| !slug_of(c));
+                collections.insert(position.min(collections.len()), collection);
+            }
+            None => collections.push(collection),
         }
-        Some(position) => {
-            collections.retain(|c| !slug_of(c));
-            collections.insert(position.min(collections.len()), collection);
-        }
-        None => collections.push(collection),
-    }
-    super::discover_data::write_collection_entries(&collections)?;
+        super::discover_data::write_collection_entries(&collections)
+    })?;
     Ok(slug)
 }
 
@@ -6437,7 +6443,10 @@ mod tests {
             let result = remove_source(REPO).expect("remove");
 
             assert_eq!(result.failed, Vec::new());
-            assert!(!collections_file().exists(), "the first-run seeding must still run");
+            assert!(
+                !collections_file().exists(),
+                "an absent file must stay absent so startup seeds the bundled set"
+            );
         });
     }
 
