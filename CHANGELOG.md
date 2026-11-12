@@ -4,6 +4,23 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.42.1] - 2026-11-13
+
+### Fixed
+
+- Discover now updates the MCP server and template catalogues when the app ships new entries. Before, a new entry such as Context.dev never reached existing installs.
+- Collections bundled with the app now appear on existing installs. Collections that remote sources installed are kept.
+- Spacelift and other servers whose URL contains an account name now ask for that name when you add them. Before, the URL was saved unfilled and the server could not connect.
+- The MCP server editor warns when a saved URL does not match its account-name fields. Authenticate stays hidden until you fix the URL.
+- One malformed source collection no longer stops the whole Discover list from loading.
+- Reinstall Defaults keeps a timestamped backup of every unreadable collections file.
+
+### Security
+
+- A remote source can no longer install a collection that passes for a bundled one. Lookalike slugs, names, ids, icons and author types are refused. Discover shows a "From owner/repo" badge on source collections.
+- Catalogue and collection files are written atomically and never through a link. Their size is capped, and writes are locked across the app and the MCP server.
+- URL templates are trusted only when they come from the bundled catalogue. Template parsing no longer uses a regular expression that could hang on hostile input.
+
 ## [1.42.0] - 2026-11-12
 
 ### Added
