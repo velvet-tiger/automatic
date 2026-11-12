@@ -61,9 +61,18 @@ pub fn featured_community_path() -> Result<PathBuf, String> {
 /// Ensure `~/.automatic/discover/` exists and write the three catalogue
 /// files.
 ///
-/// - `force = true`  — overwrite every file (used when the app version changes,
-///   matching the same gate used for bundled skill reinstallation).
-/// - `force = false` — only write files that are absent (first run).
+/// The MCP server and template catalogues are copies of content compiled into
+/// this binary, and nothing else writes them. They are rewritten whenever they
+/// differ from the bundled content, whatever `force` says. A version gate is
+/// not enough: the startup gate follows the bundled library version, which
+/// does not change when only the app's catalogue does, so new catalogue
+/// entries would never reach existing installs.
+///
+/// The collections file also holds entries that remote sources add, so it
+/// follows `force`:
+/// - `force = true`  — overwrite it (a newer bundled library, or Reinstall
+///   Defaults).
+/// - `force = false` — only write it when it is absent (first run).
 ///
 /// Either way the content written comes from the seed constants above; once the
 /// remote endpoint is live this is where the fetch will happen instead.
@@ -81,14 +90,14 @@ pub fn init_discover_files(force: bool) -> Result<(), String> {
         })?;
     }
 
-    seed_file(&mcp_servers_path()?, SEED_MCP_SERVERS, force)?;
+    seed_file_if_changed(&mcp_servers_path()?, SEED_MCP_SERVERS)?;
     seed_file(&collections_path()?, SEED_COLLECTIONS, force)?;
     // featured-community.json is not seeded — it is fetched from the remote
     // endpoint on demand and cached to disk.  If the file does not exist and
     // the network is unavailable, the UI shows an empty / "check back" state.
 
     let templates_json = build_bundled_templates_json()?;
-    seed_file(&templates_path()?, &templates_json, force)?;
+    seed_file_if_changed(&templates_path()?, &templates_json)?;
 
     Ok(())
 }
@@ -122,6 +131,26 @@ fn migrate_legacy_dir() -> Result<(), String> {
 fn seed_file(path: &PathBuf, content: &str, force: bool) -> Result<(), String> {
     if !force && path.exists() {
         return Ok(());
+    }
+    fs::write(path, content)
+        .map_err(|e| format!("Failed to write discover file {}: {}", path.display(), e))
+}
+
+/// Write `content` to `path` unless the file already holds exactly that
+/// content. Only for files that are pure copies of bundled content: any other
+/// content in the file is replaced.
+fn seed_file_if_changed(path: &PathBuf, content: &str) -> Result<(), String> {
+    match fs::read(path) {
+        Ok(existing) if existing == content.as_bytes() => return Ok(()),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Failed to read discover file {}: {}",
+                path.display(),
+                e
+            ))
+        }
     }
     fs::write(path, content)
         .map_err(|e| format!("Failed to write discover file {}: {}", path.display(), e))
@@ -212,5 +241,88 @@ fn read_json_file(path: &PathBuf) -> Result<String, String> {
         // time the user interacts with the Discover view, but this guards the
         // brief window on first launch.
         Ok("[]".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::paths::with_test_home;
+
+    fn with_temp_home<T>(test: impl FnOnce() -> T) -> T {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), test)
+    }
+
+    #[test]
+    fn a_stale_mcp_catalogue_is_replaced_without_force() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = mcp_servers_path().expect("path");
+            fs::write(&path, "[]").expect("write stale catalogue");
+
+            init_discover_files(false).expect("second seed");
+
+            assert_eq!(fs::read_to_string(&path).expect("read"), SEED_MCP_SERVERS);
+        });
+    }
+
+    #[test]
+    fn stale_templates_are_replaced_without_force() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = templates_path().expect("path");
+            fs::write(&path, "[]").expect("write stale templates");
+
+            init_discover_files(false).expect("second seed");
+
+            let expected = build_bundled_templates_json().expect("templates json");
+            assert_eq!(fs::read_to_string(&path).expect("read"), expected);
+        });
+    }
+
+    #[test]
+    fn an_up_to_date_mcp_catalogue_is_not_rewritten() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = mcp_servers_path().expect("path");
+            let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open")
+                .set_modified(old)
+                .expect("set mtime");
+
+            init_discover_files(false).expect("second seed");
+
+            let modified = fs::metadata(&path)
+                .expect("metadata")
+                .modified()
+                .expect("mtime");
+            assert_eq!(modified, old);
+        });
+    }
+
+    #[test]
+    fn collections_are_kept_without_force() {
+        with_temp_home(|| {
+            init_discover_files(false).expect("first seed");
+            let path = collections_path().expect("path");
+            fs::write(&path, "[]").expect("write collections");
+
+            init_discover_files(false).expect("second seed");
+            assert_eq!(fs::read_to_string(&path).expect("read"), "[]");
+
+            init_discover_files(true).expect("forced seed");
+            assert_eq!(fs::read_to_string(&path).expect("read"), SEED_COLLECTIONS);
+        });
+    }
+
+    #[test]
+    fn the_bundled_catalogue_lists_context_dev() {
+        let servers: Vec<serde_json::Value> =
+            serde_json::from_str(SEED_MCP_SERVERS).expect("parse catalogue");
+        assert!(servers.iter().any(|s| s["slug"] == "context-dev"));
     }
 }
