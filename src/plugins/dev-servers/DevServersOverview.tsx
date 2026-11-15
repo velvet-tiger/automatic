@@ -5,7 +5,7 @@ import { openExternalUrl } from "../../lib/externalLinks";
 import { loadProjectSummaries, projectLabelFor, projectLabels, rowProjectKey } from "../../lib/projectIdentity";
 import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import type { ProjectSummary } from "../../pages/workspace/projects/types";
-import { formatServerUrlLabel, type DevServerStatus } from "./types";
+import { describeServerCommand, formatServerUrlLabel, type DevServerStatus } from "./types";
 
 const STATUS_POLL_MS = 3000;
 
@@ -178,7 +178,7 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                           </span>
                         </div>
                         <p className="text-[11px] text-text-muted truncate mt-0.5">
-                          {status.package_manager} run {status.script}
+                          {describeServerCommand(status)}
                           {status.subdirectory ? ` — ${status.subdirectory}` : ""}
                         </p>
                         {status.last_error && (

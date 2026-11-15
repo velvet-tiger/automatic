@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::types::ServerConfig;
+use super::types::{PackageManager, ServerConfig};
 
 /// Directory holding one JSON file per project, each containing that
 /// project's list of configured dev servers. Self-contained under this
@@ -55,7 +55,10 @@ pub fn save_config(project: &str, mut config: ServerConfig) -> Result<ServerConf
         return Err("Server name cannot be empty".into());
     }
     if config.script.trim().is_empty() {
-        return Err("Script cannot be empty".into());
+        return Err(match config.package_manager {
+            PackageManager::Command => "Command cannot be empty".into(),
+            _ => "Script cannot be empty".into(),
+        });
     }
 
     let mut configs = list_configs(project)?;
@@ -263,7 +266,7 @@ mod tests {
         ServerConfig {
             id: String::new(),
             name: "web".into(),
-            package_manager: super::super::types::PackageManager::Npm,
+            package_manager: PackageManager::Npm,
             script: "dev".into(),
             subdirectory: String::new(),
             port: Some(3000),
@@ -300,6 +303,40 @@ mod tests {
             assert_eq!(listed[0].script, "start");
             assert_eq!(listed[0].created_at, saved.created_at);
             assert_eq!(resaved.created_at, saved.created_at);
+        });
+    }
+
+    #[test]
+    fn custom_command_round_trips_through_the_saved_file() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let mut config = sample();
+            config.package_manager = PackageManager::Command;
+            config.script = "make serve PORT=4000".into();
+            let saved = save_config("demo", config).unwrap();
+
+            let raw = fs::read_to_string(config_path("demo").unwrap()).unwrap();
+            assert!(raw.contains("\"package_manager\": \"command\""), "{raw}");
+
+            let listed = list_configs("demo").unwrap();
+            assert_eq!(listed[0].id, saved.id);
+            assert_eq!(listed[0].package_manager, PackageManager::Command);
+            assert_eq!(listed[0].script, "make serve PORT=4000");
+        });
+    }
+
+    #[test]
+    fn save_rejects_an_empty_command_by_its_own_name() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let mut config = sample();
+            config.package_manager = PackageManager::Command;
+            config.script = "   ".into();
+            assert_eq!(save_config("demo", config).unwrap_err(), "Command cannot be empty");
+
+            let mut script = sample();
+            script.script = String::new();
+            assert_eq!(save_config("demo", script).unwrap_err(), "Script cannot be empty");
         });
     }
 

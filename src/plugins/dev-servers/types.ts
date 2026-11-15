@@ -1,9 +1,24 @@
 // Shared types for the Dev Servers plugin, mirroring the Rust types in
 // src-tauri/src/plugins/dev_servers/types.rs.
 
-export type PackageManager = "npm" | "pnpm" | "yarn";
+/**
+ * How a server is launched. `"command"` runs `script` as a whole command
+ * line through the user's shell (e.g. `make serve`) instead of a
+ * `package.json` script.
+ */
+export type PackageManager = "npm" | "pnpm" | "yarn" | "command";
 
-export const PACKAGE_MANAGERS: PackageManager[] = ["npm", "pnpm", "yarn"];
+export const PACKAGE_MANAGERS: PackageManager[] = ["npm", "pnpm", "yarn", "command"];
+
+/** The name shown for a launch choice in the form's dropdown. */
+export function packageManagerLabel(pm: PackageManager): string {
+  return pm === "command" ? "Custom command" : pm;
+}
+
+/** The command line a server runs, as the user would type it. */
+export function describeServerCommand(server: { package_manager: PackageManager; script: string }): string {
+  return server.package_manager === "command" ? server.script : `${server.package_manager} run ${server.script}`;
+}
 
 export interface ServerConfig {
   id: string;

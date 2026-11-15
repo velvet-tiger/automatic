@@ -154,16 +154,40 @@ fn build_command(pm: PackageManager, script: &str) -> Command {
     // search) does not probe for that extension. Routing through `cmd /C`
     // gets the same shim resolution cmd.exe itself would apply.
     let mut cmd = crate::core::git_guard::console_free_command("cmd");
-    cmd.args(["/C", pm.binary(), "run", script]);
+    match pm.binary() {
+        Some(binary) => {
+            cmd.args(["/C", binary, "run", script]);
+        }
+        // `raw_arg` passes the line through untouched. Rust's own quoting
+        // would wrap it in quotes, and cmd.exe would then try to run the
+        // whole line as one program name.
+        None => {
+            use std::os::windows::process::CommandExt;
+            cmd.arg("/C").raw_arg(script);
+        }
+    }
     cmd
 }
 
 #[cfg(not(windows))]
 fn build_command(pm: PackageManager, script: &str) -> Command {
     // A plain `Command`: never built on Windows, so no console window to hide.
-    let mut cmd = Command::new(pm.binary());
-    cmd.args(["run", script]);
-    cmd
+    match pm.binary() {
+        Some(binary) => {
+            let mut cmd = Command::new(binary);
+            cmd.args(["run", script]);
+            cmd
+        }
+        // The same shell the app adopted its `PATH` from. Not a login or
+        // interactive shell: that `PATH` is already in this process's
+        // environment, and re-running the profile on every start would be
+        // slow and could print noise into the server log.
+        None => {
+            let mut cmd = Command::new(crate::path_env::user_shell());
+            cmd.args(["-c", script]);
+            cmd
+        }
+    }
 }
 
 /// The app's `PATH` with `dir` placed first.
@@ -277,7 +301,8 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
 /// EADDRINUSE inside its supervisor, which `running` cannot see).
 ///
 /// Also fails, after killing the tree, if the server prints a crash line
-/// within `START_GRACE` of spawning. Blocks for up to that long when the
+/// within `START_GRACE` of spawning, and fails if it exits with a non-zero
+/// code within that window. Blocks for up to that long when the
 /// server prints neither a crash nor a URL, so callers must not be on the
 /// UI thread.
 pub fn start(
@@ -311,14 +336,18 @@ fn start_with_grace(
         return Err(format!("Directory '{}' does not exist", working_dir.display()));
     }
 
-    let binary = config.package_manager.binary();
     let nvm_bin = match node {
         NodeSelection::Nvm(selected) => Some(selected.bin_dir.as_path()),
         NodeSelection::NotRequested | NodeSelection::System(_) => None,
     };
-    let in_nvm_bin = nvm_bin.is_some_and(|dir| dir.join(binary).is_file());
-    if !in_nvm_bin && crate::core::tools::find_binary_on_path_or_reprobe(binary).is_none() {
-        return Err(format!("'{}' was not found on $PATH", binary));
+    // A custom command has no package manager to look for. The shell
+    // resolves it, and a missing program shows as the shell's own error in
+    // the log, which the start watch below reports.
+    if let Some(binary) = config.package_manager.binary() {
+        let in_nvm_bin = nvm_bin.is_some_and(|dir| dir.join(binary).is_file());
+        if !in_nvm_bin && crate::core::tools::find_binary_on_path_or_reprobe(binary).is_none() {
+            return Err(format!("'{}' was not found on $PATH", binary));
+        }
     }
 
     let mut map = processes().lock().unwrap();
@@ -419,6 +448,9 @@ fn start_with_grace(
             let _ = stop(&config.id);
             return Err(format!("'{}' failed to start: {}", config.name, line));
         }
+        if let Some(reason) = failed_exit(&config.id) {
+            return Err(format!("'{}' failed to start: {}", config.name, reason));
+        }
         if !watched_urls.lock().unwrap().is_empty() || Instant::now() >= deadline {
             break;
         }
@@ -430,6 +462,45 @@ fn start_with_grace(
         .get_mut(&config.id)
         .ok_or_else(|| format!("'{}' was forgotten while starting", config.name))?;
     Ok(status_from_running(&config.id, running))
+}
+
+/// If the server with `id` has already exited with a non-zero code, a short
+/// reason naming the code and the last line it printed. A command that is
+/// not found, or a script that fails at once, exits before printing a
+/// crash line or a URL, and would otherwise look like a clean stop. A zero
+/// exit is left alone: a command may finish its work and exit on purpose.
+fn failed_exit(id: &str) -> Option<String> {
+    let mut map = processes().lock().unwrap();
+    let running = map.get_mut(id)?;
+    let status = running.child.try_wait().ok().flatten()?;
+    if status.success() {
+        return None;
+    }
+    let code = status
+        .code()
+        .map_or_else(|| "a signal".to_string(), |code| format!("code {}", code));
+    // The readers may still be draining the pipes for a moment after exit.
+    drop(map);
+    std::thread::sleep(START_POLL);
+    let map = processes().lock().unwrap();
+    // stderr first: that is where a shell or tool writes why it failed, and
+    // the log may also open with an informational line such as the Node
+    // version in use.
+    let last_line = map.get(id).and_then(|running| {
+        let log = running.log.lock().unwrap();
+        let last_of = |stream: Option<LogStream>| {
+            log.iter()
+                .rev()
+                .filter(|line| stream.is_none_or(|s| line.stream == s))
+                .find(|line| !line.text.trim().is_empty())
+                .map(|line| line.text.trim().to_string())
+        };
+        last_of(Some(LogStream::Stderr)).or_else(|| last_of(None))
+    });
+    Some(match last_line {
+        Some(line) => format!("exited with {}: {}", code, line),
+        None => format!("exited with {}", code),
+    })
 }
 
 #[cfg(unix)]
@@ -1108,6 +1179,100 @@ mod tests {
             assert_eq!(statuses[0].project, "vel-160-live");
             assert_eq!(registry::list_config_projects().unwrap(), vec!["vel-160-live".to_string()]);
         });
+    }
+
+    #[cfg(unix)]
+    fn command_config(id: &str, command: &str) -> ServerConfig {
+        ServerConfig {
+            id: id.to_string(),
+            name: "custom".to_string(),
+            package_manager: PackageManager::Command,
+            script: command.to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        }
+    }
+
+    /// A custom command runs through the user's shell, the same one the
+    /// `PATH` probe uses, and not as a package manager script.
+    #[cfg(unix)]
+    #[test]
+    fn custom_command_runs_through_the_user_shell() {
+        let cmd = build_command(PackageManager::Command, "make serve");
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new(&crate::path_env::user_shell()));
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, ["-c", "make serve"]);
+
+        let npm = build_command(PackageManager::Npm, "dev");
+        assert_eq!(npm.get_program(), "npm");
+        assert_eq!(npm.get_args().collect::<Vec<_>>(), ["run", "dev"]);
+    }
+
+    /// The whole spawn path for a custom command: the shell runs a compound
+    /// line, its URL is captured, and stop kills the shell and its child.
+    #[cfg(unix)]
+    #[test]
+    fn custom_command_starts_captures_its_url_and_stops_the_tree() {
+        let tmp = TempDir::new().unwrap();
+        // The odd sleep length is the marker: it names the child in `pgrep`.
+        let child_marker = "sleep 3000.4322";
+        let config = command_config(
+            "test-custom-command-url",
+            &format!("echo starting && echo 'Local: http://localhost:4322/'; {child_marker}; true"),
+        );
+
+        let status = start("test-project", tmp.path().to_str().unwrap(), &config, &NodeSelection::NotRequested)
+            .expect("command should start");
+        assert!(status.running);
+        assert_eq!(status.urls, vec!["http://localhost:4322/".to_string()]);
+        assert!(pgrep_matches(child_marker), "child should be running");
+
+        let stopped = stop(&config.id).expect("stop should succeed");
+        assert!(!stopped.running);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!pgrep_matches(child_marker), "stop should kill the shell's child");
+        forget(&config.id).unwrap();
+    }
+
+    /// A command that fails at once is a failed start that names the exit
+    /// code and the line the shell printed, not a quiet "stopped".
+    #[cfg(unix)]
+    #[test]
+    fn custom_command_that_exits_non_zero_fails_to_start() {
+        let tmp = TempDir::new().unwrap();
+        let config = command_config("test-custom-command-fail", "echo ok; echo 'make: *** No rule to make target' >&2; exit 3");
+
+        let err = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            &NodeSelection::NotRequested,
+            Duration::from_secs(3),
+        )
+        .unwrap_err();
+        assert_eq!(err, "'custom' failed to start: exited with code 3: make: *** No rule to make target");
+        forget(&config.id).unwrap();
+    }
+
+    /// A command that finishes cleanly inside the window is not an error.
+    #[cfg(unix)]
+    #[test]
+    fn custom_command_that_exits_zero_is_not_a_failure() {
+        let tmp = TempDir::new().unwrap();
+        let config = command_config("test-custom-command-done", "true");
+
+        let status = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            &NodeSelection::NotRequested,
+            Duration::from_millis(500),
+        )
+        .expect("a clean exit is not a failed start");
+        assert!(!status.running);
+        assert_eq!(status.exit_code, Some(0));
+        forget(&config.id).unwrap();
     }
 
     #[cfg(unix)]

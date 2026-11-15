@@ -1,29 +1,29 @@
 use serde::{Deserialize, Serialize};
 
-/// Node package manager used to run a project's scripts.
+/// How a dev server is launched: a `package.json` script through one of the
+/// Node package managers, or a free-form command line run through the shell
+/// (e.g. `make serve`). The variant name is kept as `package_manager` on the
+/// config so existing files load unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackageManager {
     Npm,
     Pnpm,
     Yarn,
+    /// `ServerConfig::script` holds a whole command line, run through
+    /// `/bin/sh -c` (or `cmd /C` on Windows).
+    Command,
 }
 
 impl PackageManager {
-    /// The executable name to resolve on `$PATH`.
-    pub fn binary(&self) -> &'static str {
+    /// The package manager executable to resolve on `$PATH`. `None` for a
+    /// custom command, which the shell resolves itself.
+    pub fn binary(&self) -> Option<&'static str> {
         match self {
-            PackageManager::Npm => "npm",
-            PackageManager::Pnpm => "pnpm",
-            PackageManager::Yarn => "yarn",
-        }
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            PackageManager::Npm => "npm",
-            PackageManager::Pnpm => "pnpm",
-            PackageManager::Yarn => "yarn",
+            PackageManager::Npm => Some("npm"),
+            PackageManager::Pnpm => Some("pnpm"),
+            PackageManager::Yarn => Some("yarn"),
+            PackageManager::Command => None,
         }
     }
 }
@@ -39,7 +39,8 @@ pub struct ServerConfig {
     /// Display name (e.g. "web", "api").
     pub name: String,
     pub package_manager: PackageManager,
-    /// The npm script to run (e.g. "dev").
+    /// The npm script to run (e.g. "dev"), or for
+    /// `PackageManager::Command` the full command line (e.g. "make serve").
     pub script: String,
     /// Directory the server runs from, relative to the project directory.
     /// Empty string means the project root — used for monorepos where a

@@ -244,11 +244,21 @@ fn reprobe_with(
     }
 }
 
-/// Probe the user's `$SHELL`, falling back to zsh, the macOS default.
+/// The user's shell: `$SHELL`, falling back to zsh, the macOS default.
+/// The `PATH` probe and dev server custom commands both run through it, so
+/// a command sees the same shell the adopted `PATH` came from.
+#[cfg(unix)]
+pub fn user_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.trim().is_empty())
+        .unwrap_or_else(|| "/bin/zsh".to_string())
+}
+
+/// Probe the user's shell (see [`user_shell`]).
 #[cfg(unix)]
 fn probe_login_shell_path(timeout: Duration) -> Result<ShellEnv, String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-    probe_shell(&shell, timeout)
+    probe_shell(&user_shell(), timeout)
 }
 
 /// The command the probe shell runs. It prints the exported environment

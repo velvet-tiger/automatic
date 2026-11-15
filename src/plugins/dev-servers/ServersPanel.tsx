@@ -21,6 +21,8 @@ import { openExternalUrl } from "../../lib/externalLinks";
 import {
   formatServerUrlLabel,
   PACKAGE_MANAGERS,
+  describeServerCommand,
+  packageManagerLabel,
   type DevServerStatus,
   type LogLine,
   type NpmScriptEntry,
@@ -256,8 +258,10 @@ export default function ServersPanel({ projectKey, projectDirectory }: ServersPa
           }).catch(() => []),
         ]);
         setDetectedScripts(scripts);
+        // Detection only picks between npm, pnpm and yarn. A custom command
+        // stays as the user chose it, even in a folder with a package.json.
         if (pm) {
-          setForm((prev) => (prev ? { ...prev, packageManager: pm } : prev));
+          setForm((prev) => (prev && prev.packageManager !== "command" ? { ...prev, packageManager: pm } : prev));
         }
       } catch {
         setDetectedScripts([]);
@@ -305,7 +309,7 @@ export default function ServersPanel({ projectKey, projectDirectory }: ServersPa
       return;
     }
     if (!script) {
-      setFormError("Script is required.");
+      setFormError(form.packageManager === "command" ? "Command is required." : "Script is required.");
       return;
     }
     let port: number | null = null;
@@ -395,7 +399,7 @@ export default function ServersPanel({ projectKey, projectDirectory }: ServersPa
             <ServerIcon size={24} className="text-text-muted mb-3" />
             <p className="text-[13px] text-text-base font-medium mb-1">No servers configured</p>
             <p className="text-[12px] text-text-muted max-w-sm">
-              Add a server to run an npm, pnpm, or yarn script for this project and monitor its output here.
+              Add a server to run an npm, pnpm, or yarn script, or any command such as make serve, for this project and monitor its output here.
             </p>
             {suggestedScripts.length > 0 && (
               <div className="mt-5 w-full max-w-sm">
@@ -567,7 +571,7 @@ function ServerRow({
             </span>
           </div>
           <p className="text-[11px] text-text-muted truncate mt-0.5">
-            {config.package_manager} run {config.script}
+            {describeServerCommand(config)}
             {config.subdirectory ? ` — ${config.subdirectory}` : ""}
             {running && status?.pid ? ` — pid ${status.pid}` : ""}
           </p>
@@ -732,6 +736,7 @@ function ServerFormDialog({
   onSave,
 }: ServerFormDialogProps) {
   const update = (patch: Partial<FormState>) => setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+  const isCommand = form.packageManager === "command";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -767,7 +772,7 @@ function ServerFormDialog({
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-text-muted mb-1">Package manager</label>
+            <label className="block text-[11px] font-medium text-text-muted mb-1">Run with</label>
             <div className="relative">
               <select
                 value={form.packageManager}
@@ -776,7 +781,7 @@ function ServerFormDialog({
               >
                 {PACKAGE_MANAGERS.map((pm) => (
                   <option key={pm} value={pm}>
-                    {pm}
+                    {packageManagerLabel(pm)}
                   </option>
                 ))}
               </select>
@@ -785,18 +790,21 @@ function ServerFormDialog({
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-text-muted mb-1">Script</label>
+            <label className="block text-[11px] font-medium text-text-muted mb-1">
+              {isCommand ? "Command" : "Script"}
+              {isCommand && <span className="text-text-muted/60"> (runs in your shell from the server's folder)</span>}
+            </label>
             <input
               type="text"
               value={form.script}
               onChange={(e) => update({ script: e.target.value })}
-              placeholder="dev"
+              placeholder={isCommand ? "make serve" : "dev"}
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
               className="w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
             />
-            {detectedScripts.length > 0 && (
+            {!isCommand && detectedScripts.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {detectedScripts.map((s) => (
                   <button
