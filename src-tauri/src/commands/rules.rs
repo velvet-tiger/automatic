@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 
 use crate::core;
 
@@ -77,66 +76,36 @@ pub struct RuleProjectStatus {
     pub read_only: bool,
 }
 
-/// Return all projects that reference `rule_name` together with whether
-/// their on-disk instruction files are already up to date.
+/// Whether `project` uses `rule_name`: listed in its `file_rules`, or added
+/// by sync (the mandatory rules, and the gitignore rule while the project
+/// manages its `.gitignore`).
+fn project_uses_rule(project: &core::Project, rule_name: &str) -> bool {
+    project
+        .file_rules
+        .values()
+        .any(|rules| rules.iter().any(|r| r == rule_name))
+        || crate::sync::project_rule_names(project)
+            .iter()
+            .any(|r| r == rule_name)
+}
+
+/// Return all projects that use `rule_name` together with whether their
+/// on-disk rules already match what sync would write.
+///
+/// `synced` covers all of the project's rules, not only this one.  The
+/// Update button runs a full project sync, so a row stays orange until every
+/// rule is in place.
 #[tauri::command(async)]
 pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectStatus>, String> {
     let mut referencing: Vec<RuleProjectStatus> = Vec::new();
     with_each_project_mut(|_, project| {
-        // Collect the file_rules entries that reference this rule.
-        let referencing_entries: Vec<(&String, &Vec<String>)> = project
-            .file_rules
-            .iter()
-            .filter(|(_, rules)| rules.iter().any(|r| r == rule_name))
-            .collect();
-
-        if referencing_entries.is_empty() {
+        if !project_uses_rule(project, rule_name) {
             return;
         }
-
-        let dir = PathBuf::from(&project.directory);
-
-        // Resolve each file_rules key to actual on-disk paths.
-        // In unified mode, "_unified" maps to every agent's project file.
-        let synced = referencing_entries.iter().all(|(key, rules)| {
-            // When dot-claude rules mode is active, check .claude/rules/
-            // instead of looking for inline rules in the project file.
-            if core::project_uses_dot_claude_rules(project, key) {
-                return core::is_dot_claude_rules_current(&project.directory, rules)
-                    .unwrap_or(false);
-            }
-
-            // Same for Cursor's .cursor/rules/ MDC mode.
-            if core::project_uses_cursor_mdc_rules(project, key) {
-                return core::is_cursor_mdc_rules_current(&project.directory, rules)
-                    .unwrap_or(false);
-            }
-
-            // "_unified" and "_project" both apply to all agent instruction
-            // files.  Expand them to the actual filenames for the sync check.
-            let paths: Vec<PathBuf> = if *key == "_unified" || *key == "_project" {
-                let mut seen = std::collections::HashSet::new();
-                project
-                    .agents
-                    .iter()
-                    .filter_map(|aid| crate::agent::from_id(aid))
-                    .filter(|inst| seen.insert(inst.project_file_name().to_string()))
-                    .map(|inst| dir.join(inst.project_file_name()))
-                    .collect()
-            } else {
-                vec![dir.join(key.as_str())]
-            };
-
-            // All resolved files must contain the current rules section.
-            paths
-                .iter()
-                .all(|path| core::is_file_rules_current(path, rules).unwrap_or(false))
-        });
-
         referencing.push(RuleProjectStatus {
             name: project.name.clone(),
             local_key: core::local_key_of(project),
-            synced,
+            synced: crate::sync::project_rules_current(project),
             read_only: project.is_read_only_here(),
         });
     });
@@ -158,12 +127,7 @@ pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), S
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
-    let references = project
-        .file_rules
-        .values()
-        .any(|rules| rules.iter().any(|r| r == rule_name));
-
-    if !references {
+    if !project_uses_rule(&project, rule_name) {
         return Err(format!(
             "Project '{}' does not reference rule '{}'",
             project.name, rule_name

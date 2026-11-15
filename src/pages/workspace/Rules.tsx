@@ -355,12 +355,9 @@ export default function Rules() {
     try {
       await invoke("sync_rule_to_project", { ruleName: selectedId, projectName: projectKey });
       setProjectSyncState(prev => ({ ...prev, [projectKey]: "synced" }));
-      // Recalculate aggregate state.
-      setSyncAllState(prev => {
-        if (prev === "syncing") return "syncing";
-        // Check if all are now synced.
-        return "synced";
-      });
+      // One row's sync says nothing about the other rows, so ask the backend
+      // again. That also confirms this row really is in sync now.
+      await loadReferencingProjects(selectedId, true);
     } catch (err: any) {
       setProjectSyncState(prev => ({ ...prev, [projectKey]: "error" }));
       setError(`Failed to sync rule to project "${projectName}": ${err}`);
@@ -388,7 +385,14 @@ export default function Rules() {
         setError(`Failed to sync rule to project "${projectName}": ${err}`);
       }
     }
-    setSyncAllState(hadError ? "error" : "synced");
+    if (hadError) {
+      setSyncAllState("error");
+      return;
+    }
+    // Leave "syncing" first: the refresh keeps that state while it is set.
+    // The refresh then shows what is on disk, not what the loop hoped for.
+    setSyncAllState("needs-sync");
+    await loadReferencingProjects(selectedId, true);
   };
 
   const selectedEntry = rules.find(r => r.id === selectedId);

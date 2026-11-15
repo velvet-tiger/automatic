@@ -1092,7 +1092,7 @@ fn resolve_unified_instruction_content(
 ///
 /// Shared by [`sync_instruction_target_file`] and the Cursor `.mdc` write in
 /// [`sync_agent_configs_step`] so both produce identical rule sets.
-fn resolve_rules_for_target(
+pub(super) fn resolve_rules_for_target(
     project: &Project,
     filename: &str,
     use_unified_rules: bool,

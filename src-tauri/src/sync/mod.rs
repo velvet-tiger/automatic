@@ -6,6 +6,7 @@ mod engine;
 pub mod global_mcp;
 mod helpers;
 mod rebuild;
+mod rule_status;
 mod worktrees;
 
 // Re-export the public API so callers can use `sync::function_name` as before.
@@ -30,6 +31,7 @@ pub(crate) use agent_adopt::{
     unwritable_other_agent_files, OtherAgentFile,
 };
 pub(crate) use helpers::{scan_custom_agent, CustomAgentFinding};
+pub(crate) use rule_status::{project_rule_names, project_rules_current};
 
 /// Force-write custom agents (empty skip set). Used by overwrite resolution.
 pub fn sync_custom_agents_force(

@@ -116,27 +116,22 @@ pub fn save_project_file_with_rules_and_custom(
     save_project_file(directory, filename, &full_content)
 }
 
-/// Read-only check: returns `true` if the on-disk file already contains the
-/// exact rules section that would be generated from the given rule names.
-/// Only compares the rules section — ignores user content and managed sections.
-pub fn is_file_rules_current(
-    path: &std::path::Path,
-    rule_names: &[String],
-) -> Result<bool, String> {
-    is_file_rules_current_with_custom(path, rule_names, &[])
-}
-
-/// Read-only check including custom rule contents.
+/// Read-only check: returns `true` if the instruction file at `path` already
+/// contains the exact inline rules section that sync would write for these
+/// library rules and custom rule contents.  Only the rules section is
+/// compared; user content and other managed sections are ignored.
+///
+/// The read is contained to `root`, so a link out of the project or a FIFO
+/// is an error rather than a read or a hang.
 pub fn is_file_rules_current_with_custom(
-    path: &std::path::Path,
+    root: &Path,
+    path: &Path,
     rule_names: &[String],
     custom_contents: &[String],
 ) -> Result<bool, String> {
-    if !path.exists() {
+    let Some(raw) = crate::sync::read_project_text(root, path)? else {
         return Ok(false);
-    }
-
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    };
     let expected_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
     if expected_section.is_empty() {
@@ -246,54 +241,78 @@ const CLAUDE_RULES_MANAGED_HEADER: &str = "<!-- managed by Automatic — do not 
 /// Read-only check: returns `true` if the on-disk `.claude/rules/` directory
 /// already contains exactly the files that would be generated from `rule_names`
 /// (same filenames, same content, no extra Automatic-managed files).
+///
+/// A rule that is missing from the library or empty is skipped, as the
+/// writer skips it, so it never counts as an expected file.
 pub fn is_dot_claude_rules_current(
     project_dir: &str,
     rule_names: &[String],
 ) -> Result<bool, String> {
-    let rules_dir = PathBuf::from(project_dir).join(".claude").join("rules");
+    let root = Path::new(project_dir);
+    let rules_dir = root.join(".claude").join("rules");
+    let expected: Vec<(String, String)> = rule_names
+        .iter()
+        .filter_map(|name| match read_rule_content(name) {
+            Ok(c) if !c.trim().is_empty() => Some((
+                format!("{}.md", name),
+                format!("{}{}\n", CLAUDE_RULES_MANAGED_HEADER, c.trim_end()),
+            )),
+            _ => None,
+        })
+        .collect();
+    Ok(managed_rule_dir_matches(root, &rules_dir, "md", &expected, |content| {
+        content.starts_with(CLAUDE_RULES_MANAGED_HEADER)
+    }))
+}
 
-    // Collect currently-managed files (those with our header).
+/// Compare an Automatic-managed rules directory with the files sync would
+/// write there.  `expected` pairs each file name with its full content.
+/// The directory matches when its managed files (those `is_managed` accepts)
+/// are exactly the expected names, and each holds the expected content.
+///
+/// Reads are contained to `root`.  A file that cannot be read safely counts
+/// as out of date, since sync would also refuse to write it.
+fn managed_rule_dir_matches(
+    root: &Path,
+    rules_dir: &Path,
+    extension: &str,
+    expected: &[(String, String)],
+    is_managed: impl Fn(&str) -> bool,
+) -> bool {
     let mut managed_on_disk: HashSet<String> = HashSet::new();
-    if let Ok(entries) = fs::read_dir(&rules_dir) {
+    if let Ok(entries) = fs::read_dir(rules_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            if path.extension().and_then(|e| e.to_str()) != Some(extension) {
                 continue;
             }
-            if let Ok(content) = fs::read_to_string(&path) {
-                if content.starts_with(CLAUDE_RULES_MANAGED_HEADER) {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        managed_on_disk.insert(name.to_string());
-                    }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            match crate::sync::read_project_text(root, &path) {
+                Ok(Some(content)) if is_managed(&content) => {
+                    managed_on_disk.insert(name.to_string());
                 }
+                Ok(_) => {}
+                // An unreadable file under an expected name is stale; any
+                // other unreadable file is not ours to judge.
+                Err(_) if expected.iter().any(|(n, _)| n == name) => return false,
+                Err(_) => {}
             }
         }
     }
 
-    let intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.md", n)).collect();
-
-    // Extra managed files that shouldn't be there.
+    let intended: HashSet<String> = expected.iter().map(|(n, _)| n.clone()).collect();
     if managed_on_disk != intended {
-        return Ok(false);
+        return false;
     }
 
-    // Check content of each intended file.
-    for machine_name in rule_names {
-        let content = match read_rule_content(machine_name) {
-            Ok(c) if !c.trim().is_empty() => c,
-            _ => continue,
-        };
-        let expected = format!("{}{}\n", CLAUDE_RULES_MANAGED_HEADER, content.trim_end());
-        let actual = match fs::read_to_string(rules_dir.join(format!("{}.md", machine_name))) {
-            Ok(c) => c,
-            Err(_) => return Ok(false),
-        };
-        if actual != expected {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
+    expected.iter().all(|(name, content)| {
+        matches!(
+            crate::sync::read_project_text(root, &rules_dir.join(name)),
+            Ok(Some(actual)) if actual == *content
+        )
+    })
 }
 
 // ── .cursor/rules/ MDC-based rules ──────────────────────────────────────────
@@ -417,50 +436,17 @@ pub fn is_cursor_mdc_rules_current(
     project_dir: &str,
     rule_names: &[String],
 ) -> Result<bool, String> {
-    let rules_dir = PathBuf::from(project_dir).join(".cursor").join("rules");
-
-    let mut managed_on_disk: HashSet<String> = HashSet::new();
-    if let Ok(entries) = fs::read_dir(&rules_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
-                continue;
-            }
-            if let Ok(content) = fs::read_to_string(&path) {
-                if is_managed_mdc_content(&content) {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        managed_on_disk.insert(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    let intended: HashSet<String> = rule_names
+    let root = Path::new(project_dir);
+    let rules_dir = root.join(".cursor").join("rules");
+    let expected: Vec<(String, String)> = rule_names
         .iter()
-        .filter(|n| read_rule_for_mdc(n).is_some())
-        .map(|n| format!("{}.mdc", n))
+        .filter_map(|name| {
+            read_rule_for_mdc(name).map(|(display, content)| {
+                (format!("{}.mdc", name), render_cursor_mdc_rule(&display, &content))
+            })
+        })
         .collect();
-
-    if managed_on_disk != intended {
-        return Ok(false);
-    }
-
-    for machine_name in rule_names {
-        let Some((display, content)) = read_rule_for_mdc(machine_name) else {
-            continue;
-        };
-        let expected = render_cursor_mdc_rule(&display, &content);
-        let actual = match fs::read_to_string(rules_dir.join(format!("{}.mdc", machine_name))) {
-            Ok(c) => c,
-            Err(_) => return Ok(false),
-        };
-        if actual != expected {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
+    Ok(managed_rule_dir_matches(root, &rules_dir, "mdc", &expected, is_managed_mdc_content))
 }
 
 // ── Instructions Index Mode ──────────────────────────────────────────────────
@@ -574,6 +560,54 @@ pub fn sync_rules_to_automatic_instructions(
     }
 
     Ok(touched)
+}
+
+/// Read-only check for index mode: returns `true` when each library rule's
+/// file under `<project_dir>/.automatic/instructions/` holds its current
+/// content, and the instruction file at `instruction_path` carries the index
+/// section sync would write and no inline rules section.
+///
+/// Custom rule files are not compared here.  Sync keeps an on-disk custom
+/// rule file while its conflict is open, and drift reports those conflicts.
+/// `instruction_root` contains the read of the instruction file; it differs
+/// from `project_dir` in Silent mode.
+pub fn is_index_rules_current(
+    project_dir: &str,
+    instruction_root: &Path,
+    instruction_path: &Path,
+    rule_names: &[String],
+    custom_rules: &[crate::core::CustomRule],
+) -> Result<bool, String> {
+    let root = Path::new(project_dir);
+    let instructions_dir = root.join(AUTOMATIC_INSTRUCTIONS_DIR);
+    for machine_name in rule_names {
+        let content = match read_rule_content(machine_name) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => continue,
+        };
+        let expected = format!(
+            "{}{}\n",
+            AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER,
+            content.trim_end()
+        );
+        let path = instructions_dir.join(format!("{}.md", machine_name));
+        match crate::sync::read_project_text(root, &path) {
+            Ok(Some(actual)) if actual == expected => {}
+            _ => return Ok(false),
+        }
+    }
+
+    let Some(raw) = crate::sync::read_project_text(instruction_root, instruction_path)? else {
+        return Ok(false);
+    };
+    if raw.contains(RULES_START_MARKER) {
+        return Ok(false);
+    }
+    let index_section = build_index_section(rule_names, custom_rules);
+    if index_section.is_empty() {
+        return Ok(!raw.contains(INDEX_START_MARKER));
+    }
+    Ok(raw.contains(&index_section))
 }
 
 /// Build the index section that is injected into the main instruction file when
@@ -1218,7 +1252,7 @@ mod tests {
         let content = format!("# File\n\n{}\n", section);
         fs::write(&file, &content).expect("write");
 
-        let is_current = is_file_rules_current_with_custom(&file, &no_rules(), &custom("My rule."))
+        let is_current = is_file_rules_current_with_custom(dir.path(), &file, &no_rules(), &custom("My rule."))
             .expect("check");
         assert!(is_current);
     }
@@ -1234,7 +1268,7 @@ mod tests {
         .expect("write");
 
         let is_current =
-            is_file_rules_current_with_custom(&file, &no_rules(), &custom("New rule."))
+            is_file_rules_current_with_custom(dir.path(), &file, &no_rules(), &custom("New rule."))
                 .expect("check");
         assert!(!is_current);
     }
@@ -1244,7 +1278,7 @@ mod tests {
         let dir = tmp();
         let file = dir.path().join("NONEXISTENT.md");
 
-        let is_current = is_file_rules_current_with_custom(&file, &no_rules(), &custom("A rule."))
+        let is_current = is_file_rules_current_with_custom(dir.path(), &file, &no_rules(), &custom("A rule."))
             .expect("check");
         assert!(!is_current);
     }
