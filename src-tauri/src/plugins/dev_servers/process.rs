@@ -517,17 +517,24 @@ fn failed_exit(id: &str) -> Option<String> {
 /// `server & exit 1`). `stop` cannot do that later: it only signals while
 /// the leader is alive.
 fn record_failed_start(id: &str, reason: &str) {
-    let map = processes().lock().unwrap();
-    let Some(running) = map.get(id) else {
-        return;
+    let pid = {
+        let map = processes().lock().unwrap();
+        let Some(running) = map.get(id) else {
+            return;
+        };
+        *running.last_error.lock().unwrap() = Some(reason.to_string());
+        running.pid
     };
-    *running.last_error.lock().unwrap() = Some(reason.to_string());
-    end_orphaned_group(running.pid);
+    // Outside the registry lock: the kill waits, and status polls must not.
+    end_orphaned_group(pid);
 }
 
-/// Signal what is left of a process group whose leader has exited. Called
-/// straight after the exit is seen, while the group id cannot yet have been
-/// reused. Signalling an empty group fails harmlessly.
+/// Signal what is left of a process group whose leader has exited. A pid
+/// is not reused while a live process group still carries it, so while any
+/// child remains, the signal can only reach that group. If the group is
+/// already empty, the signal fails harmlessly, unless in the fraction of a
+/// second since the exit a new process took that exact pid and made itself
+/// a group leader, which is accepted here.
 #[cfg(unix)]
 fn end_orphaned_group(pgid: u32) {
     let group = format!("-{}", pgid);
