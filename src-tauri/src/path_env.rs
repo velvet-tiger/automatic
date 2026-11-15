@@ -244,15 +244,23 @@ fn reprobe_with(
     }
 }
 
-/// The user's shell: `$SHELL`, falling back to zsh, the macOS default.
-/// The `PATH` probe and dev server custom commands both run through it, so
-/// a command sees the same shell the adopted `PATH` came from.
+/// The user's shell: `$SHELL`, else zsh (the macOS default) where it is
+/// installed, else `/bin/sh`, which every unix has. The `PATH` probe and dev
+/// server custom commands both run through it, so a command sees the same
+/// shell the adopted `PATH` came from.
 #[cfg(unix)]
 pub fn user_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.trim().is_empty())
-        .unwrap_or_else(|| "/bin/zsh".to_string())
+    shell_from(std::env::var("SHELL").ok(), Path::new("/bin/zsh").is_file())
+}
+
+/// [`user_shell`]'s choice, given `$SHELL` and whether zsh is installed.
+#[cfg(unix)]
+fn shell_from(shell_var: Option<String>, zsh_installed: bool) -> String {
+    match shell_var.filter(|shell| !shell.trim().is_empty()) {
+        Some(shell) => shell,
+        None if zsh_installed => "/bin/zsh".to_string(),
+        None => "/bin/sh".to_string(),
+    }
 }
 
 /// Probe the user's shell (see [`user_shell`]).
@@ -471,6 +479,14 @@ fn path_with_fallbacks(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_shell_prefers_shell_then_zsh_then_sh() {
+        assert_eq!(shell_from(Some("/opt/homebrew/bin/fish".into()), true), "/opt/homebrew/bin/fish");
+        assert_eq!(shell_from(Some("  ".into()), true), "/bin/zsh");
+        assert_eq!(shell_from(None, true), "/bin/zsh");
+        assert_eq!(shell_from(None, false), "/bin/sh");
+    }
 
     fn markers() -> ProbeMarkers {
         ProbeMarkers::new("test")

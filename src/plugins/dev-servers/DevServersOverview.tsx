@@ -5,7 +5,7 @@ import { openExternalUrl } from "../../lib/externalLinks";
 import { loadProjectSummaries, projectLabelFor, projectLabels, rowProjectKey } from "../../lib/projectIdentity";
 import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import type { ProjectSummary } from "../../pages/workspace/projects/types";
-import { describeServerCommand, formatServerUrlLabel, type DevServerStatus } from "./types";
+import { describeServerCommand, formatServerUrlLabel, packageManagerBadge, type DevServerStatus } from "./types";
 
 const STATUS_POLL_MS = 3000;
 
@@ -174,7 +174,7 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                         <div className="flex items-center gap-2">
                           <span className="text-[12.5px] font-medium text-text-base truncate">{status.name}</span>
                           <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted shrink-0">
-                            {status.package_manager}
+                            {packageManagerBadge(status.package_manager)}
                           </span>
                         </div>
                         <p className="text-[11px] text-text-muted truncate mt-0.5">

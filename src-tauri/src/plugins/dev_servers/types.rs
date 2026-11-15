@@ -10,8 +10,11 @@ pub enum PackageManager {
     Npm,
     Pnpm,
     Yarn,
-    /// `ServerConfig::script` holds a whole command line, run through
-    /// `/bin/sh -c` (or `cmd /C` on Windows).
+    /// `ServerConfig::script` holds a whole command line, run through the
+    /// user's `$SHELL -c` (see `path_env::user_shell`), or `cmd /S /C` on
+    /// Windows. The line is run as written, so it must only ever come from
+    /// the user typing it in the app. Never fill it from repository,
+    /// synced or other remote data.
     Command,
 }
 

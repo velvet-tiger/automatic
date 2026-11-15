@@ -21,7 +21,9 @@ import { openExternalUrl } from "../../lib/externalLinks";
 import {
   formatServerUrlLabel,
   PACKAGE_MANAGERS,
+  applyDetectedPackageManager,
   describeServerCommand,
+  packageManagerBadge,
   packageManagerLabel,
   type DevServerStatus,
   type LogLine,
@@ -258,10 +260,10 @@ export default function ServersPanel({ projectKey, projectDirectory }: ServersPa
           }).catch(() => []),
         ]);
         setDetectedScripts(scripts);
-        // Detection only picks between npm, pnpm and yarn. A custom command
-        // stays as the user chose it, even in a folder with a package.json.
         if (pm) {
-          setForm((prev) => (prev && prev.packageManager !== "command" ? { ...prev, packageManager: pm } : prev));
+          setForm((prev) =>
+            prev ? { ...prev, packageManager: applyDetectedPackageManager(prev.packageManager, pm) } : prev
+          );
         }
       } catch {
         setDetectedScripts([]);
@@ -567,7 +569,7 @@ function ServerRow({
           <div className="flex items-center gap-2">
             <span className="text-[13px] font-medium text-text-base truncate">{config.name}</span>
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted shrink-0">
-              {config.package_manager}
+              {packageManagerBadge(config.package_manager)}
             </span>
           </div>
           <p className="text-[11px] text-text-muted truncate mt-0.5">

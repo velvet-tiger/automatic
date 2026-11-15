@@ -160,13 +160,21 @@ fn build_command(pm: PackageManager, script: &str) -> Command {
         }
         // `raw_arg` passes the line through untouched. Rust's own quoting
         // would wrap it in quotes, and cmd.exe would then try to run the
-        // whole line as one program name.
+        // whole line as one program name. `/S` with one outer pair of quotes
+        // makes cmd strip exactly that pair, so a line such as
+        // `"C:\My Tools\run.bat" "arg one"` keeps its own quotes.
         None => {
             use std::os::windows::process::CommandExt;
-            cmd.arg("/C").raw_arg(script);
+            cmd.raw_arg(windows_command_line(script));
         }
     }
     cmd
+}
+
+/// The arguments `cmd.exe` gets for a custom command line.
+#[cfg(windows)]
+fn windows_command_line(script: &str) -> String {
+    format!("/S /C \"{}\"", script)
 }
 
 #[cfg(not(windows))]
@@ -449,6 +457,7 @@ fn start_with_grace(
             return Err(format!("'{}' failed to start: {}", config.name, line));
         }
         if let Some(reason) = failed_exit(&config.id) {
+            record_failed_start(&config.id, &reason);
             return Err(format!("'{}' failed to start: {}", config.name, reason));
         }
         if !watched_urls.lock().unwrap().is_empty() || Instant::now() >= deadline {
@@ -502,6 +511,36 @@ fn failed_exit(id: &str) -> Option<String> {
         None => format!("exited with {}", code),
     })
 }
+
+/// Keep the reason a start failed on the row, as a crash line is kept, and
+/// end anything the exited leader left running in its process group (e.g.
+/// `server & exit 1`). `stop` cannot do that later: it only signals while
+/// the leader is alive.
+fn record_failed_start(id: &str, reason: &str) {
+    let map = processes().lock().unwrap();
+    let Some(running) = map.get(id) else {
+        return;
+    };
+    *running.last_error.lock().unwrap() = Some(reason.to_string());
+    end_orphaned_group(running.pid);
+}
+
+/// Signal what is left of a process group whose leader has exited. Called
+/// straight after the exit is seen, while the group id cannot yet have been
+/// reused. Signalling an empty group fails harmlessly.
+#[cfg(unix)]
+fn end_orphaned_group(pgid: u32) {
+    let group = format!("-{}", pgid);
+    let _ = Command::new("kill").args(["-TERM", &group]).status();
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = Command::new("kill").args(["-KILL", &group]).status();
+}
+
+/// Windows has no process groups to signal here, and `taskkill /T` walks
+/// the tree from a live parent, which has already exited. Children a
+/// failed command started in the background stay running.
+#[cfg(windows)]
+fn end_orphaned_group(_pid: u32) {}
 
 #[cfg(unix)]
 fn terminate_and_wait(child: &mut Child, pid: u32) {
@@ -1252,7 +1291,84 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, "'custom' failed to start: exited with code 3: make: *** No rule to make target");
+        let statuses = list_statuses("test-project", &[], std::slice::from_ref(&config));
+        assert_eq!(
+            statuses[0].last_error.as_deref(),
+            Some("exited with code 3: make: *** No rule to make target"),
+            "the reason should stay on the row"
+        );
         forget(&config.id).unwrap();
+    }
+
+    /// A command that backgrounds a server and then fails leaves that
+    /// server in its process group. The failed start must end it, since
+    /// `stop` no longer can once the leader has exited.
+    #[cfg(unix)]
+    #[test]
+    fn failed_start_ends_children_the_command_left_running() {
+        let tmp = TempDir::new().unwrap();
+        let child_marker = "sleep 3000.4323";
+        let config = command_config("test-custom-command-orphan", &format!("{child_marker} & exit 4"));
+
+        let err = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            &NodeSelection::NotRequested,
+            Duration::from_secs(3),
+        )
+        .unwrap_err();
+        assert!(err.contains("exited with code 4"), "{err}");
+        assert!(!pgrep_matches(child_marker), "the backgrounded child should be ended");
+        forget(&config.id).unwrap();
+    }
+
+    /// The early-exit check is not specific to custom commands: a package
+    /// script that fails at once is a failed start too. Skips when npm/node
+    /// are not on `$PATH`.
+    #[cfg(unix)]
+    #[test]
+    fn package_script_that_exits_non_zero_fails_to_start() {
+        if crate::core::tools::find_binary_on_path("npm").is_none()
+            || crate::core::tools::find_binary_on_path("node").is_none()
+        {
+            eprintln!("skipping: npm/node not found on $PATH");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"fixture","scripts":{"dev":"node -e \"console.error('boom-4324'); process.exit(2)\""}}"#,
+        )
+        .unwrap();
+        let config = ServerConfig {
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            ..command_config("test-npm-script-fail", "")
+        };
+
+        let err = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            &NodeSelection::NotRequested,
+            Duration::from_secs(4),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("'custom' failed to start: exited with code"), "{err}");
+        forget(&config.id).unwrap();
+    }
+
+    /// cmd.exe gets one outer pair of quotes and `/S`, so it strips only
+    /// that pair and the line keeps its own quoting.
+    #[cfg(windows)]
+    #[test]
+    fn windows_custom_command_keeps_its_own_quotes() {
+        assert_eq!(
+            windows_command_line(r#""C:\My Tools\run.bat" "arg one""#),
+            r#"/S /C ""C:\My Tools\run.bat" "arg one"""#
+        );
+        assert_eq!(windows_command_line("make serve"), r#"/S /C "make serve""#);
     }
 
     /// A command that finishes cleanly inside the window is not an error.

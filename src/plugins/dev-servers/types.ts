@@ -15,6 +15,20 @@ export function packageManagerLabel(pm: PackageManager): string {
   return pm === "command" ? "Custom command" : pm;
 }
 
+/** The short tag shown on a server row. */
+export function packageManagerBadge(pm: PackageManager): string {
+  return pm === "command" ? "custom" : pm;
+}
+
+/**
+ * The launch choice after lockfile detection. Detection only picks between
+ * npm, pnpm and yarn, so a custom command stays as the user chose it, even
+ * in a folder that has a package.json.
+ */
+export function applyDetectedPackageManager(current: PackageManager, detected: PackageManager): PackageManager {
+  return current === "command" ? current : detected;
+}
+
 /** The command line a server runs, as the user would type it. */
 export function describeServerCommand(server: { package_manager: PackageManager; script: string }): string {
   return server.package_manager === "command" ? server.script : `${server.package_manager} run ${server.script}`;
