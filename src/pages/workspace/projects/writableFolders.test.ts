@@ -92,7 +92,7 @@ describe("savedStatus", () => {
 
   it("names where the folders went", () => {
     expect(savedStatus(findings({ wanted }))).toEqual({ text: "Saved for this project only", ok: true });
-    expect(savedStatus(findings({ wanted, target: { kind: "user", reason: "silent" } }))?.text).toBe(
+    expect(savedStatus(findings({ wanted, target: { kind: "user", reason: "preferred" } }))?.text).toBe(
       "Saved for all your Claude Code sessions",
     );
     expect(

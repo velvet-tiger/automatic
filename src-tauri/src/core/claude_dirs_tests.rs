@@ -179,7 +179,6 @@ fn a_file_with_the_wrong_shape_is_refused() {
 
 fn facts() -> TargetFacts {
     TargetFacts {
-        silent: false,
         read_only: false,
         local_file: Some(LocalFileState::Untracked),
         trust: TrustFlag::Clear,
@@ -197,7 +196,6 @@ fn a_normal_untracked_project_uses_its_local_file() {
 fn each_reason_falls_back_to_user_settings_and_needs_consent() {
     use UserSettingsReason as R;
     let cases: Vec<(TargetFacts, R)> = vec![
-        (TargetFacts { silent: true, ..facts() }, R::Silent),
         (TargetFacts { read_only: true, ..facts() }, R::ReadOnly),
         (
             TargetFacts { local_file: Some(LocalFileState::Tracked), ..facts() },
@@ -225,13 +223,9 @@ fn each_reason_falls_back_to_user_settings_and_needs_consent() {
 }
 
 #[test]
-fn a_silent_or_read_only_project_never_gets_the_local_file() {
-    for case in [
-        TargetFacts { silent: true, user_consent: true, ..facts() },
-        TargetFacts { read_only: true, user_consent: true, ..facts() },
-    ] {
-        assert_ne!(choose_target(&case), DirsTarget::Local);
-    }
+fn a_read_only_project_never_gets_the_local_file() {
+    let case = TargetFacts { read_only: true, user_consent: true, ..facts() };
+    assert_ne!(choose_target(&case), DirsTarget::Local);
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -346,6 +340,11 @@ fn consent() {
     set_writable_folders_user_consent(true).expect("consent");
 }
 
+/// Send every project's entries to user settings.
+fn always_user() {
+    set_writable_folders_target(WritableFoldersTarget::AlwaysUser).expect("target");
+}
+
 fn directories_in(path: &Path) -> Vec<String> {
     let Ok(raw) = fs::read_to_string(path) else {
         return Vec::new();
@@ -412,18 +411,19 @@ fn the_switch_off_wants_nothing() {
 }
 
 #[test]
-fn a_silent_project_without_consent_writes_nothing_and_asks() {
+fn user_settings_without_consent_write_nothing_and_ask() {
     let _home = temp_test_home();
     let ws = workspace();
-    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     group("team", &[&a, &b], true);
+    set_project_read_only(&a.local_key, true).expect("read only");
 
     let outcome = sync(&a);
 
     assert_eq!(
         outcome.target,
-        Some(DirsTarget::NeedsConsent(UserSettingsReason::Silent))
+        Some(DirsTarget::NeedsConsent(UserSettingsReason::ReadOnly))
     );
     assert!(!user_file().exists());
     assert!(!local_file(Path::new(&a.directory)).exists());
@@ -435,7 +435,46 @@ fn a_silent_project_without_consent_writes_nothing_and_asks() {
     sync(&a);
 
     assert_eq!(directories_in(&user_file()), vec![canonical(Path::new(&b.directory))]);
-    assert!(!local_file(Path::new(&a.directory)).exists(), "silent folder was written");
+    assert!(!local_file(Path::new(&a.directory)).exists(), "local file was written");
+}
+
+#[test]
+fn a_silent_project_uses_its_local_file_without_consent() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+
+    let outcome = sync(&a);
+
+    assert_eq!(outcome.target, Some(DirsTarget::Local));
+    assert_eq!(
+        directories_in(&local_file(Path::new(&a.directory))),
+        vec![canonical(Path::new(&b.directory))]
+    );
+    assert!(!user_file().exists(), "user settings were written");
+}
+
+#[test]
+fn user_settings_entries_move_to_the_local_file_when_the_target_changes() {
+    let _home = temp_test_home();
+    let ws = workspace();
+    always_user();
+    consent();
+    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    let b = register(&repo(&ws.base, "b"), "b", |_| {});
+    group("team", &[&a, &b], true);
+    sync(&a);
+    let b_path = canonical(Path::new(&b.directory));
+    assert_eq!(directories_in(&user_file()), vec![b_path.clone()]);
+
+    set_writable_folders_target(WritableFoldersTarget::PreferLocal).expect("target");
+    let outcome = sync(&a);
+
+    assert_eq!(outcome.target, Some(DirsTarget::Local));
+    assert_eq!(directories_in(&local_file(Path::new(&a.directory))), vec![b_path]);
+    assert!(directories_in(&user_file()).is_empty(), "user settings kept the entry");
 }
 
 #[test]
@@ -523,7 +562,8 @@ fn the_sticky_flag_needs_user_settings_until_the_folder_is_trusted() {
 fn entries_the_user_added_to_user_settings_are_never_removed() {
     let _home = temp_test_home();
     let ws = workspace();
-    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    always_user();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     let b_path = canonical(Path::new(&b.directory));
     fs::create_dir_all(user_file().parent().unwrap()).unwrap();
@@ -548,12 +588,12 @@ fn a_shared_path_stays_in_user_settings_while_another_project_wants_it() {
     let ws = workspace();
     let shared = repo(&ws.base, "shared");
     let shared_path = canonical(&shared);
-    let silent = |p: &mut Project| {
-        p.mode = ProjectMode::Silent;
+    always_user();
+    let shared_folder = |p: &mut Project| {
         p.local_writable_folders = vec![shared.to_str().unwrap().to_string()];
     };
-    let a = register(&repo(&ws.base, "a"), "a", silent);
-    let c = register(&repo(&ws.base, "c"), "c", silent);
+    let a = register(&repo(&ws.base, "a"), "a", shared_folder);
+    let c = register(&repo(&ws.base, "c"), "c", shared_folder);
     consent();
     sync(&a);
     sync(&c);
@@ -674,9 +714,10 @@ fn the_block_without_a_counting_entry_is_a_problem_with_the_json_to_paste() {
     let _home = temp_test_home();
     let ws = workspace();
     let a_dir = repo(&ws.base, "a");
-    let a = register(&a_dir, "a", |p| p.mode = ProjectMode::Silent);
+    let a = register(&a_dir, "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     group("team", &[&a, &b], true);
+    set_project_read_only(&a.local_key, true).expect("read only");
     fs::create_dir_all(a_dir.join(".claude")).unwrap();
     fs::write(
         a_dir.join(".claude/settings.json"),
@@ -721,7 +762,8 @@ fn the_drift_check_leaves_the_local_file_alone() {
 fn deleting_a_project_removes_its_user_settings_entries() {
     let _home = temp_test_home();
     let ws = workspace();
-    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    always_user();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     group("team", &[&a, &b], true);
     consent();
@@ -737,7 +779,8 @@ fn deleting_a_project_removes_its_user_settings_entries() {
 fn withdrawing_consent_removes_the_user_settings_entries() {
     let _home = temp_test_home();
     let ws = workspace();
-    let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+    always_user();
+    let a = register(&repo(&ws.base, "a"), "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     group("team", &[&a, &b], true);
     consent();
@@ -958,7 +1001,8 @@ fn a_moved_project_drops_the_old_folders_user_entries() {
     let _home = temp_test_home();
     let ws = workspace();
     let old_dir = repo(&ws.base, "a");
-    let a = register(&old_dir, "a", |p| p.mode = ProjectMode::Silent);
+    always_user();
+    let a = register(&old_dir, "a", |_| {});
     let b = register(&repo(&ws.base, "b"), "b", |_| {});
     group("team", &[&a, &b], true);
     consent();
@@ -1234,7 +1278,8 @@ fn claude_config_dir_moves_the_user_settings_and_state_files() {
     super::super::paths::with_test_claude_config_dir(config.clone(), || {
         assert_eq!(user_file(), config.join("settings.json"));
         assert_eq!(claude_state_path().unwrap(), config.join(".claude.json"));
-        let a = register(&repo(&ws.base, "a"), "a", |p| p.mode = ProjectMode::Silent);
+        always_user();
+        let a = register(&repo(&ws.base, "a"), "a", |_| {});
         let b = register(&repo(&ws.base, "b"), "b", |_| {});
         group("team", &[&a, &b], true);
         consent();

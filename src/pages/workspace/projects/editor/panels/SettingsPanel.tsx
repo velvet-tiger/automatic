@@ -129,7 +129,7 @@ export function SettingsPanel({
               <div className="text-[13px] font-medium text-text-base">Sync Mode</div>
               <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
                 {project.mode === 'silent'
-                  ? <>Files are written to <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code> only — the project root is left untouched.</>
+                  ? <>Files are written to <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code> only. The exception is Claude Code&apos;s personal <code className="bg-bg-sidebar px-1 rounded text-[10px]">.claude/settings.local.json</code>, which lists the other folders it may edit.</>
                   : "Files are written directly into the project directory (CLAUDE.md, .agents/, .claude/, etc.)."}
               </div>
             </div>

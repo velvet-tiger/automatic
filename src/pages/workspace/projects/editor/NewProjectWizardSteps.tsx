@@ -340,7 +340,7 @@ export function WizardSettingsStep({
             <div className="text-[13px] font-medium text-text-base">Sync Mode</div>
             <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
               {silent
-                ? "Files are written to .automatic/silent/ only. The project root is left untouched."
+                ? "Files are written to .automatic/silent/ only. The exception is Claude Code's personal .claude/settings.local.json, which lists the other folders it may edit."
                 : "Files are written directly into the project directory (CLAUDE.md, .agents/, .claude/, etc.)."}
             </div>
           </div>

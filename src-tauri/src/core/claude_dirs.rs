@@ -21,6 +21,11 @@
 //! User settings apply to every session on the machine, so nothing is written
 //! there until the user agrees (`Settings::writable_folders_user_consent`).
 //!
+//! A Silent project uses the local file too. It is the one file Automatic
+//! writes outside `.automatic/` in Silent mode. Git never commits it while it
+//! is untracked, and the managed `.gitignore` block lists it for a Silent
+//! project (`core::gitignore::project_patterns`).
+//!
 //! Automatic changes only the entries it wrote. Its record lives in
 //! `~/.automatic/claude-directories.json`, keyed by the checkout's
 //! `local_key` and folder. A path two checkouts want stays in user settings
@@ -436,8 +441,6 @@ pub(crate) enum TrustFlag {
 pub enum UserSettingsReason {
     /// The app setting says to always use user settings.
     Preferred,
-    /// Silent mode never writes into the project folder.
-    Silent,
     /// The project is read-only on this machine.
     ReadOnly,
     /// See [`LocalFileState::NotRepositoryRoot`].
@@ -467,7 +470,6 @@ pub enum DirsTarget {
 /// The facts [`choose_target`] decides from.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TargetFacts {
-    pub silent: bool,
     pub read_only: bool,
     /// `None` when it was not needed, because an earlier fact already rules
     /// the local file out.
@@ -479,20 +481,18 @@ pub(crate) struct TargetFacts {
 
 impl TargetFacts {
     /// Whether the local file's state matters, so git must be asked.
-    fn local_file_matters(silent: bool, read_only: bool, preference: WritableFoldersTarget) -> bool {
-        !silent && !read_only && preference == WritableFoldersTarget::PreferLocal
+    fn local_file_matters(read_only: bool, preference: WritableFoldersTarget) -> bool {
+        !read_only && preference == WritableFoldersTarget::PreferLocal
     }
 }
 
 /// Pick where a project's entries go. The local file is used only for a
-/// Normal-mode project that is writable here, whose folder is a repository
-/// root where git does not track the file, and that Claude Code has not
-/// flagged. A Silent or read-only project never gets the local file.
+/// project that is writable here, in Normal or Silent mode, whose folder is a
+/// repository root where git does not track the file, and that Claude Code
+/// has not flagged. A read-only project never gets the local file.
 pub(crate) fn choose_target(facts: &TargetFacts) -> DirsTarget {
     let reason = if facts.preference == WritableFoldersTarget::AlwaysUser {
         UserSettingsReason::Preferred
-    } else if facts.silent {
-        UserSettingsReason::Silent
     } else if facts.read_only {
         UserSettingsReason::ReadOnly
     } else {
@@ -1029,6 +1029,13 @@ fn local_settings_path(dir: &Path) -> PathBuf {
     dir.join(".claude").join("settings.local.json")
 }
 
+/// The managed `.gitignore` pattern for a Silent project's local settings
+/// file, or `None` when the project does not use Claude Code. A Normal
+/// project needs none, because its block ignores `.claude/` whole.
+pub(crate) fn silent_gitignore_pattern(project: &Project) -> Option<&'static str> {
+    uses_claude(project).then_some("/.claude/settings.local.json")
+}
+
 /// Read a settings file Claude Code loads. `contained_in` is the project
 /// folder for a file inside it, which is read without following a link out.
 fn settings_file_facts(path: &Path, shown: &str, contained_in: Option<&Path>) -> SettingsFileFacts {
@@ -1272,12 +1279,12 @@ fn is_group_member(entry: &RegistryEntry, group: &ProjectGroup) -> bool {
     })
 }
 
-/// Whether the project folder may be written: Normal mode and not read-only.
-/// A failed read-only check counts as read-only.
-fn folder_writable(project: &Project) -> bool {
-    project.mode == ProjectMode::Normal
-        && !project.is_read_only_here()
-        && matches!(project_is_read_only(project), Ok(false))
+/// Whether the project's local settings file may be written: the project is
+/// not read-only. Silent mode does not matter, because the file is personal
+/// and never committed (see the module notes). A failed read-only check
+/// counts as read-only.
+fn local_file_writable(project: &Project) -> bool {
+    !project.is_read_only_here() && matches!(project_is_read_only(project), Ok(false))
 }
 
 /// Everything the sync step and the problems check share.
@@ -1305,17 +1312,15 @@ fn gather(project: &Project) -> Result<Gathered, String> {
     let folders = resolve_folders(&own, &candidates, &denied_paths()?);
 
     let settings = read_settings()?;
-    let silent = project.mode == ProjectMode::Silent;
-    let read_only = !folder_writable(project) && !silent;
+    let read_only = !local_file_writable(project);
     // Git runs only when something is wanted. Then the state is read whatever
     // the target, so the problems check can tell whether entries the user put
     // in the local file count.
     let local_state = (!folders.wanted.is_empty()).then(|| local_file_state(&own));
     let (trust, trust_unreadable) = trust_flag(&trust_keys(project, &own, main.as_deref()));
     let facts = TargetFacts {
-        silent,
         read_only,
-        local_file: if TargetFacts::local_file_matters(silent, read_only, settings.writable_folders_target) {
+        local_file: if TargetFacts::local_file_matters(read_only, settings.writable_folders_target) {
             local_state
         } else {
             None
@@ -1456,8 +1461,8 @@ fn apply_to_file(
 /// folders it wants. Runs for a project that lists Claude Code, and for one
 /// that stopped listing it while records remain, so its entries are removed.
 ///
-/// A Silent or read-only project never gets a write into its folder, and a
-/// local file git tracks is left as it is. A project an agent registered,
+/// A read-only project never gets a write into its folder, and a local file
+/// git tracks is left as it is. A project an agent registered,
 /// which the user has not kept, is left alone. A failed write is reported in
 /// `errors` and the other target still runs. An error is returned only when
 /// nothing could be decided, and then nothing was changed.
@@ -1605,7 +1610,7 @@ fn adopt_moved_local_record(
 
 /// Bring the checkout's entries in its own local settings file at `own` in
 /// line with `desired`, and update `records`. Writes nothing when the folder
-/// must not be written (Silent, read-only) or git tracks the file: a tracked
+/// must not be written (read-only) or git tracks the file: a tracked
 /// file belongs to the repository, so Automatic leaves its entries there and
 /// keeps the record, and the problems check names them. `known` is the
 /// file's state when it was already read.
@@ -1619,7 +1624,7 @@ fn apply_local(
     let key = project.local_key.as_str();
     let folder_key = own.to_str().unwrap_or_default();
     let before = record_of(&records.local_settings, key, folder_key);
-    if !folder_writable(project) || (desired.is_empty() && before.written.is_empty()) {
+    if !local_file_writable(project) || (desired.is_empty() && before.written.is_empty()) {
         return Ok(());
     }
     if known.unwrap_or_else(|| local_file_state(own)) == LocalFileState::Tracked {

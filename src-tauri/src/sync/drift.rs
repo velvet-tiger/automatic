@@ -170,7 +170,6 @@ fn user_settings_reason(reason: crate::core::UserSettingsReason) -> String {
     use crate::core::UserSettingsReason as R;
     let text = match reason {
         R::Preferred => "Your settings say to always use your user settings.",
-        R::Silent => "Silent mode never writes into the project folder.",
         R::ReadOnly => "This project is read only on this machine.",
         R::NotRepositoryRoot => {
             "The project folder is not the root of a git repository, so Claude Code would not \
@@ -3154,7 +3153,13 @@ mod tests {
             assert_eq!(file.reason, "missing");
             assert_eq!(
                 file.expected.as_deref(),
-                Some(crate::core::gitignore::render_block(&["/.automatic/".to_string()]).as_str())
+                Some(
+                    crate::core::gitignore::render_block(&[
+                        "/.automatic/".to_string(),
+                        "/.claude/settings.local.json".to_string()
+                    ])
+                    .as_str()
+                )
             );
 
             sync_project_without_autodetect(&mut project).expect("sync");

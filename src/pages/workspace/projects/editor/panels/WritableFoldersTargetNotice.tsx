@@ -8,8 +8,6 @@ export function targetReasonText(reason: UserSettingsReason): string {
   switch (reason) {
     case "preferred":
       return "because your settings say to save them for all your sessions.";
-    case "silent":
-      return "because Silent mode never writes into the project folder.";
     case "read_only":
       return "because this project is read only on this computer.";
     case "tracked":

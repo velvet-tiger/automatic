@@ -128,6 +128,10 @@ pub fn build_patterns(
 /// compares the block on disk against it, so both must call this one
 /// function.  `project_dir` is the project root, never the Silent-mode
 /// redirect directory.
+///
+/// A Silent project also lists Claude Code's `.claude/settings.local.json`,
+/// the one file Automatic writes outside `.automatic/` in Silent mode. It
+/// holds the folders Claude Code may edit (`core::claude_dirs`).
 pub fn project_patterns(project_dir: &Path, project: &Project) -> Vec<String> {
     let managed_paths: Vec<ManagedPath> = project
         .agents
@@ -140,7 +144,11 @@ pub fn project_patterns(project_dir: &Path, project: &Project) -> Vec<String> {
         })
         .collect();
     let silent = matches!(project.mode, ProjectMode::Silent);
-    build_patterns(project_dir, &managed_paths, silent)
+    let mut patterns = build_patterns(project_dir, &managed_paths, silent);
+    if silent {
+        patterns.extend(super::claude_dirs::silent_gitignore_pattern(project).map(str::to_string));
+    }
+    patterns
 }
 
 /// Render the managed block (markers included) from a pattern list.
@@ -501,11 +509,28 @@ mod tests {
     }
 
     #[test]
-    fn project_patterns_silent_mode_lists_only_automatic_dir() {
+    fn project_patterns_silent_mode_lists_automatic_dir_and_claude_local_settings() {
         let root = PathBuf::from("/proj");
         let project = Project {
             mode: ProjectMode::Silent,
             ..claude_project()
+        };
+        assert_eq!(
+            project_patterns(&root, &project),
+            vec![
+                "/.automatic/".to_string(),
+                "/.claude/settings.local.json".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn project_patterns_silent_mode_without_claude_lists_only_automatic_dir() {
+        let root = PathBuf::from("/proj");
+        let project = Project {
+            mode: ProjectMode::Silent,
+            agents: vec!["codex".to_string()],
+            ..Default::default()
         };
         assert_eq!(
             project_patterns(&root, &project),

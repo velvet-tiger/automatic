@@ -86,7 +86,6 @@ describe("WritableFoldersTargetNotice", () => {
   it("has a sentence for every reason", () => {
     const reasons: UserSettingsReason[] = [
       "preferred",
-      "silent",
       "read_only",
       "not_repository_root",
       "tracked",

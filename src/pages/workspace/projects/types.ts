@@ -320,7 +320,6 @@ export interface ProjectProblemsReport {
 /** Why a project's folders need Claude Code's user settings rather than its local file. */
 export type UserSettingsReason =
   | "preferred"
-  | "silent"
   | "read_only"
   | "not_repository_root"
   | "tracked"
