@@ -1619,7 +1619,7 @@ export function ProjectEditor({
       await reloadProject(projectKey);
       return;
     }
-    const raw: string = await invoke("read_project", { name: projectKey });
+    const raw: string = await invoke("read_project", { name: projectKey, includePending: true });
     const fresh = JSON.parse(raw) as Partial<Project>;
     const base = storedContexts.current;
     storedContexts.current = fresh.contexts ?? [];
@@ -2194,7 +2194,7 @@ export function ProjectEditor({
       // we can tell whether detection found anything new that hasn't been saved.
       const [rawDetected, rawStored] = await Promise.all([
         invoke<string>("autodetect_project_dependencies", { name: projectKey }),
-        invoke<string>("read_project", { name: projectKey }),
+        invoke<string>("read_project", { name: projectKey, includePending: true }),
       ]);
       const parsed = JSON.parse(rawDetected);
       const stored = JSON.parse(rawStored);
@@ -2346,7 +2346,7 @@ export function ProjectEditor({
 
   const reloadProject = async (projectKey: string) => {
     try {
-      const raw: string = await invoke("read_project", { name: projectKey });
+      const raw: string = await invoke("read_project", { name: projectKey, includePending: true });
       const parsed = JSON.parse(raw);
       const data: Project = {
         name: parsed.name || projectKey,
@@ -2598,7 +2598,7 @@ export function ProjectEditor({
           const libraryRules: { id: string }[] = await invoke("get_rules");
           const libraryRuleIds = new Set(libraryRules.map((r) => r.id));
           const attachableRules = mergedRules.filter((r) => libraryRuleIds.has(r));
-          const latestRaw: string = await invoke("read_project", { name });
+          const latestRaw: string = await invoke("read_project", { name, includePending: true });
           const latestProj = JSON.parse(latestRaw);
           const existingProjectRules: string[] = (latestProj.file_rules || {})["_project"] || [];
           const combinedRules = [...new Set([...existingProjectRules, ...attachableRules])];
@@ -2968,7 +2968,7 @@ export function ProjectEditor({
       let saved = toSave;
       let reread = false;
       try {
-        const raw: string = await invoke("read_project", { name });
+        const raw: string = await invoke("read_project", { name, includePending: true });
         saved = JSON.parse(raw);
         reread = true;
       } catch { /* fall back to pre-save snapshot */ }
@@ -3215,7 +3215,7 @@ export function ProjectEditor({
     if (!name) return;
     try {
       await invoke("adopt_custom_asset", { name, kind, assetName });
-      const projRaw: string = await invoke("read_project", { name });
+      const projRaw: string = await invoke("read_project", { name, includePending: true });
       setProject(JSON.parse(projRaw));
       notifyProjectUpdated();
       const report = await recheckDrift(name);
@@ -3227,7 +3227,7 @@ export function ProjectEditor({
       // be written. The page must show what was saved, or its next save
       // writes the old copy back.
       try {
-        const projRaw: string = await invoke("read_project", { name });
+        const projRaw: string = await invoke("read_project", { name, includePending: true });
         setProject(JSON.parse(projRaw));
       } catch (reloadErr: unknown) {
         setError(`Failed to adopt custom ${kind}: ${err}. The project could not be reloaded: ${reloadErr}`);
@@ -3241,7 +3241,7 @@ export function ProjectEditor({
     if (!name) return;
     try {
       await invoke("overwrite_custom_asset", { name, kind, assetName });
-      const projRaw: string = await invoke("read_project", { name });
+      const projRaw: string = await invoke("read_project", { name, includePending: true });
       setProject(JSON.parse(projRaw));
       notifyProjectUpdated();
       const report = await recheckDrift(name);
@@ -3261,7 +3261,7 @@ export function ProjectEditor({
     notifyProjectUpdated();
     // Re-read the project to pick up config changes (e.g. adopted skill).
     try {
-      const projRaw: string = await invoke("read_project", { name });
+      const projRaw: string = await invoke("read_project", { name, includePending: true });
       if (selectedKeyRef.current === name) setProject(JSON.parse(projRaw));
     } catch (err: unknown) {
       setError(`Could not reload the project: ${checkErrorText(err)}`);
@@ -4536,7 +4536,11 @@ export function ProjectEditor({
                     projectKey={selectedKey}
                     onMcpServersChanged={loadAvailableMcpServers}
                     onProjectServersAccepted={async () => {
-                      if (selectedKey) await refreshCheckoutDecisions(selectedKey);
+                      if (!selectedKey) return;
+                      await refreshCheckoutDecisions(selectedKey);
+                      // As the notice does: sync now unless edits are unsaved,
+                      // so the accepted servers reach the agent files.
+                      if (!readOnly && !dirty && !projectFileDirty) handleSync();
                     }}
                     profileLocks={profileLocks}
                     addItem={addItem}

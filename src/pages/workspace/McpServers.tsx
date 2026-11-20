@@ -792,14 +792,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       ]);
       setScopes(scopeMap);
       setAcceptedIds(accepted);
-      // Label an id by a checkout that accepted it, so a copy with the same
-      // id never names the server's project.
+      // Label an id only by a checkout that accepted it, so a copy with the
+      // same id never names the server's project.
       const names: Record<string, string> = {};
       for (const summary of summaries) {
         if (summary.id && accepted[summary.local_key] === summary.id) names[summary.id] = summary.name;
-      }
-      for (const summary of summaries) {
-        if (summary.id && names[summary.id] === undefined) names[summary.id] = summary.name;
       }
       setProjectNames(names);
       setCheckouts(
@@ -812,11 +809,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     }
   };
 
-  /** "Project: <name>", or a plain label when the project no longer exists here. */
+  /** "Project: <name>" for a project a folder here accepted, or a plain label. */
   const scopeLabel = (projectId: string) =>
     projectNames[projectId] !== undefined
       ? `Project: ${projectNames[projectId]}`
-      : "Project: not on this machine";
+      : "Project: not used on this machine";
 
   /** `projectName` is a checkout's local_key, or null to make the server global. */
   const changeScope = async (projectName: string | null) => {
@@ -1556,7 +1553,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         <p className="text-[13px] text-text-base">
                           {projectNames[scopes[selectedName]!] !== undefined
                             ? <>Only <span className="font-medium">{projectNames[scopes[selectedName]!]}</span> can see this server.</>
-                            : "Only a project that is not registered on this machine can see this server. It may have been removed, or it may live on another machine. Make the server available to all projects, or delete it."}
+                            : "This server belongs to a project that no folder on this machine uses yet. The project may have been removed, it may live on another machine, or a folder of it can still accept it from its project page. You can also make the server available to all projects, or delete it."}
                         </p>
                         <button
                           onClick={() => void changeScope(null)}
@@ -1585,10 +1582,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                                 // Two checkouts can share a name, so the folder tells them apart.
                                 const shared = checkouts.filter((c) => c.name === checkout.name).length > 1;
                                 const label = shared ? `${checkout.name} (${checkout.directory})` : checkout.name;
-                                // The backend refuses a checkout whose id has servers it has not accepted.
+                                // The backend refuses a checkout that has not accepted its id while the
+                                // id owns servers or another checkout accepted it.
                                 const blocked =
                                   acceptedIds[checkout.local_key] !== checkout.id &&
-                                  Object.values(scopes).includes(checkout.id);
+                                  (Object.values(scopes).includes(checkout.id) ||
+                                    Object.values(acceptedIds).includes(checkout.id));
                                 return (
                                   <option key={checkout.local_key} value={checkout.local_key} disabled={blocked}>
                                     {blocked ? `${label}: accept its project servers first` : label}

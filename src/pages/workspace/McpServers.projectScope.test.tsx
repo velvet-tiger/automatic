@@ -12,6 +12,7 @@ import McpServers from "./McpServers";
 const summaries = [
   { local_key: "real-key", id: "p-1", name: "app", directory: "/work/app" },
   { local_key: "copy-key", id: "p-1", name: "app", directory: "/tmp/app" },
+  { local_key: "lookalike-key", id: "p-1", name: "lookalike", directory: "/tmp/lookalike" },
   { local_key: "other-key", id: "p-2", name: "other", directory: "/work/other" },
 ];
 
@@ -47,6 +48,7 @@ describe("McpServers project scope", () => {
     expect(copy).toBeDisabled();
     expect(screen.getByRole("option", { name: "app (/work/app)" })).not.toBeDisabled();
     expect(screen.getByRole("option", { name: "other" })).not.toBeDisabled();
+    expect(screen.getByRole("option", { name: "lookalike: accept its project servers first" })).toBeDisabled();
 
     fireEvent.change(picker, { target: { value: "real-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Limit" }));
@@ -55,11 +57,21 @@ describe("McpServers project scope", () => {
     );
   });
 
+  it("blocks a checkout whose id another checkout accepted, though the id owns no server", async () => {
+    mockInvoke({ ...routes("shared", { command: "npx" }), list_mcp_server_scopes: {} });
+    render(<McpServers initialServer="shared" />);
+    expect(
+      await screen.findByRole("option", { name: "app (/tmp/app): accept its project servers first" }),
+    ).toBeDisabled();
+  });
+
   it("copies a project server through the backend, which keeps its scope", async () => {
     mockInvoke(routes("db", { command: "npx", _project: "p-1" }));
     render(<McpServers initialServer="db" />);
 
+    // Named by the checkout that accepted the id, never by a copy.
     expect(await screen.findByText("app", { selector: "span" })).toBeInTheDocument();
+    expect(screen.queryByText("lookalike", { selector: "span" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Duplicate/ }));
     await waitFor(() =>
       expect(invokeMock).toHaveBeenCalledWith(

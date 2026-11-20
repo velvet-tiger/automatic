@@ -23,8 +23,14 @@ pub fn get_project_summaries() -> Result<Vec<core::ProjectSummary>, String> {
 
 /// Read a project by identifier: its `local_key` or its name.
 #[tauri::command]
-pub fn read_project(name: &str) -> Result<String, String> {
-    core::read_project_for_app(name)
+pub fn read_project(name: &str, include_pending: Option<bool>) -> Result<String, String> {
+    // Finding pending project MCP servers reads every library server file, so
+    // only the project editor asks for them; list pages read every project.
+    if include_pending == Some(true) {
+        core::read_project_for_app(name)
+    } else {
+        core::read_project(name)
+    }
 }
 
 #[derive(Serialize)]
