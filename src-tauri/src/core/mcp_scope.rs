@@ -144,9 +144,10 @@ pub fn project_id_for_folder(folder: &std::path::Path) -> Option<String> {
 /// so a server limited to one project cannot go in them.
 pub fn ensure_no_project_servers(names: &[String], what: &str) -> Result<(), String> {
     let scopes = list_mcp_server_scopes()?;
+    // Case-insensitive, as the library is: `GitHub` names the file `github`.
     let scoped: Vec<&str> = names
         .iter()
-        .filter(|name| scopes.contains_key(name.as_str()))
+        .filter(|name| scopes.keys().any(|scoped| scoped.eq_ignore_ascii_case(name)))
         .map(String::as_str)
         .collect();
     if scoped.is_empty() {
@@ -238,12 +239,23 @@ fn scoped_to(data: &str, project_id: &str) -> Result<String, String> {
     serde_json::to_string(&config).map_err(|e| e.to_string())
 }
 
+/// Fail unless `project_id` names a project registered on this machine, so a
+/// stale editor or a typo cannot create a server no project can see.
 fn require_project_id(project_id: &str) -> Result<(), String> {
     if project_id.trim().is_empty() {
         return Err(
             "This project has no id yet, so it cannot own an MCP server. Restart Automatic so it can assign one, then try again."
                 .to_string(),
         );
+    }
+    let known = super::get_project_summaries()?
+        .iter()
+        .any(|summary| summary.id == project_id);
+    if !known {
+        return Err(format!(
+            "No project with id '{}' is registered on this machine.",
+            project_id
+        ));
     }
     Ok(())
 }
@@ -317,7 +329,7 @@ fn scope_conflicts(name: &str, project_id: &str) -> Result<ScopeConflicts, Strin
         let listed = super::read_project(&ident)
             .ok()
             .and_then(|raw| serde_json::from_str::<super::Project>(&raw).ok())
-            .map(|project| project.mcp_servers.iter().any(|s| s == name));
+            .map(|project| project.mcp_servers.iter().any(|s| s.eq_ignore_ascii_case(name)));
         match listed {
             Some(false) => {}
             Some(true) => conflicts.projects.push(summary.name),
@@ -328,7 +340,7 @@ fn scope_conflicts(name: &str, project_id: &str) -> Result<ScopeConflicts, Strin
     for profile in super::list_project_profiles()? {
         let parsed = super::read_project_profile_parsed(&profile)
             .map_err(|e| format!("Profile '{}' could not be read: {}", profile, e))?;
-        if parsed.mcp_servers.iter().any(|s| s == name) {
+        if parsed.mcp_servers.iter().any(|s| s.eq_ignore_ascii_case(name)) {
             conflicts.profiles.push(profile);
         }
     }
@@ -337,7 +349,7 @@ fn scope_conflicts(name: &str, project_id: &str) -> Result<ScopeConflicts, Strin
     let mut agents: Vec<String> = state
         .agents
         .iter()
-        .filter(|(_, record)| record.selected.iter().any(|s| s == name))
+        .filter(|(_, record)| record.selected.iter().any(|s| s.eq_ignore_ascii_case(name)))
         .map(|(agent, _)| agent.clone())
         .collect();
     agents.sort();
@@ -411,6 +423,21 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         let path = home.path().to_path_buf();
         with_test_home(path.clone(), || test(&path));
+    }
+
+    /// Register a project with `id` and `servers`, in its own folder.
+    fn register(home: &std::path::Path, name: &str, id: &str, servers: &[&str]) {
+        let dir = home.join(name);
+        fs::create_dir_all(&dir).expect("mkdir");
+        let project = crate::core::Project {
+            name: name.to_string(),
+            id: id.to_string(),
+            directory: dir.to_string_lossy().to_string(),
+            mcp_servers: servers.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
+            .expect("save project");
     }
 
     fn store(name: &str, config: Value) {
@@ -514,7 +541,8 @@ mod tests {
 
     #[test]
     fn create_project_server_is_scoped_and_create_only() {
-        with_temp_home(|_| {
+        with_temp_home(|home| {
+            register(home, "one", "p-1", &[]);
             create_project_mcp_server("p-1", "db", r#"{"command":"npx","env":{"KEY":"v"}}"#)
                 .expect("create");
             assert_eq!(read_mcp_server_scope("db").unwrap().as_deref(), Some("p-1"));
@@ -525,6 +553,9 @@ mod tests {
             assert!(create_project_mcp_server("p-1", "DB", r#"{"command":"npx"}"#).is_err());
             assert!(create_project_mcp_server("p-1", "automatic", r#"{"command":"npx"}"#).is_err());
             assert!(create_project_mcp_server("", "other", r#"{"command":"npx"}"#).is_err());
+            let err = create_project_mcp_server("p-unknown", "other", r#"{"command":"npx"}"#)
+                .unwrap_err();
+            assert!(err.contains("No project"), "{err}");
         });
     }
 
@@ -541,12 +572,17 @@ mod tests {
             )
             .unwrap_err();
             assert!(err.contains("mine") && err.starts_with("A profile"), "{err}");
+            assert!(
+                ensure_no_project_servers(&["MINE".to_string()], "a profile").is_err(),
+                "a case variant names the same server"
+            );
         });
     }
 
     #[test]
     fn scope_can_be_set_and_cleared_and_keeps_env_values() {
-        with_temp_home(|_| {
+        with_temp_home(|home| {
+            register(home, "one", "p-1", &[]);
             store("srv", json!({ "command": "npx", "env": { "TOKEN": "secret" } }));
 
             set_mcp_server_scope("srv", Some("p-1")).expect("limit");
@@ -567,17 +603,9 @@ mod tests {
     fn limiting_is_refused_while_another_project_uses_the_server() {
         with_temp_home(|home| {
             store("srv", json!({ "command": "npx" }));
-            let dir = home.join("other");
-            fs::create_dir_all(&dir).expect("mkdir");
-            let other = crate::core::Project {
-                name: "other".to_string(),
-                id: "p-other".to_string(),
-                directory: dir.to_string_lossy().to_string(),
-                mcp_servers: vec!["srv".to_string()],
-                ..Default::default()
-            };
-            crate::core::save_project("other", &serde_json::to_string(&other).unwrap())
-                .expect("save project");
+            register(home, "mine", "p-mine", &[]);
+            // A different case names the same library file.
+            register(home, "other", "p-other", &["SRV"]);
 
             let err = set_mcp_server_scope("srv", Some("p-mine")).unwrap_err();
             assert!(err.contains("projects other"), "{err}");
@@ -591,7 +619,8 @@ mod tests {
 
     #[test]
     fn limiting_is_refused_while_a_profile_or_global_config_uses_the_server() {
-        with_temp_home(|_| {
+        with_temp_home(|home| {
+            register(home, "one", "p-1", &[]);
             store("srv", json!({ "command": "npx" }));
             crate::core::save_project_profile(
                 "team",

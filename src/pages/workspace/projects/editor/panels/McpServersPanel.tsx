@@ -57,10 +57,12 @@ function NewProjectServerForm({
   const [name, setName] = useState("");
   const [commandOrUrl, setCommandOrUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  // Set once the server exists, so a failed attach cannot create it twice.
+  const [created, setCreated] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const config = projectServerConfig(commandOrUrl);
-  const canCreate = name.trim() !== "" && config !== null && !saving;
+  const canCreate = name.trim() !== "" && config !== null && !saving && !created;
 
   const handleCreate = async () => {
     if (!canCreate) return;
@@ -72,9 +74,17 @@ function NewProjectServerForm({
         name: name.trim(),
         data: JSON.stringify(config),
       });
-      await onCreate(name.trim());
     } catch (err: unknown) {
       setError(String(err));
+      setSaving(false);
+      return;
+    }
+    setCreated(true);
+    try {
+      await onCreate(name.trim());
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setSaving(false);
     }
   };
@@ -116,7 +126,7 @@ function NewProjectServerForm({
           onClick={onCancel}
           className="px-2.5 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
         >
-          Cancel
+          {created ? "Close" : "Cancel"}
         </button>
         <button
           onClick={() => void handleCreate()}

@@ -705,7 +705,8 @@ pub fn check_template_dependencies(template_name: &str) -> Result<String, String
     let installed_names: std::collections::HashSet<String> =
         list_skill_names().unwrap_or_default().into_iter().collect();
 
-    let installed_mcp: std::collections::HashSet<String> = list_mcp_server_configs()
+    // A server limited to one project cannot serve a template.
+    let installed_mcp: std::collections::HashSet<String> = super::list_visible_mcp_server_configs(None)
         .unwrap_or_default()
         .into_iter()
         .collect();

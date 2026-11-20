@@ -1406,6 +1406,8 @@ fn save_server(server: &AgentPackageMcpServer) -> Result<(), String> {
         &content,
     )?;
     let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
+    // A package cannot limit a server to a project. Imported servers are global.
+    let content = super::mcp_scope::with_scope(&content, None);
     super::mcp_servers::create_mcp_server_config(&server.name, &content)
 }
 

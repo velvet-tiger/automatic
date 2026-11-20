@@ -756,6 +756,17 @@ fn write_mcp_server_asset(machine_name: &str, payload: &Value) -> Result<(), Str
     // wrote that. A prefixed value in it is not ciphertext this install can
     // read, so it is stored empty. Values kept from the local entry were
     // decrypted, and never carry the prefix.
+    //
+    // An entry this install already holds keeps its own project scope: only
+    // a local action changes it, so a cloud edit cannot hand a project
+    // server, and the env values kept above, to every project. A new entry
+    // keeps the scope it arrives with, so a project server reaches the same
+    // project on the user's other machines. That can only narrow who sees it.
+    let data = if super::mcp_servers::read_mcp_server_config_if_present(machine_name)?.is_some() {
+        super::mcp_scope::with_stored_scope(machine_name, &data)?
+    } else {
+        data
+    };
     super::mcp_servers::save_untrusted_mcp_server_config(machine_name, &data)
 }
 
@@ -1513,6 +1524,48 @@ mod tests {
             let raw = super::super::subagents::read_subagent("my-agent").unwrap();
             let v: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(v["name"].as_str().unwrap(), "Friendly Name");
+        });
+    }
+
+    #[test]
+    fn a_pull_keeps_the_local_scope_of_an_existing_server() {
+        with_temp_home(|_| {
+            super::super::mcp_servers::save_mcp_server_config(
+                "scoped",
+                r#"{"command":"npx","env":{"TOKEN":"secret"},"_project":"p-1"}"#,
+            )
+            .unwrap();
+            super::super::mcp_servers::save_mcp_server_config("global", r#"{"command":"npx"}"#)
+                .unwrap();
+
+            // The cloud copy drops the scope of one and adds one to the other.
+            write_mcp_server_asset(
+                "scoped",
+                &json!({ "config": { "command": "npx", "env_keys": ["TOKEN"] } }),
+            )
+            .unwrap();
+            write_mcp_server_asset(
+                "global",
+                &json!({ "config": { "command": "npx", "_project": "p-attacker" } }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                super::super::read_mcp_server_scope("scoped").unwrap().as_deref(),
+                Some("p-1")
+            );
+            assert_eq!(super::super::read_mcp_server_scope("global").unwrap(), None);
+
+            // A new server keeps the scope it arrives with.
+            write_mcp_server_asset(
+                "fresh",
+                &json!({ "config": { "command": "npx", "_project": "p-2" } }),
+            )
+            .unwrap();
+            assert_eq!(
+                super::super::read_mcp_server_scope("fresh").unwrap().as_deref(),
+                Some("p-2")
+            );
         });
     }
 

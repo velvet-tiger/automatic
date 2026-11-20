@@ -798,7 +798,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const scopeLabel = (projectId: string) =>
     projectNames[projectId] !== undefined
       ? `Project: ${projectNames[projectId]}`
-      : "Project: removed project";
+      : "Project: not on this machine";
 
   const changeScope = async (projectId: string | null) => {
     if (!selectedName) return;
@@ -1536,7 +1536,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         <p className="text-[13px] text-text-base">
                           {projectNames[scopes[selectedName]!] !== undefined
                             ? <>Only <span className="font-medium">{projectNames[scopes[selectedName]!]}</span> can see this server.</>
-                            : "Only a project that is no longer in Automatic can see this server. Make it available to all projects, or delete it."}
+                            : "Only a project that is not registered on this machine can see this server. It may have been removed, or it may live on another machine. Make the server available to all projects, or delete it."}
                         </p>
                         <button
                           onClick={() => void changeScope(null)}
