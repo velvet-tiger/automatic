@@ -533,11 +533,15 @@ fn save_reconciled_project(
                     if !core::contains_ignore_ascii_case(&enriched.mcp_servers, &server_name) {
                         enriched.mcp_servers.push(server_name.clone());
                     }
-                    // Add the config to the global registry so that
-                    // sync_project_without_autodetect can include it when
-                    // building the mcpServers map written to disk.  A name
-                    // the registry already holds keeps its saved config.
-                    let _ = core::add_discovered_mcp_server_config(&server_name, &config_str);
+                    // Add the config to the library, limited to this project,
+                    // so that sync_project_without_autodetect can include it
+                    // when building the mcpServers map written to disk.  A
+                    // name the library already holds keeps its saved config.
+                    let _ = core::add_discovered_mcp_server_config(
+                        &server_name,
+                        &config_str,
+                        Some(enriched.id.as_str()),
+                    );
                 }
             }
 

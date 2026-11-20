@@ -159,6 +159,9 @@ interface McpServerConfig {
   _author?: McpAuthorMeta;
   /** Automatic-internal: true for built-in servers that cannot be deleted or reconfigured. */
   _builtin?: boolean;
+  /** Automatic-internal: id of the only project that can see this server.
+   *  The backend keeps it on every save; change it with `set_mcp_server_scope`. */
+  _project?: string;
   /** Automatic-internal: the catalogue URL with `<token>` placeholders, such as
    *  Spacelift's `https://<account-name>.app.spacelift.io/mcp`. The editor
    *  asks for the token values and builds `url` from it. Stripped on sync. */
@@ -738,6 +741,13 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [saveDespiteErrors, setSaveDespiteErrors] = useState(false);
   const [storedFindings, setStoredFindings] = useState<Record<string, McpConfigValidation>>({});
 
+  // Project servers: server name → id of the only project that can see it,
+  // and every project's name by id for the labels.
+  const [scopes, setScopes] = useState<Record<string, string>>({});
+  const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  const [scopeTarget, setScopeTarget] = useState("");
+  const [scopeBusy, setScopeBusy] = useState(false);
+
 
   useEffect(() => {
     loadServers();
@@ -763,7 +773,47 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     } catch (err: any) {
       setError(`Failed to load servers: ${err}`);
     }
+    await loadScopes();
     await loadStoredFindings();
+  };
+
+  const loadScopes = async () => {
+    try {
+      const [scopeMap, summaries] = await Promise.all([
+        invoke<Record<string, string>>("list_mcp_server_scopes"),
+        invoke<{ id: string; name: string }[]>("get_project_summaries"),
+      ]);
+      setScopes(scopeMap);
+      const names: Record<string, string> = {};
+      for (const summary of summaries) {
+        if (summary.id) names[summary.id] = summary.name;
+      }
+      setProjectNames(names);
+    } catch (err: unknown) {
+      setError(`Failed to load project servers: ${err}`);
+    }
+  };
+
+  /** "Project: <name>", or a plain label when the project no longer exists here. */
+  const scopeLabel = (projectId: string) =>
+    projectNames[projectId] !== undefined
+      ? `Project: ${projectNames[projectId]}`
+      : "Project: removed project";
+
+  const changeScope = async (projectId: string | null) => {
+    if (!selectedName) return;
+    setScopeBusy(true);
+    try {
+      await invoke("set_mcp_server_scope", { name: selectedName, projectId });
+      setScopeTarget("");
+      await loadScopes();
+      await selectServer(selectedName);
+      setError(null);
+    } catch (err: unknown) {
+      setError(`Failed to change who can use this server: ${err}`);
+    } finally {
+      setScopeBusy(false);
+    }
   };
 
   const loadStoredFindings = async () => {
@@ -978,10 +1028,21 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       const source = JSON.parse(raw) as Record<string, unknown>;
       // A copy is user-owned: it must never inherit the built-in lock.
       delete source._builtin;
-      await invoke("save_mcp_server_config", {
-        name: copyName,
-        data: JSON.stringify(source),
-      });
+      // A copy of a project server belongs to the same project.
+      const owner = typeof source._project === "string" ? source._project : "";
+      delete source._project;
+      if (owner) {
+        await invoke("create_project_mcp_server", {
+          projectId: owner,
+          name: copyName,
+          data: JSON.stringify(source),
+        });
+      } else {
+        await invoke("save_mcp_server_config", {
+          name: copyName,
+          data: JSON.stringify(source),
+        });
+      }
       trackMcpServerCreated(copyName);
       await loadServers();
       setRecentRefresh(prev => prev + 1);
@@ -1164,6 +1225,14 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
             )}
             {recentIds.has(name) && (
               <span className="shrink-0 px-1.5 py-0.5 rounded bg-brand/15 text-brand text-[9px] font-semibold uppercase tracking-wider">New</span>
+            )}
+            {scopes[name] !== undefined && (
+              <span
+                className="shrink-0 px-1.5 py-0.5 rounded-full border border-brand/30 bg-brand/10 text-brand text-[10px] font-medium leading-none truncate max-w-[180px]"
+                title="Only this project can see this server"
+              >
+                {scopeLabel(scopes[name]!)}
+              </span>
             )}
           </div>
         </td>
@@ -1455,6 +1524,60 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     </section>
                   );
                 })()}
+
+                {/* Who can use it */}
+                {!isCreating && !isBuiltin && selectedName && (
+                  <section>
+                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
+                      Available to
+                    </label>
+                    {scopes[selectedName] !== undefined ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[13px] text-text-base">
+                          {projectNames[scopes[selectedName]!] !== undefined
+                            ? <>Only <span className="font-medium">{projectNames[scopes[selectedName]!]}</span> can see this server.</>
+                            : "Only a project that is no longer in Automatic can see this server. Make it available to all projects, or delete it."}
+                        </p>
+                        <button
+                          onClick={() => void changeScope(null)}
+                          disabled={scopeBusy || dirty}
+                          title={dirty ? "Save your changes first" : undefined}
+                          className="flex-shrink-0 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded transition-colors disabled:opacity-50"
+                        >
+                          Make available to all projects
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[13px] text-text-base">All projects.</p>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <select
+                            value={scopeTarget}
+                            onChange={(e) => setScopeTarget(e.target.value)}
+                            disabled={scopeBusy || dirty}
+                            aria-label="Project to limit this server to"
+                            className={smallInputClass}
+                          >
+                            <option value="">Limit to one project…</option>
+                            {Object.entries(projectNames)
+                              .sort(([, a], [, b]) => a.localeCompare(b))
+                              .map(([id, name]) => (
+                                <option key={id} value={id}>{name}</option>
+                              ))}
+                          </select>
+                          <button
+                            onClick={() => void changeScope(scopeTarget)}
+                            disabled={!scopeTarget || scopeBusy || dirty}
+                            title={dirty ? "Save your changes first" : undefined}
+                            className="px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded transition-colors disabled:opacity-50"
+                          >
+                            Limit
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                )}
 
                 {/* Transport Type + Enabled */}
                 <section>

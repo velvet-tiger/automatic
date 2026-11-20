@@ -31,6 +31,9 @@ pub fn read_project_profile(name: &str) -> Result<String, String> {
 pub fn save_project_profile(name: &str, data: &str) -> Result<(), String> {
     ensure_not_being_deleted(&format!("profile:{name}"), name)?;
     let writes = hold_library_writes();
+    let incoming: core::ProjectProfile =
+        serde_json::from_str(data).map_err(|e| format!("Invalid profile data: {}", e))?;
+    core::ensure_no_project_servers(&incoming.mcp_servers, "a profile")?;
     core::save_project_profile(name, data)?;
     drop(writes);
     let profile = name.to_string();

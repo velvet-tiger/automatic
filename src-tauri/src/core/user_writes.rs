@@ -48,7 +48,13 @@ pub fn save_user_command(machine_name: &str, content: &str) -> Result<(), String
 /// taking the server over: an update keeps those values, see
 /// `remote_sources::install_mcp_server`. Any other change makes the server
 /// the user's.
+///
+/// The stored project scope is kept whatever `data` says. The editor does
+/// not send it, and the scope changes only through
+/// [`super::set_mcp_server_scope`].
 pub fn save_mcp_server(name: &str, data: &str) -> Result<(), String> {
+    let data = super::mcp_scope::with_stored_scope(name, data)?;
+    let data = data.as_str();
     if changes_only_env_values(name, data)? {
         return super::mcp_servers::save_user_mcp_server_config(name, data);
     }

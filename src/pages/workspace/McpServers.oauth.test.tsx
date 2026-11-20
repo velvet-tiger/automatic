@@ -19,6 +19,8 @@ function routes(hasToken: () => boolean, tokenValid = true) {
     validate_stored_mcp_server_configs: {},
     validate_mcp_server_config: { findings: [], docker_fix_available: false, remote_equivalent: null },
     get_projects: [],
+    get_project_summaries: [],
+    list_mcp_server_scopes: {},
     get_recently_added_items: [],
     has_mcp_oauth_token: () => hasToken(),
     get_mcp_oauth_token_status: () => ({

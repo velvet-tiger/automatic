@@ -237,7 +237,7 @@ pub fn save_user_mcp_server_config(name: &str, data: &str) -> Result<(), String>
 ///
 /// A config that is not JSON, or has no `env` object, passes. The save that
 /// follows parses it again and reports invalid JSON itself.
-fn reject_undecryptable_env_values(data: &str) -> Result<(), String> {
+pub(crate) fn reject_undecryptable_env_values(data: &str) -> Result<(), String> {
     let Ok(config) = serde_json::from_str::<serde_json::Value>(data) else {
         return Ok(());
     };
@@ -579,7 +579,15 @@ pub fn comparable_mcp_url(url: &str) -> Option<String> {
 ///
 /// An env value that looks like Automatic's own ciphertext is stored empty,
 /// as [`blank_ciphertext_like_env_values`] describes.
-pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
+///
+/// A new entry is limited to the project with `project_id`, the project whose
+/// files it was found in. `None` stores it as a global server. Any scope the
+/// file's config names itself is replaced.
+pub fn add_discovered_mcp_server_config(
+    name: &str,
+    config_json: &str,
+    project_id: Option<&str>,
+) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
@@ -590,7 +598,8 @@ pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result
     }
     // The guard reads env key names only, and blanking keeps every key, so
     // the marker is the same whether it is decided before or after blanking.
-    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(config_json))
+    let scoped = super::mcp_scope::with_scope(config_json, project_id);
+    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(&scoped))
 }
 
 /// Replace every `env` value that carries the encryption prefix with an
@@ -2722,10 +2731,10 @@ mod tests {
                 .expect("seed");
 
             let incoming = r#"{"type":"http","url":"https://other.example/mcp"}"#;
-            add_discovered_mcp_server_config("github", incoming).expect("existing name");
-            add_discovered_mcp_server_config("GitHub", incoming).expect("case variant");
-            add_discovered_mcp_server_config("fresh", incoming).expect("new name");
-            assert!(add_discovered_mcp_server_config("../escape", incoming).is_err());
+            add_discovered_mcp_server_config("github", incoming, None).expect("existing name");
+            add_discovered_mcp_server_config("GitHub", incoming, None).expect("case variant");
+            add_discovered_mcp_server_config("fresh", incoming, None).expect("new name");
+            assert!(add_discovered_mcp_server_config("../escape", incoming, None).is_err());
 
             assert_eq!(
                 list_mcp_server_configs().expect("list"),
@@ -2783,7 +2792,7 @@ mod tests {
         let home = tmp();
         with_test_home(home.path().to_path_buf(), || {
             let incoming = r#"{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}"#;
-            add_discovered_mcp_server_config("discovered-planted", incoming).expect("add");
+            add_discovered_mcp_server_config("discovered-planted", incoming, None).expect("add");
 
             let raw = read_mcp_server_config("discovered-planted")
                 .expect("the stored entry must be readable");

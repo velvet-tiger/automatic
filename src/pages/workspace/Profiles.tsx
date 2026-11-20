@@ -1,6 +1,7 @@
 import { useProjectSweepFinished } from "../../lib/projectSweeps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listSharedMcpServers } from "../../lib/mcpServerScopes";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Check,
@@ -192,8 +193,7 @@ export default function Profiles({
         setAvailableSkills(result.map((e) => e.name).sort());
       }),
       quietly(async () => {
-        const result: string[] = await invoke("list_mcp_server_configs");
-        setAvailableMcpServers([...result].sort());
+        setAvailableMcpServers(await listSharedMcpServers());
       }),
       quietly(async () => {
         const result: { id: string; name: string }[] = await invoke("get_rules");

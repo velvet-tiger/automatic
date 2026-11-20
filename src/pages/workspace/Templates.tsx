@@ -12,6 +12,7 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { invoke } from "@tauri-apps/api/core";
+import { listSharedMcpServers } from "../../lib/mcpServerScopes";
 import {
   loadProjectSummaries,
   projectKeyOf,
@@ -261,8 +262,7 @@ export default function Templates({
 
   const loadAvailableMcpServers = async () => {
     try {
-      const result: string[] = await invoke("list_mcp_server_configs");
-      setAvailableMcpServers(result.sort());
+      setAvailableMcpServers(await listSharedMcpServers());
     } catch { /* ignore */ }
   };
 

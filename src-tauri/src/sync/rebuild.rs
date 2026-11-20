@@ -43,8 +43,9 @@ pub fn rebuild_project_with_refusals(project: &Project) -> Result<(Project, Vec<
         rebuilt.mcp_servers.push("automatic".to_string());
     }
 
+    // Servers found in this project's files are limited to this project.
     for (name, config_str) in discovered_servers {
-        let _ = core::add_discovered_mcp_server_config(&name, &config_str);
+        let _ = core::add_discovered_mcp_server_config(&name, &config_str, Some(project.id.as_str()));
     }
 
     rebuilt.disabled_mcp_servers = project

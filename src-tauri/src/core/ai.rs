@@ -417,8 +417,8 @@ async fn chat_with_tools_inner(
                     "read_rule" => execute_read_rule(input),
                     "list_templates" => execute_list_templates(),
                     "read_template" => execute_read_template(input),
-                    "list_mcp_servers" => execute_list_mcp_servers(),
-                    "read_mcp_server" => execute_read_mcp_server(input),
+                    "list_mcp_servers" => execute_list_mcp_servers(&work_path),
+                    "read_mcp_server" => execute_read_mcp_server(input, &work_path),
                     "search_discover_skills" => execute_search_discover_skills(input).await,
                     "search_discover_mcp" => execute_search_discover_mcp(input),
                     "search_collections" => execute_search_collections(input),
@@ -755,18 +755,29 @@ fn execute_read_template(input: &Value) -> String {
     }
 }
 
-fn execute_list_mcp_servers() -> String {
-    match crate::core::list_mcp_server_configs() {
+/// Global servers, plus the project servers of the project in `work_path`.
+fn execute_list_mcp_servers(work_path: &std::path::Path) -> String {
+    let project_id = crate::core::project_id_for_folder(work_path);
+    match crate::core::list_visible_mcp_server_configs(project_id.as_deref()) {
         Ok(names) => serde_json::to_string_pretty(&names).unwrap_or_else(|_| "[]".to_string()),
         Err(e) => format!("Error listing MCP servers: {}", e),
     }
 }
 
-fn execute_read_mcp_server(input: &Value) -> String {
+fn execute_read_mcp_server(input: &Value, work_path: &std::path::Path) -> String {
     let name = match input.get("name").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => return "Error: missing required parameter 'name'.".to_string(),
     };
+    // Another project's server reads as missing, as it does in the list.
+    let project_id = crate::core::project_id_for_folder(work_path);
+    match crate::core::read_mcp_server_scope(name) {
+        Ok(Some(owner)) if project_id.as_deref() != Some(owner.as_str()) => {
+            return format!("Error reading MCP server config '{}': MCP server '{}' not found", name, name);
+        }
+        Ok(_) => {}
+        Err(e) => return format!("Error reading MCP server config '{}': {}", name, e),
+    }
     match crate::core::read_mcp_server_config(name) {
         Ok(content) => content,
         Err(e) => format!("Error reading MCP server config '{}': {}", name, e),

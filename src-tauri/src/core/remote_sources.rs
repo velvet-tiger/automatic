@@ -3958,6 +3958,15 @@ fn install_mcp_server(
     // OAuth secrets of a server this install replaces with another URL are
     // tidied.
     let content = super::mcp_servers::blank_ciphertext_like_env_values(&content);
+    // A source cannot move a server into or out of a project. A new server
+    // is global, and a reinstall keeps the scope the user gave it. A create
+    // never replaces the stored entry, so it does not read it.
+    let content = match mode {
+        WriteMode::Create => super::mcp_scope::with_scope(&content, None),
+        WriteMode::ReplaceConfirmed | WriteMode::ReplaceOwned => {
+            super::mcp_scope::with_stored_scope(&server.name, &content)?
+        }
+    };
     let written = match mode {
         WriteMode::Create => super::mcp_servers::create_mcp_server_config(&server.name, &content),
         WriteMode::ReplaceConfirmed => {

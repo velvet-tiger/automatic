@@ -13,7 +13,7 @@ use super::rebuild::agent_file_is_refused;
 use super::helpers::{
     agent_content_notes, automatic_project_env_value, build_selected_servers, build_skill_contents,
     collect_custom_asset_conflicts, collect_mcp_config_notes, conflicting_names,
-    escaped_silent_dir, load_mcp_server_configs, read_project_text, refused_root_mcp_file,
+    escaped_silent_dir, project_mcp_selection, read_project_text, refused_root_mcp_file,
     McpConfigSyncNotes, McpServerNote, MAX_PROJECT_READ_BYTES,
     CustomAssetConflict, CustomAssetKind,
 };
@@ -332,9 +332,14 @@ fn writable_folders_target_notice(
 /// Validate the project's enabled MCP servers against the registry and report
 /// which ones a sync leaves out and which ones sync with warnings.
 pub fn mcp_config_sync_notes(project: &Project) -> Result<McpConfigSyncNotes, String> {
-    let enabled_mcp_servers = project.enabled_mcp_servers();
-    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
-    Ok(collect_mcp_config_notes(&enabled_mcp_servers, &mcp_config))
+    let super::helpers::ProjectMcpSelection {
+        names: enabled_mcp_servers,
+        configs: mcp_config,
+        other_project,
+    } = project_mcp_selection(project)?;
+    let mut notes = collect_mcp_config_notes(&enabled_mcp_servers, &mcp_config);
+    notes.other_project = other_project;
+    Ok(notes)
 }
 
 /// What sync left out or changed for each agent on `project`, one line each.
@@ -355,8 +360,11 @@ impl ProjectSyncWarnings {
 /// Derived from the project and the disk, so the problems list shows these
 /// whenever they are true, not only straight after a sync.
 pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, String> {
-    let enabled_mcp_servers = project.enabled_mcp_servers();
-    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    let super::helpers::ProjectMcpSelection {
+        names: enabled_mcp_servers,
+        configs: mcp_config,
+        ..
+    } = project_mcp_selection(project)?;
     let selected_servers = build_selected_servers(
         automatic_project_env_value(project),
         &enabled_mcp_servers,
@@ -465,6 +473,26 @@ fn mcp_config_problems(notes: &McpConfigSyncNotes) -> Vec<ProjectProblem> {
             reference_url: None,
             agents: Vec::new(),
             resources: names(&notes.skipped),
+        });
+    }
+    if !notes.other_project.is_empty() {
+        let mut solution: Vec<String> = notes
+            .other_project
+            .iter()
+            .map(|name| format!("`{}` is limited to another project.", name))
+            .collect();
+        solution.push(
+            "Remove the server from this project, or open it under Library > MCP Servers and make it available to all projects."
+                .to_string(),
+        );
+        problems.push(ProjectProblem {
+            kind: ProjectProblemKind::McpServerConfigInvalid,
+            title: "MCP servers from another project".to_string(),
+            description: "This project lists servers that belong to another project, so Automatic leaves them out of every agent config file.".to_string(),
+            solution,
+            reference_url: None,
+            agents: Vec::new(),
+            resources: notes.other_project.clone(),
         });
     }
     if !notes.warnings.is_empty() {
@@ -865,8 +893,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
 
     // Build the MCP server map using the same logic as the sync engine
     // (strips internal `_` fields, substitutes OAuth proxy configs).
-    let enabled_mcp_servers = project.enabled_mcp_servers();
-    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    let super::helpers::ProjectMcpSelection {
+        names: enabled_mcp_servers,
+        configs: mcp_config,
+        ..
+    } = project_mcp_selection(project)?;
     // The drift check runs on a timer, so it is a background read: it does
     // not ask a secret store that has just failed.
     let selected_servers = build_selected_servers(
@@ -3797,6 +3828,68 @@ mod tests {
             assert!(invalid[0].solution[0].contains("`-i` is missing"));
             assert_eq!(invalid[1].resources, vec!["handwritten".to_string()]);
             assert!(invalid[1].solution[0].contains("`-i` is missing"));
+        });
+    }
+
+    /// A project syncs its own project servers. A server limited to another
+    /// project is left out of its agent files, without drift, and reported.
+    #[test]
+    fn another_projects_server_is_skipped_without_drift_and_reported() {
+        use crate::core::{save_mcp_server_config, with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("shared", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save shared");
+            save_mcp_server_config(
+                "mine",
+                r#"{"type":"stdio","command":"npx","env":{"TOKEN":"mine-secret"},"_project":"p-mine"}"#,
+            )
+            .expect("save mine");
+            save_mcp_server_config(
+                "theirs",
+                r#"{"type":"stdio","command":"npx","env":{"TOKEN":"their-secret"},"_project":"p-theirs"}"#,
+            )
+            .expect("save theirs");
+
+            let mut project = Project {
+                name: "scoped".to_string(),
+                id: "p-mine".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec![
+                    "automatic".to_string(),
+                    "shared".to_string(),
+                    "mine".to_string(),
+                    "theirs".to_string(),
+                ],
+                ..Default::default()
+            };
+
+            crate::sync::sync_project_without_autodetect(&mut project).expect("sync");
+
+            let raw = fs::read_to_string(project_dir.path().join(".mcp.json")).expect("read .mcp.json");
+            assert!(!raw.contains("their-secret"), "another project's secret must not be written");
+            let written: Value = serde_json::from_str(&raw).expect("parse .mcp.json");
+            let servers = written["mcpServers"].as_object().expect("mcpServers map");
+            assert!(servers.contains_key("shared"));
+            assert!(servers.contains_key("mine"), "the project's own server syncs");
+            assert!(servers["mine"].get("_project").is_none(), "the scope is internal");
+            assert!(!servers.contains_key("theirs"), "another project's server is left out");
+
+            let drift = check_project_drift(&project).expect("drift check");
+            assert!(!drift.drifted, "a hidden server must not read as drift: {:?}", drift);
+
+            let report = check_project_problems(&project).expect("problems check");
+            let other: Vec<&ProjectProblem> = report
+                .problems
+                .iter()
+                .filter(|p| p.title == "MCP servers from another project")
+                .collect();
+            assert_eq!(other.len(), 1, "{:?}", report.problems);
+            assert_eq!(other[0].resources, vec!["theirs".to_string()]);
         });
     }
 

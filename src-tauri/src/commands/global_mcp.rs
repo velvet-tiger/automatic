@@ -65,10 +65,16 @@ pub fn get_global_mcp_state() -> Result<String, String> {
 #[tauri::command]
 pub fn list_global_eligible_mcp_servers() -> Result<String, String> {
     let names = crate::core::list_mcp_server_configs()?;
+    let scopes = crate::core::list_mcp_server_scopes()?;
     let mut out: Vec<serde_json::Value> = Vec::with_capacity(names.len());
     for name in names {
         let mut eligible = true;
         let mut reason: Option<String> = None;
+        // A project server is limited to one project, so it is not offered
+        // for a config every project shares.
+        if scopes.contains_key(&name) {
+            continue;
+        }
         if name == "automatic" {
             eligible = false;
             reason = Some("Project-scoped only".to_string());
@@ -104,6 +110,7 @@ pub fn set_global_mcp_servers(
     agent_id: String,
     servers: Vec<String>,
 ) -> Result<GlobalMcpApplyReport, String> {
+    crate::core::ensure_no_project_servers(&servers, "a global agent config")?;
     orchestrator::apply_global_mcp(&agent_id, servers)
 }
 

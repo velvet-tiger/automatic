@@ -19,6 +19,9 @@ pub fn read_template(name: &str) -> Result<String, String> {
 #[tauri::command(async)]
 pub fn save_template(name: &str, data: &str) -> Result<(), String> {
     let _writes = super::project_sweeps::hold_library_writes();
+    let incoming: core::ProjectTemplate =
+        serde_json::from_str(data).map_err(|e| format!("Invalid template data: {}", e))?;
+    core::ensure_no_project_servers(&incoming.mcp_servers, "a template")?;
     core::user_writes::save_template(name, data)
 }
 

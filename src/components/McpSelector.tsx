@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { DropdownMenu } from "./DropdownMenu";
 import { invoke } from "@tauri-apps/api/core";
 import { InheritedBadge, LockedRemoveButton } from "./ProtectionBadge";
@@ -61,6 +61,23 @@ interface McpSelectorProps {
   lockedServers?: string[];
   /** Name of the profile that provides a server, when one does. Renders a badge. */
   lockedLabel?: (serverName: string) => string | undefined;
+  /** Server names that only this project can see. Renders a "Project" badge. */
+  projectServers?: string[];
+  /** Extra controls shown beside "Add from Library". */
+  headerActions?: ReactNode;
+  /** Content shown between the header and the server list. */
+  headerPanel?: ReactNode;
+}
+
+function ProjectServerBadge() {
+  return (
+    <span
+      className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-brand/30 bg-brand/10 text-brand leading-none flex-shrink-0"
+      title="Only this project can see this server"
+    >
+      Project
+    </span>
+  );
 }
 
 // ── Inline read-only config card ───────────────────────────────────────────
@@ -309,6 +326,9 @@ export function McpSelector({
   onToggleEnabled,
   lockedServers = [],
   lockedLabel,
+  projectServers = [],
+  headerActions,
+  headerPanel,
 }: McpSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -358,7 +378,8 @@ export function McpSelector({
           )}
         </div>
         {!disableAdd && (
-          <div className="relative">
+          <div className="relative flex items-center gap-4">
+            {headerActions}
             <button
               onClick={(e) => { e.stopPropagation(); setAdding(!adding); }}
               className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
@@ -366,7 +387,7 @@ export function McpSelector({
               <Plus size={12} /> Add from Library
             </button>
             {adding && (
-              <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 top-full w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
@@ -394,9 +415,10 @@ export function McpSelector({
                         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors"
                       >
                         <Server size={14} className="text-text-muted flex-shrink-0" />
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div className="text-[12px] font-medium text-text-base truncate">{s}</div>
                         </div>
+                        {projectServers.includes(s) && <ProjectServerBadge />}
                       </button>
                     ))
                   )}
@@ -406,6 +428,8 @@ export function McpSelector({
           </div>
         )}
       </div>
+
+      {headerPanel}
 
       {/* Empty state */}
       {servers.length === 0 && !adding && (
@@ -450,6 +474,7 @@ export function McpSelector({
                 </button>
 
                 <McpAvailabilityPill name={srv} />
+                {projectServers.includes(srv) && <ProjectServerBadge />}
                 {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
 
                 {canToggleEnabled && (

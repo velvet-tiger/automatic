@@ -1,7 +1,8 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, RefreshCw, Search, Sparkles, X } from "lucide-react";
+import { AlertCircle, Plus, RefreshCw, Search, Sparkles, X } from "lucide-react";
 import { McpSelector } from "../../../../../components/McpSelector";
 import { McpAddButton } from "../McpAddButton";
 import type { AgentInfo, ProfileLockMap, Project, ProjectRecommendation } from "../../types";
@@ -22,6 +23,111 @@ interface McpServersPanelProps {
   removeRecommendation: (id: number) => void;
   onNavigateToMcpServer?: (serverName: string) => void;
   onNavigateToDiscoverMcp?: (slug: string) => void;
+  /** Server name → id of the project it is limited to, for project servers. */
+  mcpServerScopes: Record<string, string>;
+  /** Reload the server list after this panel created a project server. */
+  onMcpServersChanged: () => void | Promise<void>;
+}
+
+/**
+ * The config for a new project server, from what the user typed in one box.
+ * A web address makes an HTTP server. Anything else is a command line,
+ * split on spaces into the command and its arguments. Quoted arguments are
+ * not supported here; the full editor handles them.
+ */
+export function projectServerConfig(commandOrUrl: string): Record<string, unknown> | null {
+  const trimmed = commandOrUrl.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    return { type: "http", url: trimmed };
+  }
+  const [command, ...args] = trimmed.split(/\s+/);
+  return args.length > 0 ? { type: "stdio", command, args } : { type: "stdio", command };
+}
+
+function NewProjectServerForm({
+  projectId,
+  onCreate,
+  onCancel,
+}: {
+  projectId: string;
+  onCreate: (name: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [commandOrUrl, setCommandOrUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const config = projectServerConfig(commandOrUrl);
+  const canCreate = name.trim() !== "" && config !== null && !saving;
+
+  const handleCreate = async () => {
+    if (!canCreate) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await invoke("create_project_mcp_server", {
+        projectId,
+        name: name.trim(),
+        data: JSON.stringify(config),
+      });
+      await onCreate(name.trim());
+    } catch (err: unknown) {
+      setError(String(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 bg-bg-input border border-brand/30 rounded-lg px-4 py-3 space-y-2.5">
+      <p className="text-[12px] text-text-muted leading-relaxed">
+        A project server works like any library server, but only this project can see it.
+        Add environment variables and other settings in the full editor afterwards.
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name, for example local-db"
+          autoFocus
+          className="w-48 bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded px-2 py-1.5 text-[12px] text-text-base placeholder-text-muted/50 outline-none"
+        />
+        <input
+          type="text"
+          value={commandOrUrl}
+          onChange={(e) => setCommandOrUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void handleCreate();
+            if (e.key === "Escape") onCancel();
+          }}
+          placeholder="Command, for example npx -y my-server, or a URL"
+          className="flex-1 min-w-0 bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded px-2 py-1.5 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none"
+        />
+      </div>
+      {error && (
+        <p className="text-[12px] text-danger flex items-center gap-1">
+          <AlertCircle size={11} /> {error}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="px-2.5 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => void handleCreate()}
+          disabled={!canCreate}
+          className="px-2.5 py-1 text-[12px] font-medium text-white bg-brand hover:bg-brand-hover rounded disabled:opacity-40 transition-colors"
+        >
+          {saving ? "Creating…" : "Create and add"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function McpServersPanel({
@@ -39,7 +145,24 @@ export function McpServersPanel({
   removeRecommendation,
   onNavigateToMcpServer,
   onNavigateToDiscoverMcp,
+  mcpServerScopes,
+  onMcpServersChanged,
 }: McpServersPanelProps) {
+  const [creatingProjectServer, setCreatingProjectServer] = useState(false);
+  const projectId = project.id ?? "";
+  const projectServers = Object.entries(mcpServerScopes)
+    .filter(([, owner]) => projectId !== "" && owner === projectId)
+    .map(([name]) => name);
+
+  const handleProjectServerCreated = async (name: string) => {
+    await onMcpServersChanged();
+    const added = await addItem("mcp_servers", name);
+    if (!added) {
+      throw new Error(`The server "${name}" was created, but it could not be added to this project. Add it from the library.`);
+    }
+    setCreatingProjectServer(false);
+  };
+
   // "No MCP" means Automatic cannot write the agent's MCP config
   // (capabilities.mcp_servers is false) — not merely that the agent carries an
   // informational mcp_note (Z Code and OpenCode have notes but are writable).
@@ -93,6 +216,27 @@ export function McpServersPanel({
         disableAdd={allNoMcp}
         emptyMessage={allNoMcp ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
         onNavigateToMcpServer={onNavigateToMcpServer}
+        projectServers={projectServers}
+        headerActions={
+          projectId !== "" && !creatingProjectServer ? (
+            <button
+              onClick={() => setCreatingProjectServer(true)}
+              className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
+              title="Create a server that only this project can see"
+            >
+              <Plus size={12} /> New project server
+            </button>
+          ) : null
+        }
+        headerPanel={
+          creatingProjectServer ? (
+            <NewProjectServerForm
+              projectId={projectId}
+              onCreate={handleProjectServerCreated}
+              onCancel={() => setCreatingProjectServer(false)}
+            />
+          ) : null
+        }
       />
 
       {/* ── AI MCP suggestions ─────────────────────────────── */}

@@ -433,6 +433,8 @@ export function ProjectEditor({
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
+  // Server name → id of the project it is limited to, for project servers.
+  const [mcpServerScopes, setMcpServerScopes] = useState<Record<string, string>>({});
 
   // Plugin-locked resources — skills/rules that cannot be removed because
   // they are provided by a plugin whose tool is active on this project.
@@ -1349,8 +1351,12 @@ export function ProjectEditor({
 
   const loadAvailableMcpServers = async () => {
     try {
-      const result: string[] = await invoke("list_mcp_server_configs");
+      const [result, scopes] = await Promise.all([
+        invoke<string[]>("list_mcp_server_configs"),
+        invoke<Record<string, string>>("list_mcp_server_scopes"),
+      ]);
       setAvailableMcpServers(result.sort());
+      setMcpServerScopes(scopes);
     } catch {
       // MCP servers may not exist yet
     }
@@ -4511,7 +4517,13 @@ export function ProjectEditor({
                   <McpServersPanel
                     project={project}
                     availableAgents={availableAgents}
-                    availableMcpServers={availableMcpServers}
+                    availableMcpServers={availableMcpServers.filter((name) => {
+                      // Another project's server is not offered here.
+                      const owner = mcpServerScopes[name];
+                      return owner === undefined || (!!project.id && owner === project.id);
+                    })}
+                    mcpServerScopes={mcpServerScopes}
+                    onMcpServersChanged={loadAvailableMcpServers}
                     profileLocks={profileLocks}
                     addItem={addItem}
                     removeItem={removeItem}

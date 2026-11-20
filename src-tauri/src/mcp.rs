@@ -1608,10 +1608,21 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_mcp_servers",
-        description = "List all MCP server configurations registered in the Automatic server registry"
+        description = "List the MCP server configurations in the Automatic library that this \
+                       project can use: every global server, plus the servers limited to this \
+                       project. Servers limited to another project are not listed."
     )]
     async fn list_mcp_servers(&self) -> Result<CallToolResult, McpError> {
-        match crate::core::list_mcp_server_configs() {
+        // An unknown or unconfirmed checkout sees global servers only.
+        let project_id = match self.reading_scope().await {
+            Ok(scope) => scope
+                .own_checkout()
+                .ok()
+                .map(|checkout| checkout.id.clone())
+                .filter(|id| !id.is_empty()),
+            Err(_) => None,
+        };
+        match crate::core::list_visible_mcp_server_configs(project_id.as_deref()) {
             Ok(names) => {
                 // Build a full config object with all server details
                 let mut servers = serde_json::Map::new();

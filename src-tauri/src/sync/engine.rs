@@ -10,7 +10,7 @@ use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents, clean_project_file,
     collect_custom_asset_conflicts, conflicting_names, create_project_dir, escaped_silent_dir,
-    load_mcp_server_configs, project_write_refusal, read_project_text, sync_custom_agents,
+    project_mcp_selection, project_write_refusal, read_project_text, sync_custom_agents,
     sync_user_agents, write_project_file, CustomAssetKind,
 };
 
@@ -91,11 +91,16 @@ fn check_project_directory(project: &Project) -> Result<(), String> {
 fn autodetect_and_sync(project: &Project, adoption: AgentAdoption) -> Result<Vec<String>, String> {
     let (mut updated_project, discovered_servers) = autodetect_inner(project, adoption)?;
 
-    // Add newly discovered MCP server configs to the global registry.  A name
-    // the registry already holds is left as it is.  This only happens during
-    // an explicit sync, not during a read-only load.
+    // Add newly discovered MCP server configs to the library, limited to this
+    // project because they were found in its files.  A name the library
+    // already holds is left as it is.  This only happens during an explicit
+    // sync, not during a read-only load.
     for (name, config_str) in discovered_servers {
-        let _ = crate::core::add_discovered_mcp_server_config(&name, &config_str);
+        let _ = crate::core::add_discovered_mcp_server_config(
+            &name,
+            &config_str,
+            Some(project.id.as_str()),
+        );
     }
 
     sync_project_without_autodetect(&mut updated_project)
@@ -167,8 +172,11 @@ fn sync_to_directory_inner(
     // anything is written.  This read fails when an enabled server exists but
     // cannot be read, and the legacy migrations below delete and move files.
     // A sync that is going to stop here must stop before they run.
-    let enabled_mcp_servers = project.enabled_mcp_servers();
-    let mcp_config = load_mcp_server_configs(&enabled_mcp_servers)?;
+    let super::helpers::ProjectMcpSelection {
+        names: enabled_mcp_servers,
+        configs: mcp_config,
+        ..
+    } = project_mcp_selection(project)?;
 
     // Build the selected server map from the registry configs read above
     // (includes stripping internal fields and OAuth proxy substitution).

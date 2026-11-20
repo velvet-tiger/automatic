@@ -34,6 +34,35 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Every project server in the library: server name to the id of the
+/// project it belongs to. Global servers are not listed.
+#[tauri::command]
+pub fn list_mcp_server_scopes() -> Result<std::collections::BTreeMap<String, String>, String> {
+    core::list_mcp_server_scopes()
+}
+
+/// Create a new library server that only the project with `project_id` can
+/// see. The caller attaches it to the project with a project save.
+#[tauri::command]
+pub fn create_project_mcp_server(project_id: &str, name: &str, data: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
+    let _writes = hold_library_writes();
+    core::create_project_mcp_server(project_id, name, data)
+}
+
+/// Limit a server to the project with `project_id`, or make it available to
+/// every project when `project_id` is `None`, then re-sync its users.
+#[tauri::command]
+pub fn set_mcp_server_scope(name: &str, project_id: Option<String>) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
+    {
+        let _writes = hold_library_writes();
+        core::set_mcp_server_scope(name, project_id.as_deref())?;
+    }
+    queue_mcp_server_sweep(name);
+    Ok(())
+}
+
 /// Queue a re-sync of every project and global assignment that uses a server.
 /// Global assignments render the same registry entry per agent, so a change
 /// should propagate to every agent that has this server assigned globally

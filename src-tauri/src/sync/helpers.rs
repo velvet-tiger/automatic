@@ -321,6 +321,46 @@ pub(crate) fn load_mcp_server_configs(
     Ok(servers)
 }
 
+/// What [`project_mcp_selection`] decided for one project.
+pub(crate) struct ProjectMcpSelection {
+    /// Enabled servers the project may sync, in the project's order.
+    pub names: Vec<String>,
+    /// Library configs of those servers.
+    pub configs: Map<String, Value>,
+    /// Enabled servers the project lists that are limited to another project.
+    pub other_project: Vec<String>,
+}
+
+/// The servers `project` syncs, as names and library configs, plus the names
+/// it lists that belong to another project.
+///
+/// Sync, drift and the problems check all start from this, so they agree on
+/// what a project gets. A server limited to another project is left out of
+/// the first two, as if it were not in the library: the project's committed
+/// config can name any server, and this keeps another project's server, and
+/// its secrets, out of this project's agent files.
+pub(crate) fn project_mcp_selection(
+    project: &Project,
+) -> Result<ProjectMcpSelection, String> {
+    let mut names = project.enabled_mcp_servers();
+    let mut configs = load_mcp_server_configs(&names)?;
+    let project_id = Some(project.id.as_str());
+    let hidden: Vec<String> = names
+        .iter()
+        .filter(|name| {
+            configs
+                .get(name.as_str())
+                .is_some_and(|config| !crate::core::config_visible_to(config, project_id))
+        })
+        .cloned()
+        .collect();
+    if !hidden.is_empty() {
+        names.retain(|name| !hidden.contains(name));
+        configs.retain(|name, _| !hidden.contains(name));
+    }
+    Ok(ProjectMcpSelection { names, configs, other_project: hidden })
+}
+
 /// Read all skill contents from the global registry for the given names.
 ///
 /// Uses the raw SKILL.md content (without companion resource formatting) so
@@ -917,6 +957,11 @@ pub(crate) fn build_global_selected_servers(
         if crate::core::mcp_sync_block_reason(server_config).is_some() {
             continue;
         }
+        // A global agent config is shared by every project, so a server
+        // limited to one project never goes in it.
+        if crate::core::config_scope(server_config).is_some() {
+            continue;
+        }
         let cleaned = strip_internal_fields(server_config.clone());
 
         let is_http = cleaned
@@ -954,11 +999,15 @@ pub struct McpServerNote {
 pub struct McpConfigSyncNotes {
     pub skipped: Vec<McpServerNote>,
     pub warnings: Vec<McpServerNote>,
+    /// Servers the project lists that are limited to another project. Sync
+    /// leaves them out of every agent file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_project: Vec<String>,
 }
 
 impl McpConfigSyncNotes {
     pub fn is_empty(&self) -> bool {
-        self.skipped.is_empty() && self.warnings.is_empty()
+        self.skipped.is_empty() && self.warnings.is_empty() && self.other_project.is_empty()
     }
 }
 
@@ -1733,6 +1782,50 @@ mod tests {
 
         project.id.clear();
         assert_eq!(automatic_project_env_value(&project), "site");
+    }
+
+    // ── project_mcp_selection ────────────────────────────────────────────────
+
+    #[test]
+    fn project_mcp_selection_leaves_out_another_projects_servers() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config("shared", r#"{"command":"npx"}"#).expect("seed");
+            crate::core::save_mcp_server_config("mine", r#"{"command":"npx","_project":"p-1"}"#)
+                .expect("seed");
+            crate::core::save_mcp_server_config("theirs", r#"{"command":"npx","_project":"p-2"}"#)
+                .expect("seed");
+
+            let project = Project {
+                id: "p-1".to_string(),
+                mcp_servers: names(&["shared", "mine", "theirs"]),
+                ..Default::default()
+            };
+            let selection = project_mcp_selection(&project).expect("selection");
+            assert_eq!(selection.names, names(&["shared", "mine"]));
+            assert_eq!(selection.configs.keys().collect::<Vec<_>>(), vec!["mine", "shared"]);
+            assert_eq!(selection.other_project, names(&["theirs"]));
+
+            // A project with no id yet sees global servers only.
+            let unnamed = Project { mcp_servers: names(&["shared", "mine"]), ..Default::default() };
+            let selection = project_mcp_selection(&unnamed).expect("selection");
+            assert_eq!(selection.names, names(&["shared"]));
+            assert_eq!(selection.other_project, names(&["mine"]));
+        });
+    }
+
+    #[test]
+    fn global_selection_never_includes_a_project_server() {
+        let home = tmp();
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_mcp_server_config("shared", r#"{"command":"npx"}"#).expect("seed");
+            crate::core::save_mcp_server_config("mine", r#"{"command":"npx","_project":"p-1"}"#)
+                .expect("seed");
+            let wanted = names(&["shared", "mine"]);
+            let configs = load_mcp_server_configs(&wanted).expect("load");
+            let built = build_global_selected_servers(&wanted, &configs).expect("build");
+            assert_eq!(built.keys().collect::<Vec<_>>(), vec!["shared"]);
+        });
     }
 
     // ── load_mcp_server_configs ──────────────────────────────────────────────
