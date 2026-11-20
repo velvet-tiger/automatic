@@ -21,6 +21,7 @@ function routes(hasToken: () => boolean, tokenValid = true) {
     get_projects: [],
     get_project_summaries: [],
     list_mcp_server_scopes: {},
+    list_accepted_mcp_scope_ids: {},
     get_recently_added_items: [],
     has_mcp_oauth_token: () => hasToken(),
     get_mcp_oauth_token_status: () => ({

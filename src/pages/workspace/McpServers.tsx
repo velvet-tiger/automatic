@@ -748,7 +748,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   // Registered checkouts for the "Limit to one project" picker. A server is
   // limited by the checkout's local_key, so the backend knows which checkout
   // to accept for its id.
-  const [checkouts, setCheckouts] = useState<{ local_key: string; name: string; directory: string }[]>([]);
+  const [checkouts, setCheckouts] = useState<{ local_key: string; id: string; name: string; directory: string }[]>([]);
+  // Checkout local_key → the project id whose servers it accepted.
+  const [acceptedIds, setAcceptedIds] = useState<Record<string, string>>({});
   const [scopeTarget, setScopeTarget] = useState("");
   const [scopeBusy, setScopeBusy] = useState(false);
 
@@ -783,20 +785,27 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const loadScopes = async () => {
     try {
-      const [scopeMap, summaries] = await Promise.all([
+      const [scopeMap, summaries, accepted] = await Promise.all([
         invoke<Record<string, string>>("list_mcp_server_scopes"),
         invoke<{ id: string; name: string; local_key: string; directory: string }[]>("get_project_summaries"),
+        invoke<Record<string, string>>("list_accepted_mcp_scope_ids"),
       ]);
       setScopes(scopeMap);
+      setAcceptedIds(accepted);
+      // Label an id by a checkout that accepted it, so a copy with the same
+      // id never names the server's project.
       const names: Record<string, string> = {};
       for (const summary of summaries) {
-        if (summary.id) names[summary.id] = summary.name;
+        if (summary.id && accepted[summary.local_key] === summary.id) names[summary.id] = summary.name;
+      }
+      for (const summary of summaries) {
+        if (summary.id && names[summary.id] === undefined) names[summary.id] = summary.name;
       }
       setProjectNames(names);
       setCheckouts(
         summaries
           .filter((summary) => summary.id && summary.local_key)
-          .map(({ local_key, name, directory }) => ({ local_key, name, directory })),
+          .map(({ local_key, id, name, directory }) => ({ local_key, id, name, directory })),
       );
     } catch (err: unknown) {
       setError(`Failed to load project servers: ${err}`);
@@ -1575,9 +1584,14 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                               .map((checkout) => {
                                 // Two checkouts can share a name, so the folder tells them apart.
                                 const shared = checkouts.filter((c) => c.name === checkout.name).length > 1;
+                                const label = shared ? `${checkout.name} (${checkout.directory})` : checkout.name;
+                                // The backend refuses a checkout whose id has servers it has not accepted.
+                                const blocked =
+                                  acceptedIds[checkout.local_key] !== checkout.id &&
+                                  Object.values(scopes).includes(checkout.id);
                                 return (
-                                  <option key={checkout.local_key} value={checkout.local_key}>
-                                    {shared ? `${checkout.name} (${checkout.directory})` : checkout.name}
+                                  <option key={checkout.local_key} value={checkout.local_key} disabled={blocked}>
+                                    {blocked ? `${label}: accept its project servers first` : label}
                                   </option>
                                 );
                               })}

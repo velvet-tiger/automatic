@@ -62,6 +62,8 @@ export interface ProjectNoticeActions {
   /** local_key of the open project. */
   selectedKey: string;
   readOnly: boolean;
+  /** The editor holds unsaved edits. */
+  dirty: boolean;
   syncing: boolean;
   onSync: () => void;
   onRelinkFolder: () => void;
@@ -134,7 +136,7 @@ export function ProjectNoticeView({ notice, ...actions }: ProjectNoticeViewProps
           project={actions.project}
           selectedKey={actions.selectedKey}
           names={source.names}
-          readOnly={actions.readOnly}
+          canSync={!actions.readOnly && !actions.dirty}
           reloadProject={actions.reloadProject}
           onSync={actions.onSync}
         />

@@ -27,7 +27,7 @@ const summaries = [
   { local_key: "other-key", id: "p-2", name: "other", directory: "/work/other" },
 ];
 
-function renderNotice(overrides: { readOnly?: boolean; project?: Project } = {}) {
+function renderNotice(overrides: { canSync?: boolean; project?: Project } = {}) {
   const reloadProject = vi.fn().mockResolvedValue(undefined);
   const onSync = vi.fn();
   render(
@@ -35,7 +35,7 @@ function renderNotice(overrides: { readOnly?: boolean; project?: Project } = {})
       project={overrides.project ?? project()}
       selectedKey="key"
       names={["db"]}
-      readOnly={overrides.readOnly ?? false}
+      canSync={overrides.canSync ?? true}
       reloadProject={reloadProject}
       onSync={onSync}
     />,
@@ -74,8 +74,8 @@ describe("PendingProjectMcpServersNotice", () => {
     );
   });
 
-  it("does not sync a read-only project after accepting", async () => {
-    const { reloadProject, onSync } = renderNotice({ readOnly: true });
+  it("does not sync after accepting when the editor cannot sync now", async () => {
+    const { reloadProject, onSync } = renderNotice({ canSync: false });
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(reloadProject).toHaveBeenCalledWith("key"));
     expect(onSync).not.toHaveBeenCalled();

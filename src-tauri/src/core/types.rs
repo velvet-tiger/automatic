@@ -537,9 +537,9 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_profiles: Vec<String>,
 
-    /// Computed at read-time: library servers limited to this project's `id`
-    /// that this checkout has not accepted, so it neither sees nor syncs them.
-    /// Never persisted.
+    /// Computed only by `read_project_for_app`, for the app's notice: library
+    /// servers limited to this project's `id` that this checkout has not
+    /// accepted, so it neither sees nor syncs them. Never persisted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_project_mcp_servers: Vec<String>,
 

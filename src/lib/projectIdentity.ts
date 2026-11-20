@@ -88,6 +88,9 @@ interface CheckoutDecisions {
   local_awaiting_confirmation?: boolean;
   local_writable_folders?: string[];
   local_writable_folders_notice_hidden?: boolean;
+  local_confirmed_project_servers_id?: string;
+  local_ignored_project_servers_id?: string;
+  pending_project_mcp_servers?: string[];
 }
 
 /** Whether an agent registered the project and the user has not kept it. */
@@ -128,6 +131,9 @@ export function withCheckoutDecisions<T extends CheckoutDecisions>(
     local_awaiting_confirmation: fresh.local_awaiting_confirmation === true,
     local_writable_folders: fresh.local_writable_folders ?? [],
     local_writable_folders_notice_hidden: fresh.local_writable_folders_notice_hidden === true,
+    local_confirmed_project_servers_id: fresh.local_confirmed_project_servers_id,
+    local_ignored_project_servers_id: fresh.local_ignored_project_servers_id,
+    pending_project_mcp_servers: fresh.pending_project_mcp_servers ?? [],
   };
 }
 

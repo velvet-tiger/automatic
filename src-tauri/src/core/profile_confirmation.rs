@@ -389,6 +389,30 @@ pub(crate) fn checkout_accepted_mcp_scope_id(ident: &str) -> Result<Option<Strin
     Ok(resolve_registry_entry(ident)?.and_then(|entry| entry_accepted_mcp_scope_id(&entry)))
 }
 
+/// Every registered checkout that accepted its id's project MCP servers:
+/// `local_key` to that id. A checkout with no key is left out.
+pub fn list_accepted_mcp_scope_ids() -> Result<BTreeMap<String, String>, String> {
+    Ok(scan_registry()?
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.local_key()?.to_string();
+            entry_accepted_mcp_scope_id(entry).map(|id| (key, id))
+        })
+        .collect())
+}
+
+/// Names of the registered checkouts, other than `ident`, that accepted the
+/// project servers of `project_id`.
+pub(crate) fn other_checkouts_accepting(ident: &str, project_id: &str) -> Result<Vec<String>, String> {
+    let own = resolve_registry_entry(ident)?.map(|entry| entry.path);
+    Ok(scan_registry()?
+        .into_iter()
+        .filter(|entry| Some(&entry.path) != own.as_ref())
+        .filter(|entry| entry_accepted_mcp_scope_id(entry).as_deref() == Some(project_id))
+        .map(|entry| entry.name)
+        .collect())
+}
+
 /// The committed `id` of the registered checkout `ident`.
 pub(crate) fn checkout_project_id(ident: &str) -> Result<String, String> {
     let entry =

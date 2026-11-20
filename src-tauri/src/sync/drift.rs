@@ -655,7 +655,13 @@ fn user_scope_fix_step(conflict: &UserScopeConflict) -> String {
 /// MCP config keeps loading even after it is removed from the project or
 /// disabled on it.  The user has to delete it by hand.
 fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Option<ProjectProblem> {
-    let enabled = project.enabled_mcp_servers();
+    // Managed means what sync writes, so a server this checkout has not
+    // accepted, or another project's, counts as stale here too. If the
+    // selection cannot be read, the listed names stand in: the MCP config
+    // check reports that failure itself.
+    let enabled = project_mcp_selection(project)
+        .map(|selection| selection.names)
+        .unwrap_or_else(|_| project.enabled_mcp_servers());
     let managed: HashSet<&str> = enabled.iter().map(String::as_str).collect();
 
     let mut steps: Vec<String> = Vec::new();
@@ -4103,6 +4109,59 @@ mod tests {
             check_project_problems(&project).expect("problems check should succeed")
         });
         assert!(!report.has_problems);
+    }
+
+    /// A project server this checkout no longer accepts, for example after a
+    /// pull changed the committed id, is not written by sync. Silent mode
+    /// cannot remove its old root entry, which may hold the secret, so the
+    /// check must report it.
+    #[test]
+    fn check_project_problems_flags_an_unaccepted_project_server_left_in_the_silent_root() {
+        use crate::core::{save_mcp_server_config, with_test_home, Project, ProjectMode};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let root_mcp = serde_json::json!({
+            "mcpServers": { "db": { "command": "npx", "env": { "TOKEN": "old-secret" } } }
+        });
+        fs::write(
+            project_dir.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&root_mcp).unwrap(),
+        )
+        .unwrap();
+
+        let mut project = Project {
+            name: "moved".to_string(),
+            id: "p-new".to_string(),
+            local_confirmed_project_servers_id: Some("p-old".to_string()),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["db".to_string()],
+            mode: ProjectMode::Silent,
+            ..Default::default()
+        };
+
+        with_test_home(home.path().to_path_buf(), || {
+            save_mcp_server_config("db", r#"{"command":"npx","_project":"p-new"}"#)
+                .expect("save db");
+            let report = check_project_problems(&project).expect("problems check");
+            let stale: Vec<&ProjectProblem> = report
+                .problems
+                .iter()
+                .filter(|p| p.kind == ProjectProblemKind::SilentModeStaleRootMcp)
+                .collect();
+            assert_eq!(stale.len(), 1, "{:?}", report.problems);
+            assert_eq!(stale[0].resources, vec!["db".to_string()]);
+
+            // Once accepted for the current id, it is managed again.
+            project.local_confirmed_project_servers_id = Some("p-new".to_string());
+            let report = check_project_problems(&project).expect("problems check");
+            assert!(
+                report.problems.iter().all(|p| p.kind != ProjectProblemKind::SilentModeStaleRootMcp),
+                "{:?}",
+                report.problems
+            );
+        });
     }
 
     /// Silent mode cannot remove a disabled server from the root file, so the

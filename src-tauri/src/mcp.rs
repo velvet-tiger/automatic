@@ -1117,6 +1117,9 @@ const CHECKOUT_DECISION_FIELDS: &[&str] = &[
     "local_confirmed_contexts",
     "local_ignored_contexts",
     "local_ignored_profiles",
+    "pending_project_mcp_servers",
+    "local_confirmed_project_servers_id",
+    "local_ignored_project_servers_id",
 ];
 
 /// `content` without [`CHECKOUT_DECISION_FIELDS`].
@@ -1618,14 +1621,15 @@ impl AutomaticMcpServer {
         // does one that has not accepted its id's project servers: the
         // committed id can be copied from another project.
         let project_id = match self.reading_scope().await {
-            Ok(scope) => scope.own_checkout().ok().and_then(|checkout| {
-                let ident = if checkout.local_key.is_empty() {
-                    checkout.name.as_str()
-                } else {
-                    checkout.local_key.as_str()
-                };
-                crate::core::checkout_accepted_mcp_scope_id(ident).ok().flatten()
-            }),
+            // A checkout with no key could only be found by name, which
+            // another checkout may share, so it counts as not accepted.
+            Ok(scope) => scope
+                .own_checkout()
+                .ok()
+                .filter(|checkout| !checkout.local_key.is_empty())
+                .and_then(|checkout| {
+                    crate::core::checkout_accepted_mcp_scope_id(&checkout.local_key).ok().flatten()
+                }),
             Err(_) => None,
         };
         match crate::core::list_visible_mcp_server_configs(project_id.as_deref()) {
@@ -4939,8 +4943,16 @@ mod tests {
             crate::core::save_project(SITE_KEY, &serde_json::to_string(&project).unwrap()).expect("save");
             crate::core::ignore_project_context(SITE_KEY, "other").expect("ignore");
             crate::core::ignore_project_profile(SITE_KEY, "base").expect("ignore");
+            crate::core::ignore_project_mcp_servers(SITE_KEY, &project.id).expect("ignore");
             let stored = crate::core::read_project(SITE_KEY).unwrap();
-            for field in CHECKOUT_DECISION_FIELDS.iter().filter(|f| **f != "local_confirmed_contexts") {
+            // This setup accepts no context and no project servers, and the
+            // shared read never lists pending project servers.
+            let unset = [
+                "local_confirmed_contexts",
+                "local_confirmed_project_servers_id",
+                "pending_project_mcp_servers",
+            ];
+            for field in CHECKOUT_DECISION_FIELDS.iter().filter(|f| !unset.contains(f)) {
                 assert!(stored.contains(field), "{field}: {stored}");
             }
 

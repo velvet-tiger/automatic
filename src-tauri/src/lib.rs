@@ -275,6 +275,7 @@ pub fn run() {
             create_project_mcp_server,
             duplicate_project_mcp_server,
             set_mcp_server_scope,
+            list_accepted_mcp_scope_ids,
             confirm_project_mcp_servers,
             ignore_project_mcp_servers,
             delete_mcp_server_config,

@@ -149,8 +149,12 @@ pub fn list_visible_mcp_server_configs(project_id: Option<&str>) -> Result<Vec<S
 pub fn accepted_mcp_scope_id_for_folder(folder: &std::path::Path) -> Option<String> {
     let summaries = super::get_project_summaries().ok()?;
     let summary = super::reading_checkout_of(Some(folder), &summaries)?;
-    let ident = if summary.local_key.is_empty() { summary.name } else { summary.local_key };
-    super::checkout_accepted_mcp_scope_id(&ident).ok().flatten()
+    // Without a key the checkout could only be found by name, which another
+    // checkout may share, so it counts as not accepted.
+    if summary.local_key.is_empty() {
+        return None;
+    }
+    super::checkout_accepted_mcp_scope_id(&summary.local_key).ok().flatten()
 }
 
 /// Fail when any of `names` is a project server. `what` names the list for
@@ -291,8 +295,10 @@ enum ScopeClaim {
 ///
 /// A repository chooses its `id`, so a checkout that copies another
 /// project's id must not add servers to that project, or take its servers
-/// by limiting one. Once the id owns a server, only a checkout that accepted
-/// it may add more.
+/// by limiting one. Once the id owns a server, or another checkout accepted
+/// it, only a checkout that accepted it may add more. The second condition
+/// keeps a copy from claiming the id after the last server was deleted,
+/// which would hand it every server the real checkout adds later.
 fn scope_claim(checkout: &str) -> Result<(String, ScopeClaim), String> {
     let project_id = super::checkout_project_id(checkout)?;
     require_project_id(&project_id)?;
@@ -304,6 +310,15 @@ fn scope_claim(checkout: &str) -> Result<(String, ScopeClaim), String> {
             "Project '{}' shares its id with another checkout that has project MCP servers. \
              Accept this project's MCP servers in the project first.",
             checkout
+        ));
+    }
+    let others = super::other_checkouts_accepting(checkout, &project_id)?;
+    if !others.is_empty() {
+        return Err(format!(
+            "Project '{}' shares its id with {}, which already uses this project's MCP servers. \
+             Create the server there, then accept it in this project.",
+            checkout,
+            others.join(", ")
         ));
     }
     Ok((project_id, ScopeClaim::First))
@@ -755,7 +770,7 @@ mod tests {
     // ── Checkouts that share a project id ────────────────────────────────────
 
     fn read(ident: &str) -> crate::core::Project {
-        serde_json::from_str(&crate::core::read_project(ident).expect("read project"))
+        serde_json::from_str(&crate::core::read_project_for_app(ident).expect("read project"))
             .expect("parse project")
     }
 
@@ -764,6 +779,8 @@ mod tests {
     fn real_and_copy(home: &std::path::Path) {
         register(home, "real", "p-1", &["db"]);
         register(home, "copy", "p-1", &["db"]);
+        // Give both checkouts a `local_key`, as startup does.
+        crate::core::ensure_project_keys().expect("mint keys");
         create_project_mcp_server("real", "db", r#"{"command":"npx","env":{"TOKEN":"real-secret"}}"#)
             .expect("create");
     }
@@ -804,6 +821,35 @@ mod tests {
             create_project_mcp_server("copy", "second", r#"{"command":"npx"}"#).expect("create");
             set_mcp_server_scope("free", Some("copy")).expect("limit");
             assert_eq!(read_mcp_server_scope("free").unwrap().as_deref(), Some("p-1"));
+        });
+    }
+
+    #[test]
+    fn the_shared_read_path_does_not_list_pending_servers() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            let shared: crate::core::Project =
+                serde_json::from_str(&crate::core::read_project("copy").unwrap()).unwrap();
+            assert!(shared.pending_project_mcp_servers.is_empty());
+            assert_eq!(read("copy").pending_project_mcp_servers, vec!["db".to_string()]);
+        });
+    }
+
+    #[test]
+    fn a_copy_cannot_claim_an_id_after_the_last_server_is_deleted() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            crate::core::delete_mcp_server_config("db").expect("delete");
+            assert!(list_mcp_server_scopes().unwrap().is_empty());
+
+            let err = create_project_mcp_server("copy", "planted", r#"{"command":"npx"}"#)
+                .unwrap_err();
+            assert!(err.contains("real"), "{err}");
+            assert_eq!(read("copy").local_confirmed_project_servers_id, None);
+
+            // The checkout that accepted the id may still add servers.
+            create_project_mcp_server("real", "next", r#"{"command":"npx"}"#).expect("create");
+            assert_eq!(read("copy").pending_project_mcp_servers, vec!["next".to_string()]);
         });
     }
 
@@ -923,6 +969,27 @@ mod tests {
                     .unwrap(),
                 Vec::<String>::new()
             );
+        });
+    }
+
+    #[test]
+    fn accepted_ids_are_listed_by_checkout_key() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            let accepted = crate::core::list_accepted_mcp_scope_ids().expect("list");
+            let real_key = read("real").local_key;
+            assert_eq!(accepted.len(), 1, "{accepted:?}");
+            assert_eq!(accepted.get(&real_key).map(String::as_str), Some("p-1"));
+        });
+    }
+
+    #[test]
+    fn a_checkout_with_no_key_gets_no_project_servers_in_folder_lookups() {
+        with_temp_home(|home| {
+            register(home, "keyless", "p-9", &["db"]);
+            create_project_mcp_server("keyless", "db", r#"{"command":"npx"}"#).expect("create");
+            let folder = fs::canonicalize(home.join("keyless")).expect("canonical");
+            assert_eq!(accepted_mcp_scope_id_for_folder(&folder), None);
         });
     }
 

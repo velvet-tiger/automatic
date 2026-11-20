@@ -16,7 +16,13 @@ interface PendingProjectMcpServersNoticeProps {
   selectedKey: string;
   /** Project servers limited to this project's id that this checkout has not accepted. */
   names: string[];
-  readOnly: boolean;
+  /**
+   * Whether Accept may sync straight away. False for a read-only project, and
+   * while the editor holds unsaved edits, which a sync would skip; drift then
+   * asks for the sync.
+   */
+  canSync: boolean;
+  /** Refresh this checkout's decisions. Keeps unsaved edits. */
   reloadProject: (projectKey: string) => Promise<void>;
   /** Sync the open project, so accepted servers reach its agent files. */
   onSync: () => void;
@@ -32,7 +38,7 @@ export function PendingProjectMcpServersNotice({
   project,
   selectedKey,
   names,
-  readOnly,
+  canSync,
   reloadProject,
   onSync,
 }: PendingProjectMcpServersNoticeProps) {
@@ -66,7 +72,7 @@ export function PendingProjectMcpServersNotice({
       const command = verb === "accept" ? "confirm_project_mcp_servers" : "ignore_project_mcp_servers";
       await invoke(command, { projectName: selectedKey, projectId });
       await reloadProject(selectedKey);
-      if (verb === "accept" && !readOnly) onSync();
+      if (verb === "accept" && canSync) onSync();
     } catch (err) {
       setError(`Could not ${verb} this project's MCP servers: ${err}`);
     } finally {

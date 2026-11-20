@@ -771,17 +771,16 @@ fn execute_read_mcp_server(input: &Value, work_path: &std::path::Path) -> String
         None => return "Error: missing required parameter 'name'.".to_string(),
     };
     // Another project's server, or one this checkout has not accepted,
-    // reads as missing, as it does in the list.
+    // reads as missing, as it does in the list. The scope is checked on the
+    // config that is returned, so no second lookup can disagree with it.
     let project_id = crate::core::accepted_mcp_scope_id_for_folder(work_path);
-    match crate::core::read_mcp_server_scope(name) {
-        Ok(Some(owner)) if project_id.as_deref() != Some(owner.as_str()) => {
-            return format!("Error reading MCP server config '{}': MCP server '{}' not found", name, name);
-        }
-        Ok(_) => {}
-        Err(e) => return format!("Error reading MCP server config '{}': {}", name, e),
-    }
+    let missing = || format!("Error reading MCP server config '{}': MCP server '{}' not found", name, name);
     match crate::core::read_mcp_server_config(name) {
-        Ok(content) => content,
+        Ok(content) => match serde_json::from_str::<Value>(&content) {
+            Ok(config) if crate::core::config_visible_to(&config, project_id.as_deref()) => content,
+            Ok(_) => missing(),
+            Err(e) => format!("Error reading MCP server config '{}': invalid JSON: {}", name, e),
+        },
         Err(e) => format!("Error reading MCP server config '{}': {}", name, e),
     }
 }
@@ -1086,6 +1085,43 @@ pub(crate) fn validate_working_dir(working_dir: &str) -> Result<PathBuf, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Project MCP servers ──────────────────────────────────────────────────
+
+    /// Two checkouts share id `p-1`. Only the one that created `db` reads it.
+    #[test]
+    fn read_mcp_server_returns_a_project_server_only_to_the_accepted_checkout() {
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            for name in ["real", "copy"] {
+                let dir = home.path().join(name);
+                std::fs::create_dir_all(&dir).expect("mkdir");
+                let project = crate::core::Project {
+                    name: name.to_string(),
+                    id: "p-1".to_string(),
+                    directory: dir.to_string_lossy().to_string(),
+                    ..Default::default()
+                };
+                crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
+                    .expect("save project");
+            }
+            // Give both checkouts a `local_key`, as startup does.
+            crate::core::ensure_project_keys().expect("mint keys");
+            crate::core::create_project_mcp_server(
+                "real",
+                "db",
+                r#"{"command":"npx","env":{"TOKEN":"real-secret"}}"#,
+            )
+            .expect("create");
+
+            let input = serde_json::json!({ "name": "db" });
+            let folder = |name: &str| std::fs::canonicalize(home.path().join(name)).expect("canonical");
+            assert!(execute_read_mcp_server(&input, &folder("real")).contains("real-secret"));
+            let copy = execute_read_mcp_server(&input, &folder("copy"));
+            assert!(!copy.contains("real-secret"), "{copy}");
+            assert!(copy.contains("not found"), "{copy}");
+        });
+    }
 
     // ── Choosing the API key ─────────────────────────────────────────────────
 

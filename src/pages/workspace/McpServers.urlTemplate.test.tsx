@@ -19,6 +19,7 @@ function routes(saved: Record<string, unknown>) {
     get_projects: [],
     get_project_summaries: [],
     list_mcp_server_scopes: {},
+    list_accepted_mcp_scope_ids: {},
     get_recently_added_items: [],
     has_mcp_oauth_token: false,
     get_mcp_oauth_token_status: { has_token: false, valid: false, revoked: false, message: null },

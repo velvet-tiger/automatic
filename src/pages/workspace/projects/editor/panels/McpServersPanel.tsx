@@ -29,6 +29,63 @@ interface McpServersPanelProps {
   projectKey: string | null;
   /** Reload the server list after this panel created a project server. */
   onMcpServersChanged: () => void | Promise<void>;
+  /** Refresh this checkout's decisions after it accepted its project servers here. */
+  onProjectServersAccepted: () => Promise<void>;
+}
+
+/**
+ * Shown once the user chose Ignore on the pending project servers notice, so
+ * the servers do not stay hidden with no way back.
+ */
+function IgnoredProjectServersRow({
+  projectKey,
+  projectId,
+  names,
+  onAccepted,
+}: {
+  projectKey: string;
+  projectId: string;
+  names: string[];
+  onAccepted: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const accept = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("confirm_project_mcp_servers", { projectName: projectKey, projectId });
+      await onAccepted();
+    } catch (err: unknown) {
+      setError(`Could not accept this project's MCP servers: ${err}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 bg-bg-input border border-border-strong/40 rounded-lg px-4 py-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[12px] text-text-muted leading-relaxed">
+          This folder does not use the project MCP servers {names.map((n) => `"${n}"`).join(", ")}.
+          You chose to ignore them. Accept only if this folder is the same project as the one that set them up.
+        </p>
+        <button
+          onClick={() => void accept()}
+          disabled={busy}
+          className="flex-shrink-0 px-2.5 py-1 text-[12px] font-medium text-brand hover:text-brand-hover border border-brand/30 rounded transition-colors disabled:opacity-40"
+        >
+          Accept
+        </button>
+      </div>
+      {error && (
+        <p className="text-[12px] text-danger flex items-center gap-1">
+          <AlertCircle size={11} /> {error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -160,11 +217,14 @@ export function McpServersPanel({
   mcpServerScopes,
   projectKey,
   onMcpServersChanged,
+  onProjectServersAccepted,
 }: McpServersPanelProps) {
   const [creatingProjectServer, setCreatingProjectServer] = useState(false);
   const projectId = project.id ?? "";
   // Servers this checkout has not accepted are not this project's here.
   const pending = project.pending_project_mcp_servers ?? [];
+  const ignoredPending =
+    projectId !== "" && project.local_ignored_project_servers_id === projectId ? pending : [];
   const projectServers = Object.entries(mcpServerScopes)
     .filter(([name, owner]) => projectId !== "" && owner === projectId && !pending.includes(name))
     .map(([name]) => name);
@@ -244,13 +304,23 @@ export function McpServersPanel({
           ) : null
         }
         headerPanel={
-          creatingProjectServer && projectKey ? (
-            <NewProjectServerForm
-              projectKey={projectKey}
-              onCreate={handleProjectServerCreated}
-              onCancel={() => setCreatingProjectServer(false)}
-            />
-          ) : null
+          <>
+            {ignoredPending.length > 0 && projectKey && (
+              <IgnoredProjectServersRow
+                projectKey={projectKey}
+                projectId={projectId}
+                names={ignoredPending}
+                onAccepted={onProjectServersAccepted}
+              />
+            )}
+            {creatingProjectServer && projectKey ? (
+              <NewProjectServerForm
+                projectKey={projectKey}
+                onCreate={handleProjectServerCreated}
+                onCancel={() => setCreatingProjectServer(false)}
+              />
+            ) : null}
+          </>
         }
       />
 

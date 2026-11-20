@@ -247,6 +247,21 @@ pub fn read_project(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
 }
 
+/// [`read_project`] plus `pending_project_mcp_servers`, for the app's
+/// project editor and its notice.
+///
+/// Finding them reads every library server file, so the shared read path,
+/// which summaries, drift polling and agents use, leaves the field empty.
+/// Agents never see it: the names would only tell a copied repository which
+/// servers its id owns here.
+pub fn read_project_for_app(name: &str) -> Result<String, String> {
+    let resolved = resolve_project(name)?;
+    let mut project = resolved.project;
+    project.name = resolved.registry_name;
+    project.pending_project_mcp_servers = pending_project_mcp_server_names(&project);
+    serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
+}
+
 /// Write what [`read_project`] resolves back into the project folder: keys
 /// cached in the registry, a corrected `local_key` in a copied state file,
 /// current enrichment, and the split of a legacy combined `project.json`.
@@ -341,7 +356,6 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     profile_decisions.apply_to(&mut project);
     project.pending_profiles = pending_profile_names(&project);
     project.pending_contexts = pending_context_slugs(&project);
-    project.pending_project_mcp_servers = pending_project_mcp_server_names(&project);
     // A folder inside a read-only project is read-only too. A failed check
     // is logged and left to the writers, which re-check strictly.
     project.read_only_owner = if local_read_only {

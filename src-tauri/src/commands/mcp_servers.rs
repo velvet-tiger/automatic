@@ -78,6 +78,13 @@ pub fn set_mcp_server_scope(name: &str, project_name: Option<String>) -> Result<
     Ok(())
 }
 
+/// Every checkout that accepted its id's project MCP servers: `local_key` to
+/// that id. Read-only, for the library page's labels and picker.
+#[tauri::command]
+pub fn list_accepted_mcp_scope_ids() -> Result<std::collections::BTreeMap<String, String>, String> {
+    core::list_accepted_mcp_scope_ids()
+}
+
 /// Accept the project MCP servers of `project_id` on the checkout
 /// `project_name`. `project_id` is the id the user was shown. Not reachable
 /// from MCP: an agent must not grant itself another project's secrets.

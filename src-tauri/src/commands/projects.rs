@@ -24,7 +24,7 @@ pub fn get_project_summaries() -> Result<Vec<core::ProjectSummary>, String> {
 /// Read a project by identifier: its `local_key` or its name.
 #[tauri::command]
 pub fn read_project(name: &str) -> Result<String, String> {
-    core::read_project(name)
+    core::read_project_for_app(name)
 }
 
 #[derive(Serialize)]

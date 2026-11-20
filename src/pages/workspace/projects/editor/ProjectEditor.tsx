@@ -3721,6 +3721,7 @@ export function ProjectEditor({
                     project={project}
                     selectedKey={selectedKey}
                     readOnly={readOnly}
+                    dirty={dirty || projectFileDirty}
                     syncing={syncStatus === "syncing"}
                     onSync={handleSync}
                     onRelinkFolder={() => void handleRelinkFolder()}
@@ -4534,6 +4535,9 @@ export function ProjectEditor({
                     mcpServerScopes={mcpServerScopes}
                     projectKey={selectedKey}
                     onMcpServersChanged={loadAvailableMcpServers}
+                    onProjectServersAccepted={async () => {
+                      if (selectedKey) await refreshCheckoutDecisions(selectedKey);
+                    }}
                     profileLocks={profileLocks}
                     addItem={addItem}
                     removeItem={removeItem}

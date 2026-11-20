@@ -32,11 +32,12 @@ function project(overrides: Partial<Project> = {}): Project {
   } as Project;
 }
 
-function renderPanel(projectKey: string | null = "key") {
+function renderPanel(projectKey: string | null = "key", overrides: Partial<Project> = {}) {
   const addItem = vi.fn().mockResolvedValue(true);
+  const onProjectServersAccepted = vi.fn().mockResolvedValue(undefined);
   render(
     <McpServersPanel
-      project={project()}
+      project={project(overrides)}
       availableAgents={[]}
       availableMcpServers={["mine"]}
       profileLocks={noLocks}
@@ -51,9 +52,10 @@ function renderPanel(projectKey: string | null = "key") {
       mcpServerScopes={{ mine: "p-1", db: "p-1" }}
       projectKey={projectKey}
       onMcpServersChanged={vi.fn()}
+      onProjectServersAccepted={onProjectServersAccepted}
     />,
   );
-  return { addItem };
+  return { addItem, onProjectServersAccepted };
 }
 
 describe("McpServersPanel project servers", () => {
@@ -79,6 +81,22 @@ describe("McpServersPanel project servers", () => {
       "create_project_mcp_server",
       expect.objectContaining({ projectName: "key", name: "local-db" }),
     );
+  });
+
+  it("offers Accept again once the notice was ignored", async () => {
+    mockInvoke({ confirm_project_mcp_servers: null });
+    const { onProjectServersAccepted } = renderPanel("key", { local_ignored_project_servers_id: "p-1" });
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(onProjectServersAccepted).toHaveBeenCalled());
+    expect(invokeMock).toHaveBeenCalledWith(
+      "confirm_project_mcp_servers",
+      expect.objectContaining({ projectName: "key", projectId: "p-1" }),
+    );
+  });
+
+  it("shows no Accept row while the notice is not ignored", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
   });
 
   it("offers no new project server before the checkout has a key", () => {

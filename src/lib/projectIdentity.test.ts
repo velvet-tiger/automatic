@@ -219,6 +219,20 @@ describe("withCheckoutDecisions", () => {
       local_awaiting_confirmation: false,
       local_writable_folders: ["/Users/me/docs"],
       local_writable_folders_notice_hidden: false,
+      local_confirmed_project_servers_id: undefined,
+      local_ignored_project_servers_id: undefined,
+      pending_project_mcp_servers: [],
+    });
+  });
+
+  it("takes the project MCP server decisions", () => {
+    const held = { description: "unsaved", pending_project_mcp_servers: ["db"] };
+    const fresh = { local_confirmed_project_servers_id: "p-1", pending_project_mcp_servers: [] };
+
+    expect(withCheckoutDecisions(held, fresh)).toMatchObject({
+      description: "unsaved",
+      local_confirmed_project_servers_id: "p-1",
+      pending_project_mcp_servers: [],
     });
   });
 
