@@ -328,6 +328,10 @@ pub(crate) struct ProjectMcpSelection {
     /// Library configs of those servers.
     pub configs: Map<String, Value>,
     /// Enabled servers the project lists that are limited to another project.
+    /// Servers limited to the project's own `id` that this checkout has not
+    /// accepted are left out too, but not listed here: the project's pending
+    /// notice asks the user to accept them, and this list's problem advises
+    /// making a server global, which would hand it to every project.
     pub other_project: Vec<String>,
 }
 
@@ -339,26 +343,39 @@ pub(crate) struct ProjectMcpSelection {
 /// the first two, as if it were not in the library: the project's committed
 /// config can name any server, and this keeps another project's server, and
 /// its secrets, out of this project's agent files.
+///
+/// The committed `id` can be copied too, so a project server counts as this
+/// project's only once this checkout accepted the id (see
+/// `core::accepted_mcp_scope_id`). Until then it is left out the same way.
 pub(crate) fn project_mcp_selection(
     project: &Project,
 ) -> Result<ProjectMcpSelection, String> {
     let mut names = project.enabled_mcp_servers();
     let mut configs = load_mcp_server_configs(&names)?;
-    let project_id = Some(project.id.as_str());
-    let hidden: Vec<String> = names
-        .iter()
-        .filter(|name| {
-            configs
-                .get(name.as_str())
-                .is_some_and(|config| !crate::core::config_visible_to(config, project_id))
-        })
-        .cloned()
-        .collect();
-    if !hidden.is_empty() {
-        names.retain(|name| !hidden.contains(name));
-        configs.retain(|name, _| !hidden.contains(name));
+    let accepted = crate::core::accepted_mcp_scope_id(project);
+    let mut other_project = Vec::new();
+    let mut unaccepted = Vec::new();
+    for name in &names {
+        let Some(config) = configs.get(name.as_str()) else {
+            continue;
+        };
+        if crate::core::config_visible_to(config, accepted) {
+            continue;
+        }
+        let own_id = !project.id.is_empty()
+            && crate::core::config_scope(config) == Some(project.id.as_str());
+        if own_id {
+            unaccepted.push(name.clone());
+        } else {
+            other_project.push(name.clone());
+        }
     }
-    Ok(ProjectMcpSelection { names, configs, other_project: hidden })
+    if !other_project.is_empty() || !unaccepted.is_empty() {
+        let hidden = |name: &String| other_project.contains(name) || unaccepted.contains(name);
+        names.retain(|name| !hidden(name));
+        configs.retain(|name, _| !hidden(name));
+    }
+    Ok(ProjectMcpSelection { names, configs, other_project })
 }
 
 /// Read all skill contents from the global registry for the given names.
@@ -1798,6 +1815,7 @@ mod tests {
 
             let project = Project {
                 id: "p-1".to_string(),
+                local_confirmed_project_servers_id: Some("p-1".to_string()),
                 mcp_servers: names(&["shared", "mine", "theirs"]),
                 ..Default::default()
             };
@@ -1805,6 +1823,20 @@ mod tests {
             assert_eq!(selection.names, names(&["shared", "mine"]));
             assert_eq!(selection.configs.keys().collect::<Vec<_>>(), vec!["mine", "shared"]);
             assert_eq!(selection.other_project, names(&["theirs"]));
+
+            // Not accepted: its own servers are left out, but are not
+            // reported as another project's.
+            let unaccepted = Project { local_confirmed_project_servers_id: None, ..project.clone() };
+            let selection = project_mcp_selection(&unaccepted).expect("selection");
+            assert_eq!(selection.names, names(&["shared"]));
+            assert_eq!(selection.other_project, names(&["theirs"]));
+
+            // Accepted for an older id: the servers of the new id stay
+            // hidden, and the old id's are another project's.
+            let moved = Project { id: "p-2".to_string(), ..project.clone() };
+            let selection = project_mcp_selection(&moved).expect("selection");
+            assert_eq!(selection.names, names(&["shared"]));
+            assert_eq!(selection.other_project, names(&["mine"]));
 
             // A project with no id yet sees global servers only.
             let unnamed = Project { mcp_servers: names(&["shared", "mine"]), ..Default::default() };

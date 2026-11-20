@@ -32,6 +32,8 @@ const IGNORED_CONTEXTS_FIELD: &str = "local_ignored_contexts";
 const AWAITING_FIELD: &str = "local_awaiting_confirmation";
 const WRITABLE_FOLDERS_FIELD: &str = "local_writable_folders";
 const WRITABLE_NOTICE_FIELD: &str = "local_writable_folders_notice_hidden";
+const PROJECT_SERVERS_FIELD: &str = "local_confirmed_project_servers_id";
+const IGNORED_PROJECT_SERVERS_FIELD: &str = "local_ignored_project_servers_id";
 const MIGRATION_MARKER: &str = "profiles_confirmed_migrated";
 const CONTEXT_MIGRATION_MARKER: &str = "contexts_confirmed_migrated";
 
@@ -48,6 +50,8 @@ pub(crate) struct ProfileDecisions {
     awaiting_confirmation: bool,
     writable_folders: Vec<String>,
     writable_notice_hidden: bool,
+    project_servers_id: Option<String>,
+    ignored_project_servers_id: Option<String>,
 }
 
 impl ProfileDecisions {
@@ -69,6 +73,8 @@ impl ProfileDecisions {
                 .get(WRITABLE_NOTICE_FIELD)
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            project_servers_id: pointer_id(pointer, PROJECT_SERVERS_FIELD),
+            ignored_project_servers_id: pointer_id(pointer, IGNORED_PROJECT_SERVERS_FIELD),
         }
     }
 
@@ -97,6 +103,8 @@ impl ProfileDecisions {
             awaiting_confirmation: project.local_awaiting_confirmation,
             writable_folders: project.local_writable_folders.clone(),
             writable_notice_hidden: project.local_writable_folders_notice_hidden,
+            project_servers_id: project.local_confirmed_project_servers_id.clone(),
+            ignored_project_servers_id: project.local_ignored_project_servers_id.clone(),
         }
     }
 
@@ -111,6 +119,8 @@ impl ProfileDecisions {
         project.local_awaiting_confirmation = self.awaiting_confirmation;
         project.local_writable_folders = self.writable_folders;
         project.local_writable_folders_notice_hidden = self.writable_notice_hidden;
+        project.local_confirmed_project_servers_id = self.project_servers_id;
+        project.local_ignored_project_servers_id = self.ignored_project_servers_id;
     }
 
     fn write_to(&self, map: &mut serde_json::Map<String, serde_json::Value>) {
@@ -140,7 +150,29 @@ impl ProfileDecisions {
                 map.remove(field);
             }
         }
+        for (field, id) in [
+            (PROJECT_SERVERS_FIELD, &self.project_servers_id),
+            (IGNORED_PROJECT_SERVERS_FIELD, &self.ignored_project_servers_id),
+        ] {
+            match id {
+                Some(id) => {
+                    map.insert(field.into(), id.clone().into());
+                }
+                None => {
+                    map.remove(field);
+                }
+            }
+        }
     }
+}
+
+/// A non-empty string field of a pointer, or `None`.
+fn pointer_id(pointer: &serde_json::Value, field: &str) -> Option<String> {
+    pointer
+        .get(field)
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 fn pointer_names(pointer: &serde_json::Value, field: &str) -> Vec<String> {
@@ -312,6 +344,56 @@ pub(crate) fn pending_context_slugs(project: &Project) -> Vec<String> {
     slugs.retain(|slug| !groups.iter().any(|group| group.contexts.contains(slug)));
     slugs.retain(|slug| read_context(slug).is_ok());
     slugs
+}
+
+/// The id whose project MCP servers `project` may see and sync: its `id`,
+/// when this checkout accepted that id. `None` otherwise, which offers global
+/// servers only, as for a project with no id.
+pub fn accepted_mcp_scope_id(project: &Project) -> Option<&str> {
+    let id = project.id.as_str();
+    (!id.is_empty() && project.local_confirmed_project_servers_id.as_deref() == Some(id))
+        .then_some(id)
+}
+
+/// Library servers limited to `project`'s `id` that this checkout has not
+/// accepted. Read leniently, for a notice: a scope list that cannot be read
+/// shows no notice, and the servers stay hidden anyway.
+pub(crate) fn pending_project_mcp_server_names(project: &Project) -> Vec<String> {
+    if project.id.is_empty() || accepted_mcp_scope_id(project).is_some() {
+        return Vec::new();
+    }
+    match list_mcp_server_scopes() {
+        Ok(scopes) => scopes
+            .into_iter()
+            .filter(|(_, owner)| *owner == project.id)
+            .map(|(name, _)| name)
+            .collect(),
+        Err(e) => {
+            eprintln!("Could not list the project MCP servers of '{}': {}", project.name, e);
+            Vec::new()
+        }
+    }
+}
+
+/// The accepted scope id of the checkout behind registry `entry`, read from
+/// its pointer and its committed `id`.
+pub(crate) fn entry_accepted_mcp_scope_id(entry: &RegistryEntry) -> Option<String> {
+    let id = project_summary(entry).id;
+    let accepted = ProfileDecisions::of_entry(entry).project_servers_id;
+    (!id.is_empty() && accepted.as_deref() == Some(id.as_str())).then_some(id)
+}
+
+/// The accepted scope id of the registered checkout `ident`. `None` for a
+/// checkout that has not accepted its id, or that is not registered.
+pub(crate) fn checkout_accepted_mcp_scope_id(ident: &str) -> Result<Option<String>, String> {
+    Ok(resolve_registry_entry(ident)?.and_then(|entry| entry_accepted_mcp_scope_id(&entry)))
+}
+
+/// The committed `id` of the registered checkout `ident`.
+pub(crate) fn checkout_project_id(ident: &str) -> Result<String, String> {
+    let entry =
+        resolve_registry_entry(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))?;
+    Ok(project_summary(&entry).id)
 }
 
 // ── Decisions ────────────────────────────────────────────────────────────────
@@ -500,6 +582,46 @@ pub fn decide_project_context(ident: &str, slug: &str, confirmed: bool) -> Resul
 /// this: no MCP tool can, or the agent could confirm its own registration.
 pub fn confirm_project_registration(ident: &str) -> Result<(), String> {
     edit_decisions(ident, |decisions| decisions.awaiting_confirmation = false)
+}
+
+/// Record that the checkout `ident` accepts the project MCP servers of
+/// `project_id`, its current committed `id`. Clears any Ignore.
+///
+/// `project_id` is the id the user saw when they accepted. It is refused when
+/// it is no longer the checkout's id, so a change made meanwhile, such as a
+/// `git pull`, cannot slip another project's servers in. Only the app calls
+/// this: no MCP tool can, or an agent could grant itself the secrets.
+pub fn confirm_project_mcp_servers(ident: &str, project_id: &str) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
+    require_current_project_id(ident, project_id)?;
+    edit_decisions(ident, |decisions| {
+        decisions.project_servers_id = Some(project_id.to_string());
+        decisions.ignored_project_servers_id = None;
+    })
+}
+
+/// Hide the notice about the pending project MCP servers of `project_id` on
+/// the checkout `ident`. The servers stay hidden from it.
+pub fn ignore_project_mcp_servers(ident: &str, project_id: &str) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
+    require_current_project_id(ident, project_id)?;
+    edit_decisions(ident, |decisions| {
+        decisions.ignored_project_servers_id = Some(project_id.to_string());
+    })
+}
+
+fn require_current_project_id(ident: &str, project_id: &str) -> Result<(), String> {
+    if project_id.is_empty() {
+        return Err("This project has no id yet, so it has no project MCP servers.".into());
+    }
+    let current = checkout_project_id(ident)?;
+    if current != project_id {
+        return Err(format!(
+            "The id of project '{}' changed since it was shown. Reload the project and try again.",
+            ident
+        ));
+    }
+    Ok(())
 }
 
 /// Store the folders, besides group members, that Claude Code may edit from

@@ -133,6 +133,18 @@ export function collectProjectNotices(inputs: ProjectNoticeInputs): ProjectNotic
     });
   }
 
+  // Hidden only for the id the user ignored: a new id asks again.
+  const projectServers = project.pending_project_mcp_servers ?? [];
+  const serversIgnored = Boolean(project.id) && project.local_ignored_project_servers_id === project.id;
+  if (hasKey && projectServers.length > 0 && !serversIgnored) {
+    notices.push({
+      id: "pending_project_mcp_servers",
+      severity: "warning",
+      count: 1,
+      source: { kind: "pending_project_mcp_servers", names: projectServers },
+    });
+  }
+
   // The report already leaves this out once the user chose "Not now", and
   // describes the saved project, so it waits for unsaved edits like problems.
   const target = report?.writable_folders_target;

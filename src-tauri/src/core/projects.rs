@@ -341,6 +341,7 @@ fn resolve_project(name: &str) -> Result<ResolvedProject, String> {
     profile_decisions.apply_to(&mut project);
     project.pending_profiles = pending_profile_names(&project);
     project.pending_contexts = pending_context_slugs(&project);
+    project.pending_project_mcp_servers = pending_project_mcp_server_names(&project);
     // A folder inside a read-only project is read-only too. A failed check
     // is logged and left to the writers, which re-check strictly.
     project.read_only_owner = if local_read_only {

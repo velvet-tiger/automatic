@@ -142,14 +142,15 @@ pub fn list_visible_mcp_server_configs(project_id: Option<&str>) -> Result<Vec<S
         .collect())
 }
 
-/// The id of the registered project whose folder holds `folder`, if any.
-/// Used where only a working folder is known, to decide which project
-/// servers to offer.
-pub fn project_id_for_folder(folder: &std::path::Path) -> Option<String> {
+/// The project id whose servers to offer in `folder`: the id of the
+/// registered checkout whose folder holds it, when that checkout accepted its
+/// id's project servers. `None` offers global servers only. Used where only a
+/// working folder is known.
+pub fn accepted_mcp_scope_id_for_folder(folder: &std::path::Path) -> Option<String> {
     let summaries = super::get_project_summaries().ok()?;
-    super::reading_checkout_of(Some(folder), &summaries)
-        .map(|summary| summary.id)
-        .filter(|id| !id.is_empty())
+    let summary = super::reading_checkout_of(Some(folder), &summaries)?;
+    let ident = if summary.local_key.is_empty() { summary.name } else { summary.local_key };
+    super::checkout_accepted_mcp_scope_id(&ident).ok().flatten()
 }
 
 /// Fail when any of `names` is a project server. `what` names the list for
@@ -275,13 +276,79 @@ fn require_project_id(project_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Create a new library server limited to the project with `project_id`.
+/// How a checkout may give a server its project's scope.
+#[derive(Debug, PartialEq, Eq)]
+enum ScopeClaim {
+    /// The checkout already accepted its id's project servers.
+    Accepted,
+    /// The id owns no project server yet, so this checkout is the first and
+    /// is accepted once the write succeeds.
+    First,
+}
+
+/// The committed `id` of the checkout `checkout`, and how it may scope a
+/// server to it.
+///
+/// A repository chooses its `id`, so a checkout that copies another
+/// project's id must not add servers to that project, or take its servers
+/// by limiting one. Once the id owns a server, only a checkout that accepted
+/// it may add more.
+fn scope_claim(checkout: &str) -> Result<(String, ScopeClaim), String> {
+    let project_id = super::checkout_project_id(checkout)?;
+    require_project_id(&project_id)?;
+    if super::checkout_accepted_mcp_scope_id(checkout)?.as_deref() == Some(project_id.as_str()) {
+        return Ok((project_id, ScopeClaim::Accepted));
+    }
+    if list_mcp_server_scopes()?.values().any(|owner| *owner == project_id) {
+        return Err(format!(
+            "Project '{}' shares its id with another checkout that has project MCP servers. \
+             Accept this project's MCP servers in the project first.",
+            checkout
+        ));
+    }
+    Ok((project_id, ScopeClaim::First))
+}
+
+/// Accept the checkout's own id after a write that made it the first owner.
+fn settle_claim(checkout: &str, project_id: &str, claim: ScopeClaim) -> Result<(), String> {
+    match claim {
+        ScopeClaim::Accepted => Ok(()),
+        ScopeClaim::First => super::confirm_project_mcp_servers(checkout, project_id).map_err(|e| {
+            format!("The server was saved, but this project could not be set to use it: {}", e)
+        }),
+    }
+}
+
+/// Create a new library server limited to the project of the registered
+/// checkout `checkout` (its `local_key` or name).
+///
+/// Refused when another checkout with the same id owns project servers that
+/// this checkout has not accepted. The first server of an id accepts the
+/// checkout that created it. See [`scope_claim`].
+pub fn create_project_mcp_server(checkout: &str, name: &str, data: &str) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
+    let (project_id, claim) = scope_claim(checkout)?;
+    create_in_scope(&project_id, name, data)?;
+    settle_claim(checkout, &project_id, claim)
+}
+
+/// Create `name` as a copy of the project server `source`, limited to the
+/// same project. The scope comes from the stored `source`, never from the
+/// caller, so a copy cannot claim an id for the first time.
+pub fn duplicate_project_mcp_server(source: &str, name: &str, data: &str) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
+    let project_id = read_mcp_server_scope(source)?
+        .ok_or_else(|| format!("MCP server '{}' is not limited to a project", source))?;
+    create_in_scope(&project_id, name, data)
+}
+
+/// Create a new library server limited to `project_id`.
 ///
 /// The user wrote the config, so it is checked like any user save: an env
 /// value that looks encrypted but is not is refused. The write is
 /// create-only, so an existing server, or a case variant of one, is never
 /// replaced. The caller attaches the server to the project.
-pub fn create_project_mcp_server(project_id: &str, name: &str, data: &str) -> Result<(), String> {
+fn create_in_scope(project_id: &str, name: &str, data: &str) -> Result<(), String> {
     require_project_id(project_id)?;
     if name.eq_ignore_ascii_case(AUTOMATIC_SERVER_NAME) {
         return Err(format!("'{}' is reserved for Automatic's own server", AUTOMATIC_SERVER_NAME));
@@ -373,6 +440,29 @@ fn scope_conflicts(name: &str, project_id: &str) -> Result<ScopeConflicts, Strin
     Ok(conflicts)
 }
 
+/// Limit the server `name` to the project of the registered checkout
+/// `checkout` (its `local_key` or name), or make it available to every
+/// project when `checkout` is `None`.
+///
+/// Limiting follows the same claim rule as [`create_project_mcp_server`].
+pub fn set_mcp_server_scope(name: &str, checkout: Option<&str>) -> Result<(), String> {
+    let _writes = super::hold_library_writes();
+    let Some(checkout) = checkout else {
+        return apply_mcp_server_scope(name, None);
+    };
+    if !is_valid_name(name) {
+        return Err("Invalid server name".into());
+    }
+    let (project_id, claim) = scope_claim(checkout)?;
+    let before = read_mcp_server_scope(name)?;
+    apply_mcp_server_scope(name, Some(&project_id))?;
+    if before.as_deref() == Some(project_id.as_str()) {
+        // Nothing changed, so this was no first claim.
+        return Ok(());
+    }
+    settle_claim(checkout, &project_id, claim)
+}
+
 /// Limit the server `name` to the project with `project_id`, or make it
 /// available to every project when `project_id` is `None`.
 ///
@@ -380,7 +470,7 @@ fn scope_conflicts(name: &str, project_id: &str) -> Result<ScopeConflicts, Strin
 /// config lists the server, because they would lose it on their next sync
 /// without a word. The user removes it there first. Automatic's own server
 /// cannot be limited.
-pub fn set_mcp_server_scope(name: &str, project_id: Option<&str>) -> Result<(), String> {
+fn apply_mcp_server_scope(name: &str, project_id: Option<&str>) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
@@ -558,19 +648,19 @@ mod tests {
     fn create_project_server_is_scoped_and_create_only() {
         with_temp_home(|home| {
             register(home, "one", "p-1", &[]);
-            create_project_mcp_server("p-1", "db", r#"{"command":"npx","env":{"KEY":"v"}}"#)
+            create_project_mcp_server("one", "db", r#"{"command":"npx","env":{"KEY":"v"}}"#)
                 .expect("create");
             assert_eq!(read_mcp_server_scope("db").unwrap().as_deref(), Some("p-1"));
             let raw = crate::core::read_mcp_server_config("db").unwrap();
             let config: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(config["env"]["KEY"], json!("v"), "env round-trips through encryption");
 
-            assert!(create_project_mcp_server("p-1", "DB", r#"{"command":"npx"}"#).is_err());
-            assert!(create_project_mcp_server("p-1", "automatic", r#"{"command":"npx"}"#).is_err());
+            assert!(create_project_mcp_server("one", "DB", r#"{"command":"npx"}"#).is_err());
+            assert!(create_project_mcp_server("one", "automatic", r#"{"command":"npx"}"#).is_err());
             assert!(create_project_mcp_server("", "other", r#"{"command":"npx"}"#).is_err());
-            let err = create_project_mcp_server("p-unknown", "other", r#"{"command":"npx"}"#)
+            let err = create_project_mcp_server("unknown", "other", r#"{"command":"npx"}"#)
                 .unwrap_err();
-            assert!(err.contains("No project"), "{err}");
+            assert!(err.contains("not found"), "{err}");
         });
     }
 
@@ -600,7 +690,7 @@ mod tests {
             register(home, "one", "p-1", &[]);
             store("srv", json!({ "command": "npx", "env": { "TOKEN": "secret" } }));
 
-            set_mcp_server_scope("srv", Some("p-1")).expect("limit");
+            set_mcp_server_scope("srv", Some("one")).expect("limit");
             assert_eq!(read_mcp_server_scope("srv").unwrap().as_deref(), Some("p-1"));
             let config: Value =
                 serde_json::from_str(&crate::core::read_mcp_server_config("srv").unwrap()).unwrap();
@@ -609,8 +699,8 @@ mod tests {
             set_mcp_server_scope("srv", None).expect("make global");
             assert_eq!(read_mcp_server_scope("srv").unwrap(), None);
 
-            assert!(set_mcp_server_scope("automatic", Some("p-1")).is_err());
-            assert!(set_mcp_server_scope("missing", Some("p-1")).is_err());
+            assert!(set_mcp_server_scope("automatic", Some("one")).is_err());
+            assert!(set_mcp_server_scope("missing", Some("one")).is_err());
         });
     }
 
@@ -622,12 +712,12 @@ mod tests {
             // A different case names the same library file.
             register(home, "other", "p-other", &["SRV"]);
 
-            let err = set_mcp_server_scope("srv", Some("p-mine")).unwrap_err();
+            let err = set_mcp_server_scope("srv", Some("mine")).unwrap_err();
             assert!(err.contains("projects other"), "{err}");
             assert_eq!(read_mcp_server_scope("srv").unwrap(), None);
 
             // The project that uses it may take it.
-            set_mcp_server_scope("srv", Some("p-other")).expect("limit to its user");
+            set_mcp_server_scope("srv", Some("other")).expect("limit to its user");
             assert_eq!(read_mcp_server_scope("srv").unwrap().as_deref(), Some("p-other"));
         });
     }
@@ -643,7 +733,7 @@ mod tests {
             )
             .expect("profile");
 
-            let err = set_mcp_server_scope("srv", Some("p-1")).unwrap_err();
+            let err = set_mcp_server_scope("srv", Some("one")).unwrap_err();
             assert!(err.contains("profiles team"), "{err}");
             assert_eq!(read_mcp_server_scope("srv").unwrap(), None);
 
@@ -657,8 +747,194 @@ mod tests {
                 vec!["srv".to_string()];
             crate::core::global_mcp::save_global_mcp_state(&state).unwrap();
 
-            let err = set_mcp_server_scope("srv", Some("p-1")).unwrap_err();
+            let err = set_mcp_server_scope("srv", Some("one")).unwrap_err();
             assert!(err.contains("global config of claude"), "{err}");
+        });
+    }
+
+    // ── Checkouts that share a project id ────────────────────────────────────
+
+    fn read(ident: &str) -> crate::core::Project {
+        serde_json::from_str(&crate::core::read_project(ident).expect("read project"))
+            .expect("parse project")
+    }
+
+    /// Register "real" and "copy", two checkouts of id `p-1` that both list
+    /// `db`, and let "real" create `db` with a secret.
+    fn real_and_copy(home: &std::path::Path) {
+        register(home, "real", "p-1", &["db"]);
+        register(home, "copy", "p-1", &["db"]);
+        create_project_mcp_server("real", "db", r#"{"command":"npx","env":{"TOKEN":"real-secret"}}"#)
+            .expect("create");
+    }
+
+    #[test]
+    fn the_first_server_accepts_the_checkout_that_created_it_and_no_other() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+
+            let real = read("real");
+            assert_eq!(real.local_confirmed_project_servers_id.as_deref(), Some("p-1"));
+            assert!(real.pending_project_mcp_servers.is_empty());
+
+            let copy = read("copy");
+            assert_eq!(copy.local_confirmed_project_servers_id, None);
+            assert_eq!(copy.pending_project_mcp_servers, vec!["db".to_string()]);
+            assert_eq!(crate::core::accepted_mcp_scope_id(&copy), None);
+        });
+    }
+
+    #[test]
+    fn an_unaccepted_checkout_cannot_add_or_take_servers_for_its_id() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            store("free", json!({ "command": "npx" }));
+
+            let err = create_project_mcp_server("copy", "planted", r#"{"command":"npx"}"#)
+                .unwrap_err();
+            assert!(err.contains("Accept"), "{err}");
+            assert!(read_mcp_server_scope("planted").unwrap().is_none());
+
+            let err = set_mcp_server_scope("free", Some("copy")).unwrap_err();
+            assert!(err.contains("Accept"), "{err}");
+            assert_eq!(read_mcp_server_scope("free").unwrap(), None);
+
+            // Once accepted, it may.
+            crate::core::confirm_project_mcp_servers("copy", "p-1").expect("accept");
+            create_project_mcp_server("copy", "second", r#"{"command":"npx"}"#).expect("create");
+            set_mcp_server_scope("free", Some("copy")).expect("limit");
+            assert_eq!(read_mcp_server_scope("free").unwrap().as_deref(), Some("p-1"));
+        });
+    }
+
+    #[test]
+    fn accepting_needs_the_current_id_and_a_new_id_needs_a_new_accept() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+
+            let err = crate::core::confirm_project_mcp_servers("copy", "p-other").unwrap_err();
+            assert!(err.contains("changed"), "{err}");
+            assert!(crate::core::confirm_project_mcp_servers("copy", "").is_err());
+            assert_eq!(read("copy").local_confirmed_project_servers_id, None);
+
+            // An accept stored for an older id grants nothing under a new one.
+            let mut real = read("real");
+            real.id = "p-2".to_string();
+            assert_eq!(crate::core::accepted_mcp_scope_id(&real), None);
+        });
+    }
+
+    #[test]
+    fn ignore_hides_the_notice_but_keeps_the_servers_hidden() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            crate::core::ignore_project_mcp_servers("copy", "p-1").expect("ignore");
+            let copy = read("copy");
+            assert_eq!(copy.local_ignored_project_servers_id.as_deref(), Some("p-1"));
+            assert_eq!(copy.pending_project_mcp_servers, vec!["db".to_string()]);
+            assert_eq!(crate::core::accepted_mcp_scope_id(&copy), None);
+
+            // Accepting clears the Ignore.
+            crate::core::confirm_project_mcp_servers("copy", "p-1").expect("accept");
+            assert_eq!(read("copy").local_ignored_project_servers_id, None);
+        });
+    }
+
+    #[test]
+    fn a_committed_config_cannot_grant_an_accept() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            let config_path = home.join("copy").join(".automatic.json");
+            let mut committed: Value =
+                serde_json::from_str(&fs::read_to_string(&config_path).expect("read config"))
+                    .expect("parse config");
+            committed["local_confirmed_project_servers_id"] = json!("p-1");
+            fs::write(&config_path, committed.to_string()).expect("plant");
+
+            let copy = read("copy");
+            assert_eq!(copy.local_confirmed_project_servers_id, None);
+            assert_eq!(crate::core::accepted_mcp_scope_id(&copy), None);
+
+            // Saving the project does not carry the planted value into the pointer.
+            crate::core::save_project("copy", &serde_json::to_string(&copy).unwrap())
+                .expect("save");
+            assert_eq!(read("copy").local_confirmed_project_servers_id, None);
+            let saved = fs::read_to_string(&config_path).expect("read config");
+            assert!(!saved.contains("local_confirmed_project_servers_id"), "{saved}");
+        });
+    }
+
+    #[test]
+    fn only_the_accepted_checkout_syncs_the_server_and_neither_drifts() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            for name in ["real", "copy"] {
+                let mut project = read(name);
+                project.agents = vec!["claude".to_string()];
+                crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
+                    .expect("save agents");
+            }
+
+            let mut real = read("real");
+            crate::sync::sync_project_without_autodetect(&mut real).expect("sync real");
+            let mut copy = read("copy");
+            crate::sync::sync_project_without_autodetect(&mut copy).expect("sync copy");
+
+            let real_file = fs::read_to_string(home.join("real").join(".mcp.json")).expect("real");
+            assert!(real_file.contains("real-secret"), "the accepted checkout syncs it");
+            let copy_file =
+                fs::read_to_string(home.join("copy").join(".mcp.json")).unwrap_or_default();
+            assert!(!copy_file.contains("real-secret"), "the copy must not get the secret");
+            assert!(!copy_file.contains("\"db\""), "the copy must not list the server: {copy_file}");
+
+            for project in [&real, &copy] {
+                let drift = crate::sync::check_project_drift(project).expect("drift");
+                assert!(!drift.drifted, "{}: {:?}", project.name, drift);
+            }
+
+            // The copy is not told to make the server global.
+            let report = crate::sync::check_project_problems(&copy).expect("problems");
+            assert!(
+                report.problems.iter().all(|p| p.title != "MCP servers from another project"),
+                "{:?}",
+                report.problems
+            );
+
+            // After Accept, the copy syncs it too.
+            crate::core::confirm_project_mcp_servers("copy", "p-1").expect("accept");
+            let mut copy = read("copy");
+            assert!(copy.pending_project_mcp_servers.is_empty());
+            crate::sync::sync_project_without_autodetect(&mut copy).expect("sync copy");
+            let copy_file = fs::read_to_string(home.join("copy").join(".mcp.json")).expect("copy");
+            assert!(copy_file.contains("real-secret"));
+        });
+    }
+
+    #[test]
+    fn folder_lookups_offer_project_servers_only_to_the_accepted_checkout() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            // Callers pass a canonical folder, as `detect_reading_folder` does.
+            let folder = |name: &str| fs::canonicalize(home.join(name)).expect("canonical");
+            assert_eq!(accepted_mcp_scope_id_for_folder(&folder("real")).as_deref(), Some("p-1"));
+            assert_eq!(accepted_mcp_scope_id_for_folder(&folder("copy")), None);
+            assert_eq!(
+                list_visible_mcp_server_configs(accepted_mcp_scope_id_for_folder(&folder("copy")).as_deref())
+                    .unwrap(),
+                Vec::<String>::new()
+            );
+        });
+    }
+
+    #[test]
+    fn a_duplicate_keeps_the_source_scope_and_cannot_claim_an_id() {
+        with_temp_home(|home| {
+            real_and_copy(home);
+            store("global", json!({ "command": "npx" }));
+            duplicate_project_mcp_server("db", "db-copy", r#"{"command":"npx"}"#).expect("dup");
+            assert_eq!(read_mcp_server_scope("db-copy").unwrap().as_deref(), Some("p-1"));
+            assert!(duplicate_project_mcp_server("global", "g-copy", r#"{"command":"npx"}"#).is_err());
+            assert!(duplicate_project_mcp_server("missing", "m-copy", r#"{"command":"npx"}"#).is_err());
         });
     }
 }

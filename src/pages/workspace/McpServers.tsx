@@ -745,6 +745,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   // and every project's name by id for the labels.
   const [scopes, setScopes] = useState<Record<string, string>>({});
   const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  // Registered checkouts for the "Limit to one project" picker. A server is
+  // limited by the checkout's local_key, so the backend knows which checkout
+  // to accept for its id.
+  const [checkouts, setCheckouts] = useState<{ local_key: string; name: string; directory: string }[]>([]);
   const [scopeTarget, setScopeTarget] = useState("");
   const [scopeBusy, setScopeBusy] = useState(false);
 
@@ -781,7 +785,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     try {
       const [scopeMap, summaries] = await Promise.all([
         invoke<Record<string, string>>("list_mcp_server_scopes"),
-        invoke<{ id: string; name: string }[]>("get_project_summaries"),
+        invoke<{ id: string; name: string; local_key: string; directory: string }[]>("get_project_summaries"),
       ]);
       setScopes(scopeMap);
       const names: Record<string, string> = {};
@@ -789,6 +793,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
         if (summary.id) names[summary.id] = summary.name;
       }
       setProjectNames(names);
+      setCheckouts(
+        summaries
+          .filter((summary) => summary.id && summary.local_key)
+          .map(({ local_key, name, directory }) => ({ local_key, name, directory })),
+      );
     } catch (err: unknown) {
       setError(`Failed to load project servers: ${err}`);
     }
@@ -800,11 +809,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       ? `Project: ${projectNames[projectId]}`
       : "Project: not on this machine";
 
-  const changeScope = async (projectId: string | null) => {
+  /** `projectName` is a checkout's local_key, or null to make the server global. */
+  const changeScope = async (projectName: string | null) => {
     if (!selectedName) return;
     setScopeBusy(true);
     try {
-      await invoke("set_mcp_server_scope", { name: selectedName, projectId });
+      await invoke("set_mcp_server_scope", { name: selectedName, projectName });
       setScopeTarget("");
       await loadScopes();
       await selectServer(selectedName);
@@ -1032,8 +1042,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       const owner = typeof source._project === "string" ? source._project : "";
       delete source._project;
       if (owner) {
-        await invoke("create_project_mcp_server", {
-          projectId: owner,
+        // The backend takes the scope from the stored source server.
+        await invoke("duplicate_project_mcp_server", {
+          source: selectedName,
           name: copyName,
           data: JSON.stringify(source),
         });
@@ -1559,11 +1570,17 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                             className={smallInputClass}
                           >
                             <option value="">Limit to one project…</option>
-                            {Object.entries(projectNames)
-                              .sort(([, a], [, b]) => a.localeCompare(b))
-                              .map(([id, name]) => (
-                                <option key={id} value={id}>{name}</option>
-                              ))}
+                            {[...checkouts]
+                              .sort((a, b) => a.name.localeCompare(b.name))
+                              .map((checkout) => {
+                                // Two checkouts can share a name, so the folder tells them apart.
+                                const shared = checkouts.filter((c) => c.name === checkout.name).length > 1;
+                                return (
+                                  <option key={checkout.local_key} value={checkout.local_key}>
+                                    {shared ? `${checkout.name} (${checkout.directory})` : checkout.name}
+                                  </option>
+                                );
+                              })}
                           </select>
                           <button
                             onClick={() => void changeScope(scopeTarget)}

@@ -25,6 +25,8 @@ interface McpServersPanelProps {
   onNavigateToDiscoverMcp?: (slug: string) => void;
   /** Server name → id of the project it is limited to, for project servers. */
   mcpServerScopes: Record<string, string>;
+  /** local_key of the open project, or null while it is being created. */
+  projectKey: string | null;
   /** Reload the server list after this panel created a project server. */
   onMcpServersChanged: () => void | Promise<void>;
 }
@@ -46,11 +48,11 @@ export function projectServerConfig(commandOrUrl: string): Record<string, unknow
 }
 
 function NewProjectServerForm({
-  projectId,
+  projectKey,
   onCreate,
   onCancel,
 }: {
-  projectId: string;
+  projectKey: string;
   onCreate: (name: string) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -70,7 +72,7 @@ function NewProjectServerForm({
     setError(null);
     try {
       await invoke("create_project_mcp_server", {
-        projectId,
+        projectName: projectKey,
         name: name.trim(),
         data: JSON.stringify(config),
       });
@@ -156,12 +158,15 @@ export function McpServersPanel({
   onNavigateToMcpServer,
   onNavigateToDiscoverMcp,
   mcpServerScopes,
+  projectKey,
   onMcpServersChanged,
 }: McpServersPanelProps) {
   const [creatingProjectServer, setCreatingProjectServer] = useState(false);
   const projectId = project.id ?? "";
+  // Servers this checkout has not accepted are not this project's here.
+  const pending = project.pending_project_mcp_servers ?? [];
   const projectServers = Object.entries(mcpServerScopes)
-    .filter(([, owner]) => projectId !== "" && owner === projectId)
+    .filter(([name, owner]) => projectId !== "" && owner === projectId && !pending.includes(name))
     .map(([name]) => name);
 
   const handleProjectServerCreated = async (name: string) => {
@@ -228,7 +233,7 @@ export function McpServersPanel({
         onNavigateToMcpServer={onNavigateToMcpServer}
         projectServers={projectServers}
         headerActions={
-          projectId !== "" && !creatingProjectServer ? (
+          projectId !== "" && projectKey && !creatingProjectServer ? (
             <button
               onClick={() => setCreatingProjectServer(true)}
               className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
@@ -239,9 +244,9 @@ export function McpServersPanel({
           ) : null
         }
         headerPanel={
-          creatingProjectServer ? (
+          creatingProjectServer && projectKey ? (
             <NewProjectServerForm
-              projectId={projectId}
+              projectKey={projectKey}
               onCreate={handleProjectServerCreated}
               onCancel={() => setCreatingProjectServer(false)}
             />

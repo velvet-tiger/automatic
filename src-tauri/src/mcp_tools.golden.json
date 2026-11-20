@@ -867,7 +867,7 @@
     "name": "automatic_list_hooks"
   },
   {
-    "description": "List the MCP server configurations in the Automatic library that this project can use: every global server, plus the servers limited to this project. Servers limited to another project are not listed.",
+    "description": "List the MCP server configurations in the Automatic library that this project can use: every global server, plus the servers limited to this project once the user accepted them for this checkout. Servers limited to another project are not listed.",
     "inputSchema": {
       "properties": {},
       "type": "object"

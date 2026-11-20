@@ -152,6 +152,19 @@ export interface Project {
    */
   pending_contexts?: string[];
   /**
+   * The project id whose project MCP servers this checkout accepted. Stored
+   * only on this machine. Change it with `confirm_project_mcp_servers`.
+   */
+  local_confirmed_project_servers_id?: string;
+  /** The project id whose pending project MCP servers notice this checkout hid. */
+  local_ignored_project_servers_id?: string;
+  /**
+   * Computed by backend at read-time: library servers limited to this
+   * project's id that this checkout has not accepted, so it neither sees nor
+   * syncs them. Never saved.
+   */
+  pending_project_mcp_servers?: string[];
+  /**
    * Computed by backend at read-time: the read-only project whose folder
    * holds this one's. Such a project is read-only too. Never saved.
    */
@@ -550,6 +563,7 @@ export type ProjectNoticeSource =
   | { kind: "pending_registration" }
   | { kind: "pending_profiles"; names: string[] }
   | { kind: "pending_contexts"; slugs: string[] }
+  | { kind: "pending_project_mcp_servers"; names: string[] }
   | { kind: "silent_mode"; directory: string }
   | { kind: "sync_notes"; notes: string[] }
   | { kind: "writable_folders_target"; notice: WritableFoldersTargetNotice };

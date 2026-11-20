@@ -755,9 +755,10 @@ fn execute_read_template(input: &Value) -> String {
     }
 }
 
-/// Global servers, plus the project servers of the project in `work_path`.
+/// Global servers, plus the project servers of the project in `work_path`
+/// when its checkout accepted them.
 fn execute_list_mcp_servers(work_path: &std::path::Path) -> String {
-    let project_id = crate::core::project_id_for_folder(work_path);
+    let project_id = crate::core::accepted_mcp_scope_id_for_folder(work_path);
     match crate::core::list_visible_mcp_server_configs(project_id.as_deref()) {
         Ok(names) => serde_json::to_string_pretty(&names).unwrap_or_else(|_| "[]".to_string()),
         Err(e) => format!("Error listing MCP servers: {}", e),
@@ -769,8 +770,9 @@ fn execute_read_mcp_server(input: &Value, work_path: &std::path::Path) -> String
         Some(s) => s,
         None => return "Error: missing required parameter 'name'.".to_string(),
     };
-    // Another project's server reads as missing, as it does in the list.
-    let project_id = crate::core::project_id_for_folder(work_path);
+    // Another project's server, or one this checkout has not accepted,
+    // reads as missing, as it does in the list.
+    let project_id = crate::core::accepted_mcp_scope_id_for_folder(work_path);
     match crate::core::read_mcp_server_scope(name) {
         Ok(Some(owner)) if project_id.as_deref() != Some(owner.as_str()) => {
             return format!("Error reading MCP server config '{}': MCP server '{}' not found", name, name);

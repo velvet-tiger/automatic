@@ -76,6 +76,22 @@ describe("collectProjectNotices", () => {
     ]);
   });
 
+  it("asks about project MCP servers this checkout has not accepted, until it ignores this id", () => {
+    const waiting = project({ id: "p-1", pending_project_mcp_servers: ["db"] });
+    const result = collectProjectNotices(inputs({ project: waiting }));
+    expect(result.find((n) => n.id === "pending_project_mcp_servers")?.source).toEqual({
+      kind: "pending_project_mcp_servers",
+      names: ["db"],
+    });
+
+    const ignored = project({ ...waiting, local_ignored_project_servers_id: "p-1" });
+    expect(ids(inputs({ project: ignored }))).not.toContain("pending_project_mcp_servers");
+
+    // An Ignore stored for another id does not hide the notice.
+    const moved = project({ ...waiting, local_ignored_project_servers_id: "p-old" });
+    expect(ids(inputs({ project: moved }))).toContain("pending_project_mcp_servers");
+  });
+
   it("holds back problems and sync notes while there are unsaved edits", () => {
     const result = ids(
       inputs({

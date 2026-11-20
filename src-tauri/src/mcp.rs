@@ -1610,16 +1610,22 @@ impl AutomaticMcpServer {
         name = "automatic_list_mcp_servers",
         description = "List the MCP server configurations in the Automatic library that this \
                        project can use: every global server, plus the servers limited to this \
-                       project. Servers limited to another project are not listed."
+                       project once the user accepted them for this checkout. Servers limited \
+                       to another project are not listed."
     )]
     async fn list_mcp_servers(&self) -> Result<CallToolResult, McpError> {
-        // An unknown or unconfirmed checkout sees global servers only.
+        // An unknown or unconfirmed checkout sees global servers only, and so
+        // does one that has not accepted its id's project servers: the
+        // committed id can be copied from another project.
         let project_id = match self.reading_scope().await {
-            Ok(scope) => scope
-                .own_checkout()
-                .ok()
-                .map(|checkout| checkout.id.clone())
-                .filter(|id| !id.is_empty()),
+            Ok(scope) => scope.own_checkout().ok().and_then(|checkout| {
+                let ident = if checkout.local_key.is_empty() {
+                    checkout.name.as_str()
+                } else {
+                    checkout.local_key.as_str()
+                };
+                crate::core::checkout_accepted_mcp_scope_id(ident).ok().flatten()
+            }),
             Err(_) => None,
         };
         match crate::core::list_visible_mcp_server_configs(project_id.as_deref()) {

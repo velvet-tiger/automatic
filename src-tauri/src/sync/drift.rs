@@ -3857,6 +3857,7 @@ mod tests {
             let mut project = Project {
                 name: "scoped".to_string(),
                 id: "p-mine".to_string(),
+                local_confirmed_project_servers_id: Some("p-mine".to_string()),
                 directory: project_dir.path().to_string_lossy().to_string(),
                 agents: vec!["claude".to_string()],
                 mcp_servers: vec![

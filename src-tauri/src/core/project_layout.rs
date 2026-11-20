@@ -91,13 +91,16 @@ const TRANSIENT_FIELDS: &[&str] = &[
     "local_departed_groups",
     "local_releasing_profiles",
     "local_confirmed_profiles",
+    "local_confirmed_project_servers_id",
     "local_ignored_contexts",
     "local_ignored_profiles",
+    "local_ignored_project_servers_id",
     "local_read_only",
     "local_writable_folders",
     "local_writable_folders_notice_hidden",
     "pending_contexts",
     "pending_profiles",
+    "pending_project_mcp_servers",
     "read_only_owner",
 ];
 

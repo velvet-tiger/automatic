@@ -41,26 +41,58 @@ pub fn list_mcp_server_scopes() -> Result<std::collections::BTreeMap<String, Str
     core::list_mcp_server_scopes()
 }
 
-/// Create a new library server that only the project with `project_id` can
-/// see. The caller attaches it to the project with a project save.
+/// Create a new library server that only the project of the checkout
+/// `project_name` can see. Refused while another checkout with the same id
+/// owns project servers this one has not accepted. The caller attaches it to
+/// the project with a project save.
 #[tauri::command]
-pub fn create_project_mcp_server(project_id: &str, name: &str, data: &str) -> Result<(), String> {
+pub fn create_project_mcp_server(project_name: &str, name: &str, data: &str) -> Result<(), String> {
     ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
     let _writes = hold_library_writes();
-    core::create_project_mcp_server(project_id, name, data)
+    core::create_project_mcp_server(&core::canonical_project_ident(project_name)?, name, data)
 }
 
-/// Limit a server to the project with `project_id`, or make it available to
-/// every project when `project_id` is `None`, then re-sync its users.
+/// Create `name` as a copy of the project server `source`, limited to the
+/// same project.
 #[tauri::command]
-pub fn set_mcp_server_scope(name: &str, project_id: Option<String>) -> Result<(), String> {
+pub fn duplicate_project_mcp_server(source: &str, name: &str, data: &str) -> Result<(), String> {
+    ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
+    let _writes = hold_library_writes();
+    core::duplicate_project_mcp_server(source, name, data)
+}
+
+/// Limit a server to the project of the checkout `project_name`, or make it
+/// available to every project when that is `None`, then re-sync its users.
+#[tauri::command]
+pub fn set_mcp_server_scope(name: &str, project_name: Option<String>) -> Result<(), String> {
     ensure_not_being_deleted(&format!("mcp:{name}"), name)?;
     {
         let _writes = hold_library_writes();
-        core::set_mcp_server_scope(name, project_id.as_deref())?;
+        let checkout = match project_name.as_deref() {
+            Some(ident) => Some(core::canonical_project_ident(ident)?),
+            None => None,
+        };
+        core::set_mcp_server_scope(name, checkout.as_deref())?;
     }
     queue_mcp_server_sweep(name);
     Ok(())
+}
+
+/// Accept the project MCP servers of `project_id` on the checkout
+/// `project_name`. `project_id` is the id the user was shown. Not reachable
+/// from MCP: an agent must not grant itself another project's secrets.
+#[tauri::command(async)]
+pub fn confirm_project_mcp_servers(project_name: &str, project_id: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
+    core::confirm_project_mcp_servers(&core::canonical_project_ident(project_name)?, project_id)
+}
+
+/// Hide the notice about pending project MCP servers on this checkout. They
+/// stay hidden from it.
+#[tauri::command(async)]
+pub fn ignore_project_mcp_servers(project_name: &str, project_id: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
+    core::ignore_project_mcp_servers(&core::canonical_project_ident(project_name)?, project_id)
 }
 
 /// Queue a re-sync of every project and global assignment that uses a server.

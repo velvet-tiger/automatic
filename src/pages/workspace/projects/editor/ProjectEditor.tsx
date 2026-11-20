@@ -2272,6 +2272,9 @@ export function ProjectEditor({
         pending_profiles: stored.pending_profiles || [],
         local_ignored_contexts: stored.local_ignored_contexts || [],
         pending_contexts: stored.pending_contexts || [],
+        local_confirmed_project_servers_id: stored.local_confirmed_project_servers_id,
+        local_ignored_project_servers_id: stored.local_ignored_project_servers_id,
+        pending_project_mcp_servers: stored.pending_project_mcp_servers || [],
         local_awaiting_confirmation: stored.local_awaiting_confirmation === true,
         read_only_owner: typeof stored.read_only_owner === "string" ? stored.read_only_owner : undefined,
         directory_missing: stored.directory_missing === true,
@@ -2384,6 +2387,9 @@ export function ProjectEditor({
         pending_profiles: parsed.pending_profiles || [],
         local_ignored_contexts: parsed.local_ignored_contexts || [],
         pending_contexts: parsed.pending_contexts || [],
+        local_confirmed_project_servers_id: parsed.local_confirmed_project_servers_id,
+        local_ignored_project_servers_id: parsed.local_ignored_project_servers_id,
+        pending_project_mcp_servers: parsed.pending_project_mcp_servers || [],
         local_awaiting_confirmation: parsed.local_awaiting_confirmation === true,
         local_writable_folders: parsed.local_writable_folders || [],
         local_writable_folders_notice_hidden: parsed.local_writable_folders_notice_hidden === true,
@@ -4518,11 +4524,15 @@ export function ProjectEditor({
                     project={project}
                     availableAgents={availableAgents}
                     availableMcpServers={availableMcpServers.filter((name) => {
-                      // Another project's server is not offered here.
+                      // Another project's server is not offered here, nor one
+                      // this checkout has not accepted: the id can be copied.
                       const owner = mcpServerScopes[name];
-                      return owner === undefined || (!!project.id && owner === project.id);
+                      if (owner === undefined) return true;
+                      const pending = project.pending_project_mcp_servers ?? [];
+                      return !!project.id && owner === project.id && !pending.includes(name);
                     })}
                     mcpServerScopes={mcpServerScopes}
+                    projectKey={selectedKey}
                     onMcpServersChanged={loadAvailableMcpServers}
                     profileLocks={profileLocks}
                     addItem={addItem}

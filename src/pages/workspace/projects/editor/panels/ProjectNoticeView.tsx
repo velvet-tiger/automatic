@@ -19,6 +19,7 @@ import {
 } from "./NoticeRow";
 import { PendingProfilesNotice } from "./PendingProfilesNotice";
 import { PendingContextsNotice } from "./PendingContextsNotice";
+import { PendingProjectMcpServersNotice } from "./PendingProjectMcpServersNotice";
 import { PendingRegistrationNotice } from "./PendingRegistrationNotice";
 import { WritableFoldersTargetNotice } from "./WritableFoldersTargetNotice";
 
@@ -127,6 +128,17 @@ export function ProjectNoticeView({ notice, ...actions }: ProjectNoticeViewProps
       return <PendingProfilesNotice project={actions.project} selectedKey={actions.selectedKey} reloadProject={actions.reloadProject} />;
     case "pending_contexts":
       return <PendingContextsNotice project={actions.project} selectedKey={actions.selectedKey} reloadProject={actions.reloadProject} />;
+    case "pending_project_mcp_servers":
+      return (
+        <PendingProjectMcpServersNotice
+          project={actions.project}
+          selectedKey={actions.selectedKey}
+          names={source.names}
+          readOnly={actions.readOnly}
+          reloadProject={actions.reloadProject}
+          onSync={actions.onSync}
+        />
+      );
     case "silent_mode":
       return (
         <NoticeRow

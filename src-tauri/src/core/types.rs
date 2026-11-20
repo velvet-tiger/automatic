@@ -512,6 +512,19 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local_awaiting_confirmation: bool,
 
+    /// The project `id` whose project MCP servers this checkout accepted.
+    /// The id is committed, so a repository can copy another project's id;
+    /// project servers are offered and synced only while this equals `id`.
+    /// Storing the id, not a flag, means a changed `id` needs a new Accept.
+    /// Stored only in the registry pointer. See `core::profile_confirmation`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_confirmed_project_servers_id: Option<String>,
+
+    /// The project `id` whose pending project MCP servers notice this checkout
+    /// hid. The servers stay pending. Stored only in the registry pointer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_ignored_project_servers_id: Option<String>,
+
     /// Computed at read-time: slugs in `contexts` that agents are not offered
     /// here, because this checkout has not confirmed them and no group it
     /// joined provides them. Never persisted.
@@ -523,6 +536,12 @@ pub struct Project {
     /// them. Never persisted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_profiles: Vec<String>,
+
+    /// Computed at read-time: library servers limited to this project's `id`
+    /// that this checkout has not accepted, so it neither sees nor syncs them.
+    /// Never persisted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_project_mcp_servers: Vec<String>,
 
     /// Computed at read-time: the name of the read-only project whose folder
     /// holds this project's folder, when this project is not read-only
