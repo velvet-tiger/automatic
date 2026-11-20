@@ -757,16 +757,10 @@ fn write_mcp_server_asset(machine_name: &str, payload: &Value) -> Result<(), Str
     // read, so it is stored empty. Values kept from the local entry were
     // decrypted, and never carry the prefix.
     //
-    // An entry this install already holds keeps its own project scope: only
-    // a local action changes it, so a cloud edit cannot hand a project
-    // server, and the env values kept above, to every project. A new entry
-    // keeps the scope it arrives with, so a project server reaches the same
-    // project on the user's other machines. That can only narrow who sees it.
-    let data = if super::mcp_servers::read_mcp_server_config_if_present(machine_name)?.is_some() {
-        super::mcp_scope::with_stored_scope(machine_name, &data)?
-    } else {
-        data
-    };
+    // A cloud edit cannot change the scope of a server held here, so it
+    // cannot hand a project server, and the env values kept above, to every
+    // project. See `with_pulled_scope`.
+    let data = super::mcp_scope::with_pulled_scope(machine_name, &data)?;
     super::mcp_servers::save_untrusted_mcp_server_config(machine_name, &data)
 }
 

@@ -59,8 +59,22 @@ pub fn config_visible_to(config: &Value, project_id: Option<&str>) -> bool {
 pub fn read_mcp_server_scope(name: &str) -> Result<Option<String>, String> {
     match read_scope_file(name)? {
         ScopeFile::Scoped(project_id) => Ok(Some(project_id)),
-        ScopeFile::Global => Ok(None),
+        ScopeFile::Global | ScopeFile::Missing => Ok(None),
         ScopeFile::Unparseable(reason) => Err(format!("MCP server '{}' holds {}", name, reason)),
+    }
+}
+
+/// `data` for a cloud pull of `name`. A server this install already holds
+/// keeps its own scope, so only a local action changes it. A new server keeps
+/// the scope it arrives with, so a project server reaches the same project on
+/// the user's other machines. That can only narrow who sees it, and a new
+/// entry has no local env values to expose.
+///
+/// The stored file is read raw, so no env value is decrypted.
+pub(crate) fn with_pulled_scope(name: &str, data: &str) -> Result<String, String> {
+    match read_scope_file(name)? {
+        ScopeFile::Missing => Ok(data.to_string()),
+        _ => with_stored_scope(name, data),
     }
 }
 
@@ -79,7 +93,7 @@ pub fn list_mcp_server_scopes() -> Result<BTreeMap<String, String>, String> {
             ScopeFile::Scoped(project_id) => {
                 scopes.insert(name, project_id);
             }
-            ScopeFile::Global => {}
+            ScopeFile::Global | ScopeFile::Missing => {}
             ScopeFile::Unparseable(reason) => {
                 eprintln!("[automatic] MCP server '{name}' was left out of the scope list: {reason}");
             }
@@ -89,6 +103,7 @@ pub fn list_mcp_server_scopes() -> Result<BTreeMap<String, String>, String> {
 }
 
 enum ScopeFile {
+    Missing,
     Scoped(String),
     Global,
     Unparseable(String),
@@ -101,7 +116,7 @@ fn read_scope_file(name: &str) -> Result<ScopeFile, String> {
     let path = get_mcp_servers_dir()?.join(format!("{}.json", name));
     let raw = match fs::read_to_string(&path) {
         Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ScopeFile::Global),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ScopeFile::Missing),
         Err(e) => return Err(format!("MCP server '{}' could not be read: {}", name, e)),
     };
     match serde_json::from_str::<Value>(&raw) {
