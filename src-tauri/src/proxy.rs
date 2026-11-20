@@ -590,16 +590,52 @@ pub fn move_oauth_secrets(old_name: &str, new_name: &str, url: &str) {
 
 // ── Server config helpers ────────────────────────────────────────────────────
 
-/// Read the URL for a named MCP server from the Automatic registry.
-fn read_server_url(server_name: &str) -> Result<String, String> {
+/// Read the config of a named MCP server from the Automatic registry.
+fn read_server_config(server_name: &str) -> Result<Value, String> {
     let raw = crate::core::read_mcp_server_config(server_name)?;
-    let config: Value =
-        serde_json::from_str(&raw).map_err(|e| format!("invalid server config JSON: {}", e))?;
+    serde_json::from_str(&raw).map_err(|e| format!("invalid server config JSON: {}", e))
+}
+
+/// The `url` of a server config.
+fn config_url(server_name: &str, config: &Value) -> Result<String, String> {
     config
         .get("url")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| format!("server config '{}' has no 'url' field", server_name))
+}
+
+/// Fail unless the agent running in `folder` may use the server with
+/// `config`.
+///
+/// Any repository can commit an agent config that runs the proxy, so the
+/// stub's arguments prove nothing. The working directory the agent starts
+/// the proxy in is the one signal a copied config does not carry. A project
+/// server is served only to the registered checkout around that folder, and
+/// only when that checkout accepted its id's project servers. Global servers
+/// are open to every folder and need no registry read.
+pub(crate) fn ensure_proxy_may_use(
+    server_name: &str,
+    config: &Value,
+    folder: Option<&std::path::Path>,
+) -> Result<(), String> {
+    if crate::core::config_scope(config).is_none() {
+        return Ok(());
+    }
+    let accepted = folder.and_then(crate::core::accepted_mcp_scope_id_for_folder);
+    if crate::core::config_visible_to(config, accepted.as_deref()) {
+        return Ok(());
+    }
+    let place = folder.map_or_else(
+        || "an unknown folder".to_string(),
+        |f| format!("'{}'", f.display()),
+    );
+    Err(format!(
+        "MCP server '{}' is a project MCP server, and the agent started the proxy in {}. \
+         That folder is not in a project that may use it. Open the project in the Automatic \
+         app and accept its project MCP servers, or make the server available to all projects.",
+        server_name, place
+    ))
 }
 
 // ── Request helper ───────────────────────────────────────────────────────────
@@ -705,8 +741,22 @@ fn stored_token_or_error(server_name: &str, url: &str) -> Result<String, String>
 ///
 /// When the remote server returns 401/403 (expired token), the proxy
 /// automatically attempts a token refresh and retries the request once.
+///
+/// A project MCP server is refused, before its token is read, unless the
+/// working directory is in a checkout that may use it. See
+/// [`ensure_proxy_may_use`].
 pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let url = read_server_url(server_name)?;
+    run_proxy_in(server_name, crate::core::detect_reading_folder().as_deref()).await
+}
+
+/// [`run_proxy`] for an agent running in `folder`.
+pub(crate) async fn run_proxy_in(
+    server_name: &str,
+    folder: Option<&std::path::Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = read_server_config(server_name)?;
+    ensure_proxy_may_use(server_name, &config, folder)?;
+    let url = config_url(server_name, &config)?;
     let mut token = stored_token_or_error(server_name, &url)?;
 
     let client = reqwest::Client::builder()

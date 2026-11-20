@@ -1004,4 +1004,97 @@ mod tests {
             assert!(duplicate_project_mcp_server("missing", "m-copy", r#"{"command":"npx"}"#).is_err());
         });
     }
+
+    // ── The OAuth proxy serves a project server only to its checkout ────────
+
+    const REMOTE_URL: &str = "https://mcp.example.com/mcp";
+
+    /// `real` and `copy` share id `p-1`, and only `real` accepted it. `other`
+    /// has id `p-2` and accepted that. `remote` is an HTTP server of `p-1`
+    /// and `open` a global HTTP server. Returns the canonical folder of a
+    /// checkout, as `detect_reading_folder` gives it.
+    fn proxy_fixture(home: &std::path::Path) -> impl Fn(&str) -> std::path::PathBuf + '_ {
+        register(home, "real", "p-1", &[]);
+        register(home, "copy", "p-1", &[]);
+        register(home, "other", "p-2", &[]);
+        fs::create_dir_all(home.join("outside")).expect("mkdir");
+        crate::core::ensure_project_keys().expect("mint keys");
+        let remote = json!({ "type": "http", "url": REMOTE_URL }).to_string();
+        create_project_mcp_server("real", "remote", &remote).expect("create");
+        crate::core::confirm_project_mcp_servers("other", "p-2").expect("accept p-2");
+        store("open", json!({ "type": "http", "url": REMOTE_URL }));
+        move |name| fs::canonicalize(home.join(name)).expect("canonical")
+    }
+
+    fn proxy_check(server: &str, folder: Option<&std::path::Path>) -> Result<(), String> {
+        let raw = crate::core::read_mcp_server_config(server).expect("read");
+        let config: Value = serde_json::from_str(&raw).expect("json");
+        crate::proxy::ensure_proxy_may_use(server, &config, folder)
+    }
+
+    #[test]
+    fn the_proxy_serves_a_project_server_to_the_accepted_checkout() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            proxy_check("remote", Some(&folder("real"))).expect("the accepted checkout");
+            let nested = folder("real").join("src");
+            fs::create_dir_all(&nested).expect("mkdir");
+            proxy_check("remote", Some(&nested)).expect("a folder inside the checkout");
+        });
+    }
+
+    #[test]
+    fn the_proxy_refuses_a_project_server_everywhere_else() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            for name in ["copy", "other", "outside"] {
+                let err = proxy_check("remote", Some(&folder(name))).expect_err(name);
+                assert!(err.contains("'remote' is a project MCP server"), "{name}: {err}");
+                assert!(err.contains(&folder(name).display().to_string()), "{name}: {err}");
+                assert!(!err.contains("p-1"), "the message does not name the owner: {err}");
+            }
+            let err = proxy_check("remote", None).expect_err("no folder");
+            assert!(err.contains("an unknown folder"), "{err}");
+        });
+    }
+
+    #[test]
+    fn the_proxy_serves_a_global_server_in_any_folder() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            for name in ["real", "copy", "other", "outside"] {
+                proxy_check("open", Some(&folder(name))).expect(name);
+            }
+            proxy_check("open", None).expect("no folder");
+        });
+    }
+
+    #[test]
+    fn a_refused_proxy_never_reads_the_token() {
+        use crate::core::secret_store::{set_test_fault, TestFault};
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            let entry = crate::proxy::oauth_token_entry("remote", REMOTE_URL);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            // A read of the token fails loudly, so a refusal that names the
+            // scope shows the proxy stopped before it.
+            set_test_fault(&entry, Some(TestFault::Unreadable));
+            let refused = runtime
+                .block_on(crate::proxy::run_proxy_in("remote", Some(&folder("copy"))))
+                .map_err(|e| e.to_string());
+            let allowed = runtime
+                .block_on(crate::proxy::run_proxy_in("remote", Some(&folder("real"))))
+                .map_err(|e| e.to_string());
+            set_test_fault(&entry, None);
+
+            let refused = refused.expect_err("the copy is refused");
+            assert!(refused.contains("is a project MCP server"), "{refused}");
+            let allowed = allowed.expect_err("the token read fails");
+            assert!(allowed.contains("Could not read the OAuth token"), "{allowed}");
+        });
+    }
 }
