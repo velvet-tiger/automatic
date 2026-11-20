@@ -580,14 +580,11 @@ pub fn comparable_mcp_url(url: &str) -> Option<String> {
 /// An env value that looks like Automatic's own ciphertext is stored empty,
 /// as [`blank_ciphertext_like_env_values`] describes.
 ///
-/// A new entry is limited to the project with `project_id`, the project whose
-/// files it was found in. `None` stores it as a global server. Any scope the
-/// file's config names itself is replaced.
-pub fn add_discovered_mcp_server_config(
-    name: &str,
-    config_json: &str,
-    project_id: Option<&str>,
-) -> Result<(), String> {
+/// A discovered server is always global. Two projects often hold the same
+/// server name in their own files, and a server limited to the first one
+/// would be left out of the second one's files. Any `_project` field the
+/// file's config carries is removed, so a repository cannot choose a scope.
+pub fn add_discovered_mcp_server_config(name: &str, config_json: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid server name".into());
     }
@@ -598,8 +595,8 @@ pub fn add_discovered_mcp_server_config(
     }
     // The guard reads env key names only, and blanking keeps every key, so
     // the marker is the same whether it is decided before or after blanking.
-    let scoped = super::mcp_scope::with_scope(config_json, project_id);
-    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(&scoped))
+    let global = super::mcp_scope::with_scope(config_json, None);
+    save_untrusted_mcp_server_config(name, &super::mark_discovered_if_blocked(&global))
 }
 
 /// Replace every `env` value that carries the encryption prefix with an
@@ -2731,10 +2728,10 @@ mod tests {
                 .expect("seed");
 
             let incoming = r#"{"type":"http","url":"https://other.example/mcp"}"#;
-            add_discovered_mcp_server_config("github", incoming, None).expect("existing name");
-            add_discovered_mcp_server_config("GitHub", incoming, None).expect("case variant");
-            add_discovered_mcp_server_config("fresh", incoming, None).expect("new name");
-            assert!(add_discovered_mcp_server_config("../escape", incoming, None).is_err());
+            add_discovered_mcp_server_config("github", incoming).expect("existing name");
+            add_discovered_mcp_server_config("GitHub", incoming).expect("case variant");
+            add_discovered_mcp_server_config("fresh", incoming).expect("new name");
+            assert!(add_discovered_mcp_server_config("../escape", incoming).is_err());
 
             assert_eq!(
                 list_mcp_server_configs().expect("list"),
@@ -2792,7 +2789,7 @@ mod tests {
         let home = tmp();
         with_test_home(home.path().to_path_buf(), || {
             let incoming = r#"{"command":"npx","env":{"API_KEY":"enc:v1:AAAA","REGION":"eu"}}"#;
-            add_discovered_mcp_server_config("discovered-planted", incoming, None).expect("add");
+            add_discovered_mcp_server_config("discovered-planted", incoming).expect("add");
 
             let raw = read_mcp_server_config("discovered-planted")
                 .expect("the stored entry must be readable");
@@ -2800,6 +2797,30 @@ mod tests {
             assert_eq!(stored["env"]["API_KEY"], "");
             assert_eq!(stored["env"]["REGION"], "eu");
             assert_eq!(stored["command"], "npx");
+        });
+    }
+
+    #[test]
+    fn a_discovered_server_is_global_and_two_projects_can_sync_it() {
+        let home = tmp();
+        with_test_home(home.path().to_path_buf(), || {
+            // A repository's file names a scope; discovery must not keep it.
+            add_discovered_mcp_server_config(
+                "context7",
+                r#"{"command":"npx","args":["-y","context7"],"_project":"p-planted"}"#,
+            )
+            .expect("add");
+            assert_eq!(super::super::read_mcp_server_scope("context7").unwrap(), None);
+
+            for id in ["p-a", "p-b"] {
+                let project = super::super::Project {
+                    id: id.to_string(),
+                    mcp_servers: vec!["context7".to_string()],
+                    ..Default::default()
+                };
+                let notes = crate::sync::mcp_config_sync_notes(&project).expect("notes");
+                assert!(notes.other_project.is_empty(), "{id} must be able to sync it");
+            }
         });
     }
 

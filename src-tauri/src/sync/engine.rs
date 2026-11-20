@@ -91,16 +91,11 @@ fn check_project_directory(project: &Project) -> Result<(), String> {
 fn autodetect_and_sync(project: &Project, adoption: AgentAdoption) -> Result<Vec<String>, String> {
     let (mut updated_project, discovered_servers) = autodetect_inner(project, adoption)?;
 
-    // Add newly discovered MCP server configs to the library, limited to this
-    // project because they were found in its files.  A name the library
-    // already holds is left as it is.  This only happens during an explicit
-    // sync, not during a read-only load.
+    // Add newly discovered MCP server configs to the library as global
+    // servers.  A name the library already holds is left as it is.  This only
+    // happens during an explicit sync, not during a read-only load.
     for (name, config_str) in discovered_servers {
-        let _ = crate::core::add_discovered_mcp_server_config(
-            &name,
-            &config_str,
-            Some(project.id.as_str()),
-        );
+        let _ = crate::core::add_discovered_mcp_server_config(&name, &config_str);
     }
 
     sync_project_without_autodetect(&mut updated_project)
