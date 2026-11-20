@@ -605,37 +605,68 @@ fn config_url(server_name: &str, config: &Value) -> Result<String, String> {
         .ok_or_else(|| format!("server config '{}' has no 'url' field", server_name))
 }
 
-/// Fail unless the agent running in `folder` may use the server with
-/// `config`.
+/// Fail unless an agent running in `folder` may use the stored server
+/// `server_name`.
 ///
 /// Any repository can commit an agent config that runs the proxy, so the
-/// stub's arguments prove nothing. The working directory the agent starts
-/// the proxy in is the one signal a copied config does not carry. A project
-/// server is served only to the registered checkout around that folder, and
-/// only when that checkout accepted its id's project servers. Global servers
-/// are open to every folder and need no registry read.
+/// stub's arguments prove nothing. The check uses the working directory the
+/// agent starts the proxy in. A plain copied config does not carry it. An
+/// agent that reads a `cwd` field from its config (Codex, VS Code) lets a
+/// config name another folder, so this check cannot stop a config that
+/// names the absolute path of an accepted checkout.
+///
+/// A project server is served only to the registered checkout around
+/// `folder`, and only when that checkout accepted its id's project servers.
+/// Global servers are open to every folder. The scope is read from the raw
+/// file, so a refusal comes before any secret is read, including the
+/// encrypted env values. Every error refuses.
 pub(crate) fn ensure_proxy_may_use(
     server_name: &str,
-    config: &Value,
     folder: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    if crate::core::config_scope(config).is_none() {
+    let refuse = |why: String| {
+        format!(
+            "The proxy will not start for project MCP server '{}': {}",
+            server_name, why
+        )
+    };
+    let owner = match crate::core::read_mcp_server_scope(server_name) {
+        Ok(None) => return Ok(()),
+        Ok(Some(owner)) => owner,
+        Err(e) => return Err(refuse(format!("its scope could not be read: {}", e))),
+    };
+    let folder = folder.ok_or_else(|| refuse("the agent's folder is not known.".into()))?;
+    let summaries = crate::core::get_project_summaries()
+        .map_err(|e| refuse(format!("the project registry could not be read: {}", e)))?;
+    let Some(checkout) = crate::core::reading_checkout_of(Some(folder), &summaries) else {
+        return Err(refuse(format!(
+            "'{}' is not in a project registered in Automatic.",
+            folder.display()
+        )));
+    };
+    if checkout.id != owner {
+        return Err(refuse(format!(
+            "it belongs to another project, not '{}'. Make it available to all projects to \
+             use it here.",
+            checkout.name
+        )));
+    }
+    // Without a key the checkout could only be found by name, which another
+    // checkout may share, so it counts as not accepted.
+    let accepted = if checkout.local_key.is_empty() {
+        None
+    } else {
+        crate::core::checkout_accepted_mcp_scope_id(&checkout.local_key)
+            .map_err(|e| refuse(format!("the project registry could not be read: {}", e)))?
+    };
+    if accepted.as_deref() == Some(owner.as_str()) {
         return Ok(());
     }
-    let accepted = folder.and_then(crate::core::accepted_mcp_scope_id_for_folder);
-    if crate::core::config_visible_to(config, accepted.as_deref()) {
-        return Ok(());
-    }
-    let place = folder.map_or_else(
-        || "an unknown folder".to_string(),
-        |f| format!("'{}'", f.display()),
-    );
-    Err(format!(
-        "MCP server '{}' is a project MCP server, and the agent started the proxy in {}. \
-         That folder is not in a project that may use it. Open the project in the Automatic \
-         app and accept its project MCP servers, or make the server available to all projects.",
-        server_name, place
-    ))
+    Err(refuse(format!(
+        "project '{}' has not accepted its project MCP servers. Open it in the Automatic app \
+         and accept them.",
+        checkout.name
+    )))
 }
 
 // ── Request helper ───────────────────────────────────────────────────────────
@@ -754,8 +785,8 @@ pub(crate) async fn run_proxy_in(
     server_name: &str,
     folder: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    ensure_proxy_may_use(server_name, folder)?;
     let config = read_server_config(server_name)?;
-    ensure_proxy_may_use(server_name, &config, folder)?;
     let url = config_url(server_name, &config)?;
     let mut token = stored_token_or_error(server_name, &url)?;
 

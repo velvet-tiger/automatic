@@ -1027,9 +1027,20 @@ mod tests {
     }
 
     fn proxy_check(server: &str, folder: Option<&std::path::Path>) -> Result<(), String> {
-        let raw = crate::core::read_mcp_server_config(server).expect("read");
-        let config: Value = serde_json::from_str(&raw).expect("json");
-        crate::proxy::ensure_proxy_may_use(server, &config, folder)
+        crate::proxy::ensure_proxy_may_use(server, folder)
+    }
+
+    /// Register a checkout of `id` at `dir`, which may sit inside another.
+    fn register_at(name: &str, id: &str, dir: &std::path::Path) {
+        fs::create_dir_all(dir).expect("mkdir");
+        let project = crate::core::Project {
+            name: name.to_string(),
+            id: id.to_string(),
+            directory: dir.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
+            .expect("save project");
     }
 
     #[test]
@@ -1047,14 +1058,19 @@ mod tests {
     fn the_proxy_refuses_a_project_server_everywhere_else() {
         with_temp_home(|home| {
             let folder = proxy_fixture(home);
-            for name in ["copy", "other", "outside"] {
+            let reasons = [
+                ("copy", "project 'copy' has not accepted its project MCP servers"),
+                ("other", "it belongs to another project, not 'other'"),
+                ("outside", "is not in a project registered in Automatic"),
+            ];
+            for (name, reason) in reasons {
                 let err = proxy_check("remote", Some(&folder(name))).expect_err(name);
-                assert!(err.contains("'remote' is a project MCP server"), "{name}: {err}");
-                assert!(err.contains(&folder(name).display().to_string()), "{name}: {err}");
+                assert!(err.contains("project MCP server 'remote'"), "{name}: {err}");
+                assert!(err.contains(reason), "{name}: {err}");
                 assert!(!err.contains("p-1"), "the message does not name the owner: {err}");
             }
             let err = proxy_check("remote", None).expect_err("no folder");
-            assert!(err.contains("an unknown folder"), "{err}");
+            assert!(err.contains("the agent's folder is not known"), "{err}");
         });
     }
 
@@ -1066,6 +1082,66 @@ mod tests {
                 proxy_check("open", Some(&folder(name))).expect(name);
             }
             proxy_check("open", None).expect("no folder");
+        });
+    }
+
+    #[test]
+    fn the_proxy_refuses_an_unaccepted_checkout_nested_in_an_accepted_one() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            let vendor = folder("real").join("vendor");
+            register_at("vendor", "p-1", &vendor);
+            crate::core::ensure_project_keys().expect("mint keys");
+            let err = proxy_check("remote", Some(&vendor)).expect_err("the nested checkout");
+            assert!(err.contains("project 'vendor' has not accepted"), "{err}");
+            proxy_check("remote", Some(&folder("real"))).expect("the outer checkout");
+        });
+    }
+
+    #[test]
+    fn the_proxy_refuses_a_checkout_without_a_key_even_when_it_accepted() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            register_at("keyless", "p-1", &home.join("keyless"));
+            crate::core::confirm_project_mcp_servers("keyless", "p-1").expect("accept");
+            let summaries = crate::core::get_project_summaries().expect("summaries");
+            let keyless = summaries.iter().find(|s| s.name == "keyless").expect("keyless");
+            assert!(keyless.local_key.is_empty(), "the fixture must have no key");
+            let err = proxy_check("remote", Some(&folder("keyless"))).expect_err("keyless");
+            assert!(err.contains("project 'keyless' has not accepted"), "{err}");
+        });
+    }
+
+    #[test]
+    fn the_proxy_refuses_before_decrypting_any_secret() {
+        with_temp_home(|home| {
+            let folder = proxy_fixture(home);
+            // An env value that cannot be decrypted. Reaching the decryption
+            // fails with a different error than the scope refusal.
+            let config = json!({
+                "type": "http",
+                "url": REMOTE_URL,
+                "env": { "KEY": "enc:v1:not-a-real-ciphertext" },
+                "_project": "p-1",
+            });
+            let path = get_mcp_servers_dir().expect("dir").join("remote-env.json");
+            fs::write(path, config.to_string()).expect("write");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+
+            let refused = runtime
+                .block_on(crate::proxy::run_proxy_in("remote-env", Some(&folder("copy"))))
+                .expect_err("the copy is refused")
+                .to_string();
+            assert!(refused.contains("has not accepted"), "{refused}");
+
+            let allowed = runtime
+                .block_on(crate::proxy::run_proxy_in("remote-env", Some(&folder("real"))))
+                .expect_err("the env cannot be decrypted")
+                .to_string();
+            assert!(allowed.contains("encrypted value"), "the real checkout reaches decryption: {allowed}");
         });
     }
 
@@ -1092,7 +1168,7 @@ mod tests {
             set_test_fault(&entry, None);
 
             let refused = refused.expect_err("the copy is refused");
-            assert!(refused.contains("is a project MCP server"), "{refused}");
+            assert!(refused.contains("has not accepted"), "{refused}");
             let allowed = allowed.expect_err("the token read fails");
             assert!(allowed.contains("Could not read the OAuth token"), "{allowed}");
         });
