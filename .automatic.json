@@ -2,8 +2,7 @@
   "agents": [
     "claude",
     "cursor",
-    "codex",
-    "opencode"
+    "codex"
   ],
   "contexts": [
     "automatic"

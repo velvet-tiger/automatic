@@ -835,12 +835,6 @@ merge, commit, or push is a delivery step. It never fills State, Problem, or
 Solution. It goes in the Git state table. This applies however small the last
 step was, and when the last step was the only thing done this turn.
 
-**State:** one of Not started, Plan, In progress, Blocked, Complete, Failed,
-or Abandoned. Use Complete only when all the work the task requires is done.
-Required follow-on work, such as a port, means In progress. Use Blocked when
-the work cannot continue without the user, and say what you need. For Failed
-or Abandoned, give the reason.
-
 **Problem:** restate the problem and its cause in one or two sentences.
 Example: "The sync dropped remote servers because the proxy stub overwrote
 the registry entry."
@@ -856,11 +850,17 @@ resolved.
 | Sync could downgrade a remote server | Add a downgrade guard | Fixed |
 | No test for the stub round-trip | Needs an owner decision | Open |
 
+**State:** one of Not started, Plan, In progress, Blocked, Complete, Failed,
+or Abandoned. Use Complete only when all the work the task requires is done.
+Required follow-on work, such as a port, means In progress. Use Blocked when
+the work cannot continue without the user, and say what you need. For Failed
+or Abandoned, give the reason.
+
 **Git state:** use this table every time, so the fields stay in the same order.
 Write "None" or "No" rather than leaving a row out. If the work is not
 committed, say why in the Commit row.
 
-| Commit | Branch | Worktree | Merged to default |
+| Commit | Branch | Worktree | Merged to target branch |
 |---|---|---|---|
 | `fbdafcd` | `claude/example` | `.claude/worktrees/example` or None | Yes/No |
 
@@ -875,13 +875,31 @@ happening now.
 **Red flag:** you are about to end a turn on finished work, and the reader
 cannot find the state or the git position without reading the whole message.
 
-**Red flag:** your Solution section describes a git merge as the solution. This is almost always wrong. You should be refering to the original problem you were working on.
+**Red flag:** your Solution section describes a git merge as the solution. 
+This is almost always wrong. You should be refering to the original problem you were working on.
 
 # Open Items and handing off tasks to other agents
 
 If you discover new issues, or your tasks looks like it splits into multiple issues, and these issues cant be solved in the current session or you think they should be new sessions, propose this to the user. Suggest new tasks if you support it, or offer to create tickets. Never leave a list of "open items" without giving the user a path to resolve them.
 
 If you hand off a task to another agent, via a related task or some other mechanism, if your work is finished and your chat can be archived, tell the user.
+
+# Summarisation
+
+When required to summarise or compact, in addition to any instructions you have about that, do the following:
+
+Record six things, not a story of what happened:
+
+- the goal
+- facts you've confirmed
+- the files that matter
+- changes already made
+- approaches that failed
+- the next action
+
+# Working with development servers and services
+
+- If you change something on a development service that would normally require a server restart to continue to serve it to the user for testing or viewing, you should restart that service. Don't start a new, second service, or kill the user's service without restarting. Treat other services with respect.
 
 # Long-running work
 
