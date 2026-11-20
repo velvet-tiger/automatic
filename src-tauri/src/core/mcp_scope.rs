@@ -1027,7 +1027,7 @@ mod tests {
     }
 
     fn proxy_check(server: &str, folder: Option<&std::path::Path>) -> Result<(), String> {
-        crate::proxy::ensure_proxy_may_use(server, folder)
+        crate::proxy::ensure_proxy_may_use(server, folder).map(|_| ())
     }
 
     /// Register a checkout of `id` at `dir`, which may sit inside another.

@@ -620,10 +620,13 @@ fn config_url(server_name: &str, config: &Value) -> Result<String, String> {
 /// Global servers are open to every folder. The scope is read from the raw
 /// file, so a refusal comes before any secret is read, including the
 /// encrypted env values. Every error refuses.
+///
+/// Returns the scope it checked, so the caller can confirm the config it
+/// reads next still carries it.
 pub(crate) fn ensure_proxy_may_use(
     server_name: &str,
     folder: Option<&std::path::Path>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let refuse = |why: String| {
         format!(
             "The proxy will not start for project MCP server '{}': {}",
@@ -631,9 +634,16 @@ pub(crate) fn ensure_proxy_may_use(
         )
     };
     let owner = match crate::core::read_mcp_server_scope(server_name) {
-        Ok(None) => return Ok(()),
+        Ok(None) => return Ok(None),
         Ok(Some(owner)) => owner,
-        Err(e) => return Err(refuse(format!("its scope could not be read: {}", e))),
+        // The scope is unknown here, so the message does not call it a
+        // project server.
+        Err(e) => {
+            return Err(format!(
+                "The proxy will not start for MCP server '{}': it could not be checked: {}",
+                server_name, e
+            ))
+        }
     };
     let folder = folder.ok_or_else(|| refuse("the agent's folder is not known.".into()))?;
     let summaries = crate::core::get_project_summaries()
@@ -660,7 +670,7 @@ pub(crate) fn ensure_proxy_may_use(
             .map_err(|e| refuse(format!("the project registry could not be read: {}", e)))?
     };
     if accepted.as_deref() == Some(owner.as_str()) {
-        return Ok(());
+        return Ok(Some(owner));
     }
     Err(refuse(format!(
         "project '{}' has not accepted its project MCP servers. Open it in the Automatic app \
@@ -785,8 +795,17 @@ pub(crate) async fn run_proxy_in(
     server_name: &str,
     folder: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    ensure_proxy_may_use(server_name, folder)?;
+    let checked = ensure_proxy_may_use(server_name, folder)?;
     let config = read_server_config(server_name)?;
+    // The file is read twice. A save between the reads must not slip a
+    // different scope past the check.
+    if crate::core::config_scope(&config) != checked.as_deref() {
+        return Err(format!(
+            "MCP server '{}' changed while the proxy started. Start the agent again.",
+            server_name
+        )
+        .into());
+    }
     let url = config_url(server_name, &config)?;
     let mut token = stored_token_or_error(server_name, &url)?;
 
