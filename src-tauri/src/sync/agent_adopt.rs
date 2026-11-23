@@ -334,7 +334,9 @@ pub(crate) fn other_agent_files_matching(
             continue;
         };
         let old_render = other.convert_agent_content(&stored.content, &machine_name);
-        if other.agent_file_differences(&disk, &old_render).is_empty() {
+        // A line an older render wrote is Automatic's, as in the scan.
+        let compared = other.without_retired_agent_fields(&disk, &stored.content);
+        if other.agent_file_differences(&compared, &old_render).is_empty() {
             files.push(OtherAgentFile { agent: other, path });
         }
     }
@@ -941,6 +943,36 @@ mod tests {
         fs::set_permissions(&claude, fs::Permissions::from_mode(0o644)).unwrap();
         rewrite_other_agent_files(dir.path(), &files, &adopted).unwrap();
         assert!(fs::read_to_string(&claude).unwrap().contains("Edited."));
+    }
+
+    /// A Codex file that still has the `sandbox_mode` line an older version
+    /// wrote matches the stored copy, so adopting another agent's edit
+    /// rewrites it too instead of leaving a conflict that would undo the adopt.
+    #[test]
+    fn an_older_codex_file_counts_as_matching() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "older-codex".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["claude".into(), "codex".into()],
+            ..Default::default()
+        };
+        let old = stored(STORED);
+        let codex = dir.path().join(".codex/agents/planner.toml");
+        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        let older = rendered(STORED).replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1);
+        std::fs::write(&codex, older).unwrap();
+
+        let files = other_agent_files_matching(&project, dir.path(), &old, &ClaudeCode);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, codex);
+
+        let adopted = stored(&STORED.replace("Stored body.", "Edited body."));
+        rewrite_other_agent_files(dir.path(), &files, &adopted).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&codex).unwrap(),
+            rendered(&adopted.content)
+        );
     }
 
     /// A name that fails main's validation never reaches a path.

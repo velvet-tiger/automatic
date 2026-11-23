@@ -1539,6 +1539,14 @@ mod tests {
         let noted = older(WITH_TOOLS, "sandbox_mode = \"read-only\" # mine");
         assert_eq!(compare(WITH_TOOLS, &noted), vec!["comments", "sandbox_mode"]);
 
+        // The same text inside the instructions is the user's and stays.
+        let body = "---\nname: planner\ntools: Read\n---\nKeep:\nsandbox_mode = \"read-only\"\n";
+        let in_body = CodexCli.convert_agent_content(body, "planner");
+        assert!(in_body.contains("\nsandbox_mode = \"read-only\"\n"), "{in_body}");
+        assert_eq!(CodexCli.without_retired_agent_fields(&in_body, body), in_body);
+        let edited = in_body.replace("Keep:", "Changed:");
+        assert_eq!(compare(body, &edited), vec!["developer_instructions"]);
+
         // A comment above the line survives the drop and is still reported.
         let above = older(WITH_TOOLS, "# keep this\nsandbox_mode = \"read-only\"");
         assert_eq!(compare(WITH_TOOLS, &above), vec!["comments"]);
