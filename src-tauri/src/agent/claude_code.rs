@@ -65,6 +65,7 @@ impl Agent for ClaudeCode {
                     obj.remove("enabled");
                     obj.remove("timeout");
                 }
+                write_claude_oauth_scopes(obj);
             }
             claude_servers.insert(name.clone(), server);
         }
@@ -157,8 +158,7 @@ impl Agent for ClaudeCode {
         if !path.exists() {
             return Map::new();
         }
-        // Claude's format is already canonical — no normalisation needed.
-        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+        discover_mcp_servers_from_json(&path, "mcpServers", normalise_claude_server)
     }
 
     fn detect_global_install(&self) -> bool {
@@ -256,6 +256,7 @@ impl Agent for ClaudeCode {
                     obj.remove("enabled");
                     obj.remove("timeout");
                 }
+                write_claude_oauth_scopes(obj);
             }
             rendered.insert(name.clone(), server);
         }
@@ -280,12 +281,55 @@ impl Agent for ClaudeCode {
 /// are intentionally excluded because they are project-specific and we have
 /// no project path context here.
 fn discover_claude_global_config(path: &Path) -> Map<String, Value> {
-    discover_mcp_servers_from_json(path, "mcpServers", identity)
+    discover_mcp_servers_from_json(path, "mcpServers", normalise_claude_server)
 }
 
-/// Pass-through normaliser: Claude's format is already canonical.
-fn identity(v: Value) -> Value {
-    v
+/// Claude's format matches Automatic's canonical one except for the pinned
+/// OAuth scopes, which are restored from `oauth.scopes` to `oauth.scope`.
+///
+/// The sync engine saves discovered entries over the registry, so without
+/// this the second sync would store Claude's spelling as canonical and the
+/// MCP server form, Cursor and every other writer would lose the scope.
+fn normalise_claude_server(mut server: Value) -> Value {
+    restore_claude_oauth_scope(&mut server);
+    server
+}
+
+/// Rename Automatic's canonical `oauth.scope` to Claude Code's `oauth.scopes`.
+///
+/// Claude Code documents `oauth.scopes` as "a single space-separated string,
+/// matching the `scope` parameter format in RFC 6749 §3.3"
+/// (<https://code.claude.com/docs/en/mcp>), so the value is copied unchanged.
+/// `scope` is not a documented alias, and an entry written with it pins
+/// nothing.  When both keys are present the canonical `scope` wins.
+fn write_claude_oauth_scopes(server: &mut Map<String, Value>) {
+    let Some(Value::Object(oauth)) = server.get_mut("oauth") else {
+        return;
+    };
+    if let Some(scope) = oauth.remove("scope") {
+        oauth.insert("scopes".to_string(), scope);
+    }
+}
+
+/// Undo [`write_claude_oauth_scopes`] on an entry read back from `.mcp.json`
+/// or `~/.claude.json`: a string `oauth.scopes` becomes `oauth.scope`.
+///
+/// A file written before the rename still carries the legacy `scope` key.
+/// That entry is already canonical and is left alone; drift reports the file
+/// because the expected render says `scopes`, and the next sync rewrites it.
+/// A non-string `scopes` is not Claude's documented form, so it is left as
+/// found rather than guessed at.
+fn restore_claude_oauth_scope(server: &mut Value) {
+    let Some(Value::Object(oauth)) = server.get_mut("oauth") else {
+        return;
+    };
+    if !oauth.get("scopes").is_some_and(Value::is_string) {
+        return;
+    }
+    if let Some(scopes) = oauth.remove("scopes") {
+        // A hand-edited file may carry both keys; Claude Code reads `scopes`.
+        oauth.insert("scope".to_string(), scopes);
+    }
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
@@ -509,6 +553,74 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "client_123"
+        );
+        // Claude Code pins scopes from `oauth.scopes`; `scope` is not read.
+        assert_eq!(
+            parsed["mcpServers"]["remote-api"]["oauth"]["scopes"],
+            "read"
+        );
+        assert!(parsed["mcpServers"]["remote-api"]["oauth"]
+            .get("scope")
+            .is_none());
+    }
+
+    #[test]
+    fn test_oauth_scopes_written_as_one_space_separated_string() {
+        let mut servers = Map::new();
+        servers.insert(
+            "remote".to_string(),
+            json!({"type":"http","url":"https://api.example.com/mcp","oauth":{"clientId":"c","scope":"read write","callbackPort":8787}}),
+        );
+        let dir = tempdir().unwrap();
+        ClaudeCode.write_mcp_config(dir.path(), &servers).unwrap();
+        let parsed: Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join(".mcp.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["remote"]["oauth"],
+            json!({"clientId":"c","scopes":"read write","callbackPort":8787})
+        );
+    }
+
+    #[test]
+    fn test_oauth_scope_round_trips_to_canonical_scope() {
+        let dir = tempdir().unwrap();
+        ClaudeCode
+            .write_mcp_config(dir.path(), &http_servers())
+            .unwrap();
+
+        let discovered = ClaudeCode.discover_mcp_servers(dir.path());
+        assert_eq!(discovered["remote-api"], http_servers()["remote-api"]);
+    }
+
+    #[test]
+    fn test_legacy_oauth_scope_file_is_read_as_canonical() {
+        // Files written before Automatic used `scopes` carry `scope`.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join(".mcp.json"),
+            r#"{"mcpServers":{"remote-api":{"type":"http","url":"https://api.example.com/mcp","headers":{"Authorization":"Bearer tok_abc123"},"oauth":{"clientId":"client_123","scope":"read"}}}}"#,
+        )
+        .unwrap();
+
+        let discovered = ClaudeCode.discover_mcp_servers(dir.path());
+        assert_eq!(discovered["remote-api"], http_servers()["remote-api"]);
+    }
+
+    #[test]
+    fn test_global_config_restores_oauth_scope() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".claude.json");
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"remote":{"type":"http","url":"https://x/mcp","oauth":{"clientId":"c","scopes":"read write"}}}}"#,
+        )
+        .unwrap();
+
+        let discovered = discover_claude_global_config(&path);
+        assert_eq!(
+            discovered["remote"]["oauth"],
+            json!({"clientId":"c","scope":"read write"})
         );
     }
 

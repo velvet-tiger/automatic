@@ -2854,6 +2854,58 @@ mod tests {
         );
     }
 
+    /// A pinned OAuth scope renders as Claude Code's `oauth.scopes`.  A file
+    /// written by the new writer shows no drift; a file from an older version
+    /// that used `oauth.scope` drifts, so the next sync rewrites it.
+    #[test]
+    fn claude_oauth_scopes_drift_only_for_legacy_scope_key() {
+        let mut servers = Map::new();
+        servers.insert(
+            "remote".to_string(),
+            serde_json::json!({
+                "type": "http",
+                "url": "https://api.example.com/mcp",
+                "oauth": { "clientId": "client_123", "scope": "read write" }
+            }),
+        );
+
+        let current = tempdir().unwrap();
+        ClaudeCode
+            .write_mcp_config(current.path(), &servers)
+            .expect("write_mcp_config should succeed");
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &ClaudeCode,
+            &current.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+        assert!(files.is_empty(), "unexpected drift: {:?}", files.len());
+
+        let legacy = tempdir().unwrap();
+        let legacy_content = serde_json::to_string_pretty(&serde_json::json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "url": "https://api.example.com/mcp",
+                    "oauth": { "clientId": "client_123", "scope": "read write" }
+                }
+            }
+        }))
+        .unwrap();
+        fs::write(legacy.path().join(".mcp.json"), legacy_content).unwrap();
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &ClaudeCode,
+            &legacy.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+        assert_eq!(files.len(), 1, "legacy `scope` file must drift");
+        assert_eq!(files[0].path, ".mcp.json");
+        assert_eq!(files[0].reason, "modified");
+    }
+
     /// A changed binary path must produce a "modified" drift entry for `.mcp.json`.
     ///
     /// Regression test for the "MCP drift after binary path changes" bug where
