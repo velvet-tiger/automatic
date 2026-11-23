@@ -2906,6 +2906,61 @@ mod tests {
         assert_eq!(files[0].reason, "modified");
     }
 
+    /// OpenCode's oauth keys render in snake_case.  A file written by the new
+    /// writer shows no drift; a file from an older version that used the
+    /// canonical camelCase keys drifts, so the next sync rewrites it.
+    #[test]
+    fn opencode_oauth_keys_drift_only_for_legacy_camel_case() {
+        use crate::agent::OpenCode;
+
+        let mut servers = Map::new();
+        servers.insert(
+            "remote".to_string(),
+            serde_json::json!({
+                "type": "http",
+                "url": "https://api.example.com/mcp",
+                "oauth": { "clientId": "client_123", "scope": "read", "callbackPort": 19876 }
+            }),
+        );
+
+        let current = tempdir().unwrap();
+        OpenCode
+            .write_mcp_config(current.path(), &servers)
+            .expect("write_mcp_config should succeed");
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &OpenCode,
+            &current.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+        assert!(files.is_empty(), "unexpected drift: {:?}", files.len());
+
+        let legacy = tempdir().unwrap();
+        let legacy_content = serde_json::to_string_pretty(&serde_json::json!({
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {
+                "remote": {
+                    "type": "remote",
+                    "url": "https://api.example.com/mcp",
+                    "oauth": { "clientId": "client_123", "scope": "read", "callbackPort": 19876 }
+                }
+            }
+        }))
+        .unwrap();
+        fs::write(legacy.path().join("opencode.json"), legacy_content).unwrap();
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &OpenCode,
+            &legacy.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+        assert_eq!(files.len(), 1, "legacy camelCase file must drift");
+        assert_eq!(files[0].path, "opencode.json");
+        assert_eq!(files[0].reason, "modified");
+    }
+
     /// A changed binary path must produce a "modified" drift entry for `.mcp.json`.
     ///
     /// Regression test for the "MCP drift after binary path changes" bug where

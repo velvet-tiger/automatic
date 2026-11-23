@@ -90,10 +90,14 @@ impl Agent for OpenCode {
     }
 
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
+        let servers: Map<String, Value> = servers
+            .iter()
+            .map(|(name, config)| (name.clone(), with_opencode_oauth_keys(config)))
+            .collect();
         write_opencode_dialect_mcp_config(
             &dir.join("opencode.json"),
             Some(OPENCODE_SCHEMA_URL),
-            servers,
+            &servers,
         )
     }
 
@@ -123,7 +127,10 @@ impl Agent for OpenCode {
 
         let mut rendered: Map<String, Value> = Map::new();
         for (name, config) in desired {
-            rendered.insert(name.clone(), render_opencode_entry(config));
+            rendered.insert(
+                name.clone(),
+                render_opencode_entry(&with_opencode_oauth_keys(config)),
+            );
         }
 
         merge_global_mcp_entries_json(&target.path, "mcp", &rendered, previously_managed)
@@ -217,7 +224,56 @@ impl Agent for OpenCode {
 fn normalise_opencode_server(config: Value) -> Value {
     let mut server = normalise_opencode_dialect_server(config);
     super::restore_header_env_references(&mut server, "{env:");
+    restore_canonical_oauth_keys(&mut server);
     server
+}
+
+/// Automatic's canonical camelCase `oauth` keys and OpenCode's snake_case
+/// spelling of each, from the "Pre-registered clients" table at
+/// <https://opencode.ai/docs/mcp-servers/>.  `scope` is spelled the same in
+/// both and needs no entry.  OpenCode also documents `redirect_uri` and
+/// `auth_server_metadata_url`, but Automatic stores neither.
+const OPENCODE_OAUTH_KEYS: &[(&str, &str)] = &[
+    ("clientId", "client_id"),
+    ("clientSecret", "client_secret"),
+    ("callbackPort", "callback_port"),
+];
+
+/// A copy of `config` whose `oauth` keys use OpenCode's snake_case names.
+///
+/// OpenCode does not read the camelCase names, so a pre-registered client id
+/// written as `clientId` was ignored.  When both spellings are present the
+/// canonical camelCase value wins.  Only OpenCode calls this: Kilo Code
+/// shares the dialect renderer, but its docs were not checked for these keys.
+fn with_opencode_oauth_keys(config: &Value) -> Value {
+    let mut config = config.clone();
+    if let Some(Value::Object(oauth)) = config.get_mut("oauth") {
+        for (canonical, opencode) in OPENCODE_OAUTH_KEYS {
+            if let Some(value) = oauth.remove(*canonical) {
+                oauth.insert((*opencode).to_string(), value);
+            }
+        }
+    }
+    config
+}
+
+/// Undo [`with_opencode_oauth_keys`] on an entry read back from an OpenCode
+/// config file.  The sync engine saves discovered entries over the registry,
+/// so the snake_case names must not become canonical.
+///
+/// A file written before the rename still carries camelCase keys.  Those are
+/// already canonical and are left alone; drift reports the file because the
+/// expected render uses snake_case, and the next sync rewrites it.  When both
+/// spellings are present the snake_case value wins, because OpenCode reads it.
+fn restore_canonical_oauth_keys(server: &mut Value) {
+    let Some(Value::Object(oauth)) = server.get_mut("oauth") else {
+        return;
+    };
+    for (canonical, opencode) in OPENCODE_OAUTH_KEYS {
+        if let Some(value) = oauth.remove(*opencode) {
+            oauth.insert((*canonical).to_string(), value);
+        }
+    }
 }
 
 // ── Cache management ────────────────────────────────────────────────────────
@@ -793,11 +849,65 @@ mod tests {
             parsed["mcp"]["remote-api"]["url"].as_str().unwrap(),
             "https://api.example.com/mcp"
         );
+        // OpenCode spells its oauth keys in snake_case; `scope` is unchanged.
         assert_eq!(
-            parsed["mcp"]["remote-api"]["oauth"]["clientId"]
-                .as_str()
-                .unwrap(),
-            "client_123"
+            parsed["mcp"]["remote-api"]["oauth"],
+            json!({"client_id":"client_123","scope":"read"})
         );
+    }
+
+    fn full_oauth_servers() -> Map<String, Value> {
+        let mut s = Map::new();
+        s.insert(
+            "remote".to_string(),
+            json!({"type":"http","url":"https://api.example.com/mcp","oauth":{"clientId":"c","clientSecret":"s","scope":"read write","callbackPort":19876}}),
+        );
+        s
+    }
+
+    #[test]
+    fn test_oauth_keys_written_in_snake_case() {
+        let dir = tempdir().unwrap();
+        OpenCode
+            .write_mcp_config(dir.path(), &full_oauth_servers())
+            .unwrap();
+        let parsed: Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join("opencode.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            parsed["mcp"]["remote"]["oauth"],
+            json!({"client_id":"c","client_secret":"s","scope":"read write","callback_port":19876})
+        );
+    }
+
+    #[test]
+    fn test_oauth_keys_round_trip_to_canonical_camel_case() {
+        let dir = tempdir().unwrap();
+        OpenCode
+            .write_mcp_config(dir.path(), &full_oauth_servers())
+            .unwrap();
+        let discovered = OpenCode.discover_mcp_servers(dir.path());
+        assert_eq!(discovered["remote"], full_oauth_servers()["remote"]);
+    }
+
+    #[test]
+    fn test_legacy_camel_case_oauth_file_is_read_as_canonical() {
+        // Files written before the rename carry Automatic's camelCase keys.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("opencode.json"),
+            r#"{"mcp":{"remote":{"type":"remote","url":"https://api.example.com/mcp","oauth":{"clientId":"c","clientSecret":"s","scope":"read write","callbackPort":19876}}}}"#,
+        )
+        .unwrap();
+        let discovered = OpenCode.discover_mcp_servers(dir.path());
+        assert_eq!(discovered["remote"], full_oauth_servers()["remote"]);
+    }
+
+    #[test]
+    fn test_global_render_uses_snake_case_oauth_keys() {
+        let rendered =
+            render_opencode_entry(&with_opencode_oauth_keys(&full_oauth_servers()["remote"]));
+        assert_eq!(rendered["oauth"]["client_id"], "c");
+        assert!(rendered["oauth"].get("clientId").is_none());
     }
 }
