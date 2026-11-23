@@ -696,8 +696,9 @@ pub(crate) fn scan_custom_agent(
             }
         };
         let expected = agent_instance.convert_agent_content(&ca.content, &machine_name);
+        let compared = agent_instance.without_retired_agent_fields(&disk_content, &ca.content);
         if agent_instance
-            .agent_file_differences(&disk_content, &expected)
+            .agent_file_differences(&compared, &expected)
             .is_empty()
         {
             // Matches here.  Keep looking: a file in another agent's
@@ -1347,8 +1348,9 @@ pub(crate) fn remove_dropped_agent_files(
                 continue;
             };
             let expected = agent.convert_agent_content(&content, &machine_name);
+            let compared = agent.without_retired_agent_fields(&disk, &content);
             if !crate::agent::is_managed_agent_content(&path, &disk)
-                || !agent.agent_file_differences(&disk, &expected).is_empty()
+                || !agent.agent_file_differences(&compared, &expected).is_empty()
             {
                 continue;
             }

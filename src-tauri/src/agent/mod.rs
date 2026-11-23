@@ -530,6 +530,18 @@ pub trait Agent: Send + Sync {
         Vec::new()
     }
 
+    /// `disk` without fields that an older version of
+    /// [`convert_agent_content`](Agent::convert_agent_content) wrote for the
+    /// stored `content` and the current one no longer writes.  The conflict
+    /// scan, dropped-file cleanup and adopt compare this, not `disk`, with
+    /// the render, so a file Automatic wrote is not mistaken for a user edit
+    /// and the next sync rewrites it.
+    ///
+    /// Default: `disk` unchanged.  Codex drops the retired `sandbox_mode`.
+    fn without_retired_agent_fields(&self, disk: &str, _content: &str) -> String {
+        disk.to_string()
+    }
+
     /// Return what differs between a sub-agent file on disk and `expected`,
     /// the file [`convert_agent_content`](Agent::convert_agent_content)
     /// renders from the stored copy.  Empty means the file matches.

@@ -23,8 +23,6 @@ pub(crate) enum AdoptRefusal {
     /// Settings stored once for every agent, while other agents are
     /// configured.
     SharedSettings(Vec<String>),
-    /// Removing `sandbox_mode` would lose a real tool list.
-    WouldDropTools,
     /// The stored value of this field runs over several lines, so one line
     /// of a Codex file cannot replace it.
     MultiLineStoredValue(String),
@@ -49,10 +47,6 @@ impl AdoptRefusal {
                 "Automatic stores one {} for every agent in this project. Change it in Automatic's agent editor, or use Overwrite to discard this edit.",
                 settings.join(" and ")
             ),
-            Self::WouldDropTools => {
-                "Removing sandbox_mode would drop the stored tools list, so it cannot be adopted. Restore sandbox_mode in the file, or use Overwrite to replace the file with Automatic's copy."
-                    .to_string()
-            }
             Self::MultiLineStoredValue(field) => format!(
                 "Automatic's copy writes {field} over several lines, so this file cannot change it. Change it in the agent's content on the Agents tab, or use Overwrite to replace the file with Automatic's copy."
             ),
@@ -85,6 +79,8 @@ pub(crate) fn adopted_agent_markdown(
 ) -> Result<String, AdoptRefusal> {
     let machine_name =
         custom_agent_machine_name(stored).map_err(AdoptRefusal::InvalidStoredName)?;
+    // A line an older render wrote is Automatic's, not an edit to adopt.
+    let disk = &adopting.without_retired_agent_fields(disk, &stored.content);
     let markdown = match adopting.agents_file_ext() {
         "md" if adopting.agent_markdown_is_lossy() => {
             merge_body_into_stored(adopting, stored, disk, &machine_name)?
@@ -167,15 +163,6 @@ impl CodexEdit {
     fn changed(&self, field: &str) -> bool {
         self.changed.contains(field)
     }
-
-    fn removes_sandbox(&self) -> bool {
-        self.changed("sandbox_mode") && !self.table.contains_key("sandbox_mode")
-    }
-
-    fn sets_read_only(&self) -> bool {
-        self.changed("sandbox_mode")
-            && self.table.get("sandbox_mode").and_then(toml::Value::as_str) == Some("read-only")
-    }
 }
 
 /// Apply the fields the user changed in a Codex file to the stored Markdown.
@@ -194,14 +181,13 @@ fn merge_edit_into_stored(
         .collect();
     let edit = CodexEdit { table, changed };
 
-    refuse_unsupported_edit(&edit, stored, machine_name, shared_with_other_agents)?;
+    refuse_unsupported_edit(&edit, machine_name, shared_with_other_agents)?;
     apply_edit(&edit, stored)
 }
 
 /// Refuse an edit that cannot be applied at all, before touching the copy.
 fn refuse_unsupported_edit(
     edit: &CodexEdit,
-    stored: &str,
     machine_name: &str,
     shared_with_other_agents: bool,
 ) -> Result<(), AdoptRefusal> {
@@ -214,26 +200,8 @@ fn refuse_unsupported_edit(
         }
     }
 
-    // Codex can only express "read-only or not", so dropping it would drop a
-    // real tool list the other agents depend on.
-    let tools = agent::top_level_frontmatter_value(stored, "tools");
-    if edit.removes_sandbox() && tools.is_some_and(|tools| tools != "inherit") {
-        return Err(AdoptRefusal::WouldDropTools);
-    }
-
-    if shared_with_other_agents {
-        let mut shared = Vec::new();
-        if edit.changed("model") {
-            shared.push("model".to_string());
-        }
-        // Another sandbox value cannot be stored at all, which the
-        // round-trip check reports more accurately.
-        if edit.removes_sandbox() || edit.sets_read_only() {
-            shared.push("sandbox_mode".to_string());
-        }
-        if !shared.is_empty() {
-            return Err(AdoptRefusal::SharedSettings(shared));
-        }
+    if shared_with_other_agents && edit.changed("model") {
+        return Err(AdoptRefusal::SharedSettings(vec!["model".to_string()]));
     }
     Ok(())
 }
@@ -269,13 +237,6 @@ fn apply_edit(edit: &CodexEdit, stored: &str) -> Result<String, AdoptRefusal> {
         let inherit = toml::Value::String("inherit".to_string());
         let model = edit.table.get("model").unwrap_or(&inherit);
         merged = apply_text_field(merged, Some(model), "model", "model")?;
-    }
-
-    let tools = agent::top_level_frontmatter_value(stored, "tools");
-    if edit.sets_read_only() && tools.is_none() {
-        merged = apply_field(&merged, "sandbox_mode", "tools", Some("inherit"))?;
-    } else if edit.removes_sandbox() {
-        merged = apply_field(&merged, "sandbox_mode", "tools", None)?;
     }
 
     if edit.changed("developer_instructions") {
@@ -568,67 +529,42 @@ mod tests {
         assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("model")));
     }
 
+    /// Codex ignores `sandbox_mode` in an agent file and the render never
+    /// writes it, so a line the user adds is an unknown key, refused in any
+    /// project like `custom_flag`.
     #[test]
-    fn a_read_only_sandbox_is_refused_when_other_agents_share_the_copy() {
+    fn a_read_only_sandbox_the_user_added_is_refused_in_any_project() {
         let disk = format!("sandbox_mode = \"read-only\"\n{}", rendered(PLAIN));
 
-        assert_eq!(
-            adopt(PLAIN, &disk, true),
-            Err(AdoptRefusal::SharedSettings(vec![
-                "sandbox_mode".to_string()
-            ]))
-        );
+        assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("sandbox_mode")));
+        assert_eq!(adopt(PLAIN, &disk, true), Err(cannot_keep("sandbox_mode")));
     }
 
+    /// The line older versions wrote for an agent with `tools` is
+    /// Automatic's, so adopting another edit in the same file ignores it and
+    /// keeps the stored tool list.
     #[test]
-    fn a_read_only_sandbox_sets_tools_when_codex_is_alone() {
-        let disk = format!("sandbox_mode = \"read-only\"\n{}", rendered(PLAIN));
+    fn the_sandbox_line_older_versions_wrote_is_not_an_edit() {
+        let disk = rendered(STORED)
+            .replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1)
+            .replace("Stored body.", "Edited body.");
 
-        let merged = adopt(PLAIN, &disk, false).unwrap();
+        let merged = adopt(STORED, &disk, true).unwrap();
 
-        assert_eq!(
-            merged,
-            PLAIN.replace(
-                "description: Plans\n",
-                "description: Plans\ntools: inherit\n"
-            )
-        );
+        assert_eq!(merged, STORED.replace("Stored body.", "Edited body."));
     }
 
-    #[test]
-    fn removing_the_sandbox_removes_tools_inherit_when_codex_is_alone() {
-        let with_tools = PLAIN.replace(
-            "description: Plans\n",
-            "description: Plans\ntools: inherit\n",
-        );
-        let disk = rendered(&with_tools).replace("sandbox_mode = \"read-only\"\n", "");
-
-        assert_eq!(adopt(&with_tools, &disk, false).unwrap(), PLAIN);
-    }
-
-    /// A real tool list cannot be expressed in Codex, in any project.
-    #[test]
-    fn removing_the_sandbox_cannot_lose_a_stored_tool_list() {
-        let disk = rendered(STORED).replace("sandbox_mode = \"read-only\"\n", "");
-
-        assert_eq!(
-            adopt(STORED, &disk, false),
-            Err(AdoptRefusal::WouldDropTools)
-        );
-        assert_eq!(
-            adopt(STORED, &disk, true),
-            Err(AdoptRefusal::WouldDropTools)
-        );
-    }
-
-    /// Any other sandbox value cannot be stored at all, so "use another
-    /// agent" would be the wrong advice.
+    /// Any other sandbox value is refused too, even on an agent with
+    /// `tools`, because older versions only ever wrote `read-only`.
     #[test]
     fn another_sandbox_value_is_refused_in_any_project() {
         let disk = format!("sandbox_mode = \"workspace-write\"\n{}", rendered(PLAIN));
 
         assert_eq!(adopt(PLAIN, &disk, false), Err(cannot_keep("sandbox_mode")));
         assert_eq!(adopt(PLAIN, &disk, true), Err(cannot_keep("sandbox_mode")));
+
+        let disk = format!("sandbox_mode = \"workspace-write\"\n{}", rendered(STORED));
+        assert_eq!(adopt(STORED, &disk, false), Err(cannot_keep("sandbox_mode")));
     }
 
     #[test]
@@ -699,7 +635,6 @@ mod tests {
         const OVERWRITE: &str = "use Overwrite to replace the file with Automatic's copy.";
         for (refusal, says) in [
             (AdoptRefusal::CannotConvert, "Use Overwrite"),
-            (AdoptRefusal::WouldDropTools, OVERWRITE),
             (
                 AdoptRefusal::CannotKeep(vec!["a".into(), "b".into()]),
                 OVERWRITE,
@@ -906,29 +841,32 @@ mod tests {
         assert_eq!(merged, block.replace("Plan.", "Edited."));
     }
 
-    /// A stored tool list written as a block cannot be removed by its first
-    /// line, and an indented `tools` under another key is not the tool list.
+    /// The render no longer writes `sandbox_mode`, so a file without it
+    /// leaves every stored tool list as it is, in any frontmatter shape.
+    /// Older versions read `tools` anywhere in the frontmatter, so the line
+    /// they wrote is dropped for each of these shapes too.
     #[test]
-    fn removing_the_sandbox_reads_only_the_top_level_tools_line() {
+    fn a_file_without_the_sandbox_line_keeps_the_stored_tools() {
         let listed = PLAIN.replace(
             "description: Plans\n",
             "description: Plans\ntools:\n  - Read\n",
         );
-        let disk = rendered(&listed).replace("sandbox_mode = \"read-only\"\n", "");
-        assert_eq!(
-            adopt(&listed, &disk, false),
-            Err(AdoptRefusal::WouldDropTools)
-        );
-
         let nested = PLAIN.replace(
             "description: Plans\n",
             "description: Plans\nhooks:\n  tools: Read\n",
         );
-        let disk = rendered(&nested).replace("sandbox_mode = \"read-only\"\n", "");
-        assert_eq!(
-            adopt(&nested, &disk, false),
-            Err(cannot_keep("sandbox_mode"))
+        let inherit = PLAIN.replace(
+            "description: Plans\n",
+            "description: Plans\ntools: inherit\n",
         );
+        for stored in [STORED, listed.as_str(), nested.as_str(), inherit.as_str()] {
+            let disk = rendered(stored);
+            assert!(!disk.contains("sandbox_mode"), "{disk}");
+            assert_eq!(adopt(stored, &disk, false).as_deref(), Ok(stored));
+
+            let older = disk.replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1);
+            assert_eq!(adopt(stored, &older, false).as_deref(), Ok(stored));
+        }
     }
 
     #[test]

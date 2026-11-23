@@ -390,6 +390,10 @@ impl Agent for CodexCli {
         codex_agent_differences(disk, expected)
     }
 
+    fn without_retired_agent_fields(&self, disk: &str, content: &str) -> String {
+        without_retired_sandbox_mode(disk, content).unwrap_or_else(|| disk.to_string())
+    }
+
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             hooks: true,
@@ -947,9 +951,9 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
         ));
     }
 
-    if frontmatter.contains_key("tools") {
-        toml.push_str("sandbox_mode = \"read-only\"\n");
-    }
+    // `tools` has no counterpart here.  Codex ignores `sandbox_mode` in an
+    // agent file, so writing it would claim a restriction that does not
+    // apply.  See `without_retired_sandbox_mode` for files that still carry it.
 
     // Frontmatter is free text.  Writing a bad value here raw would make the
     // whole file unloadable, so only an integer is written.
@@ -976,6 +980,35 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     }
 
     toml
+}
+
+/// `disk` without the `sandbox_mode = "read-only"` line that versions before
+/// VEL-442 wrote for every sub-agent with `tools`, or `None` when there is
+/// nothing to drop.  Codex ignores `sandbox_mode` in a custom agent file
+/// (<https://learn.chatgpt.com/docs/agent-configuration/subagents>), so the
+/// line never did anything and the render no longer writes it.  Without this,
+/// every file an older version wrote would conflict for ever.
+///
+/// Only that exact line is dropped, and only when the stored copy has
+/// `tools`, which is when older versions wrote it.  Any other value, the line
+/// on an agent without `tools`, or the line with a comment on it is a setting
+/// the user wrote, and stays a difference like any other unknown key.  The
+/// result must parse to the same fields minus `sandbox_mode`, so a matching
+/// line inside a multi-line string is never touched.
+fn without_retired_sandbox_mode(disk: &str, content: &str) -> Option<String> {
+    const RETIRED: &str = "sandbox_mode = \"read-only\"";
+    if !super::parse_frontmatter(content).0.contains_key("tools") {
+        return None;
+    }
+    let mut fields = toml::from_str::<toml::Table>(disk).ok()?;
+    if fields.remove("sandbox_mode")?.as_str() != Some("read-only") {
+        return None;
+    }
+    let stripped: String = disk
+        .split_inclusive('\n')
+        .filter(|line| line.trim() != RETIRED)
+        .collect();
+    (toml::from_str::<toml::Table>(&stripped).ok()? == fields).then_some(stripped)
 }
 
 /// The sorted names of the fields that differ between two Codex agent files.
@@ -1084,8 +1117,10 @@ fn collect_raw_comments(raw: Option<&toml_edit::RawString>, out: &mut BTreeSet<S
 /// `true` when one field of two Codex agent files means the same thing.
 /// The defaults mirror what `convert_codex_toml_to_markdown` fills in for an
 /// absent field.  Every other field must be present on both sides, so a
-/// setting Automatic cannot keep (`sandbox_mode = "workspace-write"`, an
-/// unknown key) always counts as a difference.
+/// setting Automatic cannot keep (`sandbox_mode`, which the render never
+/// writes, or any other unknown key) always counts as a difference.  The
+/// `sandbox_mode` line older versions wrote is dropped before this runs, by
+/// `without_retired_sandbox_mode`.
 fn codex_agent_field_matches(
     key: &str,
     disk: Option<&toml::Value>,
@@ -1451,10 +1486,62 @@ mod tests {
         let extra = RENDERED_AGENT.replacen("name =", "custom_flag = true\nname =", 1);
         assert_eq!(differences(&extra, RENDERED_AGENT), vec!["custom_flag"]);
 
+        // The render never writes `sandbox_mode`, so on its own it is an
+        // unknown key like any other.
         let read_only =
             RENDERED_AGENT.replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1);
         assert_eq!(differences(&read_only, RENDERED_AGENT), vec!["sandbox_mode"]);
         assert_eq!(differences(RENDERED_AGENT, &read_only), vec!["sandbox_mode"]);
+    }
+
+    /// Codex ignores `sandbox_mode` in an agent file, so a tool list must not
+    /// render one.
+    #[test]
+    fn agent_with_tools_renders_no_sandbox_mode() {
+        let rendered = CodexCli.convert_agent_content(
+            "---\nname: planner\ntools: Read, Grep\n---\nPlan.\n",
+            "planner",
+        );
+
+        let table = toml::from_str::<toml::Table>(&rendered).expect("valid TOML");
+        assert!(!table.contains_key("sandbox_mode"), "{rendered}");
+    }
+
+    /// The line older versions wrote for an agent with `tools` is dropped
+    /// before comparing, so the file matches and the next sync rewrites it.
+    #[test]
+    fn retired_sandbox_line_is_dropped_only_where_older_versions_wrote_it() {
+        const WITH_TOOLS: &str = "---\nname: planner\ntools: Read\n---\nPlan.\n";
+        const WITHOUT_TOOLS: &str = "---\nname: planner\n---\nPlan.\n";
+        let older = |content: &str, line: &str| {
+            CodexCli
+                .convert_agent_content(content, "planner")
+                .replacen("name =", &format!("{line}\nname ="), 1)
+        };
+        let compare = |content: &str, disk: &str| {
+            let expected = CodexCli.convert_agent_content(content, "planner");
+            CodexCli.agent_file_differences(
+                &CodexCli.without_retired_agent_fields(disk, content),
+                &expected,
+            )
+        };
+
+        let written = older(WITH_TOOLS, "sandbox_mode = \"read-only\"");
+        assert_eq!(compare(WITH_TOOLS, &written), Vec::<String>::new());
+
+        // A user's own setting stays a difference, like any unknown key.
+        let no_tools = older(WITHOUT_TOOLS, "sandbox_mode = \"read-only\"");
+        assert_eq!(compare(WITHOUT_TOOLS, &no_tools), vec!["sandbox_mode"]);
+        let other = older(WITH_TOOLS, "sandbox_mode = \"workspace-write\"");
+        assert_eq!(compare(WITH_TOOLS, &other), vec!["sandbox_mode"]);
+
+        // A comment beside the line is the user's, so the line stays.
+        let noted = older(WITH_TOOLS, "sandbox_mode = \"read-only\" # mine");
+        assert_eq!(compare(WITH_TOOLS, &noted), vec!["comments", "sandbox_mode"]);
+
+        // A comment above the line survives the drop and is still reported.
+        let above = older(WITH_TOOLS, "# keep this\nsandbox_mode = \"read-only\"");
+        assert_eq!(compare(WITH_TOOLS, &above), vec!["comments"]);
     }
 
     #[test]

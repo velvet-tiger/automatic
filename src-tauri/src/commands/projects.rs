@@ -6433,22 +6433,6 @@ mod adopt_custom_asset_tests {
         });
     }
 
-    #[test]
-    fn adopted_read_only_codex_file_leaves_no_conflict() {
-        with_temp_home(|_| {
-            let (_keep, dir) = planner_project("codex-read-only", &["codex"]);
-            write(
-                &dir.join(".codex/agents/planner.toml"),
-                "sandbox_mode = \"read-only\"\ndeveloper_instructions = \"Edited.\"\nname = \"planner\"\n",
-            );
-
-            adopt_custom_asset("codex-read-only", "agent", "Planner").expect("adopt");
-
-            assert!(stored_planner("codex-read-only").contains("tools: inherit\n"));
-            assert_no_conflict("codex-read-only", &dir);
-        });
-    }
-
     /// The scan compares fields and drift compares bytes.  After adopting, a
     /// formatting difference is no longer a conflict but still shows as a
     /// modified file, until sync rewrites it with every field kept.
@@ -6509,6 +6493,8 @@ mod adopt_custom_asset_tests {
     fn adopt_refuses_codex_settings_it_cannot_keep() {
         for (key, line) in [
             ("sandbox_mode", "sandbox_mode = \"workspace-write\""),
+            // Codex ignores it in an agent file, so it is no tool list.
+            ("sandbox_mode", "sandbox_mode = \"read-only\""),
             ("custom_flag", "custom_flag = true"),
         ] {
             with_temp_home(|_| {
@@ -7405,9 +7391,48 @@ mod adopt_custom_asset_tests {
                 let disk = format!("{head}{fields}{body}");
                 write(&dir.join(".codex/agents/planner.toml"), &disk);
 
-                assert_eq!(codex_render(stored), disk, "{stored}");
+                // The render no longer writes the `sandbox_mode` line.  The
+                // scan must still match the file older versions wrote.
+                let retired = "sandbox_mode = \"read-only\"\n";
+                assert_eq!(codex_render(stored), disk.replace(retired, ""), "{stored}");
                 assert_no_conflict(&name, &dir);
             }
+        });
+    }
+
+    /// A file older versions wrote with `sandbox_mode = "read-only"` is
+    /// Automatic's.  The next sync rewrites it without the line, and no
+    /// drift or conflict is left behind.
+    #[test]
+    fn sync_drops_the_sandbox_line_older_versions_wrote() {
+        let stored = "---\nname: planner\ndescription: Plans\ntools: Read, Grep\n---\n\nPlan.\n";
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("retired-sandbox", |p| {
+                p.agents = vec!["codex".into()];
+                p.custom_agents = Some(vec![core::CustomAgent {
+                    name: "Planner".into(),
+                    content: stored.into(),
+                }]);
+            });
+            let path = dir.join(".codex/agents/planner.toml");
+            let older = codex_render(stored)
+                .replacen("name =", "sandbox_mode = \"read-only\"\nname =", 1);
+            write(&path, &older);
+            assert_no_conflict("retired-sandbox", &dir);
+
+            sync_project("retired-sandbox").expect("sync");
+
+            let rewritten = std::fs::read_to_string(&path).expect("read");
+            assert_eq!(rewritten, codex_render(stored));
+            let raw = core::read_project("retired-sandbox").expect("read project");
+            let project: core::Project = serde_json::from_str(&raw).expect("project json");
+            let drift = sync::check_project_drift(&project).expect("drift");
+            assert!(drift.custom_conflicts.is_empty(), "{:?}", drift.custom_conflicts);
+            assert!(
+                !drift.agents.iter().flat_map(|a| &a.files).any(|f| f.path.ends_with("planner.toml")),
+                "{:?}",
+                drift.agents
+            );
         });
     }
 

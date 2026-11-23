@@ -600,9 +600,11 @@ fn convert_codex_toml_to_markdown(content: &str, fallback_id: &str) -> Result<St
         line("model", model)?,
     ];
 
-    // `convert_md_to_codex_toml` writes `sandbox_mode = "read-only"` whenever
-    // `tools` is present.  Emitting `tools` for any other file would silently
-    // tighten its permissions, and the adopt guard would refuse it.
+    // Versions before VEL-442 wrote `sandbox_mode = "read-only"` whenever
+    // `tools` was present.  Codex ignores the line, and the render no longer
+    // writes it.  Rebuilding such a file with `tools: inherit` lets the scan
+    // recognise the line as Automatic's, so the next sync drops it instead of
+    // reporting a conflict.  `inherit` restricts nothing.
     let read_only =
         table.get("sandbox_mode").and_then(|value| value.as_str()) == Some("read-only");
     if read_only {
@@ -988,8 +990,8 @@ Inspect the repo carefully.\n\
         });
     }
 
-    /// `tools` converts back to `sandbox_mode = "read-only"`, so only a
-    /// read-only file may carry it.
+    /// Only the `sandbox_mode = "read-only"` line older versions wrote for
+    /// `tools` rebuilds as `tools: inherit`.
     #[test]
     fn codex_toml_gets_tools_only_when_read_only() {
         let plain = convert_codex_toml_to_markdown("name = \"planner\"\n", "planner").unwrap();
