@@ -4,6 +4,29 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.43.0] - 2026-11-24
+
+### Added
+
+- Project MCP servers. A library MCP server can be limited to one project. Only that project is offered the server and syncs it. Create one with "New project server" in the project's MCP tab. The library shows a Project badge and an "Available to" section.
+
+### Changed
+
+- MCP servers found in a project's files are imported as global servers, as before project servers existed. Before, a server limited to the first project was left out of a second project's files on its next sync.
+
+### Fixed
+
+- Claude Code OAuth scopes are written under `oauth.scopes`, the key Claude Code reads. Before, the scope was written under a key Claude Code ignored.
+- OpenCode OAuth settings are written as `client_id`, `client_secret` and `callback_port`, the keys OpenCode reads. Before, OpenCode ignored them.
+- The rule usage panel matches what sync writes. Projects that manage their `.gitignore` no longer show "Update" for ever, and updating one project no longer marks every project in sync.
+- Silent projects use their own untracked `.claude/settings.local.json` for the folders Claude Code may edit. Before, they went to your user settings and applied to every session on the machine.
+
+### Security
+
+- A checkout must accept a project's MCP servers before they sync. A repository could copy another project's id and list its servers by name, and sync then wrote that server's decrypted env into the copy's agent files. The first checkout to create a server is accepted automatically. Another checkout sharing the id is asked in a project notice.
+- The OAuth proxy refuses project servers outside their own checkout. Before, a repository could commit an agent config that used your credentials to reach another project's server.
+- Vite is updated to 7.3.8 for GHSA-p4f5-76q4-ffq7.
+
 ## [1.42.1] - 2026-11-13
 
 ### Fixed
