@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockInvoke, resetInvokeMock, invokeMock } from "../../test/tauriMock";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import McpServers from "./McpServers";
 
 const summaries = [
@@ -26,6 +26,9 @@ function routes(server: string, saved: Record<string, unknown>) {
     get_project_summaries: summaries,
     list_mcp_server_scopes: { db: "p-1" },
     list_accepted_mcp_scope_ids: { "real-key": "p-1" },
+    list_mcp_server_connections: {},
+    get_mcp_server_usage: { projects: [], profiles: [] },
+    get_project_profiles: [],
     get_recently_added_items: [],
     has_mcp_oauth_token: false,
     get_mcp_oauth_token_status: { has_token: false, valid: false, revoked: false, message: null },
@@ -44,11 +47,11 @@ describe("McpServers project scope", () => {
     render(<McpServers initialServer="shared" />);
 
     const picker = await screen.findByLabelText("Project to limit this server to");
-    const copy = await screen.findByRole("option", { name: "app (/tmp/app): accept its project servers first" });
+    const copy = await within(picker).findByRole("option", { name: "app (/tmp/app): accept its project servers first" });
     expect(copy).toBeDisabled();
-    expect(screen.getByRole("option", { name: "app (/work/app)" })).not.toBeDisabled();
-    expect(screen.getByRole("option", { name: "other" })).not.toBeDisabled();
-    expect(screen.getByRole("option", { name: "lookalike: accept its project servers first" })).toBeDisabled();
+    expect(within(picker).getByRole("option", { name: "app (/work/app)" })).not.toBeDisabled();
+    expect(within(picker).getByRole("option", { name: "other" })).not.toBeDisabled();
+    expect(within(picker).getByRole("option", { name: "lookalike: accept its project servers first" })).toBeDisabled();
 
     fireEvent.change(picker, { target: { value: "real-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Limit" }));
