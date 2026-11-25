@@ -22,6 +22,9 @@ function routes(hasToken: () => boolean, tokenValid = true) {
     get_project_summaries: [],
     list_mcp_server_scopes: {},
     list_accepted_mcp_scope_ids: {},
+    list_mcp_server_connections: {},
+    get_mcp_server_usage: { projects: [], profiles: [] },
+    get_project_profiles: [],
     get_recently_added_items: [],
     has_mcp_oauth_token: () => hasToken(),
     get_mcp_oauth_token_status: () => ({
@@ -42,6 +45,12 @@ async function editUrl(value = EDITED_URL) {
   fireEvent.change(input, { target: { value } });
 }
 
+
+/** Connection fields live on the editor's second tab. */
+async function openConnectionTab(): Promise<void> {
+  fireEvent.click(await screen.findByRole("tab", { name: "Connection details" }));
+}
+
 describe("McpServers OAuth section", () => {
   beforeEach(() => {
     resetInvokeMock();
@@ -50,6 +59,7 @@ describe("McpServers OAuth section", () => {
   it("does not offer sign-in while the URL is not saved", async () => {
     mockInvoke(routes(() => false));
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     const signIn = await screen.findByRole("button", { name: "Authenticate" });
     expect(signIn).toBeEnabled();
@@ -68,6 +78,7 @@ describe("McpServers OAuth section", () => {
       has_mcp_oauth_token: () => Promise.reject("the keychain is locked"),
     });
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     expect(await screen.findByText(/the keychain is locked/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Authenticate" })).not.toBeInTheDocument();
@@ -88,6 +99,7 @@ describe("McpServers OAuth section", () => {
       },
     });
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     fireEvent.click(await screen.findByRole("button", { name: "Sign in again" }));
 
@@ -102,6 +114,7 @@ describe("McpServers OAuth section", () => {
       get_mcp_oauth_token_status: () => Promise.reject("the keychain is locked"),
     });
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     expect(await screen.findByText(/the keychain is locked/)).toBeInTheDocument();
     expect(screen.queryByText("Authentication expired")).not.toBeInTheDocument();
@@ -111,6 +124,7 @@ describe("McpServers OAuth section", () => {
   it("does not send the stored token to a URL that is not saved", async () => {
     mockInvoke(routes(() => true));
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     await screen.findByText("Authenticated");
     await waitFor(() => expect(callsTo("get_mcp_oauth_token_status")).toHaveLength(1));
@@ -126,6 +140,7 @@ describe("McpServers OAuth section", () => {
   it("does not offer to sign in again while the URL is not saved", async () => {
     mockInvoke(routes(() => true, false));
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
 
     const signInAgain = await screen.findByRole("button", { name: "Re-authenticate" });
     expect(signInAgain).toBeEnabled();
@@ -141,6 +156,7 @@ describe("McpServers OAuth section", () => {
   it("does not check the token again after a save that keeps the URL", async () => {
     mockInvoke(routes(() => true));
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
     await screen.findByText("Authenticated");
     await waitFor(() => expect(callsTo("get_mcp_oauth_token_status")).toHaveLength(1));
 
@@ -164,6 +180,7 @@ describe("McpServers OAuth section", () => {
       },
     });
     render(<McpServers initialServer="linear" />);
+    await openConnectionTab();
     await screen.findByText("Authenticated");
 
     await editUrl();

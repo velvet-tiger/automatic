@@ -886,6 +886,7 @@ function App() {
                 initialServer={pendingMcpServer}
                 onInitialServerConsumed={() => setPendingMcpServer(null)}
                 onBrowseDiscover={() => setActiveTabWithSection("discover-mcp")}
+                onNavigateToDiscoverMcp={navigateToDiscoverMcp}
               />
             </div>
           )}

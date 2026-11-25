@@ -8,6 +8,7 @@ import { AuthorSection } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
 import { smallInputClass } from "../../components/KvField";
 import { nextAvailableName } from "../../lib/uniqueName";
+import { McpServerIcon } from "../../components/McpServerIcon";
 import {
   Search,
   Server,
@@ -100,47 +101,6 @@ const CLASSIFICATION_COLORS: Record<string, string> = {
   reference: "bg-accent/15 text-accent border-accent/20",
   community: "bg-accent-hover/15 text-accent-hover border-accent-hover/20",
 };
-
-// ── Server Icon ────────────────────────────────────────────────────────────
-
-const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
-
-function brandfetchUrl(domain: string, px: number): string {
-  const s = Math.min(px * 2, 64);
-  return `https://cdn.brandfetch.io/${encodeURIComponent(domain)}/w/${s}/h/${s}/theme/dark/fallback/lettermark/type/icon?c=${BRANDFETCH_CLIENT_ID ?? ""}`;
-}
-
-/**
- * Renders the server's brand icon via Brandfetch if an `icon` domain is set,
- * with an amber Server icon as the fallback.
- */
-function McpServerIcon({ server, size }: { server: McpServer; size: number }) {
-  const [imgError, setImgError] = useState(false);
-
-  if (server.icon && BRANDFETCH_CLIENT_ID && !imgError) {
-    return (
-      <img
-        src={brandfetchUrl(server.icon, size)}
-        alt={server.title}
-        width={size}
-        height={size}
-        onError={() => setImgError(true)}
-        className="flex-shrink-0 rounded-md object-contain"
-        style={{ width: size, height: size }}
-        draggable={false}
-      />
-    );
-  }
-
-  return (
-    <div
-      className={`flex-shrink-0 rounded-md ${ACCENT_BG} border ${ACCENT_BORDER} flex items-center justify-center`}
-      style={{ width: size, height: size }}
-    >
-      <Server size={Math.round(size * 0.5)} style={{ color: ACCENT }} />
-    </div>
-  );
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -522,7 +482,7 @@ export default function DiscoverMcp({
 
             {/* Header */}
             <div className="flex items-start gap-4 mb-6">
-              <McpServerIcon server={selected} size={48} />
+              <McpServerIcon icon={selected.icon} title={selected.title} size={48} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2.5 mb-1.5">
                   <h1 className="text-[20px] font-semibold text-text-base leading-tight">
@@ -1197,7 +1157,7 @@ export default function DiscoverMcp({
                   {/* Header: icon + title + category + installed badge + arrow */}
                   <div className="flex items-start justify-between gap-3 mb-4 min-h-[52px]">
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <McpServerIcon server={server} size={36} />
+                      <McpServerIcon icon={server.icon} title={server.title} size={36} />
                       <div className="min-w-0">
                         <div className="text-[14px] font-semibold text-text-base leading-snug truncate">
                           {server.title}
