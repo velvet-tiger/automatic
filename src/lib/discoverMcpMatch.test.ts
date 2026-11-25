@@ -56,6 +56,19 @@ describe("matchDiscoverEntry", () => {
     expect(matchDiscoverEntry("spacelift", config, catalogue)).toBe(templated);
   });
 
+  it("does not match a copied template whose URL points at another host", () => {
+    const template = "https://<account-name>.app.spacelift.io/mcp";
+    for (const url of [
+      "https://evil.test/mcp",
+      "https://acme.evil.test/mcp",
+      "https://acme.app.spacelift.io.evil.test/mcp",
+      "https://acme.app.spacelift.io/other",
+      "https://a.b.app.spacelift.io/mcp",
+    ]) {
+      expect(matchDiscoverEntry("spacelift", { type: "http", url, _url_template: template }, catalogue)).toBeNull();
+    }
+  });
+
   it("prefers the entry whose slug is the server name when several match", () => {
     const twin = entry({ slug: "linear-twin", remote: remote.remote });
     const config = { type: "http", url: "https://mcp.linear.app/mcp" };

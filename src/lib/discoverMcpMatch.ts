@@ -1,5 +1,6 @@
 import featuredMcpServers from "../../src-tauri/assets/discover/featured-mcp-servers.json";
 import { resolveLocalCommand, type DiscoverMcpSource } from "./discoverMcpConfig";
+import { fillUrlTemplate, readUrlTemplateValues } from "./urlTemplate";
 
 /** The Discover catalogue fields the MCP Servers page shows for a matched server. */
 export interface DiscoverCatalogueEntry extends DiscoverMcpSource {
@@ -40,8 +41,20 @@ function connectsLike(config: SavedMcpConnection, entry: DiscoverCatalogueEntry)
   }
   if (!entry.remote) return false;
   const catalogueUrl = entry.remote.url;
-  // A templated URL is filled per account, so the saved template is compared.
-  return config.url === catalogueUrl || (!!config._url_template && config._url_template === catalogueUrl);
+  if (config.url === catalogueUrl) return true;
+  if (!config.url || config._url_template !== catalogueUrl) return false;
+  return fillsTemplate(catalogueUrl, config.url);
+}
+
+/**
+ * Whether `url` is a valid fill of `template`: each placeholder holds one
+ * safe host label and every other part is the template's own. Without this,
+ * a config could copy a catalogue template into `_url_template` and point
+ * `url` at any host, and still be shown as the catalogue server.
+ */
+function fillsTemplate(template: string, url: string): boolean {
+  const filled = fillUrlTemplate(template, readUrlTemplateValues(template, url));
+  return "url" in filled && filled.url === url;
 }
 
 /**
