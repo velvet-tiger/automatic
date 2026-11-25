@@ -2553,27 +2553,51 @@ fn prepare_mcp_servers_impl(
     prepared
 }
 
-/// Remove `oauth.clientSecret` from one server entry.
+/// Blocks that can hold an OAuth client secret.  `oauth` is Automatic's own
+/// key; `auth` is Cursor's, and reaches the registry when a Cursor config is
+/// imported as it is.
+const CLIENT_SECRET_BLOCKS: [&str; 2] = ["oauth", "auth"];
+
+/// Every spelling of the client secret key that an agent dialect uses:
+/// Automatic's `clientSecret`, OpenCode's `client_secret` and Cursor's
+/// `CLIENT_SECRET`.  Discovery does not map them all back to `clientSecret`,
+/// so the registry can hold any of them.
+const CLIENT_SECRET_KEYS: [&str; 3] = ["clientSecret", "client_secret", "CLIENT_SECRET"];
+
+/// Remove the OAuth client secret, in any spelling, from one server entry.
 ///
 /// Project config files are often committed, so a client secret must never
-/// reach one (VEL-458).  An `oauth` object that held only the secret is
-/// removed too, so the agent does not see an empty OAuth block.
+/// reach one (VEL-458).  A block that held only the secret is removed too, so
+/// the agent does not see an empty OAuth block.
 fn remove_oauth_client_secret(server: &mut Map<String, Value>) {
-    let Some(Value::Object(oauth)) = server.get_mut("oauth") else {
-        return;
-    };
-    if oauth.remove("clientSecret").is_some() && oauth.is_empty() {
-        server.remove("oauth");
+    for block_key in CLIENT_SECRET_BLOCKS {
+        let Some(Value::Object(block)) = server.get_mut(block_key) else {
+            continue;
+        };
+        let mut removed = false;
+        for key in CLIENT_SECRET_KEYS {
+            removed |= block.remove(key).is_some();
+        }
+        if removed && block.is_empty() {
+            server.remove(block_key);
+        }
     }
 }
 
-/// `true` when a server entry carries a non-empty `oauth.clientSecret`.
+/// `true` when a server entry carries a non-empty OAuth client secret, in any
+/// spelling [`remove_oauth_client_secret`] removes.
 pub(crate) fn has_oauth_client_secret(server: &Value) -> bool {
-    server
-        .get("oauth")
-        .and_then(|oauth| oauth.get("clientSecret"))
-        .and_then(Value::as_str)
-        .is_some_and(|secret| !secret.is_empty())
+    CLIENT_SECRET_BLOCKS.iter().any(|block_key| {
+        let Some(block) = server.get(*block_key) else {
+            return false;
+        };
+        CLIENT_SECRET_KEYS.iter().any(|key| {
+            block
+                .get(*key)
+                .and_then(Value::as_str)
+                .is_some_and(|secret| !secret.is_empty())
+        })
+    })
 }
 
 /// Recursively substitute `${workspaceFolder}` and `${userHome}` inside every

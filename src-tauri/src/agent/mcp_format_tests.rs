@@ -465,6 +465,55 @@ fn cursor_global_config_maps_the_client_secret_onto_its_auth_block() {
     );
 }
 
+/// Discovery can bring a secret into the registry in another agent's
+/// spelling: Cursor's `auth.CLIENT_SECRET`, or `oauth.client_secret` from an
+/// OpenCode-dialect file.  No project file may carry those either.
+#[test]
+fn no_project_file_carries_a_client_secret_in_another_dialect() {
+    let mut servers = Map::new();
+    servers.insert(
+        "from-cursor".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://a.example.com/mcp",
+            "auth": { "CLIENT_ID": "c", "CLIENT_SECRET": CLIENT_SECRET_MARKER },
+        }),
+    );
+    servers.insert(
+        "from-opencode".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://b.example.com/mcp",
+            "oauth": { "client_id": "c", "client_secret": CLIENT_SECRET_MARKER },
+        }),
+    );
+    for entry in servers.values() {
+        assert!(has_oauth_client_secret(entry), "{entry}");
+    }
+
+    for agent in all() {
+        let dir = tempdir().unwrap();
+        let Some(content) = write_and_read(agent, dir.path(), &servers) else {
+            continue;
+        };
+        assert!(
+            !content.contains(CLIENT_SECRET_MARKER),
+            "{} wrote a client secret into a project file:\n{content}",
+            agent.id()
+        );
+
+        let prepared = prepare_global_mcp_servers(agent, &servers);
+        for entry in prepared.values() {
+            assert_eq!(
+                has_oauth_client_secret(entry),
+                agent.reads_oauth_client_secret(),
+                "{}: {entry}",
+                agent.id()
+            );
+        }
+    }
+}
+
 /// An `oauth` block that held only the secret is dropped, not left empty.
 #[test]
 fn an_oauth_block_holding_only_the_secret_is_removed() {
