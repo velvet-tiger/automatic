@@ -23,6 +23,9 @@ pub struct FeaturedMcpServer {
     pub classification: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_url: Option<String>,
+    /// Provider's setup guide, shown as "View setup documentation".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docs_url: Option<String>,
     /// Remote transport config (SSE/HTTP), if supported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<serde_json::Value>,
@@ -34,9 +37,8 @@ pub struct FeaturedMcpServer {
     pub auth: Option<serde_json::Value>,
 }
 
-fn load_featured_mcp_servers() -> Result<Vec<FeaturedMcpServer>, String> {
-    let json = read_mcp_servers_json()?;
-    serde_json::from_str(&json).map_err(|e| format!("Failed to parse featured MCP servers: {}", e))
+fn parse_featured_mcp_servers(json: &str) -> Result<Vec<FeaturedMcpServer>, String> {
+    serde_json::from_str(json).map_err(|e| format!("Failed to parse featured MCP servers: {}", e))
 }
 
 /// List all featured MCP servers from the Discover catalogue.
@@ -44,7 +46,15 @@ fn load_featured_mcp_servers() -> Result<Vec<FeaturedMcpServer>, String> {
 /// Otherwise, case-insensitive substring match across title, description,
 /// provider, classification, and slug.
 pub fn search_discover_mcp(query: &str) -> Result<String, String> {
-    let servers = load_featured_mcp_servers()?;
+    search_featured_mcp_json(&read_mcp_servers_json()?, query)
+}
+
+/// Parse catalogue JSON, filter it by `query`, and serialise the matches.
+/// Kept free of file I/O so the round trip can be tested against the
+/// bundled catalogue. Any catalogue field missing from `FeaturedMcpServer`
+/// is dropped here, so the frontend never sees it.
+fn search_featured_mcp_json(json: &str, query: &str) -> Result<String, String> {
+    let servers = parse_featured_mcp_servers(json)?;
     let q = query.trim().to_lowercase();
 
     let filtered: Vec<&FeaturedMcpServer> = if q.is_empty() {
@@ -250,4 +260,71 @@ async fn fetch_featured_community_remote() -> Result<String, String> {
     resp.text()
         .await
         .map_err(|e| format!("Failed to read response body: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BUNDLED_CATALOGUE: &str = include_str!("../../assets/discover/featured-mcp-servers.json");
+
+    fn search_bundled(query: &str) -> Vec<serde_json::Value> {
+        let out = search_featured_mcp_json(BUNDLED_CATALOGUE, query).expect("search");
+        serde_json::from_str(&out).expect("output is a JSON array")
+    }
+
+    fn entry<'a>(entries: &'a [serde_json::Value], slug: &str) -> &'a serde_json::Value {
+        entries
+            .iter()
+            .find(|e| e["slug"] == slug)
+            .unwrap_or_else(|| panic!("no '{slug}' entry in search output"))
+    }
+
+    #[test]
+    fn search_output_keeps_docs_url() {
+        let results = search_bundled("aikido");
+        assert_eq!(
+            entry(&results, "aikido-security")["docs_url"],
+            "https://help.aikido.dev/ai-and-dev-tools/aikido-mcp"
+        );
+    }
+
+    #[test]
+    fn search_output_omits_null_or_missing_docs_url() {
+        let json = r#"[
+            {"slug":"a","name":"a","title":"A","description":"","provider":"p","docs_url":null},
+            {"slug":"b","name":"b","title":"B","description":"","provider":"p"}
+        ]"#;
+        let out: Vec<serde_json::Value> =
+            serde_json::from_str(&search_featured_mcp_json(json, "").unwrap()).unwrap();
+        assert_eq!(out.len(), 2);
+        for e in &out {
+            assert!(e.get("docs_url").is_none(), "unexpected docs_url key in {e}");
+        }
+    }
+
+    #[test]
+    fn every_bundled_docs_url_reaches_the_output() {
+        let raw: Vec<serde_json::Value> = serde_json::from_str(BUNDLED_CATALOGUE).unwrap();
+        let results = search_bundled("");
+        let with_docs: Vec<&serde_json::Value> =
+            raw.iter().filter(|e| e["docs_url"].is_string()).collect();
+        assert!(!with_docs.is_empty(), "catalogue has no docs_url entries");
+        for source in with_docs {
+            let slug = source["slug"].as_str().unwrap();
+            assert_eq!(entry(&results, slug)["docs_url"], source["docs_url"], "slug {slug}");
+        }
+    }
+
+    #[test]
+    fn bundled_catalogue_has_no_companion_skill() {
+        // Companion skills were removed: the install recorded a GitHub source
+        // that did not match the download URL, so updates fetched from
+        // somewhere else. Re-adding one needs a source kind that records the
+        // real URL first.
+        let raw: Vec<serde_json::Value> = serde_json::from_str(BUNDLED_CATALOGUE).unwrap();
+        for e in &raw {
+            assert!(e.get("companion_skill").is_none(), "companion_skill on {}", e["slug"]);
+        }
+    }
 }

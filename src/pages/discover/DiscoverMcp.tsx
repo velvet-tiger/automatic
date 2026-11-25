@@ -29,13 +29,7 @@ import {
   CheckCircle2,
   Loader2,
   BookOpen,
-  Sparkles,
 } from "lucide-react";
-import {
-  formatAssetScanResult,
-  scanAssetContent,
-  warningFindings,
-} from "../../lib/assetSecurity";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface EnvVar {
@@ -45,23 +39,6 @@ interface EnvVar {
   /** True when the server runs without this variable, e.g. because it signs
    *  in through the browser and the token is only for headless use. */
   optional?: boolean;
-}
-
-interface CompanionSkill {
-  /** Skill name used as the key when saving, e.g. "aikido-security" */
-  name: string;
-  /** Human-readable display name */
-  title: string;
-  /** One-line description shown in the callout */
-  description: string;
-  /** Raw URL to download the skill content from */
-  url: string;
-  /**
-   * GitHub owner or owner/repo used to record skill origin, e.g. "aikidosec".
-   * Stored as the `source` in skills.json so the Skills view can resolve the
-   * provider's GitHub profile instead of falling back to "local".
-   */
-  github_source: string;
 }
 
 interface McpServer {
@@ -88,8 +65,6 @@ interface McpServer {
   } | null;
   /** `note` explains how the server signs in when every env var is optional. */
   auth: { method: string; env_vars: EnvVar[]; note?: string | null };
-  /** Optional skill that should be installed alongside this server */
-  companion_skill?: CompanionSkill | null;
 }
 
 // servers is loaded asynchronously in the component via invoke("search_discover_mcp")
@@ -327,10 +302,6 @@ export default function DiscoverMcp({
   // Values for the `<token>` placeholders in the selected server's URL, such
   // as the Spacelift account name. Used by "Add" and "Add another copy".
   const [urlValues, setUrlValues] = useState<Record<string, string>>({});
-  const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
-  const [installingSkill, setInstallingSkill] = useState(false);
-  const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
-  const [skillInstallNotice, setSkillInstallNotice] = useState<string | null>(null);
 
   // Load Discover catalogue from ~/.automatic/discover/mcp-servers.json
   const loadServers = useCallback(async () => {
@@ -355,52 +326,7 @@ export default function DiscoverMcp({
     }
   }, []);
 
-  // Load installed skills
-  const loadInstalledSkills = useCallback(async () => {
-    try {
-      const result: { name: string }[] = await invoke("get_skills");
-      setInstalledSkills(new Set(result.map((s) => s.name)));
-    } catch {
-      // non-fatal
-    }
-  }, []);
-
-  useEffect(() => { loadServers(); loadInstalled(); loadInstalledSkills(); }, [loadServers, loadInstalled, loadInstalledSkills]);
-
-  // Install a companion skill from a raw URL, recording its remote origin so
-  // it shows as provider-managed rather than local in the Skills view.
-  const handleInstallSkill = useCallback(async (skill: CompanionSkill) => {
-    setInstallingSkill(true);
-    setSkillInstallError(null);
-    setSkillInstallNotice(null);
-    try {
-      const response = await fetch(skill.url);
-      if (!response.ok) throw new Error(`Failed to fetch skill: ${response.status}`);
-      const content = await response.text();
-      const scan = await scanAssetContent("skill", content);
-      if (scan.blocked) {
-        setSkillInstallError(formatAssetScanResult(scan, "skill"));
-        return;
-      }
-      // Use import_remote_skill so the skill source is recorded (shows as
-      // managed by the provider rather than "local" in the Skills view).
-      await invoke("import_remote_skill", {
-        name: skill.name,
-        content,
-        source: skill.github_source,
-        id: `${skill.github_source}/${skill.name}`,
-      });
-      setInstalledSkills((prev) => new Set([...prev, skill.name]));
-      const warnings = warningFindings(scan);
-      setSkillInstallNotice(
-        warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null,
-      );
-    } catch (err: unknown) {
-      setSkillInstallError(`Failed to install skill: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setInstallingSkill(false);
-    }
-  }, []);
+  useEffect(() => { loadServers(); loadInstalled(); }, [loadServers, loadInstalled]);
 
   // Reset when the nav item is re-clicked
   useEffect(() => {
@@ -414,8 +340,6 @@ export default function DiscoverMcp({
       setCopyName("");
       setCopyError(null);
       setUrlValues({});
-      setSkillInstallError(null);
-      setSkillInstallNotice(null);
     }
   }, [resetKey]);
 
@@ -766,62 +690,6 @@ export default function DiscoverMcp({
                   {installError && (
                     <p className="mt-2 text-[12px] text-red-400">{installError}</p>
                   )}
-                </div>
-              );
-            })()}
-
-            {/* Companion skill callout */}
-            {selected.companion_skill && (() => {
-              const skill = selected.companion_skill!;
-              const isSkillInstalled = installedSkills.has(skill.name);
-              return (
-                <div className="mb-6 p-4 rounded-xl border border-icon-mcp/25 bg-icon-mcp/6">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-icon-mcp/15 border border-icon-mcp/20 flex items-center justify-center">
-                      <Sparkles size={14} style={{ color: ACCENT }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-medium text-text-base mb-0.5">
-                        {skill.title}
-                      </p>
-                      <p className="text-[12px] text-text-muted leading-relaxed mb-3">
-                        {skill.description}
-                      </p>
-                      {isSkillInstalled ? (
-                        <div className="flex items-center gap-1.5 text-[12px] text-success">
-                          <CheckCircle2 size={13} />
-                          Skill installed
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-1.5">
-                          <button
-                            onClick={() => handleInstallSkill(skill)}
-                            disabled={installingSkill}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-icon-mcp/15 hover:bg-icon-mcp/25 border border-icon-mcp/25 text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            style={{ color: ACCENT }}
-                          >
-                            {installingSkill ? (
-                              <>
-                                <Loader2 size={12} className="animate-spin" />
-                                Installing…
-                              </>
-                            ) : (
-                              <>
-                                <Download size={12} />
-                                Install Companion Skill
-                              </>
-                            )}
-                          </button>
-                          {skillInstallError && (
-                            <p className="text-[11px] text-red-400 whitespace-pre-wrap">{skillInstallError}</p>
-                          )}
-                          {skillInstallNotice && (
-                            <p className="text-[11px] text-amber-950 whitespace-pre-wrap">{skillInstallNotice}</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
                 </div>
               );
             })()}
