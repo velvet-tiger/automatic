@@ -51,6 +51,7 @@ import {
 } from "../../lib/projectIdentity";
 import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import {
+  type AssetSecurityFinding,
   type AssetSecurityScanRecord,
   formatAssetScanResult,
   getAssetSecurityDismissButtonClass,
@@ -83,6 +84,9 @@ interface SkillUpdateStatus {
   remote_version?: string;
   installed_at?: string;
   reason?: string;
+  // Scan warnings for content "Update Now" just installed. Blocked content
+  // is refused by the backend, so these are warnings only.
+  security_findings?: AssetSecurityFinding[];
 }
 
 interface SkillEntry {
@@ -286,6 +290,11 @@ function SkillPreview({ content, source, sources, resources, license, onUpdated 
   const [updateStatus, setUpdateStatus] = useState<SkillUpdateStatus | "loading" | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateNoticeFindings, setUpdateNoticeFindings] = useState<AssetSecurityFinding[]>([]);
+  const updateNotice =
+    updateNoticeFindings.length > 0
+      ? formatAssetScanResult({ blocked: false, findings: updateNoticeFindings }, "skill")
+      : null;
   const checkableName = meta.name;
   const canCheckUpdate = source?.kind === "github" && !!checkableName;
   // The Update Now button is shown for every remote-sourced skill so the
@@ -320,17 +329,20 @@ function SkillPreview({ content, source, sources, resources, license, onUpdated 
   useEffect(() => {
     setUpdating(false);
     setUpdateError(null);
+    setUpdateNoticeFindings([]);
   }, [checkableName]);
 
   const handleUpdateNow = async () => {
     if (!canUpdate || !checkableName) return;
     setUpdating(true);
     setUpdateError(null);
+    setUpdateNoticeFindings([]);
     try {
       const status = await invoke<SkillUpdateStatus>("update_skill_from_source", {
         name: checkableName,
       });
       setUpdateStatus(status);
+      setUpdateNoticeFindings(status.security_findings ?? []);
       // Parent owns content/library state — let it refresh so the markdown
       // body and "Used By" sidebar reflect the new bytes.
       await onUpdated?.(checkableName);
@@ -387,9 +399,17 @@ function SkillPreview({ content, source, sources, resources, license, onUpdated 
           )}
 
           {updateError && (
-            <p className="mt-1.5 text-[11px] text-red-400">
+            <p className="mt-1.5 text-[11px] text-red-400 whitespace-pre-wrap">
               Update failed: {updateError}
             </p>
+          )}
+
+          {updateNotice && (
+            <div
+              className={`mt-2 rounded-lg border p-3 text-[12px] whitespace-pre-wrap ${getAssetSecurityNoticeClass({ blocked: false, findings: updateNoticeFindings })}`}
+            >
+              {updateNotice}
+            </div>
           )}
         </div>
 
