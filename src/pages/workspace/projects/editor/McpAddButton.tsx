@@ -40,7 +40,7 @@ export function McpAddButton({
       repository_url: string | null;
       remote: { transport: string; url: string } | null;
       local: { registry: string; package: string; version: string | null; transport: string; command: string; args?: string[] | null } | null;
-      auth: { method: string; env_vars: Array<{ name: string; description: string; secret: boolean }> };
+      auth: { method: string; env_vars: Array<{ name: string; description: string; secret: boolean; optional?: boolean }>; note?: string | null };
     }>;
     const server = servers.find(
       (s) => s.slug === needle || s.title.toLowerCase() === needle || s.name.toLowerCase() === needle,

@@ -2354,11 +2354,13 @@
     },
     "auth": {
       "method": "api_key",
+      "note": "Aikido signs you in through the browser. The first time an agent calls an Aikido tool, it returns a sign-in link for each region. Open the one for your account. Set the token below only for CI, containers, WSL or other setups that cannot open a browser.",
       "env_vars": [
         {
           "name": "AIKIDO_API_KEY",
-          "description": "Personal Access Token for headless or CI use. Generate one in Aikido under Settings → Integrations → IDE → MCP. When set, it takes precedence over the browser sign-in token.",
+          "description": "Personal Access Token for headless or CI use. Generate one in Aikido under Settings → Integrations → AI Code Generators → Aikido MCP Server. When set, it is used instead of the browser sign-in.",
           "secret": true,
+          "optional": true,
           "token_url": "https://app.aikido.dev/settings/integrations/ide/mcp",
           "token_url_label": "Generate token"
         }

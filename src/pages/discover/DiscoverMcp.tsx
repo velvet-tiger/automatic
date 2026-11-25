@@ -42,6 +42,9 @@ interface EnvVar {
   name: string;
   description: string;
   secret: boolean;
+  /** True when the server runs without this variable, e.g. because it signs
+   *  in through the browser and the token is only for headless use. */
+  optional?: boolean;
 }
 
 interface CompanionSkill {
@@ -83,7 +86,8 @@ interface McpServer {
     /** Explicit argument vector. Preferred over splitting `command` on whitespace. */
     args?: string[] | null;
   } | null;
-  auth: { method: string; env_vars: EnvVar[] };
+  /** `note` explains how the server signs in when every env var is optional. */
+  auth: { method: string; env_vars: EnvVar[]; note?: string | null };
   /** Optional skill that should be installed alongside this server */
   companion_skill?: CompanionSkill | null;
 }
@@ -211,6 +215,11 @@ function hasLocal(s: McpServer): boolean {
 
 function hasAuth(s: McpServer): boolean {
   return s.auth.method !== "none" && s.auth.env_vars.length > 0;
+}
+
+/** True when the server runs with none of its env vars set. */
+function authVarsAllOptional(s: McpServer): boolean {
+  return s.auth.env_vars.length > 0 && s.auth.env_vars.every((v) => v.optional === true);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -1082,9 +1091,16 @@ export default function DiscoverMcp({
                     <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
                       Authentication
                     </h3>
-                    <p className="text-[12px] text-text-muted mb-4">
-                      This server requires authentication. Set the following environment variables.
-                    </p>
+                    {authVarsAllOptional(selected) ? (
+                      <p className="text-[12px] text-text-muted mb-4">
+                        {selected.auth.note ||
+                          "These environment variables are optional. The server runs without them."}
+                      </p>
+                    ) : (
+                      <p className="text-[12px] text-text-muted mb-4">
+                        This server requires authentication. Set the following environment variables.
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -1116,6 +1132,11 @@ export default function DiscoverMcp({
                                 <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-danger/10 text-danger text-[9px] font-medium">
                                   <Key size={8} />
                                   secret
+                                </span>
+                              )}
+                              {v.optional && (
+                                <span className="px-1.5 py-0.5 rounded bg-bg-sidebar border border-border-strong/40 text-text-muted text-[9px] font-medium">
+                                  optional
                                 </span>
                               )}
                             </div>
