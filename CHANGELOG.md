@@ -4,6 +4,35 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.44.0] - 2026-11-26
+
+### Added
+
+- The MCP server editor has Projects and Connection details tabs. The Projects tab shows which projects and profiles use a server. You can add the server to a project or profile, or remove it, from that tab.
+- Servers installed from Discover show the catalogue logo and details, and link back to Discover. This applies in the editor and in the server list.
+
+### Changed
+
+- Codex sub-agent files no longer include `sandbox_mode = "read-only"`. Codex ignores that line, so it claimed a restriction that never applied.
+- The companion skill install is removed from the Discover MCP page. It recorded a source that did not match its download, so Update Now could fetch from somewhere else. It can return once a skill source records the real URL.
+- Aikido's MCP server signs in through the browser. Its API key is optional and only needed for headless use.
+- Catalogue environment variables can be marked optional. The Authentication tab shows an auth note instead of "requires authentication".
+
+### Fixed
+
+- The "View setup documentation" links on Discover MCP servers now show. Before, the links never appeared.
+- A catalogue server shows its logo and Discover link only when its URL fills the catalogue template. Before, a copied template could point at any host and still show them.
+- The MCP picker menu no longer collapses when it opens upward, such as in the profile editor.
+- Adopting an edit to another agent's file no longer reports a conflict for an older Codex file. The retired `sandbox_mode` line is ignored, and the file is rewritten on the next sync.
+
+### Security
+
+- The zip library is updated to 9.8.2. Version 9.0.5 had 20 open advisories, three of them critical, for reading untrusted archives during skill import and library refresh.
+- OAuth client secrets are no longer written into project files such as `.mcp.json` and `opencode.json`. Those files are often committed. Cursor and OpenCode still read the secret from their global config. An upgrade removes it from global files that older versions wrote.
+- Sync no longer copies a client secret from Cursor or OpenCode config into other agents' files, under any of its key spellings.
+- External links open only for `http`, `https` and `mailto`. Before, a `file:`, `javascript:` or custom-scheme link could bypass the opener's scope.
+- Update Now scans upstream skill content before it saves the skill. Blocked content is refused, and the local copy stays unchanged. Warnings appear on the Skills page.
+
 ## [1.43.0] - 2026-11-24
 
 ### Added
