@@ -387,7 +387,7 @@ export function McpSelector({
               <Plus size={12} /> Add from Library
             </button>
             {adding && (
-              <DropdownMenu className="absolute right-0 top-full w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <DropdownMenu className="absolute right-0 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
                 <div className="p-2 border-b border-border-strong/40">
                   <input
                     type="text"
