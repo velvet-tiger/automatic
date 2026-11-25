@@ -89,6 +89,11 @@ impl Agent for OpenCode {
         super::substitute_header_env_references(server, |name| format!("{{env:{}}}", name));
     }
 
+    /// OpenCode reads `oauth.client_secret` (https://opencode.ai/docs/mcp-servers/).
+    fn reads_oauth_client_secret(&self) -> bool {
+        true
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let servers: Map<String, Value> = servers
             .iter()

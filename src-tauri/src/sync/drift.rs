@@ -393,6 +393,11 @@ pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, S
         let Some(agent_instance) = agent::from_id(agent_id) else {
             continue;
         };
+        if agent_instance.reads_oauth_client_secret() {
+            warnings
+                .notes
+                .extend(project_client_secret_notes(agent_instance, &selected_servers));
+        }
         let prepared = agent::prepare_mcp_servers(agent_instance, &selected_servers, &dir);
         for (name, server) in &prepared {
             if let Some(reason) = agent_instance.mcp_unsupported_reason(server) {
@@ -428,6 +433,25 @@ pub fn project_sync_warnings(project: &Project) -> Result<ProjectSyncWarnings, S
     let mut seen = HashSet::new();
     warnings.notes.retain(|line| seen.insert(line.clone()));
     Ok(warnings)
+}
+
+/// One note per server whose OAuth client secret the agent would read but
+/// that a project file never receives (VEL-458).  Project files are often
+/// committed, so the secret is written only to the agent's global config.
+fn project_client_secret_notes(
+    agent_instance: &dyn agent::Agent,
+    servers: &Map<String, Value>,
+) -> Vec<String> {
+    servers
+        .iter()
+        .filter(|(_, server)| agent::has_oauth_client_secret(server))
+        .map(|(name, _)| {
+            format!(
+                "{label} MCP server `{name}`: its OAuth client secret is not written to project files. To use the secret, add `{name}` to {label}'s global MCP servers.",
+                label = agent_instance.label()
+            )
+        })
+        .collect()
 }
 
 fn agent_sync_limits_problem(warnings: Vec<String>) -> Option<ProjectProblem> {
@@ -2904,6 +2928,81 @@ mod tests {
         assert_eq!(files.len(), 1, "legacy `scope` file must drift");
         assert_eq!(files[0].path, ".mcp.json");
         assert_eq!(files[0].reason, "modified");
+    }
+
+    /// A project file written before VEL-458 still holds the OAuth client
+    /// secret.  It drifts, so the next sync rewrites it without the secret,
+    /// and the rewritten file shows no drift.
+    ///
+    /// Only agents whose MCP file sits at the project root are covered:
+    /// `collect_mcp_drift` does not look inside folders such as `.cursor/`.
+    /// Sync rewrites those files regardless, and an upgrade re-syncs every
+    /// project.
+    #[test]
+    fn project_file_holding_the_client_secret_drifts_until_rewritten() {
+        use crate::agent::OpenCode;
+
+        let mut servers = Map::new();
+        servers.insert(
+            "remote".to_string(),
+            serde_json::json!({
+                "type": "http",
+                "url": "https://api.example.com/mcp",
+                "oauth": { "clientId": "client_123", "clientSecret": "s3cret" }
+            }),
+        );
+
+        let agents: [&dyn agent::Agent; 2] = [&ClaudeCode, &OpenCode];
+        for agent_instance in agents {
+            let old = tempdir().unwrap();
+            // The writer on its own is what older versions wrote: no strip.
+            agent_instance
+                .write_mcp_config(old.path(), &servers)
+                .expect("write_mcp_config should succeed");
+            let mut files: Vec<DriftedFile> = Vec::new();
+            collect_mcp_drift(agent_instance, &old.path().to_path_buf(), &servers, &mut files);
+            assert_eq!(files.len(), 1, "{}: old file must drift", agent_instance.id());
+
+            let current = tempdir().unwrap();
+            let prepared =
+                agent::prepare_mcp_servers(agent_instance, &servers, current.path());
+            let path = agent_instance
+                .write_mcp_config(current.path(), &prepared)
+                .expect("write_mcp_config should succeed");
+            assert!(!fs::read_to_string(path).unwrap().contains("s3cret"));
+            let mut files: Vec<DriftedFile> = Vec::new();
+            collect_mcp_drift(
+                agent_instance,
+                &current.path().to_path_buf(),
+                &servers,
+                &mut files,
+            );
+            assert!(files.is_empty(), "{}: unexpected drift", agent_instance.id());
+        }
+    }
+
+    #[test]
+    fn client_secret_note_names_the_server_and_the_global_fix() {
+        use crate::agent::Cursor;
+
+        let mut servers = Map::new();
+        servers.insert(
+            "remote".to_string(),
+            serde_json::json!({
+                "type": "http",
+                "url": "https://api.example.com/mcp",
+                "oauth": { "clientId": "c", "clientSecret": "s3cret" }
+            }),
+        );
+        servers.insert(
+            "plain".to_string(),
+            serde_json::json!({ "type": "http", "url": "https://api.example.com/mcp" }),
+        );
+        let notes = project_client_secret_notes(&Cursor, &servers);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("`remote`"), "{}", notes[0]);
+        assert!(notes[0].contains("global MCP servers"), "{}", notes[0]);
+        assert!(!notes[0].contains("s3cret"), "{}", notes[0]);
     }
 
     /// OpenCode's oauth keys render in snake_case.  A file written by the new

@@ -310,6 +310,18 @@ pub trait Agent: Send + Sync {
     /// placeholder text to the server as the credential.
     fn rewrite_header_env_references(&self, _server: &mut Map<String, Value>) {}
 
+    /// `true` when this agent reads an OAuth client secret from its MCP
+    /// config file.
+    ///
+    /// Automatic never writes `oauth.clientSecret` into a project file, which
+    /// may be committed.  It writes the secret only into the global config of
+    /// an agent that returns `true` here.  Claude Code, for one, takes the
+    /// secret only through `claude mcp add --client-secret` and keeps it in
+    /// the keychain, so the default is `false`.
+    fn reads_oauth_client_secret(&self) -> bool {
+        false
+    }
+
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
     ///
@@ -2528,12 +2540,40 @@ fn prepare_mcp_servers_impl(
                 agent.rewrite_inherited_env(obj, &inherited);
             }
             agent.rewrite_header_env_references(obj);
+
+            let keep_secret = workspace_folder.is_none() && agent.reads_oauth_client_secret();
+            if !keep_secret {
+                remove_oauth_client_secret(obj);
+            }
         }
         expand_workspace_variables(&mut server, workspace_folder, home.as_deref());
         prepared.insert(name.clone(), server);
     }
 
     prepared
+}
+
+/// Remove `oauth.clientSecret` from one server entry.
+///
+/// Project config files are often committed, so a client secret must never
+/// reach one (VEL-458).  An `oauth` object that held only the secret is
+/// removed too, so the agent does not see an empty OAuth block.
+fn remove_oauth_client_secret(server: &mut Map<String, Value>) {
+    let Some(Value::Object(oauth)) = server.get_mut("oauth") else {
+        return;
+    };
+    if oauth.remove("clientSecret").is_some() && oauth.is_empty() {
+        server.remove("oauth");
+    }
+}
+
+/// `true` when a server entry carries a non-empty `oauth.clientSecret`.
+pub(crate) fn has_oauth_client_secret(server: &Value) -> bool {
+    server
+        .get("oauth")
+        .and_then(|oauth| oauth.get("clientSecret"))
+        .and_then(Value::as_str)
+        .is_some_and(|secret| !secret.is_empty())
 }
 
 /// Recursively substitute `${workspaceFolder}` and `${userHome}` inside every
