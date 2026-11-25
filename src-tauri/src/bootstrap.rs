@@ -254,6 +254,12 @@ pub fn run_startup_housekeeping() {
             "[automatic] bundled assets refreshed; re-syncing all projects to propagate updates"
         );
         commands::resync_all_projects(&commands::project_sweeps::SweepProgress::silent());
+        // Global agent configs are rewritten too, so an upgrade that changes
+        // what Automatic writes there (VEL-458 removed the OAuth client
+        // secret) reaches files written by the older version.
+        for (agent, error) in crate::sync::global_mcp::reapply_all_agents() {
+            eprintln!("[automatic] global MCP re-apply for '{}' failed: {}", agent, error);
+        }
     }
 
     match core::install_plugin_marketplace() {

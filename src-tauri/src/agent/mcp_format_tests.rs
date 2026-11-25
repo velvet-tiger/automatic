@@ -373,7 +373,10 @@ fn cursor_maps_oauth_onto_its_auth_block() {
     let remote = &parsed["mcpServers"]["remote"];
 
     assert_eq!(remote["auth"]["CLIENT_ID"], "client_123");
-    assert_eq!(remote["auth"]["CLIENT_SECRET"], "secret_456");
+    assert!(
+        remote["auth"].get("CLIENT_SECRET").is_none(),
+        "a project file must never carry the client secret (VEL-458)"
+    );
     assert_eq!(remote["auth"]["scopes"], json!(["read", "write"]));
     assert!(
         remote.get("oauth").is_none(),
@@ -383,6 +386,157 @@ fn cursor_maps_oauth_onto_its_auth_block() {
         remote["auth"].get("callbackPort").is_none(),
         "Cursor registers fixed redirect URLs, so callbackPort has no counterpart"
     );
+}
+
+// ── OAuth client secret (VEL-458) ───────────────────────────────────────────
+
+const CLIENT_SECRET_MARKER: &str = "vel458-client-secret-marker";
+
+fn servers_with_client_secret() -> Map<String, Value> {
+    let mut servers = Map::new();
+    servers.insert(
+        "remote".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.example.com/mcp",
+            "oauth": {
+                "clientId": "client_123",
+                "clientSecret": CLIENT_SECRET_MARKER,
+                "scope": "read write",
+                "callbackPort": 8787,
+            },
+        }),
+    );
+    servers
+}
+
+/// Project files are often committed, so no agent's project file may carry
+/// the OAuth client secret, whatever its dialect calls the key.
+#[test]
+fn no_project_file_carries_the_oauth_client_secret() {
+    for agent in all() {
+        let dir = tempdir().unwrap();
+        let Some(content) = write_and_read(agent, dir.path(), &servers_with_client_secret())
+        else {
+            continue;
+        };
+        assert!(
+            !content.contains(CLIENT_SECRET_MARKER),
+            "{} wrote the client secret into a project file:\n{content}",
+            agent.id()
+        );
+    }
+}
+
+/// Only the agents that read a client secret from their config receive it,
+/// and only at global scope.
+#[test]
+fn global_config_keeps_the_client_secret_only_for_agents_that_read_it() {
+    let readers: Vec<&str> = all()
+        .into_iter()
+        .filter(|agent| agent.reads_oauth_client_secret())
+        .map(|agent| agent.id())
+        .collect();
+    assert_eq!(readers, vec!["cursor", "opencode"]);
+
+    for agent in all() {
+        let prepared = prepare_global_mcp_servers(agent, &servers_with_client_secret());
+        assert_eq!(
+            has_oauth_client_secret(&prepared["remote"]),
+            agent.reads_oauth_client_secret(),
+            "{}",
+            agent.id()
+        );
+        // The rest of the OAuth block is kept for every agent.
+        assert_eq!(prepared["remote"]["oauth"]["clientId"], "client_123");
+    }
+}
+
+/// A global Cursor config still gets `auth.CLIENT_SECRET`.
+#[test]
+fn cursor_global_config_maps_the_client_secret_onto_its_auth_block() {
+    let prepared = prepare_global_mcp_servers(&Cursor, &servers_with_client_secret());
+    let dir = tempdir().unwrap();
+    let path = Cursor.write_mcp_config(dir.path(), &prepared).expect("write");
+    let parsed: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["remote"]["auth"]["CLIENT_SECRET"],
+        CLIENT_SECRET_MARKER
+    );
+}
+
+/// Discovery can bring a secret into the registry in another agent's
+/// spelling: Cursor's `auth.CLIENT_SECRET`, or `oauth.client_secret` from an
+/// OpenCode-dialect file.  No project file may carry those either.
+#[test]
+fn no_project_file_carries_a_client_secret_in_another_dialect() {
+    let mut servers = Map::new();
+    servers.insert(
+        "from-cursor".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://a.example.com/mcp",
+            "auth": { "CLIENT_ID": "c", "CLIENT_SECRET": CLIENT_SECRET_MARKER },
+        }),
+    );
+    servers.insert(
+        "from-opencode".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://b.example.com/mcp",
+            "oauth": { "client_id": "c", "client_secret": CLIENT_SECRET_MARKER },
+        }),
+    );
+    for entry in servers.values() {
+        assert!(has_oauth_client_secret(entry), "{entry}");
+    }
+
+    for agent in all() {
+        let dir = tempdir().unwrap();
+        let Some(content) = write_and_read(agent, dir.path(), &servers) else {
+            continue;
+        };
+        assert!(
+            !content.contains(CLIENT_SECRET_MARKER),
+            "{} wrote a client secret into a project file:\n{content}",
+            agent.id()
+        );
+
+        let prepared = prepare_global_mcp_servers(agent, &servers);
+        for entry in prepared.values() {
+            assert_eq!(
+                has_oauth_client_secret(entry),
+                agent.reads_oauth_client_secret(),
+                "{}: {entry}",
+                agent.id()
+            );
+        }
+    }
+}
+
+/// An `oauth` block that held only the secret is dropped, not left empty.
+#[test]
+fn an_oauth_block_holding_only_the_secret_is_removed() {
+    let mut servers = Map::new();
+    servers.insert(
+        "remote".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.example.com/mcp",
+            "oauth": { "clientSecret": CLIENT_SECRET_MARKER },
+        }),
+    );
+    let dir = tempdir().unwrap();
+    let prepared = prepare_mcp_servers(&ClaudeCode, &servers, dir.path());
+    assert!(prepared["remote"].get("oauth").is_none(), "{}", prepared["remote"]);
+
+    // An empty block the user stored is left as it is.
+    servers.insert(
+        "remote".to_string(),
+        json!({ "type": "http", "url": "https://api.example.com/mcp", "oauth": {} }),
+    );
+    let prepared = prepare_mcp_servers(&ClaudeCode, &servers, dir.path());
+    assert_eq!(prepared["remote"]["oauth"], json!({}));
 }
 
 #[test]

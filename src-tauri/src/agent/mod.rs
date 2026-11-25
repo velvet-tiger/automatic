@@ -310,6 +310,18 @@ pub trait Agent: Send + Sync {
     /// placeholder text to the server as the credential.
     fn rewrite_header_env_references(&self, _server: &mut Map<String, Value>) {}
 
+    /// `true` when this agent reads an OAuth client secret from its MCP
+    /// config file.
+    ///
+    /// Automatic never writes `oauth.clientSecret` into a project file, which
+    /// may be committed.  It writes the secret only into the global config of
+    /// an agent that returns `true` here.  Claude Code, for one, takes the
+    /// secret only through `claude mcp add --client-secret` and keeps it in
+    /// the keychain, so the default is `false`.
+    fn reads_oauth_client_secret(&self) -> bool {
+        false
+    }
+
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
     ///
@@ -2528,12 +2540,64 @@ fn prepare_mcp_servers_impl(
                 agent.rewrite_inherited_env(obj, &inherited);
             }
             agent.rewrite_header_env_references(obj);
+
+            let keep_secret = workspace_folder.is_none() && agent.reads_oauth_client_secret();
+            if !keep_secret {
+                remove_oauth_client_secret(obj);
+            }
         }
         expand_workspace_variables(&mut server, workspace_folder, home.as_deref());
         prepared.insert(name.clone(), server);
     }
 
     prepared
+}
+
+/// Blocks that can hold an OAuth client secret.  `oauth` is Automatic's own
+/// key; `auth` is Cursor's, and reaches the registry when a Cursor config is
+/// imported as it is.
+const CLIENT_SECRET_BLOCKS: [&str; 2] = ["oauth", "auth"];
+
+/// Every spelling of the client secret key that an agent dialect uses:
+/// Automatic's `clientSecret`, OpenCode's `client_secret` and Cursor's
+/// `CLIENT_SECRET`.  Discovery does not map them all back to `clientSecret`,
+/// so the registry can hold any of them.
+const CLIENT_SECRET_KEYS: [&str; 3] = ["clientSecret", "client_secret", "CLIENT_SECRET"];
+
+/// Remove the OAuth client secret, in any spelling, from one server entry.
+///
+/// Project config files are often committed, so a client secret must never
+/// reach one (VEL-458).  A block that held only the secret is removed too, so
+/// the agent does not see an empty OAuth block.
+fn remove_oauth_client_secret(server: &mut Map<String, Value>) {
+    for block_key in CLIENT_SECRET_BLOCKS {
+        let Some(Value::Object(block)) = server.get_mut(block_key) else {
+            continue;
+        };
+        let mut removed = false;
+        for key in CLIENT_SECRET_KEYS {
+            removed |= block.remove(key).is_some();
+        }
+        if removed && block.is_empty() {
+            server.remove(block_key);
+        }
+    }
+}
+
+/// `true` when a server entry carries a non-empty OAuth client secret, in any
+/// spelling [`remove_oauth_client_secret`] removes.
+pub(crate) fn has_oauth_client_secret(server: &Value) -> bool {
+    CLIENT_SECRET_BLOCKS.iter().any(|block_key| {
+        let Some(block) = server.get(*block_key) else {
+            return false;
+        };
+        CLIENT_SECRET_KEYS.iter().any(|key| {
+            block
+                .get(*key)
+                .and_then(Value::as_str)
+                .is_some_and(|secret| !secret.is_empty())
+        })
+    })
 }
 
 /// Recursively substitute `${workspaceFolder}` and `${userHome}` inside every

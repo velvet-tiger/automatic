@@ -146,6 +146,12 @@ impl Agent for Cursor {
         super::substitute_header_env_references(server, |name| format!("${{env:{}}}", name));
     }
 
+    /// Cursor reads `auth.CLIENT_SECRET`, which [`cursor_auth_block`] fills
+    /// from `oauth.clientSecret`.
+    fn reads_oauth_client_secret(&self) -> bool {
+        true
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // Cursor's `mcpServers` map looks like Claude Code's but diverges on
         // two points: OAuth client details live under `auth` in SCREAMING_CASE,
