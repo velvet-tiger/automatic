@@ -5601,6 +5601,58 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
+    fn mcp_server_page_attaches_reports_and_detaches_a_server() {
+        use super::super::mcp_servers as mcp;
+        with_temp_home(|_| {
+            let name = "usage-page-server";
+            core::save_mcp_server_config(name, r#"{"type":"stdio","command":"echo"}"#)
+                .expect("save server");
+            let (_keep, dir) = make_project("project-a", |p| p.agents = vec!["claude".to_string()]);
+
+            mcp::attach_mcp_server_to_project("project-a", "Usage-Page-Server").expect("attach");
+            assert_eq!(read_back("project-a").mcp_servers, vec![name]);
+            let mcp_json = std::fs::read_to_string(dir.join(".mcp.json")).unwrap_or_default();
+            assert!(mcp_json.contains(name), "attach syncs the project: {mcp_json}");
+
+            save_profile("usage-profile", |_| {});
+            mcp::add_mcp_server_to_profile("usage-profile", name).expect("add to profile");
+            let usage = mcp::get_mcp_server_usage(name).expect("usage");
+            assert_eq!(usage.projects.len(), 1);
+            assert_eq!(usage.projects[0].name, "project-a");
+            assert!(usage.projects[0].enabled);
+            assert!(usage.projects[0].profiles.is_empty());
+            assert_eq!(usage.profiles, vec!["usage-profile"]);
+
+            mcp::remove_mcp_server_from_profile("usage-profile", name).expect("remove");
+            assert!(read_profile("usage-profile").mcp_servers.is_empty());
+
+            mcp::detach_mcp_server_from_project("project-a", name).expect("detach");
+            assert!(read_back("project-a").mcp_servers.is_empty());
+            assert!(mcp::get_mcp_server_usage(name).expect("usage").projects.is_empty());
+
+            assert!(mcp::attach_mcp_server_to_project("project-a", "not-in-library").is_err());
+        });
+    }
+
+    #[test]
+    fn mcp_server_page_refuses_a_project_server_in_a_profile() {
+        use super::super::mcp_servers as mcp;
+        with_temp_home(|_| {
+            let name = "usage-page-scoped";
+            let (_keep, _dir) = make_project("project-a", |_| {});
+            let key = core::local_key_of(&read_back("project-a")).expect("key");
+            core::save_mcp_server_config(name, r#"{"type":"stdio","command":"echo"}"#)
+                .expect("save server");
+            core::set_mcp_server_scope(name, Some(&key)).expect("limit");
+            save_profile("usage-profile", |_| {});
+
+            let err = mcp::add_mcp_server_to_profile("usage-profile", name).expect_err("refused");
+            assert!(err.contains("project MCP servers"), "{err}");
+            assert!(read_profile("usage-profile").mcp_servers.is_empty());
+        });
+    }
+
+    #[test]
     fn deleting_a_rule_prunes_it_from_projects_profiles_and_templates() {
         with_temp_home(|_| {
             core::save_rule("delete-rule", "Delete Rule", "Body.\n").expect("save rule");

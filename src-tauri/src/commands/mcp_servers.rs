@@ -4,7 +4,9 @@ use super::project_sweeps::{
     ensure_not_being_deleted, hold_library_writes, queue_sweep, run_delete_and_wait,
     run_sweep_and_wait, SweepProgress,
 };
+use super::project_profiles::save_project_profile;
 use super::projects::{
+    ensure_writable, sync_project_if_configured, with_each_project_mut,
     prune_mcp_server_from_projects, rename_mcp_server_in_projects,
     rename_mcp_server_in_templates, sync_projects_referencing_mcp_server,
 };
@@ -100,6 +102,118 @@ pub fn confirm_project_mcp_servers(project_name: &str, project_id: &str) -> Resu
 pub fn ignore_project_mcp_servers(project_name: &str, project_id: &str) -> Result<(), String> {
     let _writes = hold_library_writes();
     core::ignore_project_mcp_servers(&core::canonical_project_ident(project_name)?, project_id)
+}
+
+/// What every stored server connects to, for matching it to the Discover
+/// catalogue. Reads the files raw, so nothing is decrypted.
+#[tauri::command(async)]
+pub fn list_mcp_server_connections(
+) -> Result<std::collections::BTreeMap<String, core::McpServerConnection>, String> {
+    core::list_mcp_server_connections()
+}
+
+/// Where `name` is used: every project that lists it, with the profiles that
+/// provide it there, and every profile that lists it. Read-only.
+#[tauri::command(async)]
+pub fn get_mcp_server_usage(name: &str) -> Result<core::McpServerUsage, String> {
+    let mut usage = core::McpServerUsage::default();
+    with_each_project_mut(|_, project| {
+        if let Some(found) = core::mcp_server_use_in_project(project, name, core::local_key_of(project)) {
+            usage.projects.push(found);
+        }
+    });
+    usage.projects.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    for profile_name in core::list_project_profiles()? {
+        let profile = core::read_project_profile_parsed(&profile_name)?;
+        if core::profile_lists_mcp_server(&profile, name) {
+            usage.profiles.push(profile_name);
+        }
+    }
+    usage.profiles.sort_by_key(|p| p.to_lowercase());
+    Ok(usage)
+}
+
+/// The library's own spelling of `name`, or an error when it is not stored.
+fn stored_server_name(name: &str) -> Result<String, String> {
+    core::list_mcp_server_configs()?
+        .into_iter()
+        .find(|stored| stored.eq_ignore_ascii_case(name.trim()))
+        .ok_or_else(|| format!("MCP server '{}' is not in the library", name))
+}
+
+fn read_project_for_update(project_name: &str) -> Result<core::Project, String> {
+    let raw = core::read_project(project_name)?;
+    serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))
+}
+
+fn save_and_sync_project(project_name: &str, project: &mut core::Project) -> Result<(), String> {
+    project.updated_at = chrono::Utc::now().to_rfc3339();
+    let json = serde_json::to_string_pretty(project)
+        .map_err(|e| format!("Failed to serialise project: {}", e))?;
+    core::save_project(project_name, &json)?;
+    sync_project_if_configured(project_name, project);
+    Ok(())
+}
+
+/// Add a library server to one project and re-sync it. A server limited to
+/// a project is accepted only by the checkout that accepted that project's
+/// servers.
+#[tauri::command(async)]
+pub fn attach_mcp_server_to_project(project_name: &str, server_name: &str) -> Result<(), String> {
+    let server = stored_server_name(server_name)?;
+    ensure_not_being_deleted(&format!("mcp:{server}"), &server)?;
+    let _writes = hold_library_writes();
+    let project_name = &core::canonical_project_ident(project_name)?;
+    ensure_writable(project_name)?;
+    let scope = core::read_mcp_server_scope(&server)?;
+    let accepted = core::checkout_accepted_mcp_scope_id(project_name)?;
+    let mut project = read_project_for_update(project_name)?;
+    if core::attach_mcp_server_to_project(&mut project, &server, scope.as_deref(), accepted.as_deref())? {
+        save_and_sync_project(project_name, &mut project)?;
+    }
+    Ok(())
+}
+
+/// Remove a server the project added itself, then re-sync it. A server a
+/// profile provides is refused.
+#[tauri::command(async)]
+pub fn detach_mcp_server_from_project(project_name: &str, server_name: &str) -> Result<(), String> {
+    let _writes = hold_library_writes();
+    let project_name = &core::canonical_project_ident(project_name)?;
+    ensure_writable(project_name)?;
+    let mut project = read_project_for_update(project_name)?;
+    if core::detach_mcp_server_from_project(&mut project, server_name)? {
+        save_and_sync_project(project_name, &mut project)?;
+    }
+    Ok(())
+}
+
+/// Add a library server to a profile. The profile save brings every
+/// attached project in step. A server limited to one project is refused.
+#[tauri::command(async)]
+pub fn add_mcp_server_to_profile(profile_name: &str, server_name: &str) -> Result<(), String> {
+    let server = stored_server_name(server_name)?;
+    ensure_not_being_deleted(&format!("mcp:{server}"), &server)?;
+    let mut profile = core::read_project_profile_parsed(profile_name)?;
+    if core::add_mcp_server_to_profile(&mut profile, &server)? {
+        let json = serde_json::to_string_pretty(&profile)
+            .map_err(|e| format!("Failed to serialise profile: {}", e))?;
+        save_project_profile(profile_name, &json)?;
+    }
+    Ok(())
+}
+
+/// Remove a server from a profile. The profile save removes it from every
+/// attached project that does not list it some other way.
+#[tauri::command(async)]
+pub fn remove_mcp_server_from_profile(profile_name: &str, server_name: &str) -> Result<(), String> {
+    let mut profile = core::read_project_profile_parsed(profile_name)?;
+    if core::remove_mcp_server_from_profile(&mut profile, server_name)? {
+        let json = serde_json::to_string_pretty(&profile)
+            .map_err(|e| format!("Failed to serialise profile: {}", e))?;
+        save_project_profile(profile_name, &json)?;
+    }
+    Ok(())
 }
 
 /// Queue a re-sync of every project and global assignment that uses a server.

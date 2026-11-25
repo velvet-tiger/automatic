@@ -20,6 +20,9 @@ function routes(saved: Record<string, unknown>) {
     get_project_summaries: [],
     list_mcp_server_scopes: {},
     list_accepted_mcp_scope_ids: {},
+    list_mcp_server_connections: {},
+    get_mcp_server_usage: { projects: [], profiles: [] },
+    get_project_profiles: [],
     get_recently_added_items: [],
     has_mcp_oauth_token: false,
     get_mcp_oauth_token_status: { has_token: false, valid: false, revoked: false, message: null },
@@ -32,6 +35,12 @@ function savedConfigs(): Record<string, unknown>[] {
     .map(([, args]) => JSON.parse((args as { data: string }).data));
 }
 
+
+/** Connection fields live on the editor's second tab. */
+async function openConnectionTab(): Promise<void> {
+  fireEvent.click(await screen.findByRole("tab", { name: "Connection details" }));
+}
+
 describe("McpServers URL template", () => {
   beforeEach(() => {
     resetInvokeMock();
@@ -40,6 +49,7 @@ describe("McpServers URL template", () => {
   it("repairs a server saved with the raw template", async () => {
     mockInvoke(routes({ type: "http", url: TEMPLATE, _author: { name: "Spacelift" } }));
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     const field = await screen.findByLabelText("Account name");
     expect(screen.getByText("Enter your account name.")).toBeInTheDocument();
@@ -67,6 +77,7 @@ describe("McpServers URL template", () => {
       }),
     );
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     const field = (await screen.findByLabelText("Account name")) as HTMLInputElement;
     expect(field.value).toBe("acme");
@@ -92,6 +103,7 @@ describe("McpServers URL template", () => {
       }),
     );
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     fireEvent.change(await screen.findByLabelText("Account name"), { target: { value: "evil.com/x" } });
 
@@ -110,6 +122,7 @@ describe("McpServers URL template", () => {
       }),
     );
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     const url = (await screen.findByPlaceholderText("https://example.com/mcp")) as HTMLInputElement;
     expect(url.readOnly).toBe(true);
@@ -126,6 +139,7 @@ describe("McpServers URL template", () => {
       }),
     );
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     const field = (await screen.findByLabelText("Account name")) as HTMLInputElement;
     expect(field.value).toBe("");
@@ -143,6 +157,7 @@ describe("McpServers URL template", () => {
       }),
     );
     render(<McpServers initialServer="spacelift" />);
+    await openConnectionTab();
 
     fireEvent.change(await screen.findByLabelText("Account name"), { target: { value: "acme." } });
     const save = await screen.findByRole("button", { name: "Save" });

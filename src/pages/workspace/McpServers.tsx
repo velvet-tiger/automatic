@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -16,6 +16,10 @@ import { nextAvailableName } from "../../lib/uniqueName";
 import { encryptedPrefixMessage, envKeysWithEncryptedPrefix } from "../../lib/encryptedEnvValues";
 import { McpConfigFindings } from "../../components/McpConfigFindings";
 import { UrlTemplateFields } from "../../components/UrlTemplateFields";
+import { McpServerIcon } from "../../components/McpServerIcon";
+import { matchDiscoverEntry, tokenLinksFor, type SavedMcpConnection } from "../../lib/discoverMcpMatch";
+import { McpServerProjectsTab } from "./mcp/McpServerProjectsTab";
+import { McpCatalogueCard } from "./mcp/McpCatalogueCard";
 import {
   fillUrlTemplate,
   knownUrlTemplates,
@@ -52,56 +56,11 @@ import {
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 
-/** Discover-catalogue env-var metadata used to surface a "Generate token" link
- *  next to each configured environment variable that has one. */
-interface DiscoverEnvVarMeta {
-  name: string;
-  token_url?: string | null;
-  token_url_label?: string | null;
-}
-interface DiscoverEntryMeta {
-  slug: string;
-  title: string;
-  auth?: { method?: string; env_vars?: DiscoverEnvVarMeta[] } | null;
-}
-const DISCOVER_ENTRIES = featuredMcpServers as DiscoverEntryMeta[];
-
 /** The bundled catalogue's templated URLs. The editor honours a server's
  *  `_url_template` only when it is one of these. */
 const KNOWN_URL_TEMPLATES = knownUrlTemplates(
   (featuredMcpServers as Array<{ remote?: { url?: string } | null }>).map((e) => e.remote?.url),
 );
-
-/** Find the Discover catalogue entry that matches a saved server name.
- *  Matches by slug first (the installer's default), then by title-derived key. */
-function findDiscoverEntry(serverName: string): DiscoverEntryMeta | null {
-  const needle = serverName.toLowerCase();
-  return (
-    DISCOVER_ENTRIES.find(
-      (e) =>
-        e.slug === needle ||
-        e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") === needle,
-    ) ?? null
-  );
-}
-
-/** Resolve token-acquisition links for the env vars present in a server's config. */
-function tokenLinksForServer(
-  serverName: string,
-  env: Record<string, string>,
-): Array<{ name: string; url: string; label: string }> {
-  const entry = findDiscoverEntry(serverName);
-  const vars = entry?.auth?.env_vars;
-  if (!vars) return [];
-  const out: Array<{ name: string; url: string; label: string }> = [];
-  for (const key of Object.keys(env)) {
-    const meta = vars.find((v) => v.name === key);
-    if (meta?.token_url) {
-      out.push({ name: key, url: meta.token_url, label: meta.token_url_label || "Get token" });
-    }
-  }
-  return out;
-}
 
 /** Environment variables a server's headers reference as `${NAME}`, in first-use
  *  order. Mirrors `parse_header_value` in `src-tauri/src/agent/mod.rs`, which
@@ -703,9 +662,18 @@ interface McpServersProps {
   onInitialServerConsumed?: () => void;
   /** Opens Discover MCP Servers. Shown in the empty state so new users find ready-made servers. */
   onBrowseDiscover?: () => void;
+  /** Opens one Discover catalogue entry, for a server installed from it. */
+  onNavigateToDiscoverMcp?: (slug: string) => void;
 }
 
-export default function McpServers({ initialServer = null, onInitialServerConsumed, onBrowseDiscover }: McpServersProps = {}) {
+type DrawerTab = "projects" | "connection";
+
+export default function McpServers({
+  initialServer = null,
+  onInitialServerConsumed,
+  onBrowseDiscover,
+  onNavigateToDiscoverMcp,
+}: McpServersProps = {}) {
   const [servers, setServers] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
   const recentIds = useRecentlyAdded("mcp_servers", recentRefresh);
@@ -751,8 +719,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [checkouts, setCheckouts] = useState<{ local_key: string; id: string; name: string; directory: string }[]>([]);
   // Checkout local_key → the project id whose servers it accepted.
   const [acceptedIds, setAcceptedIds] = useState<Record<string, string>>({});
-  const [scopeTarget, setScopeTarget] = useState("");
   const [scopeBusy, setScopeBusy] = useState(false);
+  // What each stored server connects to, for its catalogue logo in the list.
+  const [connections, setConnections] = useState<Record<string, SavedMcpConnection>>({});
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>("projects");
+  const reportError = useCallback((message: string) => setError(message), []);
 
 
   useEffect(() => {
@@ -781,6 +752,15 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     }
     await loadScopes();
     await loadStoredFindings();
+    await loadConnections();
+  };
+
+  const loadConnections = async () => {
+    try {
+      setConnections(await invoke<Record<string, SavedMcpConnection>>("list_mcp_server_connections"));
+    } catch (err: unknown) {
+      setError(`Failed to read server connections: ${err}`);
+    }
   };
 
   const loadScopes = async () => {
@@ -821,7 +801,6 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     setScopeBusy(true);
     try {
       await invoke("set_mcp_server_scope", { name: selectedName, projectName });
-      setScopeTarget("");
       await loadScopes();
       await selectServer(selectedName);
       setError(null);
@@ -1190,6 +1169,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const authUrl =
     urlTemplateMismatch || urlTemplateTokens(config?.url || "").length > 0 ? "" : config?.url || "";
 
+  /** The Discover entry this server was installed from, matched on what it connects to. */
+  const catalogueEntry = config && !isCreating && selectedName ? matchDiscoverEntry(selectedName, config) : null;
+  /** Built-in servers and new ones have nothing to show on the Projects tab. */
+  const showTabs = !isCreating && !isBuiltin && !!selectedName;
+  const activeTab: DrawerTab = showTabs ? drawerTab : "connection";
+
   const searchLower = search.trim().toLowerCase();
   const filteredServers = servers.filter(name => !searchLower || name.toLowerCase().includes(searchLower));
 
@@ -1200,6 +1185,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     const isRowSelected = selection.isSelected(name);
     const isFocused = selectedName === name && !isCreating;
     const deletable = isDeletable(name);
+    const rowConnection = connections[name];
+    const rowEntry = rowConnection ? matchDiscoverEntry(name, rowConnection) : null;
     return (
       <tr
         key={name}
@@ -1222,9 +1209,13 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
           )}
         </td>
         <td className="px-3 py-2 w-11">
-          <div className={ICONS.mcp.iconBox}>
-            <Server size={15} className={ICONS.mcp.iconColor} />
-          </div>
+          {rowEntry ? (
+            <McpServerIcon icon={rowEntry.icon} title={rowEntry.title} size={32} />
+          ) : (
+            <div className={ICONS.mcp.iconBox}>
+              <Server size={15} className={ICONS.mcp.iconColor} />
+            </div>
+          )}
         </td>
         <td className="px-3 py-2 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -1445,7 +1436,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
             {/* Header */}
             <div className="h-11 pl-6 pr-10 border-b border-surface flex justify-between items-center shrink-0">
               <div className="flex items-center gap-3">
-                <Server size={14} className={ICONS.mcp.iconColor} />
+                {catalogueEntry ? (
+                  <McpServerIcon icon={catalogueEntry.icon} title={catalogueEntry.title} size={18} />
+                ) : (
+                  <Server size={14} className={ICONS.mcp.iconColor} />
+                )}
                 {isCreating ? (
                   <input
                     type="text"
@@ -1526,89 +1521,63 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                   </div>
                 )}
 
-                {/* Author */}
-                {(() => {
-                  const descriptor: AuthorDescriptor = isBuiltin
-                    ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
-                    : githubRepo
-                    ? { type: "github", repo: githubRepo, url: config._author?.repository_url }
-                    : config._author
-                    ? { type: "provider", name: config._author.name, url: config._author.url ?? config._author.repository_url }
-                    : { type: "local" };
-                  return (
-                    <section className="pb-2 border-b border-border-strong/40">
-                      <AuthorSection descriptor={descriptor} />
-                    </section>
-                  );
-                })()}
+                {/* Catalogue entry, or the author for other servers */}
+                <section className="pb-2 border-b border-border-strong/40">
+                  {catalogueEntry && !isBuiltin ? (
+                    <McpCatalogueCard entry={catalogueEntry} onViewInDiscover={onNavigateToDiscoverMcp} />
+                  ) : (
+                    (() => {
+                      const descriptor: AuthorDescriptor = isBuiltin
+                        ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
+                        : githubRepo
+                        ? { type: "github", repo: githubRepo, url: config._author?.repository_url }
+                        : config._author
+                        ? { type: "provider", name: config._author.name, url: config._author.url ?? config._author.repository_url }
+                        : { type: "local" };
+                      return <AuthorSection descriptor={descriptor} />;
+                    })()
+                  )}
+                </section>
 
-                {/* Who can use it */}
-                {!isCreating && !isBuiltin && selectedName && (
-                  <section>
-                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                      Available to
-                    </label>
-                    {scopes[selectedName] !== undefined ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-[13px] text-text-base">
-                          {projectNames[scopes[selectedName]!] !== undefined
-                            ? <>Only <span className="font-medium">{projectNames[scopes[selectedName]!]}</span> can see this server.</>
-                            : "This server belongs to a project that no folder on this machine uses yet. The project may have been removed, it may live on another machine, or a folder of it can still accept it from its project page. You can also make the server available to all projects, or delete it."}
-                        </p>
-                        <button
-                          onClick={() => void changeScope(null)}
-                          disabled={scopeBusy || dirty}
-                          title={dirty ? "Save your changes first" : undefined}
-                          className="flex-shrink-0 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded transition-colors disabled:opacity-50"
-                        >
-                          Make available to all projects
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-[13px] text-text-base">All projects.</p>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <select
-                            value={scopeTarget}
-                            onChange={(e) => setScopeTarget(e.target.value)}
-                            disabled={scopeBusy || dirty}
-                            aria-label="Project to limit this server to"
-                            className={smallInputClass}
-                          >
-                            <option value="">Limit to one project…</option>
-                            {[...checkouts]
-                              .sort((a, b) => a.name.localeCompare(b.name))
-                              .map((checkout) => {
-                                // Two checkouts can share a name, so the folder tells them apart.
-                                const shared = checkouts.filter((c) => c.name === checkout.name).length > 1;
-                                const label = shared ? `${checkout.name} (${checkout.directory})` : checkout.name;
-                                // The backend refuses a checkout that has not accepted its id while the
-                                // id owns servers or another checkout accepted it.
-                                const blocked =
-                                  acceptedIds[checkout.local_key] !== checkout.id &&
-                                  (Object.values(scopes).includes(checkout.id) ||
-                                    Object.values(acceptedIds).includes(checkout.id));
-                                return (
-                                  <option key={checkout.local_key} value={checkout.local_key} disabled={blocked}>
-                                    {blocked ? `${label}: accept its project servers first` : label}
-                                  </option>
-                                );
-                              })}
-                          </select>
-                          <button
-                            onClick={() => void changeScope(scopeTarget)}
-                            disabled={!scopeTarget || scopeBusy || dirty}
-                            title={dirty ? "Save your changes first" : undefined}
-                            className="px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded transition-colors disabled:opacity-50"
-                          >
-                            Limit
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </section>
+                {showTabs && (
+                  <div role="tablist" aria-label="Server details" className="flex gap-1 border-b border-border-strong/40">
+                    {([
+                      { id: "projects", label: "Projects" },
+                      { id: "connection", label: "Connection details" },
+                    ] as const).map((tab) => (
+                      <button
+                        key={tab.id}
+                        role="tab"
+                        aria-selected={activeTab === tab.id}
+                        onClick={() => setDrawerTab(tab.id)}
+                        className={`px-4 py-2.5 text-[12px] font-medium border-b-2 -mb-[1px] transition-colors ${
+                          activeTab === tab.id
+                            ? "border-icon-mcp text-text-base"
+                            : "border-transparent text-text-muted hover:text-text-base"
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
 
+                {activeTab === "projects" && selectedName && (
+                  <McpServerProjectsTab
+                    serverName={selectedName}
+                    scopes={scopes}
+                    projectNames={projectNames}
+                    checkouts={checkouts}
+                    acceptedIds={acceptedIds}
+                    scopeBusy={scopeBusy}
+                    dirty={dirty}
+                    onChangeScope={changeScope}
+                    onError={reportError}
+                  />
+                )}
+
+                {activeTab === "connection" && (
+                <>
                 {/* Transport Type + Enabled */}
                 <section>
                   <div className="flex items-center justify-between mb-2">
@@ -1869,7 +1838,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       {" "}instead, inheriting from your shell at runtime.
                     </p>
                     {(() => {
-                      const links = tokenLinksForServer(selectedName || "", config.env || {});
+                      const links = tokenLinksFor(catalogueEntry, config.env || {});
                       if (links.length === 0) return null;
                       return (
                         <div className="mt-2 flex flex-col gap-1">
@@ -1993,6 +1962,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     className={`w-48 bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                   />
                 </section>
+                )}
+                </>
                 )}
               </div>
             </div>
